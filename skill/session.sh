@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# dev-agent cloud session verbs: track, start, send, status, stop, mark, close.
+# Every verb that creates or drives a session needs --asked "<user's request>".
+#   session.sh start NAME [--label L] --asked "..."
+#   session.sh send NAME "<task text>" [--label L] [--session SID] [--new] --asked "..."
+#   session.sh status [SID|NAME]
+#   session.sh stop SID
+#   session.sh mark SID applied|rejected|pending
+#   session.sh close SID
+#   session.sh track NAME SID --asked "..."     (used by init)
+. "$(dirname "$0")/lib.sh"
+
+verb=${1:-}; shift || true
+LABEL= SESSION= NEW= ASKED= POS=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --label) LABEL=$2; shift 2;;
+    --session) SESSION=$2; shift 2;;
+    --new) NEW=1; shift;;
+    --asked) ASKED=$2; shift 2;;
+    -*) die "unknown option $1";;
+    *) POS+=("$1"); shift;;
+  esac
+done
+
+cloud_inst() {
+  local i; i=$(inst_get "$1") || exit 1
+  [ "$(jq -r .location <<<"$i")" = cloud ] || die "$1 is a local instance; sessions are cloud only"
+  echo "$i"
+}
+
+set_budget() {
+  local sid=$1 cents=$2
+  ant beta:sessions update --session-id "$sid" \
+    --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 \
+    || echo "dev-agent: warning: could not set a budget on $sid" >&2
+}
+
+track() {
+  local name=$1 sid=$2 i cents
+  i=$(cloud_inst "$name") || exit 1; cents=$(jq -r .budget_default_cents <<<"$i")
+  json_update "$TRK" '.[$s] = {instance: $n, label: $l, created: $t, status: "unknown", stop_reason: null,
+      last_seen: $t, list_cost: null, budget: $b, outputs_collected: false, review_state: "pending",
+      closed_at: null, asked: $a}' \
+    --arg s "$sid" --arg n "$name" --arg l "$LABEL" --arg t "$(now)" --arg b "$cents" --arg a "$ASKED"
+  set_budget "$sid" "$cents"
+  trk_refresh "$sid"
+  echo "tracking session $sid for $name (budget $cents)"
+}
+
+start() {
+  need_asked; ant_ok
+  local name=$1 i run sid
+  i=$(cloud_inst "$name") || exit 1
+  run=$(ant beta:deployments run --deployment-id "$(jq -r .deployment_id <<<"$i")" 2>/dev/null) || die "deployments run failed"
+  sid=$(jq -r '.session_id // .session.id // empty' <<<"$run")
+  [ -n "$sid" ] || { echo "$run" >&2; die "no session id in the run response"; }
+  track "$name" "$sid"
+}
+
+send() {
+  need_asked; ant_ok
+  local name=$1 task=$2 sid i
+  i=$(cloud_inst "$name") || exit 1
+  [ -n "$task" ] || die "send needs the task text"
+  if [ -n "$NEW" ]; then
+    start "$name" | tail -1
+    sid=$(jq -r --arg n "$name" '[to_entries[]|select(.value.instance==$n and .value.closed_at==null)]|sort_by(.value.created)|last|.key' "$TRK")
+  else
+    sid=${SESSION:-$(inst_idle_session "$name")}
+    [ -n "$sid" ] || die "no idle tracked session for $name; use --new or start"
+  fi
+  trk_refresh "$sid" || die "cannot read session $sid"
+  [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" = idle ] || die "session $sid is not idle (see: status)"
+  [ -z "$LABEL" ] || json_update "$TRK" '.[$s].label = $l' --arg s "$sid" --arg l "$LABEL"
+  ant beta:sessions:events send --session-id "$sid" \
+    --event "$(jq -n --arg t "$task" '{type: "user.message", content: [{type: "text", text: $t}]}')" >/dev/null \
+    || die "could not send the task"
+  json_update "$TRK" '.[$s] += {status: "running", outputs_collected: false, review_state: "pending", sent_at: $t}' \
+    --arg s "$sid" --arg t "$(now)"
+  echo "sent to $sid; next: watch.sh $sid (Bash run_in_background)"
+}
+
+status() {
+  local target=${POS[0]:-} sid
+  if [ -z "$target" ]; then
+    for sid in $(jq -r 'to_entries[]|select(.value.closed_at==null)|.key' "$TRK"); do trk_refresh "$sid"; done
+    jq -r 'to_entries[]|select(.value.closed_at==null)|"\(.key) \(.value.instance) \(.value.status) \(.value.stop_reason // "-") cost=\(.value.list_cost // "-")/\(.value.budget) collected=\(.value.outputs_collected) review=\(.value.review_state)"' "$TRK"
+    return 0
+  fi
+  case $target in sesn_*) sid=$target;; *) sid=$(inst_idle_session "$target");; esac
+  [ -n "$sid" ] || die "no session found for $target"
+  trk_refresh "$sid" || die "cannot read $sid"
+  jq --arg s "$sid" '.[$s]' "$TRK"
+}
+
+stop() {
+  local sid=${POS[0]:-}; [ -n "$sid" ] || die "stop needs SID"
+  ant beta:sessions:events send --session-id "$sid" --event '{type: user.interrupt}' >/dev/null || die "interrupt failed"
+  echo "interrupt sent to $sid; the session returns to idle, then collect.sh"
+}
+
+mark() {
+  local sid=${POS[0]:-} st=${POS[1]:-}
+  case $st in applied|rejected|pending) ;; *) die "mark SID applied|rejected|pending";; esac
+  json_update "$TRK" '.[$s].review_state = $r' --arg s "$sid" --arg r "$st"
+}
+
+# Close = archive, only after outputs are collected and a review verdict exists.
+close() {
+  local sid=${POS[0]:-} row
+  [ -n "$sid" ] || die "close needs SID"
+  row=$(jq -e --arg s "$sid" '.[$s]' "$TRK") || die "session $sid is not tracked"
+  trk_refresh "$sid" || die "cannot read $sid"
+  [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" != running ] || die "session is running; stop it first"
+  [ "$(jq -r .outputs_collected <<<"$row")" = true ] || die "outputs not collected; run collect.sh first"
+  [ "$(jq -r --arg s "$sid" '.[$s].review_state' "$TRK")" != pending ] || die "review verdict pending; mark applied or rejected first"
+  ant beta:sessions archive --session-id "$sid" >/dev/null || die "archive failed"
+  json_update "$TRK" '.[$s].closed_at = $t | .[$s].status = "archived"' --arg s "$sid" --arg t "$(now)"
+  echo "archived $sid (not deleted)"
+}
+
+case $verb in
+  track) track "${POS[0]:-}" "${POS[1]:-}";;
+  start) start "${POS[0]:-}";;
+  send) send "${POS[0]:-}" "${POS[1]:-}";;
+  status) status;;
+  stop) stop;;
+  mark) mark;;
+  close) close;;
+  *) die "usage: session.sh track|start|send|status|stop|mark|close ...";;
+esac
