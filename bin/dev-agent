@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # dev-agent: one entry point for the helper scripts behind the dev-* skills.
 #
+#   dev-agent project template|init|show|list|validate ...      (skill: dev-project)
 #   dev-agent instances init|list|show|remove|normalize ...   (skill: dev-instances)
 #   dev-agent provision plan|apply|add-reference ...           (skill: dev-provision)
 #   dev-agent memory seed|seed-reference|lint ...              (skill: dev-memory)
@@ -12,10 +13,11 @@ set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
+  project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;

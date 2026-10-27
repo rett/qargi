@@ -36,11 +36,12 @@ lists the deviations. The role list can be extended with `DEV_AGENT_ROLES`.
 
 ## Skills and command
 
-Five skills, all prefixed `dev-`, drive one `dev-agent` command. `/dev-task` dispatches work; the others configure and manage:
+Six skills, all prefixed `dev-`, drive one `dev-agent` command. `/dev-task` dispatches work; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
 | `/dev-task` | dispatch (`/dev-task "<task>" --done "<check>"`) and session lifecycle: `send`, `start`, `status`, `watch`, `collect`, `stop`, `close` |
+| `/dev-project` | the one-time project questionnaire: repository, roles, per-role push policy, models, skills, budget, memory |
 | `/dev-instances` | `init`, `list`, `show`, `remove`, `normalize` |
 | `/dev-provision` | `plan`, `apply`, `add-reference` |
 | `/dev-memory` | `seed`, `seed-reference`, `lint`, migrating a flat store |
