@@ -4,12 +4,9 @@ Cloud session specifics (this is the cloud backend of /dev-task):
 - If the repository named in the task is already mounted under /workspace (the case
   for private repositories), use it; otherwise clone it into /workspace. Fetch tags and
   initialise any submodules the checks need. RUN_DIR is /mnt/session/outputs.
-- Your role is {{ROLE}}. Under /mnt/memory are the project's memory store
-  (read-write) and reference store (read-only). In each, read README.md first, then
-  shared/INDEX.md and roles/{{ROLE}}/INDEX.md, and load only the files the task
-  needs. Never read or write under another role's folder. Write new verified
-  facts only under shared/ (if every role needs them) or roles/{{ROLE}}/ in the
-  memory store, as the contract says; the reference store is read-only.
+- Your role is {{ROLE}}. Memory stores are under /mnt/memory: the memory store is
+  read-write, the reference store read-only. Read each store's README.md and follow
+  it. Write new verified facts only to the memory store, under shared/ or roles/{{ROLE}}/.
 - Run checks as a non-root user when the repository's tests require it. Start
   long commands detached and poll their log in later calls.
 - The coordinator downloads RUN_DIR after you go idle and runs any private-name

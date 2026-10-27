@@ -61,7 +61,8 @@ grouped under the one change they implement, so a change is reviewed with its co
 base {branch, sha}, branch, scope[], done {command, exit_code, output_tail},
 gates[] {name, command, result pass|fail|not run, exit_code, verdict_line
 verbatim}, commits[] {sha, subject}, touched_paths[] {path, reason},
-deviations[], noticed_not_acted_on[], environment {tool versions, test_user}.
+deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|suggestion|log|other} (deliverables
+that are not patches), environment {tool versions, test_user}.
 
 # Final report (your last message)
 Line 1: DONE or BLOCKED. Then: the DONE check and each gate result quoted
