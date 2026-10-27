@@ -20,6 +20,13 @@
 `agents/` the local subagent; `provision/` the resource and memory templates;
 `examples/` sample repository profiles.
 
+## Changing the canon
+
+The layout of memory stores is versioned (`canon/CANON.md`, `canon/layout.json`).
+A change to it needs a new version, a migration in `lib/canon.py`, a simulation
+run (`python3 tests/canon_sim.py KIND FIXTURE.jsonl`: plan, apply in memory,
+plan again must be empty, check must pass) and a CHANGELOG entry.
+
 ## Versioning
 
 [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html), with the

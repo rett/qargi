@@ -62,6 +62,15 @@ case $verb in
       put "/repos/$REPO/INDEX.md" "$tmp"; rm -f "$tmp"
     fi;;
   lint)
+    if [ -z "${DEV_AGENT_MEMORY_FIXTURE:-}" ]; then
+      ctmp=$(mktemp); mem_list full | jq -c '{type, id, path, content}' > "$ctmp"
+      if jq -e 'select(.path=="/CANON.md")' "$ctmp" >/dev/null 2>&1; then
+        marker=$(jq -r 'select(.path=="/CANON.md")|.content' "$ctmp")
+        ck=$(sed -n 's/^kind: *//p' <<<"$marker"); cp=$(sed -n 's/^project: *//p' <<<"$marker"); cr=$(sed -n 's/^roles: *//p' <<<"$marker" | tr ' ' ',')
+        python3 -I "$here/canon.py" check --kind "$ck" --project "$cp" --roles "$cr" --store "$ctmp"; rc=$?; rm -f "$ctmp"; exit $rc
+      fi
+      rm -f "$ctmp"
+    fi
     if [ "$KIND" = reference ]; then
       mem_list full | python3 -I -c '
 import sys, json, re

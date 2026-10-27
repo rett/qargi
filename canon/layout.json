@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "kinds": {
+    "memory":    {"store": "<project>-memory",    "access": "read_write"},
+    "reference": {"store": "<project>-reference", "access": "read_only"}
+  },
+  "top": ["CANON.md", "README.md", "_template.md", "shared", "roles", "_conflicts"],
+  "role_index": "INDEX.md",
+  "skills": {
+    "dev":    {"anthropic": [],      "custom": []},
+    "review": {"anthropic": [],      "custom": []},
+    "test":   {"anthropic": [],      "custom": []},
+    "docs":   {"anthropic": ["pdf"], "custom": []}
+  },
+  "imports": {"docs-v0": "documentation store layout (numbered folders 01-rules to 08-maintainer, tools/)"}
+}

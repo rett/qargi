@@ -23,7 +23,26 @@ coordinator applies them (write with `ant beta:memory-stores:memories`).
 | seed-reference | `dev-agent memory seed-reference STORE_ID` | The reference skeleton; never overwrites. |
 | lint | `dev-agent memory lint STORE_ID [--kind recipes\|reference]` | Read-only: layout, index coverage, required fields, size, secrets, staleness. Exit 1 on any FAIL. |
 
-Migrating a flat store: seed, replace the old README, have the cloud agent
+## The canon and the reconciler
+
+Both stores follow the versioned canon in `canon/CANON.md` (current version 2):
+`/CANON.md` marker, `/README.md`, `shared/` for every role and `roles/<role>/`
+(with its `INDEX.md`) per role. An agent loads the README, `shared/INDEX.md` and
+only its own role's index, never another role's folder.
+
+| Verb | Command | Notes |
+|---|---|---|
+| check | `dev-agent canon check PROJECT [--kind K]` | Conformance and version report; exit 1 on any FAIL. |
+| plan | `dev-agent canon plan PROJECT [--kind K] [--default-role R]` | Every step needed to reach the current canon, from whichever version the store is at. Changes nothing. |
+| apply | `dev-agent canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: renames keep identity and history, conflicts go to `/_conflicts/<date>/`, the marker is written last, a re-run resumes. Show the plan first. |
+| import | `dev-agent canon import PROJECT --from STORE --role R --map docs-v0 [--approved "..."]` | Merges a foreign store (the old documentation store layout) into `roles/<R>/`; curated parts into the reference store, history into the memory store. The source is only read. |
+| promote | `dev-agent canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
+| audit | `dev-agent canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder. |
+
+`dev-agent memory lint` hands canon-2 stores to `canon check`. A new canon
+version means a new migration; see `canon/CANON.md` § Changing the canon.
+
+Migrating a flat store (pre-canon): seed, replace the old README, have the cloud agent
 move each file to its new place re-running each `Check` (cheap ones; expensive
 ones keep their date marked "not re-run"), then lint and close the session with
 `dev-agent close SID --no-outputs`.
