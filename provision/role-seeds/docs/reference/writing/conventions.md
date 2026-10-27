@@ -2,6 +2,8 @@
 
 Structure, voice and formatting of documents for this project.
 
+Kind: guide
+Applies to: <project and ref range, or "any">
 Sources: <list the project files and the maintainer's instructions this was written from>
 
 ## Contents

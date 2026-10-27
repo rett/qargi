@@ -2,6 +2,6 @@
 
 Facts every role needs. Paths are relative to `shared/`.
 
-| Path | Purpose | Load when |
+| Path | Purpose | Load |
 |---|---|---|
 | (none yet) | | |

@@ -2,6 +2,6 @@
 
 What the {{ROLE}} role follows. Paths are relative to `roles/{{ROLE}}/`.
 
-| Path | Purpose | Load when |
+| Path | Purpose | Load |
 |---|---|---|
 | (none yet) | | |

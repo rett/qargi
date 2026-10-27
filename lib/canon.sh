@@ -126,7 +126,7 @@ case $verb in
     printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
     tmp=$(mktemp -d)
     dump "$FROM" > "$tmp/src.jsonl"; dump "$(store_of memory)" > "$tmp/mem.jsonl"; dump "$(store_of reference)" > "$tmp/ref.jsonl"
-    python3 -I "$PY" import --map "$MAP" --role "$ROLE" --src "$tmp/src.jsonl" --memory "$tmp/mem.jsonl" --reference "$tmp/ref.jsonl" --today "$TODAY" > "$tmp/imp.json"
+    python3 -I "$PY" import --map "$MAP" --project "$PROJECT" --role "$ROLE" --src "$tmp/src.jsonl" --memory "$tmp/mem.jsonl" --reference "$tmp/ref.jsonl" --today "$TODAY" > "$tmp/imp.json"
     for k in memory reference; do
       jq -c '{from_version:"-", to_version:"-", ops: .[$k], notes: (if $k=="memory" then .notes else [] end)}' --arg k "$k" "$tmp/imp.json" > "$tmp/$k.plan.json"
       echo "== $k store: $(jq '.ops|length' "$tmp/$k.plan.json") file(s) to add under roles/$ROLE/"

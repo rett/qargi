@@ -2,6 +2,8 @@
 
 Components, their responsibilities, the main data flows and the boundaries between them.
 
+Kind: architecture
+Applies to: <project and ref range, or "any">
 Sources: <list the repository files and commits this file was written from>
 
 ## Contents

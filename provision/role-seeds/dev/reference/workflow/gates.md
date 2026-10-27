@@ -2,6 +2,8 @@
 
 Checks by changed path: the command, what a pass looks like (the verdict line), typical duration, and which are coordinator-only.
 
+Kind: workflow
+Applies to: <project and ref range, or "any">
 Sources: <list the repository files and commits this file was written from>
 
 ## Contents

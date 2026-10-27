@@ -10,7 +10,12 @@ sys.path.insert(0, LIB)
 import canon as C  # noqa: E402
 
 TODAY = "2026-10-27"
-GOOD = "Kind: setup\nApplies to: any\nCheck: true\nVerified: %s by test\n" % datetime.date.today().isoformat()
+GOOD = "Kind: sandbox\nApplies to: any\nSources: test run\nCheck: true\nVerified: %s by test\n" % datetime.date.today().isoformat()
+
+
+def slurp(path):
+    with open(path) as f:
+        return f.read()
 
 
 def write(files):
@@ -52,7 +57,7 @@ def converge(kind, files, roles="dev,docs"):
 class Canon(unittest.TestCase):
     def assertConverges(self, kind, files, roles="dev,docs"):
         p, after, again, chk = converge(kind, files, roles)
-        self.assertEqual(again["from_version"], 1, again)
+        self.assertEqual(again["from_version"], C.LATEST, again)
         self.assertEqual(again["ops"], [], "second plan must be a no-op: %s" % again["ops"])
         self.assertEqual(chk.returncode, 0, chk.stdout)
         return p, after
@@ -62,26 +67,27 @@ class Canon(unittest.TestCase):
             self.assertConverges(kind, {})
 
     def test_legacy_memory(self):
-        files = {"/README.md": "# old\n\n| Path | Purpose | Load when |\n|---|---|---|\n| sandbox/a.md | a | always |\n",
+        files = {"/README.md": "# old\n\n| Path | Purpose | Load when |\n|---|---|---|\n| sandbox/a.md | a | always |\n| repos/demo/INDEX.md | d | x |\n",
                  "/_template.md": "t", "/sandbox/a.md": "# a\n" + GOOD,
-                 "/repos/demo/INDEX.md": "| setup/s.md | s | x |\n", "/repos/demo/setup/s.md": "# s\n" + GOOD}
+                 "/repos/demo/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| setup/s.md | s | x |\n",
+                 "/repos/demo/setup/s.md": "# s\n" + GOOD.replace("sandbox", "setup")}
         p, after = self.assertConverges("memory", files)
         self.assertIn("/shared/sandbox/a.md", after)
         self.assertIn("sandbox/a.md", after["/shared/INDEX.md"])  # index rows were carried over
 
     def test_legacy_reference_numbers_become_names(self):
-        files = {"/README.md": "# idx\n01-rules/rules.md\n", "/01-rules/rules.md": "see 02-workflow/w.md\n", "/02-workflow/w.md": "w\n"}
+        files = {"/README.md": "# idx\n01-rules/rules.md\n", "/01-rules/rules.md": "# R\n\nsee 02-workflow/w.md\n", "/02-workflow/w.md": "# W\n\nw\n"}
         p, after = self.assertConverges("reference", files)
         self.assertIn("/roles/dev/rules/rules.md", after)
-        self.assertEqual(after["/roles/dev/rules/rules.md"], "see workflow/w.md\n")
+        self.assertTrue(after["/roles/dev/rules/rules.md"].endswith("\nsee workflow/w.md\n"))
 
     def test_draft_marker_is_migrated(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 2\nkind: reference\nproject: demo\nroles: dev docs\n",
+        files = {"/CANON.md": "# Canon\n\ncanon: 3\nkind: reference\nproject: demo\nroles: dev docs\n",
                  "/README.md": "r", "/shared/INDEX.md": "s", "/roles/dev/INDEX.md": "d", "/roles/docs/INDEX.md": "d",
-                 "/roles/dev/01-rules/rules.md": "x 01-rules y\n"}
+                 "/roles/dev/01-rules/rules.md": "# R\n\nx 01-rules y\n"}
         p, after = self.assertConverges("reference", files)
-        self.assertEqual(after["/roles/dev/rules/rules.md"], "x rules y\n")
-        self.assertIn("canon: 1", after["/CANON.md"])
+        self.assertTrue(after["/roles/dev/rules/rules.md"].endswith("\nx rules y\n"))
+        self.assertIn("canon: 2", after["/CANON.md"])
 
     def test_interrupted_migration_resumes(self):
         # moves done, nothing else: no marker, no shared index
@@ -95,7 +101,7 @@ class Canon(unittest.TestCase):
     def test_role_added_after_the_fact(self):
         _, after = self.assertConverges("memory", {}, roles="dev")
         p = plan("memory", after, roles="dev,docs")
-        self.assertEqual(p["from_version"], 1)
+        self.assertEqual(p["from_version"], C.LATEST)
         paths = [o["path"] for o in p["ops"]]
         self.assertIn("/roles/docs/INDEX.md", paths)
         self.assertIn("/CANON.md", paths)
@@ -115,23 +121,100 @@ class Canon(unittest.TestCase):
         moves = [o for o in p["ops"] if o["op"] == "move"]
         self.assertTrue(moves and moves[0]["to"].startswith("/_conflicts/"), moves)
 
-    def test_canon_one_check_is_structural_only(self):
+    def test_note_rules_catch_incomplete_notes_and_secrets(self):
         _, after = self.assertConverges("memory", {})
-        after["/shared/sandbox/x.md"] = "# x\nKind: setup\n"   # incomplete recipe: not a canon 1 matter
-        self.assertEqual(run("check", "memory", after).returncode, 0)
-
-    def test_content_rules_catch_incomplete_recipes_and_secrets(self):
-        _, after = self.assertConverges("memory", {})
-        after["/shared/sandbox/x.md"] = "# x\nKind: setup\n"
-        after["/shared/sandbox/y.md"] = "token = abcd1234efgh5678ijkl\n"
-        after["/shared/sandbox/z.md"] = "A fine-grained token: Contents read/write on the repository; token: process.env.CMA_GITHUB_TOKEN\n"
-        st = write(after)
-        r = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "content", "--kind", "memory", "--store", st], capture_output=True, text=True)
-        os.unlink(st)
+        after["/shared/sandbox/x.md"] = "# x\nKind: sandbox\n"
+        after["/shared/sandbox/y.md"] = "# y\n" + GOOD + "token = abcd1234efgh5678ijkl\n"
+        after["/shared/sandbox/z.md"] = "# z\n" + GOOD + "A fine-grained token: Contents read/write; token: process.env.CMA_GITHUB_TOKEN\n"
+        r = run("check", "memory", after)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("no Applies to", r.stdout)
-        self.assertIn("looks like a secret", r.stdout)
-        self.assertNotIn("z.md", r.stdout)   # prose about tokens is not a secret
+        for want in ("x.md: no Applies to", "x.md: no Sources", "x.md: no Check", "x.md: no Verified", "y.md: looks like a secret"):
+            self.assertIn(want, r.stdout)
+        self.assertNotIn("FAIL /shared/sandbox/z.md", r.stdout)   # prose about tokens is not a secret
+
+    def test_kind_must_match_store_and_folder(self):
+        _, after = self.assertConverges("memory", {})
+        after["/shared/repos/demo/INDEX.md"] = "| Path | Purpose | Load |\n|---|---|---|\n| pitfalls/a.md | a | x |\n"
+        after["/shared/INDEX.md"] += "| repos/demo/INDEX.md | demo | x |\n"
+        after["/shared/repos/demo/pitfalls/a.md"] = "# a\n" + GOOD.replace("sandbox", "setup")   # Kind: setup in pitfalls/
+        after["/shared/sandbox/b.md"] = "# b\n" + GOOD.replace("sandbox", "rule")
+        r = run("check", "memory", after)
+        self.assertIn("a.md: Kind is setup, this folder holds pitfall", r.stdout)
+        self.assertIn("b.md: Kind is rule", r.stdout)
+
+    def test_staleness_future_and_unrecorded_sources(self):
+        _, after = self.assertConverges("memory", {})
+        after["/shared/sandbox/old.md"] = "# o\n" + GOOD.replace(datetime.date.today().isoformat(), "2020-01-01")
+        after["/shared/sandbox/new.md"] = "# n\n" + GOOD.replace(datetime.date.today().isoformat(), "2999-01-01")
+        after["/shared/sandbox/src.md"] = "# s\n" + GOOD.replace("test run", "origin not recorded")
+        r = run("check", "memory", after)
+        self.assertIn("old.md: verified", r.stdout)
+        self.assertIn("new.md: Verified date is in the future", r.stdout)
+        self.assertIn("src.md: Sources: origin not recorded", r.stdout)
+
+    def test_reference_document_notes(self):
+        _, after = self.assertConverges("reference", {})
+        after["/shared/INDEX.md"] += "| rules/r.md | r | always |\n"
+        after["/shared/rules/r.md"] = "# r\n\nKind: rule\nApplies to: demo\nSources: docs/x.md@abc1234\n\n## Contents\n\nbe nice\n"
+        self.assertEqual(run("check", "reference", after).returncode, 0)
+        after["/shared/rules/q.md"] = "# q\n\nKind: setup\nApplies to: demo\nSources: x\n"      # a memory kind
+        self.assertIn("q.md: Kind is setup, this store's kinds are", run("check", "reference", after).stdout)
+
+    def test_tools_and_indexes_are_not_notes(self):
+        _, after = self.assertConverges("reference", {})
+        after["/roles/dev/tools/run.py"] = "print(1)\n"
+        after["/roles/dev/tools/README.md"] = "no header\n"
+        r = run("check", "reference", after)
+        self.assertNotIn("no Kind", r.stdout)
+
+    def test_v1_store_gains_headers_and_keeps_bodies(self):
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n",
+              "/README.md": "custom readme\n", "/_template.md": slurp(os.path.join(SEED, "v1", "_template.md")),
+              "/shared/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| repos/demo/INDEX.md | d | x |\n",
+              "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x",
+              "/shared/repos/demo/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| pitfalls/a.md | a | x |\n",
+              "/shared/repos/demo/pitfalls/a.md": "# a\n\nKind: pitfall\nApplies to: demo\n\nFact: f\n\nCheck: true\nVerified: %s by run7 on linux\n" % datetime.date.today().isoformat(),
+              "/roles/docs/project/history.md": "# History\n\nlines\n"}
+        p, after = self.assertConverges("memory", v1)
+        self.assertEqual(p["from_version"], 1)
+        a = after["/shared/repos/demo/pitfalls/a.md"]
+        self.assertIn("Sources: run7, %s" % datetime.date.today().isoformat(), a)
+        self.assertIn("Fact: f\n", a)
+        h = after["/roles/docs/project/history.md"]
+        self.assertTrue(h.startswith("# History\n\nKind: history\nApplies to: demo\nSources: carried over"), h)
+        self.assertTrue(h.endswith("\nlines\n"))
+        self.assertIn("| Load |", after["/shared/INDEX.md"])
+        self.assertIn("canon: 2", after["/CANON.md"])
+        self.assertEqual(after["/_conflicts/%s/README.md" % TODAY], "custom readme\n")   # a customised README is kept
+        self.assertIn("Kind: setup | gate", after["/_template.md"])
+
+    def test_unedited_v1_readme_is_replaced_without_conflict(self):
+        text = slurp(os.path.join(SEED, "v1", "README.memory.md")).replace("{{PROJECT}}", "demo")
+        text = text.replace("{{ROLES}}", C.role_lines(["dev", "docs"]))
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n", "/README.md": text,
+              "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        p, after = self.assertConverges("memory", v1)
+        self.assertFalse([k for k in after if k.startswith("/_conflicts/")])
+        self.assertIn("Sources", after["/README.md"])
+
+    def test_vocabulary_matches_layout_json(self):
+        lay = json.loads(slurp(os.path.join(HERE, "..", "canon", "layout.json")))
+        self.assertEqual(lay["version"], C.LATEST)
+        for k in C.KINDS:
+            self.assertEqual(tuple(lay["note_kinds"][k]["runnable"]), C.RUNNABLE[k])
+            self.assertEqual(tuple(lay["note_kinds"][k]["document"]), C.DOCUMENT[k])
+        self.assertEqual(lay["limits"], C.LIMITS)
+        self.assertEqual(tuple(lay["header"]), C.HEADER)
+
+    def test_import_adds_the_header(self):
+        src = {"/README.md": "# idx\n", "/01-rules/rules.md": "# Rules\n\nSources: x\n\nbe nice\n"}
+        s, m, r = write(src), write({}), write({})
+        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo",
+                              "--role", "docs", "--src", s, "--memory", m, "--reference", r, "--today", TODAY], capture_output=True, text=True)
+        imp = json.loads(out.stdout)
+        c = [o for o in imp["reference"] if o["path"].endswith("rules/rules.md")][0]["content"]
+        self.assertIn("Kind: rule\nApplies to: demo\n", c)
+        self.assertIn("be nice\n", c)
 
     def test_cross_role_folder_for_unused_role_fails(self):
         _, after = self.assertConverges("memory", {})

@@ -3,14 +3,26 @@
 
 Subcommands (all read JSON lines of {"id","path","content"} from --store and print JSON):
   plan    --kind memory|reference --project P --roles dev,docs --default-role R --store F --seed D
-  check   --kind K --project P --roles ... --store F
+  check   --kind K --project P --roles ... --store F   (structure, note format, indexes, hygiene)
   import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.
 """
 import argparse, datetime, json, re, sys
 
-LATEST = 1
+LATEST = 2
 KINDS = ("memory", "reference")
+# canon/layout.json carries the same vocabulary; tests/test_canon.py keeps them equal.
+RUNNABLE = {"memory": ("setup", "gate", "pitfall", "sandbox"), "reference": ()}
+DOCUMENT = {"memory": ("history", "status"),
+            "reference": ("rule", "convention", "workflow", "architecture", "knowledge", "preference", "review", "guide")}
+LIMITS = {"runnable_chars": 3000, "document_chars": 30000, "readme_chars": 3000, "stale_days": 90}
+HEADER = ("Kind", "Applies to", "Sources", "Check", "Verified", "Supersedes")
+FIELD = re.compile(r"^(Kind|Applies to|Sources|Check|Verified|Supersedes):[ \t]*(.*)$")
+MEM_FOLDER_KIND = {"sandbox": "sandbox", "setup": "setup", "gates": "gate", "pitfalls": "pitfall"}
+MEM_STEM_KIND = {"history": "history", "open-items": "status", "status": "status"}
+REF_FOLDER_KIND = {"rules": "rule", "conventions": "convention", "workflow": "workflow", "architecture": "architecture",
+                   "knowledge": "knowledge", "preferences": "preference", "review": "review"}
+NOT_RECORDED = "origin not recorded"
 
 
 def load(path):
@@ -53,7 +65,11 @@ def detect(kind, mems):
             n = int(d.get("canon", ""))
         except ValueError:
             return "unknown", "unreadable /CANON.md"
-        return (LATEST, "marker") if n == LATEST else ("draft", "marker from an earlier draft of the canon (%d)" % n)
+        if n == LATEST:
+            return LATEST, "marker"
+        if 1 <= n < LATEST:
+            return n, "canon version %d" % n
+        return "draft", "marker from an earlier draft of the canon (%d)" % n
     paths = list(mems)
     if not paths:
         return "legacy", "empty store"
@@ -68,6 +84,79 @@ def detect(kind, mems):
         if any(re.match(r"/\d\d-[^/]+/", p) or re.match(r"/[a-z]+/[^/]+\.md", p) for p in paths):
             return "legacy", "layout: folders at the root"
     return "unknown", "no marker and no known layout"
+
+
+def is_note(p):
+    """A note is a Markdown file under shared/ or roles/<role>/ that is not an index and not under tools/."""
+    parts = p.strip("/").split("/")
+    return (parts[0] in ("shared", "roles") and len(parts) > 1 and parts[-1].endswith(".md")
+            and parts[-1] != "INDEX.md" and "tools" not in parts[:-1])
+
+
+def note_fields(c):
+    out = {}
+    for line in c.splitlines():
+        m = FIELD.match(line)
+        if m and m.group(1) not in out:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def kind_for(kind, p):
+    """The kind a note at path p is expected to have (None when the path does not say)."""
+    parts = p.strip("/").split("/")
+    inner = parts[2:] if parts[0] == "roles" else parts[1:]
+    if kind == "memory":
+        for part in inner[:-1]:
+            if part in MEM_FOLDER_KIND:
+                return MEM_FOLDER_KIND[part]
+        return MEM_STEM_KIND.get(inner[-1][:-3]) if inner else None
+    return REF_FOLDER_KIND.get(inner[0], "guide") if len(inner) > 1 else "guide"
+
+
+def applies_for(kind, p, project):
+    parts = p.strip("/").split("/")
+    if "repos" in parts[:-1]:
+        i = parts.index("repos")
+        if i + 1 < len(parts) - 1:
+            return parts[i + 1]
+    return "any" if kind_for(kind, p) == "sandbox" else project
+
+
+def add_header(kind, p, content, project, today):
+    """Insert the header lines a note lacks; the body is never edited. -> (content, [added fields])"""
+    f = note_fields(content)
+    want = []
+    k = kind_for(kind, p)
+    if "Kind" not in f and k:
+        want.append(("Kind", k))
+    if "Applies to" not in f:
+        want.append(("Applies to", applies_for(kind, p, project)))
+    if "Sources" not in f:
+        m = re.match(r"\d{4}-\d{2}-\d{2}\s+by\s+(.+?)(?:\s+on\s+.*)?$", f.get("Verified", ""))
+        src = "%s, %s" % (m.group(1), f["Verified"][:10]) if m else "carried over by the canon %d migration on %s; %s" % (LATEST, today, NOT_RECORDED)
+        want.append(("Sources", src))
+    if not want:
+        return content, []
+    lines = ["%s: %s" % kv for kv in want]
+    L = content.split("\n")
+    t = next((i for i, l in enumerate(L) if l.startswith("# ")), -1)
+    h = next((i for i, l in enumerate(L) if i > t and FIELD.match(l)), None)
+    if h is not None and h - t <= 8:
+        L[h:h] = lines
+    else:
+        ins = ([""] if t >= 0 else []) + lines
+        if t + 1 < len(L) and L[t + 1].strip():
+            ins.append("")
+        L[t + 1:t + 1] = ins
+    return "\n".join(L), [k for k, _ in want]
+
+
+LOAD_WHEN = re.compile(r"(?m)^(\|[^\n]*\bPath\b[^\n]*)\bLoad when\b")
+
+
+def fix_index(content):
+    return LOAD_WHEN.sub(r"\1Load", content)
 
 
 def seed_text(seed, name, subs):
@@ -141,8 +230,8 @@ def migrate_legacy(kind, mems, project, roles, default_role, seed, today):
         if p not in taken:
             new.append((p, seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))))
             taken.add(p)
-    if kind == "memory" and "/_template.md" not in mems:
-        new.append(("/_template.md", open("%s/_template.md" % seed).read()))
+    if "/_template.md" not in mems:
+        new.append(("/_template.md", open("%s/_template.%s.md" % (seed, kind)).read()))
     for p, c in new:
         ops.append({"op": "create", "path": p, "content": c})
 
@@ -236,8 +325,44 @@ def migrate_draft(kind, mems, project, roles, default_role, seed, today):
     return ops, notes
 
 
+def migrate_v2(kind, mems, project, roles, default_role, seed, today):
+    """Version 1 (structure only) to 2 (the note format): add what a note lacks, never edit a body."""
+    ops, notes = [], []
+    subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
+    for p, m in sorted(mems.items()):
+        c, new = m["content"], m["content"]
+        if is_note(p):
+            new, added = add_header(kind, p, c, project, today)
+            if "Kind" not in note_fields(new):
+                notes.append("kind not derivable from the path, set Kind: by hand: %s" % p)
+        elif p.endswith("/INDEX.md"):
+            new = fix_index(c)
+        if new != c:
+            ops.append({"op": "update", "id": m["id"], "path": p, "content": new, "sha": m.get("content_sha256", "")})
+    for name, v1, v2 in (("README.md", "%s/v1/README.%s.md" % (seed, kind), seed_text(seed, "README.%s.md" % kind, subs)),
+                         ("_template.md", "%s/v1/_template.md" % seed if kind == "memory" else None,
+                          open("%s/_template.%s.md" % (seed, kind)).read())):
+        cur = mems.get("/" + name)
+        if cur is None:
+            ops.append({"op": "create", "path": "/" + name, "content": v2})
+        elif cur["content"] != v2:
+            was = open(v1).read() if v1 else ""
+            for k_, v_ in subs.items():
+                was = was.replace(k_, v_)
+            if cur["content"] != was and name == "README.md":
+                keep = "/_conflicts/%s/README.md" % today
+                if keep not in mems:
+                    ops.append({"op": "create", "path": keep, "content": cur["content"]})
+                notes.append("the root README differed from the version 1 seed: the old text is kept at %s" % keep)
+            elif cur["content"] != was:
+                notes.append("%s differs from the version 1 seed and was left as it is" % name)
+                continue
+            ops.append({"op": "update", "id": cur["id"], "path": "/" + name, "content": v2, "sha": cur.get("content_sha256", "")})
+    return ops, notes
+
+
 # Each state reaches LATEST through an ordered chain of steps.
-CHAINS = {"legacy": [migrate_legacy, migrate_draft], "draft": [migrate_draft]}
+CHAINS = {"legacy": [migrate_legacy, migrate_draft, migrate_v2], "draft": [migrate_draft, migrate_v2], 1: [migrate_v2]}
 
 
 def maintain(kind, mems, project, roles, seed, today):
@@ -291,6 +416,67 @@ def cmd_plan(a):
     return 0
 
 
+def notes_check(kind, mems, roles, F, W):
+    """Canon 2: the note format, freshness, index form and hygiene."""
+    assign = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{16,})(?![\w(.])")
+    docip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.|10\.|172\.|192\.168\.)")
+    banned = re.compile(r"(?i)\b(backlog|roadmap|todo|planned|plans?|later|ideas?)\b")
+    today = datetime.date.today()
+    vocab = RUNNABLE[kind] + DOCUMENT[kind]
+    for p, m in sorted(mems.items()):
+        c = m["content"]
+        for g in assign.finditer(c):
+            v = g.group(2)
+            if re.search(r"\d", v) and re.search(r"[A-Za-z]", v):
+                F(p, "looks like a secret (%s assigned a long mixed value)" % g.group(1).lower()); break
+        if re.search(r"/home/(?!user/|u/)[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
+        for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
+            if all(int(x) <= 255 for x in ip.split(".")) and not docip.match(ip):
+                W(p, "contains address %s (use documentation addresses)" % ip)
+        if p.endswith("/INDEX.md"):
+            if re.search(r"(?m)^\|[^\n]*\bLoad when\b", c):
+                W(p, "the index column is `Load when`; canon 2 names it `Load`")
+            elif not re.search(r"(?m)^\|\s*Path\s*\|\s*Purpose\s*\|\s*Load\s*\|", c):
+                W(p, "no `| Path | Purpose | Load |` table")
+            base = p.rsplit("/", 1)[0]
+            for ref in re.findall(r"(?m)^\|\s*`?([A-Za-z0-9._/-]+\.md)`?\s*\|", c):
+                if base + "/" + ref not in mems:
+                    W(p, "lists %s, which does not exist" % ref)
+            continue
+        if not is_note(p):
+            continue
+        if kind == "memory" and banned.search(p): W(p, "path suggests backlog or planning material")
+        f = note_fields(c)
+        k = f.get("Kind", "")
+        if not c.lstrip().startswith("# "): W(p, "no `# Title` line first")
+        if not k: F(p, "no Kind: line")
+        elif k not in vocab: F(p, "Kind is %s, this store's kinds are %s" % (k, ", ".join(vocab)))
+        else:
+            want = kind_for(kind, p)
+            if want in RUNNABLE[kind] and k != want: F(p, "Kind is %s, this folder holds %s" % (k, want))
+            elif kind == "reference" and want not in (None, "guide") and k != want: W(p, "Kind is %s, the folder suggests %s" % (k, want))
+        for fld in ("Applies to", "Sources"):
+            if not f.get(fld): F(p, "no %s: line" % fld)
+        if NOT_RECORDED in f.get("Sources", ""): W(p, "Sources: %s; source it or remove it" % NOT_RECORDED)
+        if k in RUNNABLE[kind]:
+            if not f.get("Check"): F(p, "no Check: line (a %s note needs one)" % k)
+            if not f.get("Verified"): F(p, "no Verified: line (a %s note needs one)" % k)
+            if len(c) > LIMITS["runnable_chars"]: W(p, "%d chars; one fact per note, split it" % len(c))
+        elif len(c) > LIMITS["document_chars"]:
+            W(p, "%d chars; split it" % len(c))
+        if f.get("Verified"):
+            v = re.match(r"(\d{4}-\d{2}-\d{2})\b", f["Verified"])
+            try:
+                d = datetime.date.fromisoformat(v.group(1))
+            except (AttributeError, ValueError):
+                F(p, "Verified is not YYYY-MM-DD"); continue
+            if d > today: F(p, "Verified date is in the future")
+            elif k in RUNNABLE[kind] and (today - d).days > LIMITS["stale_days"]:
+                W(p, "verified %d days ago; re-check" % (today - d).days)
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*\.md", p.rsplit("/", 1)[1]) and p.rsplit("/", 1)[1] != "README.md":
+            W(p, "file name should be kebab-case")
+
+
 def cmd_check(a):
     mems = load(a.store)
     roles = a.roles.split(",")
@@ -308,7 +494,7 @@ def cmd_check(a):
             W("/CANON.md", "roles %s differ from the project's %s" % (d.get("roles"), " ".join(roles)))
         readme = mems.get("/README.md")
         if not readme: F("/README.md", "missing")
-        elif len(readme["content"]) > 3000: F("/README.md", "%d chars, limit 3000" % len(readme["content"]))
+        elif len(readme["content"]) > LIMITS["readme_chars"]: F("/README.md", "%d chars, limit %d" % (len(readme["content"]), LIMITS["readme_chars"]))
         if "/shared/INDEX.md" not in mems: F("/shared/INDEX.md", "missing")
         for r in roles:
             if "/roles/%s/INDEX.md" % r not in mems: F("/roles/%s/INDEX.md" % r, "missing")
@@ -343,6 +529,8 @@ def cmd_check(a):
             for pre, idx in scopes.items():
                 if p.startswith(pre) and not p.endswith("INDEX.md") and p[len(pre):] not in idx:
                     W(p, "not listed in %sINDEX.md" % pre)
+        notes_check(a.kind, mems, roles, F, W)
+
     secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}",
                r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY"]
     for p, m in sorted(mems.items()):
@@ -350,43 +538,6 @@ def cmd_check(a):
             if re.search(pat, m["content"]): F(p, "looks like a secret")
     out = fails + warns
     print("\n".join(out) if out else "clean: canon %s, %d files" % (ver, len(mems)))
-    print("%d fail, %d warn" % (len(fails), len(warns)))
-    return 1 if fails else 0
-
-
-def cmd_content(a):
-    """The fuller content rules for recipe files and stores. Not part of canon version 1:
-    they become canon 2 when complete. `dev-agent memory lint` runs them next to `check`."""
-    mems = load(a.store)
-    fails, warns = [], []
-    F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
-    W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
-    assign = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{16,})(?![\w(.])")
-    docip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.|10\.|172\.|192\.168\.)")
-    today = datetime.date.today()
-    for p, m in sorted(mems.items()):
-        c = m["content"]
-        for g in assign.finditer(c):
-            v = g.group(2)
-            if re.search(r"\d", v) and re.search(r"[A-Za-z]", v): F(p, "looks like a secret (%s assigned a long mixed value)" % g.group(1).lower()); break
-        if re.search(r"/home/(?!user/|u/)[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
-        for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
-            if all(int(x) <= 255 for x in ip.split(".")) and not docip.match(ip):
-                W(p, "contains address %s (use documentation addresses)" % ip)
-        if p.endswith("INDEX.md") or p in ("/README.md", "/CANON.md", "/_template.md"):
-            continue
-        if re.search(r"(?m)^Kind:\s*\S", c):          # a file that declares itself a recipe
-            for fld in ("Applies to", "Check"):
-                if not re.search(r"(?m)^%s:\s*\S" % fld, c): F(p, "no %s: line" % fld)
-            v = re.search(r"(?m)^Verified:\s*(\d{4}-\d{2}-\d{2})", c)
-            if not v: F(p, "no Verified: YYYY-MM-DD line")
-            else:
-                d = datetime.date.fromisoformat(v.group(1))
-                if d > today: F(p, "Verified date is in the future")
-                elif (today - d).days > 90: W(p, "verified %d days ago; re-check" % (today - d).days)
-            if a.kind == "memory" and len(c) > 3000: W(p, "%d chars; one fact per file, split it" % len(c))
-    out = fails + warns
-    print("\n".join(out) if out else "content rules: clean, %d files" % len(mems))
     print("%d fail, %d warn" % (len(fails), len(warns)))
     return 1 if fails else 0
 
@@ -425,6 +576,8 @@ def import_docs_v0(a):
         else:
             notes.append("not imported, unknown part of the source layout: %s" % p)
             continue
+        if is_note(dest) and not p.endswith("INDEX.md") and kind_for(kind, dest):
+            content, _ = add_header(kind, dest, content, a.project, today)
         if dest in taken[kind]:
             existing = (ref if kind == "reference" else mem).get(dest)
             if existing and existing["content"] == content:
@@ -453,18 +606,16 @@ def main():
         if name == "plan":
             s.add_argument("--default-role", required=True)
             s.add_argument("--seed", required=True)
-    s = sub.add_parser("content")
-    s.add_argument("--kind", choices=KINDS, required=True)
-    s.add_argument("--store", required=True)
     s = sub.add_parser("import")
     s.add_argument("--map", required=True, choices=["docs-v0"])
+    s.add_argument("--project", required=True)
     s.add_argument("--role", required=True)
     s.add_argument("--src", required=True)
     s.add_argument("--memory", required=True)
     s.add_argument("--reference", required=True)
     s.add_argument("--today")
     a = ap.parse_args()
-    sys.exit({"plan": cmd_plan, "check": cmd_check, "content": cmd_content, "import": import_docs_v0}[a.cmd](a))
+    sys.exit({"plan": cmd_plan, "check": cmd_check, "import": import_docs_v0}[a.cmd](a))
 
 
 if __name__ == "__main__":

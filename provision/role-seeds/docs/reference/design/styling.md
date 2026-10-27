@@ -3,6 +3,8 @@
 Visual design of rendered documents (print and web): fonts, spacing, colours, tables,
 code blocks, page furniture.
 
+Kind: guide
+Applies to: <project and ref range, or "any">
 Sources: <list the project files this was written from>
 
 ## Contents

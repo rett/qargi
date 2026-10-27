@@ -3,6 +3,8 @@
 Rules for documentation work. Replace each `<...>` with the project's own value and
 tag each entry with its source; an entry without a source is not trusted.
 
+Kind: rule
+Applies to: <project and ref range, or "any">
 Sources: <list the project files and the maintainer's instructions this was written from>
 
 ## Contents

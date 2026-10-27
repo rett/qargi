@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Manage the structure of a dev-agent recipes memory store.
 #   memory.sh lint STORE_ID [--kind recipes|reference]   read-only structure and content check
-# Checks stores in the pre-canon layout; canon stores are handed to `dev-agent canon check`.
+# Checks stores in the pre-canon layout; canon stores are handed to `dev-agent canon check`
+# (structure, note format, indexes and hygiene).
 . "$(dirname "$0")/lib.sh"
 
 here=$(dirname "$(readlink -f "$0")")
@@ -36,7 +37,6 @@ case $verb in
         marker=$(jq -r 'select(.path=="/CANON.md")|.content' "$ctmp")
         ck=$(sed -n 's/^kind: *//p' <<<"$marker"); cp=$(sed -n 's/^project: *//p' <<<"$marker"); cr=$(sed -n 's/^roles: *//p' <<<"$marker" | tr ' ' ',')
         python3 -I "$here/canon.py" check --kind "$ck" --project "$cp" --roles "$cr" --store "$ctmp"; rc=$?
-        python3 -I "$here/canon.py" content --kind "$ck" --store "$ctmp" || rc=1
         rm -f "$ctmp"; exit $rc
       fi
       rm -f "$ctmp"

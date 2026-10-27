@@ -1,17 +1,87 @@
 {
-  "version": 1,
+  "version": 2,
   "ordered_folders": [],
   "kinds": {
-    "memory":    {"store": "<project>-memory",    "access": "read_write"},
-    "reference": {"store": "<project>-reference", "access": "read_only"}
+    "memory": {
+      "store": "<project>-memory",
+      "access": "read_write"
+    },
+    "reference": {
+      "store": "<project>-reference",
+      "access": "read_only"
+    }
   },
-  "top": ["CANON.md", "README.md", "_template.md", "shared", "roles", "_conflicts"],
+  "top": [
+    "CANON.md",
+    "README.md",
+    "_template.md",
+    "shared",
+    "roles",
+    "_conflicts"
+  ],
   "role_index": "INDEX.md",
   "skills": {
-    "dev":    {"anthropic": [],      "custom": []},
-    "review": {"anthropic": [],      "custom": []},
-    "test":   {"anthropic": [],      "custom": []},
-    "docs":   {"anthropic": ["pdf"], "custom": []}
+    "dev": {
+      "anthropic": [],
+      "custom": []
+    },
+    "review": {
+      "anthropic": [],
+      "custom": []
+    },
+    "test": {
+      "anthropic": [],
+      "custom": []
+    },
+    "docs": {
+      "anthropic": [
+        "pdf"
+      ],
+      "custom": []
+    }
   },
-  "imports": {"docs-v0": "documentation store layout (numbered folders 01-rules to 08-maintainer, tools/)"}
+  "imports": {
+    "docs-v0": "documentation store layout (numbered folders 01-rules to 08-maintainer, tools/)"
+  },
+  "note_kinds": {
+    "memory": {
+      "runnable": [
+        "setup",
+        "gate",
+        "pitfall",
+        "sandbox"
+      ],
+      "document": [
+        "history",
+        "status"
+      ]
+    },
+    "reference": {
+      "runnable": [],
+      "document": [
+        "rule",
+        "convention",
+        "workflow",
+        "architecture",
+        "knowledge",
+        "preference",
+        "review",
+        "guide"
+      ]
+    }
+  },
+  "limits": {
+    "runnable_chars": 3000,
+    "document_chars": 30000,
+    "readme_chars": 3000,
+    "stale_days": 90
+  },
+  "header": [
+    "Kind",
+    "Applies to",
+    "Sources",
+    "Check",
+    "Verified",
+    "Supersedes"
+  ]
 }
