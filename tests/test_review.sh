@@ -46,4 +46,10 @@ $DA review check "$T/batch" 2>&1 | grep -q "NOTE.*batch" && ok "commits made wit
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
 out=$($DA review check "$T/nogroups" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "patch_groups" && ok "missing patch groups and commit advice are warned about" || no "nogroups: $out"
+# a review run returns a report instead of patches
+mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
+printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only" && ok "a report with a Findings section passes as a review run" || no "report run: $out"
+printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
+$DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
 exit $fail
