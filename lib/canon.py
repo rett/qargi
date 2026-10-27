@@ -15,7 +15,7 @@ KINDS = ("memory", "reference")
 RUNNABLE = {"memory": ("setup", "gate", "pitfall", "sandbox"), "reference": ()}
 DOCUMENT = {"memory": ("history", "status"),
             "reference": ("rule", "convention", "workflow", "architecture", "knowledge", "preference", "review", "guide")}
-LIMITS = {"runnable_chars": 3000, "document_chars": 30000, "readme_chars": 3000, "stale_days": 90}
+LIMITS = {"runnable_chars": 3000, "document_chars": 10000, "readme_chars": 3000, "index_chars": 2500, "always_chars": 8000, "stale_days": 90}
 HEADER = ("Kind", "Applies to", "Sources", "Check", "Verified", "Supersedes")
 FIELD = re.compile(r"^(Kind|Applies to|Sources|Check|Verified|Supersedes):[ \t]*(.*)$")
 MEM_FOLDER_KIND = {"sandbox": "sandbox", "setup": "setup", "gates": "gate", "pitfalls": "pitfall"}
@@ -447,6 +447,26 @@ def cmd_plan(a):
     return 0
 
 
+ROW = re.compile(r"(?m)^\|\s*`?([A-Za-z0-9._/-]+\.md)`?\s*\|([^|\n]*)\|([^|\n]*)\|\s*$")
+VAGUE = re.compile(r"(?i)unsure|if needed|as needed|when relevant|sometimes|working on")
+
+
+def load_ok(cell):
+    c = cell.strip().lower()
+    return bool(c) and not VAGUE.search(c)
+
+
+def always_set(mems, role):
+    """Paths an agent of this role loads before it knows the task: README, indexes, rows marked always."""
+    out = ["/README.md", "/shared/INDEX.md", "/roles/%s/INDEX.md" % role]
+    for idx in out[1:]:
+        base = idx.rsplit("/", 1)[0]
+        for ref, _, load in ROW.findall(mems.get(idx, {}).get("content", "")):
+            if load.strip().lower() == "always" and not ref.endswith("INDEX.md"):
+                out.append(base + "/" + ref)
+    return [p for p in out if p in mems]
+
+
 def notes_check(kind, mems, roles, F, W):
     """Canon 2: the note format, freshness, index form and hygiene."""
     assign = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{16,})(?![\w(.])")
@@ -470,9 +490,12 @@ def notes_check(kind, mems, roles, F, W):
             elif not re.search(r"(?m)^\|\s*Path\s*\|\s*Purpose\s*\|\s*Load\s*\|", c):
                 W(p, "no `| Path | Purpose | Load |` table")
             base = p.rsplit("/", 1)[0]
-            for ref in re.findall(r"(?m)^\|\s*`?([A-Za-z0-9._/-]+\.md)`?\s*\|", c):
+            if len(c) > LIMITS["index_chars"]: W(p, "%d chars; an index is read every session, keep it under %d" % (len(c), LIMITS["index_chars"]))
+            for ref, _, load in ROW.findall(c):
                 if base + "/" + ref not in mems:
                     W(p, "lists %s, which does not exist" % ref)
+                if not load_ok(load):
+                    W(p, "Load of %s is %r: say `always` or the task that needs it" % (ref, load.strip()))
             continue
         if not is_note(p):
             continue
@@ -561,6 +584,10 @@ def cmd_check(a):
                 if p.startswith(pre) and not p.endswith("INDEX.md") and p[len(pre):] not in idx:
                     W(p, "not listed in %sINDEX.md" % pre)
         notes_check(a.kind, mems, roles, F, W)
+        for r in roles:
+            n = sum(len(mems[q]["content"]) for q in always_set(mems, r))
+            if n > LIMITS["always_chars"]:
+                W("/roles/%s/INDEX.md" % r, "the always-loaded set of the %s role is %d chars (limit %d): trim the README or the indexes, or load a note only when its task needs it" % (r, n, LIMITS["always_chars"]))
 
     secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}",
                r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY"]

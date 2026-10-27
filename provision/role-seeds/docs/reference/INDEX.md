@@ -12,7 +12,7 @@ in your final report under "Reference updates proposed"; the coordinator applies
 | writing/conventions.md | structure, voice and formatting of documents | when writing or reviewing |
 | design/styling.md | visual design of rendered documents | when restyling or rendering |
 | knowledge/facts.md | checked project behaviour worth keeping straight | when describing behaviour |
-| user/preferences.md | what the maintainer wants and how | when unsure what is wanted |
+| user/preferences.md | what the maintainer wants and how | when choosing the format, tone or scope of a document |
 
 Memory for this role (history, open items) is in the memory store under
 `roles/docs/project/`: check `open-items.md` before starting.

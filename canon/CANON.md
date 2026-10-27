@@ -76,8 +76,8 @@ match the folder is only a warning.
 
 **Shape of the body.** A runnable note is one verified fact (`Fact:`, `Do:`, then the
 header's `Check:` and `Verified:`); a document note is one topic under `## Contents`.
-Size: a runnable note over 3000 characters warns (split it), a document note over 30000
-warns. File names are lowercase with hyphens (digits and dots are fine; numbered folder prefixes stay
+Size: a runnable note over 3000 characters warns (split it), a document note over 10000
+warns (an agent loads a note whole, so split one by topic). File names are lowercase with hyphens (digits and dots are fine; numbered folder prefixes stay
 forbidden). A `README.md` inside a folder is a note like any other, and its name
 is exempt from the lowercase rule. Under `roles/<role>/tools/` live the role's scripts and
 they are not notes.
@@ -89,8 +89,13 @@ content carried over without provenance that a curator should source or remove.
 **Indexes.** Every file is listed in the nearest index (`shared/INDEX.md`,
 `roles/<role>/INDEX.md`, or `repos/<repo>/INDEX.md` for a repository's files) as a row of
 the table `| Path | Purpose | Load |` with paths relative to the index. A row that points
-at a file that does not exist warns. The Load column states when to read the note and
-whether it is always read; it is the only place that order or bindingness is stated.
+at a file that does not exist warns. The Load column is `always` or the task that needs the note (`when writing a test`,
+`before committing`, `running make lint`): a trigger an agent can act on, never "when unsure", "if needed" or "working on <project>" (which is `always` in disguise). It is the only place that order or bindingness is stated.
+An index over 2500 characters warns.
+
+**Budget.** What a role loads before it knows its task (the README, `shared/INDEX.md`, its role index, and every
+note an index marks `always`) is at most 8000 characters per store; over that `canon check` warns. Everything
+else is loaded when its Load trigger applies.
 
 **Hygiene.** A value that looks like a credential fails; a home path or a dotted-quad
 address outside the documentation and private ranges warns (a heuristic: a version number

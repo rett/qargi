@@ -72,8 +72,10 @@
   },
   "limits": {
     "runnable_chars": 3000,
-    "document_chars": 30000,
+    "document_chars": 10000,
     "readme_chars": 3000,
+    "index_chars": 2500,
+    "always_chars": 8000,
     "stale_days": 90
   },
   "header": [

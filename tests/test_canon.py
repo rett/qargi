@@ -263,6 +263,22 @@ class Canon(unittest.TestCase):
                               "--src", write(src), "--memory", write({}), "--reference", write({}), "--today", TODAY], capture_output=True, text=True)
         self.assertTrue(any("set Kind: by hand" in n for n in json.loads(out.stdout)["notes"]))
 
+    def test_load_triggers_and_budget(self):
+        _, after = self.assertConverges("reference", {})
+        after["/shared/INDEX.md"] = ("| Path | Purpose | Load |\n|---|---|---|\n| rules/a.md | a | always |\n| rules/b.md | b | when unsure what is wanted |\n"
+                                     "| rules/c.md | c | working on x |\n| rules/d.md | d | running make lint |\n")
+        for n in "abcd":
+            after["/shared/rules/%s.md" % n] = "# %s\n\nKind: rule\nApplies to: demo\nSources: x\n\n%s\n" % (n, "x" * (6000 if n == "a" else 10))
+        out = run("check", "reference", after).stdout
+        self.assertIn("Load of rules/b.md is 'when unsure what is wanted'", out)
+        self.assertIn("Load of rules/c.md is 'working on x'", out)
+        self.assertNotIn("Load of rules/d.md", out)
+        self.assertNotIn("always-loaded set", out)          # 6 KB is inside the budget
+        after["/shared/rules/a.md"] = after["/shared/rules/a.md"] + "y" * 4000
+        out = run("check", "reference", after).stdout
+        self.assertIn("always-loaded set of the dev role", out)
+        self.assertIn("chars; split it", out)               # and the note itself is over 10000
+
     def test_import_adds_the_header(self):
         src = {"/README.md": "# idx\n", "/01-rules/rules.md": "# Rules\n\nSources: x\n\nbe nice\n"}
         s, m, r = write(src), write({}), write({})
