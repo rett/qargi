@@ -3,6 +3,7 @@ description: Manual-run deployment for the {{NAME}} dev-agent. No schedule; each
 agent: ./agent.md
 environment_id: ./environment.yaml
 vault_ids: []
+budget: {type: limit, max_list_cost: {amount: "{{BUDGET}}", currency: USD}}
 resources:
   - ./memory_store-recipes.yaml
 initial_events:

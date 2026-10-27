@@ -29,23 +29,30 @@ cloud_inst() {
   echo "$i"
 }
 
-set_budget() {
-  local sid=$1 cents=$2
-  ant beta:sessions update --session-id "$sid" \
-    --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 \
-    || echo "dev-agent: warning: could not set a budget on $sid" >&2
+# A budget can only be attached when a session is created, so it lives on the
+# deployment (init --budget, or the provisioned deployment file) and sessions
+# inherit it. Warn when a session has none.
+check_budget() {
+  local sid=$1 b
+  b=$(ant beta:sessions retrieve --session-id "$sid" 2>/dev/null | jq -r '.budget.max_list_cost.amount // empty')
+  if [ -n "$b" ]; then
+    json_update "$TRK" '.[$s].budget = $b' --arg s "$sid" --arg b "$b"
+  else
+    echo "dev-agent: warning: session $sid has NO budget; set one on the deployment (registry.sh init ... --budget CENTS) before the next session" >&2
+    json_update "$TRK" '.[$s].budget = "none"' --arg s "$sid"
+  fi
 }
 
 track() {
-  local name=$1 sid=$2 i cents
-  i=$(cloud_inst "$name") || exit 1; cents=$(jq -r .budget_default_cents <<<"$i")
+  local name=$1 sid=$2 i
+  i=$(cloud_inst "$name") || exit 1
   json_update "$TRK" '.[$s] = {instance: $n, label: $l, created: $t, status: "unknown", stop_reason: null,
       last_seen: $t, list_cost: null, budget: $b, outputs_collected: false, review_state: "pending",
       closed_at: null, asked: $a}' \
-    --arg s "$sid" --arg n "$name" --arg l "$LABEL" --arg t "$(now)" --arg b "$cents" --arg a "$ASKED"
-  set_budget "$sid" "$cents"
+    --arg s "$sid" --arg n "$name" --arg l "$LABEL" --arg t "$(now)" --arg b "none" --arg a "$ASKED"
   trk_refresh "$sid"
-  echo "tracking session $sid for $name (budget $cents)"
+  check_budget "$sid"
+  echo "tracking session $sid for $name (budget $(jq -r --arg s "$sid" '.[$s].budget' "$TRK"))"
 }
 
 start() {

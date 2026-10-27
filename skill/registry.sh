@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dev-agent registry verbs: init, list, show, remove.
 # Usage: registry.sh init --location cloud --deployment ID [--name N] [--no-session] --asked "..."
-#        registry.sh init --location cloud --deployment ID --model M --effort E --asked "..." [--approved "..."]
+#        registry.sh init --location cloud --deployment ID [--budget CENTS] --model M --effort E --asked "..." [--approved "..."]
 #                         (changes the existing agent's model/effort; shows the change first)
 #        registry.sh init --location cloud --provision --name N [--model M] [--effort E] [--apt "pkg ..."]
 #                         [--networking unrestricted|limited] --asked "..." [--approved "..."]
@@ -13,7 +13,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED=''
+LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
     --location) LOC=$2; shift 2;;
@@ -29,6 +29,7 @@ while [ $# -gt 0 ]; do
     --apt) APT=$2; shift 2;;
     --networking) NETWORKING=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
+    --budget) BUDGET=$2; shift 2;;
     -*) die "unknown option $1";;
     *) ARG=$1; shift;;
   esac
@@ -36,6 +37,8 @@ done
 
 case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
 [ -z "$MODEL" ] || printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
+
+case $BUDGET in ''|*[!0-9]*) [ -z "$BUDGET" ] || die "--budget CENTS must be a whole number";; esac
 
 slug() { printf '%s' "$1" | tr '[:upper:] _' '[:lower:]--' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//'; }
 
@@ -46,6 +49,13 @@ init_cloud() {
   d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot read deployment $DEP"
   [ "$(jq -r '.archived_at' <<<"$d")" = null ] || die "deployment is archived"
   local ag aid aver cur_m cur_e new_m new_e
+  if [ -n "$BUDGET" ]; then
+    ant beta:deployments update --deployment-id "$DEP" \
+      --budget "{type: limit, max_list_cost: {amount: \"$BUDGET\", currency: USD}}" >/dev/null 2>&1 || die "could not set the deployment budget"
+    d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot re-read deployment"
+    echo "deployment budget set to $BUDGET"
+  fi
+  [ "$(jq -r '.budget // empty' <<<"$d")" != "" ] || echo "dev-agent: warning: the deployment has no budget; pass --budget CENTS" >&2
   aid=$(jq -r .agent.id <<<"$d")
   ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null) || die "cannot read agent $aid"
   aver=$(jq -r .version <<<"$ag"); cur_m=$(jq -r .model.id <<<"$ag"); cur_e=$(jq -r '.model.effort.type // "default"' <<<"$ag")
@@ -67,7 +77,7 @@ init_cloud() {
               model: $ag.model.id, effort: ($ag.model.effort.type // "default")},
       environment_id: $d.environment_id,
       resources: ($d.resources // []), vault_ids: ($d.vault_ids // []),
-      budget_default_cents: 500}')
+      budget: ($d.budget.max_list_cost.amount // null)}')
   json_update "$REG" '.[$n] = $v' --arg n "$name" --argjson v "$rec"
   echo "registered cloud instance: $name"
   [ -n "$NOSESS" ] && return 0
@@ -85,6 +95,7 @@ init_provision() {
   [ -z "$EFFORT" ] || args+=(--effort "$EFFORT")
   [ -z "$APT" ] || args+=(--apt "$APT")
   [ -z "$NETWORKING" ] || args+=(--networking "$NETWORKING")
+  [ -z "$BUDGET" ] || args+=(--budget "$BUDGET")
   if [ -z "$APPROVED" ]; then
     "$(dirname "$0")/provision.sh" plan "${args[@]}"
     echo "plan only; show it to the user, then re-run with --approved \"<the user's go-ahead>\""

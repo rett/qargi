@@ -38,3 +38,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   existing deployment's agent (prints a plan, then updates the agent and
   re-points the deployment only with `--approved`). `list` shows model and
   effort.
+
+### Fixed
+- A session budget can only be set when a session is created, so it is now
+  set on the deployment (`init --budget CENTS`, or `provision.sh --budget`,
+  default 500) and sessions inherit it. The tracker records the session's
+  actual budget and warns when a session has none.
