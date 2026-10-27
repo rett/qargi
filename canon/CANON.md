@@ -1,7 +1,7 @@
 # Canon: the standard layout of memory and skills
 
 The canon is the one layout every project's memory stores and agent skillset
-follow. It is versioned. The current version is **2**. A store records the
+follow. It is versioned. The current version is **1** (the spec is still being drafted). A store records the
 version it conforms to in `/CANON.md`; `dev-agent canon` compares a store with
 the current canon and, with approval, brings it in line without losing content.
 
@@ -32,9 +32,15 @@ Memory store, inside `shared/` and each role: `sandbox/<topic>.md`,
 `repos/<repo>/{INDEX.md,setup,gates,pitfalls}/<topic>.md`, and for roles
 free-standing `<topic>.md` files, each with Kind, Applies to, Check, Verified.
 
-Reference store, inside `shared/` and each role: numbered folders
-`NN-name/file.md` (`01-rules` first), and for a role also `tools/` for scripts it
-runs.
+Reference store, inside `shared/` and each role: folders named for their scope
+(`rules/`, `workflow/`, `conventions/`, `architecture/`, `knowledge/`,
+`preferences/`, `review/`, and for a role also `tools/` for scripts it runs).
+
+**No numbered prefixes** (`01-rules`). A number in a folder name goes stale when a
+folder is inserted and means different things in different roles, so order and
+bindingness are stated in the index (its Load column), not in names. A folder may
+keep a number only when its whole content is a sequence that needs it, and that
+is listed in `canon/layout.json` under `ordered_folders`.
 
 ## Role rules
 
@@ -63,7 +69,7 @@ reconciler yet; the layout manifest is where that will read from.
 ## Reconciling
 
 `dev-agent canon plan` reads a store, determines the canon version it conforms
-to (a store without `/CANON.md` is recognised by its layout: version 1), and
+to (a store without `/CANON.md` is recognised by its layout: `legacy`), and
 prints every step needed to reach the current version. `apply` runs the same
 plan with approval. Rules the reconciler always follows:
 
@@ -74,12 +80,13 @@ plan with approval. Rules the reconciler always follows:
 3. The `/CANON.md` marker is written last, so an interrupted run is visibly
    unfinished and is resumed by running it again.
 4. Content that cannot be classified is left where it is and reported.
-5. Migrations are ordered functions (version N to N+1) and chain: a store at
-   version 1 reaches version 3 by running 1 to 2, then 2 to 3.
+5. Migrations are ordered functions (version N to N+1) and chain: a store at an
+   older version reaches the current one by running each step in turn.
 
 ## Changing the canon
 
-1. Edit this document and `canon/layout.json`; raise `version`.
+1. Edit this document and `canon/layout.json`; raise `version` (only after a
+   version has been released; until then the draft is edited in place).
 2. Add the migration from the previous version in `lib/canon.py` (a function that
    turns the store's memories into a list of steps) and a test fixture.
 3. Add a CHANGELOG entry and, for a breaking layout, a MINOR (before 1.0) or
@@ -87,10 +94,21 @@ plan with approval. Rules the reconciler always follows:
 4. Every project then sees `canon check` report the older stores and offers the
    migration.
 
+## Earlier layouts
+
+The reconciler recognises two states older than version 1 and migrates them:
+`legacy` (the layouts before the canon: `sandbox/` and `repos/` at the root of a
+memory store, folders at the root of a reference store) and `draft` (a
+`/CANON.md` marker left by an earlier draft of this spec). Both are brought to
+version 1 in one plan. Once version 1 is released, every later change gets its own
+migration here.
+
 ## Importing a foreign store
 
 `dev-agent canon import SOURCE --role ROLE --map NAME` merges an existing store
 (for example an older documentation store) into the project's stores under
 `roles/<role>/`, using a named mapping (`docs-v0` for the documentation store
 layout). Curated parts go to the reference store, run history to the memory
-store. Collisions go to `/_conflicts/`. The source is read, never modified.
+store. Imported folders get names relevant to their scope: numbered prefixes are
+removed and the references to them inside the imported files are rewritten.
+Collisions go to `/_conflicts/`. The source is read, never modified.

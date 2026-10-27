@@ -40,7 +40,7 @@ for op in plan["ops"]:
 write(mems, st)
 rc, out = run("plan", "--kind", kind, "--project", "tacctl", "--roles", roles, "--default-role", "dev", "--store", st, "--seed", seed, "--today", "2026-10-27")
 again = json.loads(out)
-assert again["from_version"] == 2 and not again["ops"], "second plan is not a no-op: %s" % json.dumps(again)[:300]
+assert again["from_version"] == 1 and not again["ops"], "second plan is not a no-op: %s" % json.dumps(again)[:300]
 rc, out = run("check", "--kind", kind, "--project", "tacctl", "--roles", roles, "--store", st)
 print(out.strip().splitlines()[-1])
 assert rc == 0, out

@@ -5,6 +5,7 @@
 #   canon.sh plan    PROJECT [--kind K] [--default-role R]
 #   canon.sh apply   PROJECT [--kind K] [--default-role R] --approved "<go-ahead>"
 #   canon.sh import  PROJECT --from STORE_ID --role R --map docs-v0 [--approved "<go-ahead>"]
+#   canon.sh seed-role PROJECT --role R --approved "..."   write the role's skeleton (provision/role-seeds/R/) without overwriting
 #   canon.sh audit   PROJECT [--kind K]        who wrote under which role folder (read-only)
 #   canon.sh promote PROJECT --kind K --path /roles/R/... --approved "<go-ahead>"
 #
@@ -50,7 +51,7 @@ dump() { # store_id -> JSONL of full memories on stdout
 }
 
 show_plan() { # plan.json
-  jq -r '"from canon \(.from_version) to \(.to_version): \(.ops|length) step(s)"' "$1"
+  jq -r '"from \(.from_version) to canon version \(.to_version): \(.ops|length) step(s)"' "$1"
   jq -r '.ops[] | if .op=="move" then "  move   \(.from) -> \(.to)" elif .op=="create" then "  create \(.path)" elif .op=="update" then "  update \(.path)" else "  mark   \(.path)" end' "$1"
   jq -r '.notes[] | "  note: " + .' "$1"
 }
@@ -65,8 +66,10 @@ exec_ops() { # store_id plan.json
       create|marker|update)
         f=$(mktemp); jq -j .content <<<"$op" > "$f"
         if [ -n "$(jq -r '.id // empty' <<<"$op")" ]; then
+          sha=$(jq -r '.sha // empty' <<<"$op"); pre=()
+          [ -z "$sha" ] || pre=(--precondition "{type: content_sha256, content_sha256: \"$sha\"}")
           printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories update --memory-store-id "$store" \
-            --memory-id "$(jq -r .id <<<"$op")" >/dev/null 2>&1 || { rm -f "$f"; die "update failed: $(jq -r .path <<<"$op")"; }
+            --memory-id "$(jq -r .id <<<"$op")" "${pre[@]}" >/dev/null 2>&1 || { rm -f "$f"; die "update failed (changed meanwhile?): $(jq -r .path <<<"$op")"; }
         else
           printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories create --memory-store-id "$store" \
             --path "$(jq -r .path <<<"$op")" >/dev/null 2>&1 || { rm -f "$f"; die "create failed: $(jq -r .path <<<"$op")"; }
@@ -127,6 +130,25 @@ case $verb in
       echo "imported $FROM into $PROJECT roles/$ROLE (approved: $APPROVED); the source is untouched"
     else
       echo "plan only: re-run with --approved \"<the user's go-ahead>\""
+    fi;;
+  seed-role)
+    [ -n "$ROLE" ] || die "seed-role needs --role R"
+    [ -n "$APPROVED" ] || die "seed-role needs --approved \"<go-ahead>\""
+    printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
+    RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
+    [ -d "$RS" ] || { echo "no seed for role $ROLE (nothing to write)"; exit 0; }
+    ant_ok
+    if [ -d "$RS/reference" ]; then
+      store=$(store_of reference); tmp=$(mktemp); dump "$store" > "$tmp"
+      (cd "$RS/reference" && find . -type f | sort) | while IFS= read -r f; do
+        rel=${f#./}; p="/roles/$ROLE/$rel"
+        id=$(jq -r --arg p "$p" 'select(.path==$p)|.id' "$tmp")
+        if [ -z "$id" ]; then
+          printf 'content: "@%s"\n' "$RS/reference/$rel" | ant beta:memory-stores:memories create --memory-store-id "$store" --path "$p" >/dev/null 2>&1 && echo "created $p" || echo "FAILED $p" >&2
+        elif [ "$rel" = INDEX.md ] && jq -e --arg p "$p" 'select(.path==$p and (.content|contains("| (none yet) | | |")))' "$tmp" >/dev/null; then
+          printf 'content: "@%s"\n' "$RS/reference/$rel" | ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" >/dev/null 2>&1 && echo "filled  $p" || echo "FAILED $p" >&2
+        else echo "kept    $p"; fi
+      done
     fi;;
   audit)
     # Isolation between roles is by convention; the memory version history makes it auditable:

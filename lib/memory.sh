@@ -1,28 +1,20 @@
 #!/usr/bin/env bash
 # Manage the structure of a dev-agent recipes memory store.
-#   memory.sh seed STORE_ID [--repo NAME]   write README.md and _template.md (and
-#                                           repos/NAME/INDEX.md); never overwrites
-#   memory.sh seed-reference STORE_ID       write the development-reference skeleton; never overwrites
 #   memory.sh lint STORE_ID [--kind recipes|reference]   read-only structure and content check
-# The structure is described by provision/memory-seed/README.md.
+# Checks stores in the pre-canon layout; canon stores are handed to `dev-agent canon check`.
 . "$(dirname "$0")/lib.sh"
 
 here=$(dirname "$(readlink -f "$0")")
-SEED=$here/../provision/memory-seed
-[ -d "$SEED" ] || SEED=$here/provision/memory-seed
-REFSEED=$here/../provision/reference-seed
-[ -d "$REFSEED" ] || REFSEED=$here/provision/reference-seed
 
 verb=${1:-}; store=${2:-}; shift 2 || true
-REPO='' KIND=recipes
+KIND=recipes
 while [ $# -gt 0 ]; do
   case $1 in
-    --repo) REPO=$2; shift 2;;
     --kind) KIND=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done
-case $store in memstore_*) ;; *) die "usage: memory.sh seed|lint memstore_ID";; esac
+case $store in memstore_*) ;; *) die "usage: memory.sh lint memstore_ID";; esac
 [ -n "${DEV_AGENT_MEMORY_FIXTURE:-}" ] || ant_ok
 
 mem_list() {
@@ -37,30 +29,6 @@ create() { # path file
 }
 
 case $verb in
-  seed-reference)
-    [ -d "$REFSEED" ] || die "reference seed not found"
-    have=$(mem_list basic | jq -r .path)
-    (cd "$REFSEED" && find . -type f | sort) | while read -r f; do
-      p=/${f#./}
-      if grep -qx -F "$p" <<<"$have"; then echo "kept    $p"
-      elif create "$p" "$REFSEED/${f#./}"; then echo "created $p"
-      else echo "FAILED  $p" >&2; fi
-    done;;
-  seed)
-    [ -d "$SEED" ] || die "seed files not found"
-    have=$(mem_list basic | jq -r .path)
-    put() {
-      if grep -qx -F "$1" <<<"$have"; then echo "kept    $1"
-      elif create "$1" "$2"; then echo "created $1"
-      else echo "FAILED  $1" >&2; return 1; fi
-    }
-    put /README.md "$SEED/README.md"
-    put /_template.md "$SEED/_template.md"
-    if [ -n "$REPO" ]; then
-      case $REPO in *[!a-z0-9._-]*|'') die "--repo must be a plain name (a-z, 0-9, . _ -)";; esac
-      tmp=$(mktemp); printf '# %s index\n\n| Path | Purpose | Load when |\n|---|---|---|\n| (none yet) | | |\n' "$REPO" > "$tmp"
-      put "/repos/$REPO/INDEX.md" "$tmp"; rm -f "$tmp"
-    fi;;
   lint)
     if [ -z "${DEV_AGENT_MEMORY_FIXTURE:-}" ]; then
       ctmp=$(mktemp); mem_list full | jq -c '{type, id, path, content}' > "$ctmp"
@@ -81,7 +49,7 @@ fails, warns = [], []
 F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
 W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
 readme = mems.get("/README.md")
-if readme is None: F("/README.md", "missing (run: memory.sh seed-reference)")
+if readme is None: F("/README.md", "missing (run: dev-agent canon plan)")
 secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}", r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
 for p, c in sorted(mems.items()):
     for pat in secrets:
@@ -115,7 +83,7 @@ today = datetime.date.today()
 
 readme = mems.get("/README.md")
 if readme is None:
-    F("/README.md", "missing (run: memory.sh seed)")
+    F("/README.md", "missing (run: dev-agent canon plan)")
 else:
     if len(readme) > 3000: F("/README.md", "%d chars, limit 3000; move detail into INDEX.md" % len(readme))
 if "/_template.md" not in mems: W("/_template.md", "missing")
@@ -187,5 +155,5 @@ print("\n".join(out) if out else "clean: %d memories" % len(mems))
 print("%d fail, %d warn, %d memories" % (len(fails), len(warns), len(mems)))
 sys.exit(1 if fails else 0)
 ';;
-  *) die "usage: memory.sh seed|lint memstore_ID";;
+  *) die "usage: memory.sh lint memstore_ID (stores are created and seeded by dev-agent canon)";;
 esac

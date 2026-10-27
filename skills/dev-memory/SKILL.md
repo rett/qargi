@@ -25,7 +25,7 @@ coordinator applies them (write with `ant beta:memory-stores:memories`).
 
 ## The canon and the reconciler
 
-Both stores follow the versioned canon in `canon/CANON.md` (current version 2):
+Both stores follow the versioned canon in `canon/CANON.md` (version 1, still a draft):
 `/CANON.md` marker, `/README.md`, `shared/` for every role and `roles/<role>/`
 (with its `INDEX.md`) per role. An agent loads the README, `shared/INDEX.md` and
 only its own role's index, never another role's folder.
@@ -33,14 +33,17 @@ only its own role's index, never another role's folder.
 | Verb | Command | Notes |
 |---|---|---|
 | check | `dev-agent canon check PROJECT [--kind K]` | Conformance and version report; exit 1 on any FAIL. |
+| seed-role | `dev-agent canon seed-role PROJECT --role R --approved "..."` | Writes the role's skeleton (`provision/role-seeds/R/`) into the stores without overwriting. |
 | plan | `dev-agent canon plan PROJECT [--kind K] [--default-role R]` | Every step needed to reach the current canon, from whichever version the store is at. Changes nothing. |
 | apply | `dev-agent canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: renames keep identity and history, conflicts go to `/_conflicts/<date>/`, the marker is written last, a re-run resumes. Show the plan first. |
-| import | `dev-agent canon import PROJECT --from STORE --role R --map docs-v0 [--approved "..."]` | Merges a foreign store (the old documentation store layout) into `roles/<R>/`; curated parts into the reference store, history into the memory store. The source is only read. |
+| import | `dev-agent canon import PROJECT --from STORE --role R --map docs-v0 [--approved "..."]` | Merges a foreign store (the old documentation store layout) into `roles/<R>/` with relevant folder names (numbered prefixes removed, references rewritten); curated parts into the reference store, history into the memory store. The source is only read. |
 | promote | `dev-agent canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
 | audit | `dev-agent canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder. |
 
-`dev-agent memory lint` hands canon-2 stores to `canon check`. A new canon
-version means a new migration; see `canon/CANON.md` § Changing the canon.
+`dev-agent memory lint` hands canon stores to `canon check` and checks only the
+pre-canon layouts itself. Stores are created and seeded by `/dev-provision`, which
+uses the canon. A new canon version means a new migration; see `canon/CANON.md`
+§ Changing the canon.
 
 Migrating a flat store (pre-canon): seed, replace the old README, have the cloud agent
 move each file to its new place re-running each `Check` (cheap ones; expensive

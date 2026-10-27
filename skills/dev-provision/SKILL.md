@@ -9,7 +9,8 @@ argument-hint: plan|apply|add-reference NAME ...
 Names follow the convention in the README: `NAME` is `<project>-<role>` (`--project P
 --role R`, role defaults to `dev`, from a fixed list); the agent, environment and
 deployment are `<NAME>-agent`, `-environment`, `-deployment`; the memory stores
-belong to the project: `<project>-memory` and `<project>-reference`. Existing
+belong to the project: `<project>-memory` and `<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is
+seeded (the project's stored answers must exist). Existing
 stores of those names are attached (the plan says so), not duplicated;
 `--memory-store ID` / `--reference-store ID` name them explicitly. Files and `claude-lock.json` stay in the state directory,
 outside any repository. Resources created in the Console or with

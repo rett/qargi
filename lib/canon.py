@@ -9,7 +9,7 @@ The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the 
 """
 import argparse, datetime, json, re, sys
 
-LATEST = 2
+LATEST = 1
 KINDS = ("memory", "reference")
 
 
@@ -45,23 +45,25 @@ def parse_marker(text):
 
 
 def detect(kind, mems):
-    """-> (version, why). 0 = unrecognised, 1 = the layout before the canon."""
+    """-> (state, why). state is LATEST (conforms), "draft" (a marker from an earlier
+    draft of this spec), "legacy" (the layout before the canon) or "unknown"."""
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
         try:
-            return int(d.get("canon", "")), "marker"
+            n = int(d.get("canon", ""))
         except ValueError:
-            return 0, "unreadable /CANON.md"
+            return "unknown", "unreadable /CANON.md"
+        return (LATEST, "marker") if n == LATEST else ("draft", "marker from an earlier draft of the canon (%d)" % n)
     paths = list(mems)
     if not paths:
-        return 1, "empty store"
+        return "legacy", "empty store"
     if kind == "memory":
         if any(p.startswith(("/sandbox/", "/repos/")) for p in paths):
-            return 1, "layout: sandbox/ and repos/ at the root"
+            return "legacy", "layout: sandbox/ and repos/ at the root"
     else:
-        if any(re.match(r"/\d\d-[^/]+/", p) for p in paths):
-            return 1, "layout: numbered folders at the root"
-    return 0, "no marker and no known layout"
+        if any(re.match(r"/\d\d-[^/]+/", p) or re.match(r"/[a-z]+/[^/]+\.md", p) for p in paths):
+            return "legacy", "layout: folders at the root"
+    return "unknown", "no marker and no known layout"
 
 
 def seed_text(seed, name, subs):
@@ -75,7 +77,7 @@ def role_lines(roles):
     return "\n".join("- `roles/%s/INDEX.md`: the %s role" % (r, r) for r in roles)
 
 
-def migrate_1_to_2(kind, mems, project, roles, default_role, seed, today):
+def migrate_legacy(kind, mems, project, roles, default_role, seed, today):
     ops, notes = [], []
     taken = set(mems)
     moved_to = {}
@@ -135,6 +137,8 @@ def migrate_1_to_2(kind, mems, project, roles, default_role, seed, today):
         if p not in taken:
             new.append((p, seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))))
             taken.add(p)
+    if kind == "memory" and "/_template.md" not in mems:
+        new.append(("/_template.md", open("%s/_template.md" % seed).read()))
     for p, c in new:
         ops.append({"op": "create", "path": p, "content": c})
 
@@ -147,30 +151,109 @@ def migrate_1_to_2(kind, mems, project, roles, default_role, seed, today):
     return ops, notes
 
 
-MIGRATIONS = {1: migrate_1_to_2}
+NUM = re.compile(r"^\d\d-")
+
+
+def strip_num(name):
+    return NUM.sub("", name)
+
+
+def rewrite_refs(text, folders):
+    """Replace old numbered folder names with the new ones wherever they are named."""
+    for old in sorted(folders, key=len, reverse=True):
+        text = re.sub(r"(?<![\w-])%s(?![\w-])" % re.escape(old), folders[old], text)
+    return text
+
+
+def simulate(mems, ops):
+    """Apply steps to an in-memory store: {path: {id, path, content, content_sha256}}."""
+    out = {p: dict(m) for p, m in mems.items()}
+    n = 0
+    for op in ops:
+        if op["op"] == "move":
+            m = out.pop(op["from"]); m["path"] = op["to"]; out[op["to"]] = m
+        elif op["op"] in ("create", "marker", "update"):
+            cur = None
+            if op.get("id"):
+                cur = next((v for v in out.values() if v["id"] == op["id"]), None)
+            if cur is None:
+                n += 1
+                out[op["path"]] = {"type": "memory", "id": "new_%d" % n, "path": op["path"], "content": op["content"], "content_sha256": ""}
+            else:
+                cur["content"] = op["content"]; cur["content_sha256"] = ""
+    return out
+
+
+def migrate_draft(kind, mems, project, roles, default_role, seed, today):
+    """Numbered prefixes (01-rules) become plain names (rules): folders are renamed and
+    the references to them inside the files of the same scope are rewritten."""
+    ops, notes = [], []
+    taken = set(mems)
+    scopes = ["/shared/"] + ["/roles/%s/" % r for r in roles]
+    moved = {}
+    for scope in scopes:
+        folders = {}
+        for p in mems:
+            if p.startswith(scope):
+                top = p[len(scope):].split("/")[0]
+                if "/" in p[len(scope):] and NUM.match(top):
+                    folders[top] = strip_num(top)
+        if not folders:
+            continue
+        for p, m in sorted(mems.items()):
+            if not p.startswith(scope):
+                continue
+            rest = p[len(scope):]
+            top = rest.split("/")[0]
+            if "/" in rest and top in folders:
+                d = scope + folders[top] + rest[len(top):]
+                if d in taken:
+                    d = "/_conflicts/%s%s" % (today, p)
+                    notes.append("conflict: %s already exists; %s goes to %s" % (scope + folders[top] + rest[len(top):], p, d))
+                taken.add(d)
+                moved[p] = d
+                ops.append({"op": "move", "id": m["id"], "from": p, "to": d})
+        for p, m in sorted(mems.items()):
+            if not p.startswith(scope):
+                continue
+            new = rewrite_refs(m["content"], folders)
+            if new != m["content"]:
+                ops.append({"op": "update", "id": m["id"], "path": moved.get(p, p), "content": new,
+                            "sha": m.get("content_sha256", "")})
+        notes.append("%s: %s" % (scope, ", ".join("%s -> %s" % kv for kv in sorted(folders.items()))))
+    # the root README is regenerated from the seed (it names the layout)
+    old = mems.get("/README.md")
+    if old:
+        subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
+        new = seed_text(seed, "README.%s.md" % kind, subs)
+        if new != old["content"]:
+            ops.append({"op": "update", "id": old["id"], "path": "/README.md", "content": new,
+                        "sha": old.get("content_sha256", "")})
+    return ops, notes
+
+
+# Each state reaches LATEST through an ordered chain of steps.
+CHAINS = {"legacy": [migrate_legacy, migrate_draft], "draft": [migrate_draft]}
 
 
 def cmd_plan(a):
     mems = load(a.store)
     roles = a.roles.split(",")
-    ver, why = detect(a.kind, mems)
+    state, why = detect(a.kind, mems)
     today = a.today or datetime.date.today().isoformat()
-    out = {"from_version": ver, "to_version": LATEST, "why": why, "ops": [], "notes": []}
-    if ver == 0:
-        out["notes"].append("version unrecognised (%s): nothing can be planned" % why)
+    out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
+    if state == "unknown":
+        out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
         print(json.dumps(out)); return 0
-    if ver > LATEST:
-        out["notes"].append("the store is canon %d, newer than this tool (%d)" % (ver, LATEST))
-        print(json.dumps(out)); return 0
-    cur = ver
-    while cur < LATEST:
-        ops, notes = MIGRATIONS[cur](a.kind, mems, a.project, roles, a.default_role, a.seed, today)
-        out["ops"] += ops
-        out["notes"] += notes
-        cur += 1
-    if ver < LATEST:
+    if state != LATEST:
+        cur = mems
+        for step in CHAINS[state]:
+            ops, notes = step(a.kind, cur, a.project, roles, a.default_role, a.seed, today)
+            out["ops"] += ops
+            out["notes"] += notes
+            cur = simulate(cur, ops)
         out["ops"].append({"op": "marker", "path": "/CANON.md", "content":
-                           canon_marker(a.kind, a.project, roles, LATEST, ver, today),
+                           canon_marker(a.kind, a.project, roles, LATEST, state, today),
                            "id": mems.get("/CANON.md", {}).get("id", "")})
     print(json.dumps(out))
     return 0
@@ -184,7 +267,7 @@ def cmd_check(a):
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
     if ver != LATEST:
-        F("/CANON.md", "store is canon %s (%s), the tool is at %d: run `dev-agent canon plan`" % (ver, why, LATEST))
+        F("/CANON.md", "store is %s (%s); the canon is at version %d: run `dev-agent canon plan`" % (ver, why, LATEST))
     else:
         d = parse_marker(mems["/CANON.md"]["content"])
         if d.get("kind") != a.kind: F("/CANON.md", "kind is %s, expected %s" % (d.get("kind"), a.kind))
@@ -234,9 +317,14 @@ def cmd_check(a):
         for pat in secrets:
             if re.search(pat, m["content"]): F(p, "looks like a secret")
     out = fails + warns
-    print("\n".join(out) if out else "clean: canon %d, %d files" % (ver, len(mems)))
+    print("\n".join(out) if out else "clean: canon %s, %d files" % (ver, len(mems)))
     print("%d fail, %d warn" % (len(fails), len(warns)))
     return 1 if fails else 0
+
+
+def rename_top(p, folders):
+    top = p.strip('/').split('/')[0]
+    return '/' + folders.get(top, top) + p[len(top) + 1:]
 
 
 def import_docs_v0(a):
@@ -247,15 +335,24 @@ def import_docs_v0(a):
     taken = {"memory": set(mem), "reference": set(ref)}
     ops = {"memory": [], "reference": []}
     notes = []
+    # numbered source folders become plain names; references to them are rewritten
+    folders = {}
+    for p in src:
+        top = p.strip("/").split("/")[0]
+        if NUM.match(top):
+            folders[top] = strip_num(top)
+    if folders:
+        notes.append("renamed: " + ", ".join("%s -> %s" % kv for kv in sorted(folders.items())))
+    src = {p: dict(m, content=rewrite_refs(m["content"], folders)) for p, m in src.items()}
     for p, m in sorted(src.items()):
         if p == "/README.md":
             kind, dest = "reference", "/roles/%s/INDEX.md" % role
             content = ("> Imported from the documentation store; paths below are relative to this role folder.\n\n"
                        + m["content"])
         elif re.match(r"/0[1-6]-", p) or p.startswith(("/08-maintainer/", "/tools/")):
-            kind, dest, content = "reference", "/roles/%s%s" % (role, p), m["content"]
+            kind, dest, content = "reference", "/roles/%s%s" % (role, rename_top(p, folders)), m["content"]
         elif p.startswith("/07-project/"):
-            kind, dest, content = "memory", "/roles/%s%s" % (role, p), m["content"]
+            kind, dest, content = "memory", "/roles/%s%s" % (role, rename_top(p, folders)), m["content"]
         else:
             notes.append("not imported, unknown part of the source layout: %s" % p)
             continue

@@ -1,5 +1,6 @@
 {
-  "version": 2,
+  "version": 1,
+  "ordered_folders": [],
   "kinds": {
     "memory":    {"store": "<project>-memory",    "access": "read_write"},
     "reference": {"store": "<project>-reference", "access": "read_only"}

@@ -18,8 +18,8 @@ project:
 
 ```
 CANON.md                 canon version marker
-shared/                  numbered folders (01-rules first) for every role
-roles/<role>/            numbered folders for that role, its INDEX.md, tools/
+shared/                  folders named for their scope (rules/, workflow/, ...) for every role
+roles/<role>/            the same for that role, its INDEX.md, tools/
 ```
 
 ## Rules

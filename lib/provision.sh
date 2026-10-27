@@ -13,8 +13,8 @@
 # Options also include --budget CENTS (default 500, set on the deployment).
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
 # changes nothing. `apply` creates the resources only with --approved (the
-# user's go-ahead after seeing the plan), seeds the recipes store with its
-# README and registers the instance. Files and claude-lock.json stay in the
+# user's go-ahead after seeing the plan), brings new memory stores to the canon
+# layout, seeds each enabled role's skeleton and registers the instance. Files and claude-lock.json stay in the
 # state directory, outside any repository. Existing resources created in the
 # Console or with `ant beta:... create` cannot be adopted: this creates new ones.
 . "$(dirname "$0")/lib.sh"
@@ -108,6 +108,22 @@ EOF
 
 FILES=(agents/"$NAME"/deployment-standby.yaml)
 
+# New stores get the canon layout and each enabled role's skeleton. The stores' ids are
+# recorded in the project's stored answers so `dev-agent canon` finds them.
+canonise() {
+  if [ ! -f "$PCFG" ]; then
+    echo "dev-agent: warning: no stored answers for $PROJECT, so the new stores are empty; run /dev-project, then: dev-agent canon apply $PROJECT --approved \"...\"" >&2
+    return 0
+  fi
+  [ -z "${store:-}" ] || "$here/project.sh" set "$PROJECT" memory.memory_store "$store" >/dev/null
+  [ -z "${refstore:-}" ] || "$here/project.sh" set "$PROJECT" memory.reference_store "$refstore" >/dev/null
+  "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not bring the new stores to the canon" >&2
+  local r
+  for r in $(jq -r '.roles | keys[]' "$PCFG"); do
+    "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not seed role $r" >&2
+  done
+}
+
 case $verb in
   plan)
     render
@@ -124,14 +140,9 @@ case $verb in
     dep=$(key 'deployment-standby')
     [ -n "$dep" ] || die "deployment id not found in $LOCK"
     store=$MEMID; refstore=$REFID
-    if [ -z "$store" ]; then
-      store=$(key 'memory_store-recipes')
-      "$here/memory.sh" seed "$store" || echo "dev-agent: warning: could not seed the memory store" >&2
-    fi
-    if [ -z "$refstore" ]; then
-      refstore=$(key 'memory_store-reference')
-      "$here/memory.sh" seed-reference "$refstore" || echo "dev-agent: warning: could not seed the reference store" >&2
-    fi
+    newstores=
+    if [ -z "$store" ]; then store=$(key 'memory_store-recipes'); newstores=1; fi
+    if [ -z "$refstore" ]; then refstore=$(key 'memory_store-reference'); newstores=1; fi
     if [ -n "$refstore" ] && [ -n "$store" ]; then
       # ant apply attaches a referenced store read-write; the reference store must be read-only.
       arr=$(jq -nc --arg r "$store" --arg f "$refstore" '[
@@ -140,6 +151,7 @@ case $verb in
       ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
         || die "could not set the stores' access on the deployment; fix it before running a session"
     fi
+    if [ -n "$newstores" ]; then canonise; fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
   add-reference)
@@ -151,11 +163,11 @@ case $verb in
     desc=$(sed -n 's/^description: //p' "$TPL/memory_store-reference.yaml.tmpl")
     refstore=$(ant beta:memory-stores create --name "$PROJECT-reference" --description "$desc" 2>/dev/null | jq -r .id)
     [ -n "$refstore" ] && [ "$refstore" != null ] || die "could not create the reference store"
-    "$here/memory.sh" seed-reference "$refstore" || die "could not seed $refstore"
     arr=$(jq -c --arg f "$refstore" '.resources + [{type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]' <<<"$cur")
     ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 || die "could not attach $refstore to the deployment (store created: $refstore)"
     new=$(ant beta:deployments retrieve --deployment-id "$dep" 2>/dev/null | jq -c '.resources')
     json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
-    echo "reference store $refstore ($PROJECT-reference) created, seeded and attached read-only to $dep (approved: $APPROVED)";;
+    store=''; canonise
+    echo "reference store $refstore ($PROJECT-reference) created, brought to the canon and attached read-only to $dep (approved: $APPROVED)";;
   *) die "usage: provision.sh plan|apply NAME [options]";;
 esac
