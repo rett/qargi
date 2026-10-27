@@ -34,8 +34,9 @@ config and state directories, never in the repository.
 
 | Verb | Command | Notes |
 |---|---|---|
-| init (cloud) | `R init --location cloud --deployment ID [--name N] [--no-session] --asked "..."` | Reads the deployment, records agent pinned version, environment, resources, vault ids; runs the deployment (first session, standby), sets the budget, starts tracking. `--no-session` only registers. |
-| init (local) | `R init --location local --agent .claude/agents/dev-agent.md [--name N]` | Records path, sha256, model. |
+| init (cloud, existing) | `R init --location cloud --deployment ID [--name N] [--model M] [--effort E] [--no-session] --asked "..." [--approved "..."]` | Reads the deployment and its agent, records pinned version, model, effort, environment, resources, vault ids; runs the deployment (standby session), sets the budget, starts tracking. `--model`/`--effort` that differ from the agent's current values print a PLAN and change nothing until `--approved` (the user's go-ahead): then the agent gets a new version and the deployment is re-pointed. |
+| init (cloud, new) | `R init --location cloud --provision --name N [--model M] [--effort E] [--apt "pkg ..."] [--networking unrestricted\|limited] --asked "..." [--approved "..."]` | Creates new resources via `provision.sh`: prints the plan without `--approved`, creates, seeds the memory store, registers and starts a session with it. |
+| init (local) | `R init --location local --agent FILE [--name N] [--model M] [--effort E]` | Records path, sha256, model and effort. |
 | list | `R list [--reconcile]` | Instances plus active sessions; `--reconcile` flags live sessions missing from the tracker (ORPHAN, never touched). |
 | show | `R show NAME [--reconcile]` | Full record plus staleness: agent newer than pinned, agent file changed, deployment/agent archived or paused. |
 | start | `S start NAME [--label L] --asked "..."` | New cloud session via the deployment. |
@@ -84,7 +85,9 @@ Nothing dev-agent related is ever added to a project's committed files.
    `git -C $CLONE remote set-url --push origin DISABLED`, then
    `git -C $CLONE checkout -b agent/<slug> origin/<base>`; note the base SHA.
 2. Spawn the `dev-agent` subagent (Agent tool, subagent_type `dev-agent`) with
-   the task block. No opinions on the solution.
+   the task block; pass the instance's recorded model (and effort, if set) as
+   the Agent tool's `model` and `effort`: the user chose them at init. No
+   opinions on the solution.
 3. When it reports, run Review on `$OUT`.
 
 ## Review (both backends; you are the coordinator)

@@ -32,3 +32,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writes it without overwriting; `memory.sh lint` checks layout, index
   coverage, required fields, size, secrets and staleness. Provisioning seeds
   new stores with it.
+- `init` selects agent details: `--model` and `--effort` for local instances
+  (recorded and passed to the subagent at dispatch), for new cloud resources
+  (`--provision`, plan first, create only with `--approved`), and for an
+  existing deployment's agent (prints a plan, then updates the agent and
+  re-points the deployment only with `--approved`). `list` shows model and
+  effort.

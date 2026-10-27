@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # dev-agent registry verbs: init, list, show, remove.
 # Usage: registry.sh init --location cloud --deployment ID [--name N] [--no-session] --asked "..."
-#        registry.sh init --location local --agent FILE [--name N]
+#        registry.sh init --location cloud --deployment ID --model M --effort E --asked "..." [--approved "..."]
+#                         (changes the existing agent's model/effort; shows the change first)
+#        registry.sh init --location cloud --provision --name N [--model M] [--effort E] [--apt "pkg ..."]
+#                         [--networking unrestricted|limited] --asked "..." [--approved "..."]
+#                         (creates new resources through provision.sh; without --approved it only prints the plan)
+#        registry.sh init --location local --agent FILE [--name N] [--model M] [--effort E]
 #        registry.sh list [--reconcile]
 #        registry.sh show NAME [--reconcile]
 #        registry.sh remove NAME
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-LOC= DEP= AGENT_FILE= NAME= NOSESS= ASKED= RECON= ARG=
+LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED=''
 while [ $# -gt 0 ]; do
   case $1 in
     --location) LOC=$2; shift 2;;
@@ -18,10 +23,19 @@ while [ $# -gt 0 ]; do
     --no-session) NOSESS=1; shift;;
     --asked) ASKED=$2; shift 2;;
     --reconcile) RECON=1; shift;;
+    --model) MODEL=$2; shift 2;;
+    --effort) EFFORT=$2; shift 2;;
+    --provision) PROVISION=1; shift;;
+    --apt) APT=$2; shift 2;;
+    --networking) NETWORKING=$2; shift 2;;
+    --approved) APPROVED=$2; shift 2;;
     -*) die "unknown option $1";;
     *) ARG=$1; shift;;
   esac
 done
+
+case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
+[ -z "$MODEL" ] || printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
 
 slug() { printf '%s' "$1" | tr '[:upper:] _' '[:lower:]--' | tr -cd 'a-z0-9-' | sed 's/--*/-/g; s/^-//; s/-$//'; }
 
@@ -31,11 +45,26 @@ init_cloud() {
   local d name rec run sid
   d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot read deployment $DEP"
   [ "$(jq -r '.archived_at' <<<"$d")" = null ] || die "deployment is archived"
+  local ag aid aver cur_m cur_e new_m new_e
+  aid=$(jq -r .agent.id <<<"$d")
+  ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null) || die "cannot read agent $aid"
+  aver=$(jq -r .version <<<"$ag"); cur_m=$(jq -r .model.id <<<"$ag"); cur_e=$(jq -r '.model.effort.type // "default"' <<<"$ag")
+  new_m=${MODEL:-$cur_m}; new_e=${EFFORT:-$cur_e}
+  if [ "$new_m" != "$cur_m" ] || { [ -n "$EFFORT" ] && [ "$new_e" != "$cur_e" ]; }; then
+    echo "PLAN: agent $aid v$aver: model $cur_m -> $new_m, effort $cur_e -> $new_e (creates a new agent version and re-points the deployment)"
+    [ -n "$APPROVED" ] || { echo "re-run with --approved \"<the user's go-ahead>\" to apply; nothing changed"; return 0; }
+    ant beta:agents update --agent-id "$aid" --version "$aver" --model "{id: $new_m, effort: $new_e}" >/dev/null 2>&1 || die "agent update failed"
+    ant beta:deployments update --deployment-id "$DEP" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was updated)"
+    d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot re-read deployment"
+    ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null)
+    echo "agent updated to v$(jq -r .version <<<"$ag"); deployment now pins v$(jq -r .agent.version <<<"$d")"
+  fi
   name=${NAME:-$(slug "$(jq -r '.name' <<<"$d")")}
   [ -n "$name" ] || die "empty instance name; pass --name"
-  rec=$(jq -n --argjson d "$d" --arg t "$(now)" '{
+  rec=$(jq -n --argjson d "$d" --argjson ag "$ag" --arg t "$(now)" '{
       location: "cloud", created: $t, deployment_id: $d.id,
-      agent: {id: $d.agent.id, version_pinned: $d.agent.version},
+      agent: {id: $d.agent.id, version_pinned: $d.agent.version,
+              model: $ag.model.id, effort: ($ag.model.effort.type // "default")},
       environment_id: $d.environment_id,
       resources: ($d.resources // []), vault_ids: ($d.vault_ids // []),
       budget_default_cents: 500}')
@@ -48,6 +77,23 @@ init_cloud() {
   "$(dirname "$0")/session.sh" track "$name" "$sid" --asked "$ASKED"
 }
 
+init_provision() {
+  need_asked
+  [ -n "$NAME" ] || die "--provision needs --name"
+  local args=("$NAME")
+  [ -z "$MODEL" ] || args+=(--model "$MODEL")
+  [ -z "$EFFORT" ] || args+=(--effort "$EFFORT")
+  [ -z "$APT" ] || args+=(--apt "$APT")
+  [ -z "$NETWORKING" ] || args+=(--networking "$NETWORKING")
+  if [ -z "$APPROVED" ]; then
+    "$(dirname "$0")/provision.sh" plan "${args[@]}"
+    echo "plan only; show it to the user, then re-run with --approved \"<the user's go-ahead>\""
+    return 0
+  fi
+  "$(dirname "$0")/provision.sh" apply "${args[@]}" --asked "$ASKED" --approved "$APPROVED" || return 1
+  [ -n "$NOSESS" ] || "$(dirname "$0")/session.sh" start "$NAME" --asked "$ASKED"
+}
+
 init_local() {
   [ -f "$AGENT_FILE" ] || die "agent file not found: $AGENT_FILE"
   local f name sha model rec
@@ -56,8 +102,9 @@ init_local() {
   [ -n "${NAME:-}" ] && name=$NAME
   sha=$(sha256sum "$f" | cut -d' ' -f1)
   model=$(sed -n 's/^model:[[:space:]]*//p' "$f" | head -1)
-  rec=$(jq -n --arg f "$f" --arg s "$sha" --arg m "$model" --arg t "$(now)" \
-    '{location: "local", created: $t, local: {agent_file: $f, sha256: $s, model: $m}}')
+  [ -z "$MODEL" ] || model=$MODEL
+  rec=$(jq -n --arg f "$f" --arg s "$sha" --arg m "$model" --arg e "$EFFORT" --arg t "$(now)" \
+    '{location: "local", created: $t, local: {agent_file: $f, sha256: $s, model: $m, effort: (if $e=="" then null else $e end)}}')
   json_update "$REG" '.[$n] = $v' --arg n "$name" --argjson v "$rec"
   echo "registered local instance: $name"
 }
@@ -98,14 +145,14 @@ reconcile() {
 case $verb in
   init)
     case $LOC in
-      cloud) init_cloud;;
+      cloud) if [ -n "$PROVISION" ]; then init_provision; else init_cloud; fi;;
       local) init_local;;
       *) die "init needs --location local|cloud";;
     esac;;
   list)
     jq -r 'to_entries[] | "\(.key)\t\(.value.location)\t" +
-        (if .value.location=="cloud" then "agent \(.value.agent.id) v\(.value.agent.version_pinned)\tenv \(.value.environment_id)"
-         else "model \(.value.local.model)\t\(.value.local.agent_file)" end)' "$REG" | column -t -s "$(printf '\t')"
+        (if .value.location=="cloud" then "agent v\(.value.agent.version_pinned) \(.value.agent.model // "?")/\(.value.agent.effort // "?")\tenv \(.value.environment_id)"
+         else "model \(.value.local.model)/\(.value.local.effort // "default")\t\(.value.local.agent_file)" end)' "$REG" | column -t -s "$(printf '\t')"
     echo "-- active sessions --"
     jq -r 'to_entries[] | select(.value.closed_at==null) | "\(.key)\t\(.value.instance)\t\(.value.status)\tlabel=\(.value.label // "-")\tcost=\(.value.list_cost // "-")\tcollected=\(.value.outputs_collected)\treview=\(.value.review_state)"' "$TRK" | column -t -s "$(printf '\t')"
     [ -n "$RECON" ] && for n in $(jq -r 'keys[]' "$REG"); do reconcile "$n"; done
