@@ -63,7 +63,6 @@ r("environment.yaml.tmpl", "environment.yaml")
 r("memory_store-recipes.yaml.tmpl", "memory_store-recipes.yaml")
 r("deployment-standby.yaml.tmpl", "deployment-standby.yaml")
 EOF
-  cp "$TPL/memory-readme.md" "$D/memory-readme.md"
 }
 
 FILES=(agents/"$NAME"/deployment-standby.yaml)
@@ -82,9 +81,7 @@ case $verb in
     dep=$(key 'deployment-standby'); store=$(key 'memory_store-recipes')
     [ -n "$dep" ] || die "deployment id not found in $LOCK"
     if [ -n "$store" ]; then
-      printf 'content: "@%s"\n' "$D/memory-readme.md" \
-        | ant beta:memory-stores:memories create --memory-store-id "$store" --path /README.md >/dev/null \
-        || echo "dev-agent: warning: could not seed the recipes README" >&2
+      "$here/memory.sh" seed "$store" || echo "dev-agent: warning: could not seed the memory store" >&2
     fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;

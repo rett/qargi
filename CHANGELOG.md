@@ -25,3 +25,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   directory) and are inlined into the task block; no file is ever added to a
   project's committed files. Project-level installs are excluded from git
   through `.git/info/exclude` and refused if the target paths are tracked.
+- Memory store structure with a seed (`provision/memory-seed/`): a short
+  README index loaded at session start, `sandbox/` and `repos/<repo>/{setup,gates,pitfalls}/`
+  files that follow one template (Kind, Applies to, Check, Verified), and
+  rules against secrets, per-run data and backlog material. `memory.sh seed`
+  writes it without overwriting; `memory.sh lint` checks layout, index
+  coverage, required fields, size, secrets and staleness. Provisioning seeds
+  new stores with it.

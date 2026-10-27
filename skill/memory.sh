@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# Manage the structure of a dev-agent recipes memory store.
+#   memory.sh seed STORE_ID [--repo NAME]   write README.md and _template.md (and
+#                                           repos/NAME/INDEX.md); never overwrites
+#   memory.sh lint STORE_ID                 read-only structure and content check
+# The structure is described by provision/memory-seed/README.md.
+. "$(dirname "$0")/lib.sh"
+
+here=$(dirname "$(readlink -f "$0")")
+SEED=$here/../provision/memory-seed
+[ -d "$SEED" ] || SEED=$here/provision/memory-seed
+
+verb=${1:-}; store=${2:-}; shift 2 || true
+REPO=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --repo) REPO=$2; shift 2;;
+    *) die "unknown option $1";;
+  esac
+done
+case $store in memstore_*) ;; *) die "usage: memory.sh seed|lint memstore_ID";; esac
+[ -n "${DEV_AGENT_MEMORY_FIXTURE:-}" ] || ant_ok
+
+mem_list() {
+  if [ -n "${DEV_AGENT_MEMORY_FIXTURE:-}" ]; then cat "$DEV_AGENT_MEMORY_FIXTURE"; return; fi   # tests
+  ant beta:memory-stores:memories list --memory-store-id "$store" --path-prefix / \
+    --view "$1" --max-items -1 2>/dev/null | jq -c 'select(.type=="memory")'
+}
+
+create() { # path file
+  printf 'content: "@%s"\n' "$2" \
+    | ant beta:memory-stores:memories create --memory-store-id "$store" --path "$1" >/dev/null
+}
+
+case $verb in
+  seed)
+    [ -d "$SEED" ] || die "seed files not found"
+    have=$(mem_list basic | jq -r .path)
+    put() {
+      if grep -qx -F "$1" <<<"$have"; then echo "kept    $1"
+      elif create "$1" "$2"; then echo "created $1"
+      else echo "FAILED  $1" >&2; return 1; fi
+    }
+    put /README.md "$SEED/README.md"
+    put /_template.md "$SEED/_template.md"
+    if [ -n "$REPO" ]; then
+      case $REPO in *[!a-z0-9._-]*|'') die "--repo must be a plain name (a-z, 0-9, . _ -)";; esac
+      tmp=$(mktemp); printf '# %s index\n\n| Path | Purpose | Load when |\n|---|---|---|\n| (none yet) | | |\n' "$REPO" > "$tmp"
+      put "/repos/$REPO/INDEX.md" "$tmp"; rm -f "$tmp"
+    fi;;
+  lint)
+    mem_list full | python3 -I -c '
+import sys, json, re, datetime
+mems = {}
+for line in sys.stdin:
+    m = json.loads(line); mems[m["path"]] = m.get("content", "")
+fails, warns = [], []
+F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
+W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
+today = datetime.date.today()
+
+readme = mems.get("/README.md")
+if readme is None:
+    F("/README.md", "missing (run: memory.sh seed)")
+else:
+    if len(readme) > 3000: F("/README.md", "%d chars, limit 3000; move detail into INDEX.md" % len(readme))
+if "/_template.md" not in mems: W("/_template.md", "missing")
+
+kinds = {"setup": "setup", "gates": "gate", "pitfalls": "pitfall"}
+secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}",
+           r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
+example_ip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.)")
+banned = re.compile(r"(?i)\b(backlog|roadmap|todo|planned|plans?|later|ideas?)\b")
+
+def indexed(text, rel):
+    return rel in text
+
+for p, c in sorted(mems.items()):
+    parts = p.strip("/").split("/")
+    for pat in secrets:
+        if re.search(pat, c): F(p, "looks like a secret (%s)" % pat[:18])
+    if re.search(r"/home/[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
+    for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
+        if not example_ip.match(ip) and not ip.startswith(("10.", "172.", "192.168.")) and all(int(x) <= 255 for x in ip.split(".")):
+            W(p, "contains address %s (use documentation addresses)" % ip)
+    if p in ("/README.md", "/_template.md"): continue
+    top = parts[0]
+    if top not in ("sandbox", "repos"):
+        F(p, "outside the layout (allowed: README.md, _template.md, sandbox/, repos/)"); continue
+    if banned.search(p): W(p, "path suggests backlog or planning material")
+    name = parts[-1]
+    if top == "repos":
+        if len(parts) < 3: F(p, "expected repos/<repo>/..."); continue
+        repo = parts[1]; sub = parts[2]
+        if sub == "INDEX.md" and len(parts) == 3:
+            if readme is not None and ("repos/%s/INDEX.md" % repo) not in readme:
+                W(p, "not listed in README.md")
+            continue
+        if sub not in kinds or len(parts) != 4:
+            F(p, "expected repos/<repo>/(setup|gates|pitfalls)/<topic>.md"); continue
+        idx = mems.get("/repos/%s/INDEX.md" % repo)
+        rel = "/".join(parts[2:])
+        if idx is None: F(p, "repos/%s/INDEX.md is missing" % repo)
+        elif rel not in idx: F(p, "not listed in repos/%s/INDEX.md" % repo)
+        want = kinds[sub]
+    else:
+        if len(parts) != 2: F(p, "expected sandbox/<topic>.md"); continue
+        if readme is not None and ("sandbox/" + name) not in readme: F(p, "not listed in README.md")
+        want = "sandbox"
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.md", name): W(p, "file name should be kebab-case")
+    if len(c) > 3000: W(p, "%d chars; one fact per file, split it" % len(c))
+    m = re.search(r"(?m)^Kind:\s*(\S+)", c)
+    if not m: F(p, "no Kind: line")
+    elif m.group(1) != want: F(p, "Kind is %s, this directory holds %s" % (m.group(1), want))
+    if not re.search(r"(?m)^Applies to:\s*\S", c): F(p, "no Applies to: line")
+    if not re.search(r"(?m)^Check:\s*\S", c): F(p, "no Check: line")
+    v = re.search(r"(?m)^Verified:\s*(\d{4}-\d{2}-\d{2})", c)
+    if not v: F(p, "no Verified: YYYY-MM-DD line")
+    else:
+        d = datetime.date.fromisoformat(v.group(1))
+        if d > today: F(p, "Verified date is in the future")
+        elif (today - d).days > 90: W(p, "verified %d days ago; re-check" % (today - d).days)
+
+# index rows that point at files that do not exist
+for ip_, text in [("/README.md", readme or "")] + [(k, v) for k, v in mems.items() if k.endswith("/INDEX.md")]:
+    base = ip_.rsplit("/", 1)[0]
+    for ref in set(re.findall(r"`?((?:repos/[a-z0-9._-]+/)?(?:sandbox|setup|gates|pitfalls)/[a-z0-9._-]+\.md|repos/[a-z0-9._-]+/INDEX\.md)`?", text)):
+        cands = ["/" + ref] if ref.startswith(("repos/", "sandbox/")) else [base + "/" + ref]
+        if not any(c in mems for c in cands): W(ip_, "lists %s, which does not exist" % ref)
+
+out = fails + warns
+print("\n".join(out) if out else "clean: %d memories" % len(mems))
+print("%d fail, %d warn, %d memories" % (len(fails), len(warns), len(mems)))
+sys.exit(1 if fails else 0)
+';;
+  *) die "usage: memory.sh seed|lint memstore_ID";;
+esac
