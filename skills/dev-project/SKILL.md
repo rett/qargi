@@ -16,7 +16,13 @@ Ask the user these, in batches (AskUserQuestion), with the stated defaults
 recommended; do not assume answers:
 
 1. **Repository.** URL; local checkout path (optional); the long-lived branches
-   no agent may ever touch (default `master`, `develop`).
+   no agent may ever touch (default `master`, `develop`). **Private repository?** If
+   checking it out needs a credential, ask for a token file: a fine-grained, read-only
+   token (contents: read), in a file only the user can read (chmod 600), outside every
+   repository. Record its path as `repo.credential_file`, then run
+   `dev-agent credential check NAME`: it proves the token can read and warns if it can
+   also push. Public repositories need none. The token is never typed into a command, a
+   log, the tracker or a repository.
 2. **Roles.** Which of `dev`, `review`, `docs`, `test` this project uses.
 3. **Per role, base branch.** `@dispatcher` (the dispatching session's branch)
    for dev; the docs branch (for example `gh-pages`) for docs.

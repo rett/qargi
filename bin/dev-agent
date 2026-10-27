@@ -6,6 +6,7 @@
 #   dev-agent provision plan|apply|add-reference ...           (skill: dev-provision)
 #   dev-agent memory seed|seed-reference|lint ...              (skill: dev-memory)
 #   dev-agent canon check|plan|apply|import|promote PROJECT ... (skill: dev-memory)
+#   dev-agent credential check PROJECT [--allow-write-token]   (skill: dev-project)
 #   dev-agent local prepare|verify ...                         (skill: dev-task)
 #   dev-agent start|send|status|stop|mark|close ...            (skill: dev-task)
 #   dev-agent watch SID [MAX_SECONDS]
@@ -15,13 +16,14 @@ set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
+  credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;

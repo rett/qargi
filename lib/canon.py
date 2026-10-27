@@ -361,14 +361,15 @@ def cmd_content(a):
     fails, warns = [], []
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
-    secrets = [r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
+    assign = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{16,})(?![\w(.])")
     docip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.|10\.|172\.|192\.168\.)")
     today = datetime.date.today()
     for p, m in sorted(mems.items()):
         c = m["content"]
-        for pat in secrets:
-            if re.search(pat, c): F(p, "looks like a secret")
-        if re.search(r"/home/[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
+        for g in assign.finditer(c):
+            v = g.group(2)
+            if re.search(r"\d", v) and re.search(r"[A-Za-z]", v): F(p, "looks like a secret (%s assigned a long mixed value)" % g.group(1).lower()); break
+        if re.search(r"/home/(?!user/|u/)[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
         for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
             if all(int(x) <= 255 for x in ip.split(".")) and not docip.match(ip):
                 W(p, "contains address %s (use documentation addresses)" % ip)

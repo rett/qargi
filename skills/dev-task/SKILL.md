@@ -68,6 +68,16 @@ repository directory's name (override with `--profile NAME|FILE`). Before a
 `send`, read it and inline its text as PROFILE. No profile is fine. Nothing
 dev-agent related is ever added to a project's committed files.
 
+## Private repositories
+
+If the project's answers name a `repo.credential_file`, `dev-agent start` creates the cloud
+session with the repository mounted (a `github_repository` resource; the token goes to
+`ant` on stdin and is never in an argument, the tracker or a log). The repository is then
+at `/workspace/<repo>`: use that as `CLONE` in the task block. For a local run on a
+repository that is not checked out here, use
+`dev-agent local prepare --repo-url URL --credential-file FILE ...`. A token that can also
+push is flagged by `dev-agent credential check`; the agent is still told never to push.
+
 ## Cloud flow (user asked for it)
 
 1. `dev-agent instances show NAME --reconcile`: stop on UNUSABLE; on STALE

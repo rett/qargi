@@ -123,13 +123,15 @@ class Canon(unittest.TestCase):
     def test_content_rules_catch_incomplete_recipes_and_secrets(self):
         _, after = self.assertConverges("memory", {})
         after["/shared/sandbox/x.md"] = "# x\nKind: setup\n"
-        after["/shared/sandbox/y.md"] = "token = abcdefghijklmnop\n"
+        after["/shared/sandbox/y.md"] = "token = abcd1234efgh5678ijkl\n"
+        after["/shared/sandbox/z.md"] = "A fine-grained token: Contents read/write on the repository; token: process.env.CMA_GITHUB_TOKEN\n"
         st = write(after)
         r = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "content", "--kind", "memory", "--store", st], capture_output=True, text=True)
         os.unlink(st)
         self.assertEqual(r.returncode, 1)
         self.assertIn("no Applies to", r.stdout)
         self.assertIn("looks like a secret", r.stdout)
+        self.assertNotIn("z.md", r.stdout)   # prose about tokens is not a secret
 
     def test_cross_role_folder_for_unused_role_fails(self):
         _, after = self.assertConverges("memory", {})

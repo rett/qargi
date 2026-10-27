@@ -65,10 +65,35 @@ track() {
   echo "tracking session $sid for $name (budget $(jq -r --arg s "$sid" '.[$s].budget' "$TRK"))"
 }
 
+# A session with the project's repository mounted (private repositories). The token is read
+# from the credential file and goes to ant on stdin; it is in no argument and no log.
+start_with_repo() { # name credential-file -> session id
+  local i dep url body
+  i=$(inst_get "$1") || exit 1
+  dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"
+  url=$(jq -r .repo.url "$DA_CONF/projects/${1%%-*}.json")
+  body=$(jq -n --argjson d "$dep" --arg url "$url" --rawfile tok "$2" '{
+      agent: {id: $d.agent.id, type: "agent", version: $d.agent.version},
+      environment_id: $d.environment_id, vault_ids: ($d.vault_ids // []),
+      resources: (($d.resources // []) + [{type: "github_repository", url: $url, authorization_token: ($tok | rtrimstr("\n"))}]),
+      initial_events: $d.initial_events, metadata: {deployment_id: $d.id}}
+      + (if $d.budget then {budget: $d.budget} else {} end)')
+  audit_log session-with-repo "$1 credential file $(basename "$2")"
+  if [ -n "${DEV_AGENT_DRY_RUN:-}" ]; then jq '.resources |= map(if .authorization_token then .authorization_token="***" else . end)' <<<"$body"; return 0; fi
+  printf '%s' "$body" | ant beta:sessions create 2>/dev/null | jq -r '.id // empty'
+}
+
 start() {
   need_asked; ant_ok
-  local name=$1 i run sid
+  local name=$1 i run sid cf
   i=$(cloud_inst "$name") || exit 1
+  split_instance "$name"; cf=$(cred_file "$PROJECT")
+  if [ -n "$cf" ]; then
+    sid=$(start_with_repo "$name" "$cf") || exit 1
+    [ -n "${DEV_AGENT_DRY_RUN:-}" ] && exit 0
+    [ -n "$sid" ] || die "could not create the session with the repository mounted (check: dev-agent credential check $PROJECT)"
+    track "$name" "$sid"; return 0
+  fi
   run=$(ant beta:deployments run --deployment-id "$(jq -r .deployment_id <<<"$i")" 2>/dev/null) || die "deployments run failed"
   sid=$(jq -r '.session_id // .session.id // empty' <<<"$run")
   [ -n "$sid" ] || { echo "$run" >&2; die "no session id in the run response"; }

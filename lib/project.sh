@@ -45,6 +45,18 @@ repo = c.get("repo", {})
 need(isinstance(repo.get("url"), str) and repo["url"] and "OWNER/REPO" not in repo["url"], "repo.url is required (replace the placeholder)")
 ll = repo.get("long_lived", [])
 need(isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll), "repo.long_lived: the branches no agent may ever touch (e.g. master, develop)")
+cf = repo.get("credential_file", "")
+if cf:
+    import os, subprocess
+    pth = os.path.expanduser(cf)
+    if not os.path.isfile(pth): bad.append("repo.credential_file: %s is not a file" % cf)
+    else:
+        st = os.stat(pth)
+        if st.st_mode & 0o077: bad.append("repo.credential_file: %s must be readable by you only (chmod 600)" % cf)
+        if st.st_size == 0: bad.append("repo.credential_file: %s is empty" % cf)
+        inside = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
+        if inside.returncode == 0 and inside.stdout.strip() == "true":
+            bad.append("repo.credential_file: %s is inside a git working tree; keep it outside every repository" % cf)
 r = c.get("roles", {})
 need(isinstance(r, dict) and r, "roles: enable at least one role")
 efforts = {"low", "medium", "high", "xhigh", "max"}
@@ -77,7 +89,7 @@ case $verb in
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
     jq -n --arg n "$n" '{
       schema: 1, project: $n,
-      repo: {url: "https://github.com/OWNER/REPO", path: "", long_lived: ["master", "develop"]},
+      repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
         dev:  {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
         docs: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}

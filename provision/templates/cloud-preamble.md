@@ -1,9 +1,9 @@
 Cloud session specifics (this is the cloud backend of /dev-task):
 - Wait for a task. Do no repository work until a coordinator message gives you
   TASK and DONE.
-- Clone the repository named in the task into /workspace with the access
-  provided to you, fetch tags, and initialise any submodules the checks need.
-  RUN_DIR is /mnt/session/outputs.
+- If the repository named in the task is already mounted under /workspace (the case
+  for private repositories), use it; otherwise clone it into /workspace. Fetch tags and
+  initialise any submodules the checks need. RUN_DIR is /mnt/session/outputs.
 - Your role is {{ROLE}}. Under /mnt/memory are the project's memory store
   (read-write) and reference store (read-only). In each, read README.md first, then
   shared/INDEX.md and roles/{{ROLE}}/INDEX.md, and load only the files the task

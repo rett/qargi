@@ -92,3 +92,16 @@ trk_refresh() {
       last_seen: $t, list_cost: ($st.usage.list_cost.amount // null)}' \
     --arg s "$sid" --arg t "$(now)" --argjson st "$s"
 }
+
+cred_file() { # project -> expanded credential file path, or empty
+  local f; f=$(jq -r '.repo.credential_file // ""' "$DA_CONF/projects/$1.json" 2>/dev/null)
+  [ -z "$f" ] || printf '%s' "${f/#\~/$HOME}"
+}
+
+# git environment that authenticates over https with the token and nothing else.
+# Sets GIT_ASKPASS to a helper that reads the file at call time (the token is never in argv).
+git_auth_env() { # credential-file -> exports for the caller's subshell
+  ASKPASS=$(mktemp "${TMPDIR:-/tmp}/dev-agent-askpass.XXXXXX")
+  printf '#!/bin/sh\ncat %s\n' "$(printf '%q' "$1")" > "$ASKPASS"; chmod 700 "$ASKPASS"
+  export GIT_ASKPASS=$ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
+}

@@ -7,6 +7,7 @@ run() { echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo
 run python3 tests/test_canon.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
+run bash tests/test_cred.sh
 run python3 tests/role_seed_sim.py dev
 run python3 tests/role_seed_sim.py docs
 run shellcheck -x -S warning lib/*.sh bin/dev-agent install.sh tests/*.sh
