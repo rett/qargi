@@ -9,7 +9,7 @@
 #   canon.sh audit   PROJECT [--kind K]        who wrote under which role folder (read-only)
 #   canon.sh promote PROJECT --kind K --path /roles/R/... --approved "<go-ahead>"
 #
-# PROJECT's stores come from its stored answers (dev-agent project init). Without
+# PROJECT's stores come from its stored answers (qargi project init). Without
 # --kind, both stores are handled. `plan` and `check` change nothing. The source
 # of an import is read, never modified.
 . "$(dirname "$0")/lib.sh"
@@ -38,7 +38,7 @@ done
 export PLAN_ARG
 valid_project "$PROJECT" || die "usage: canon.sh check|plan|apply|import|promote PROJECT ..."
 PCFG=$DA_CONF/projects/$PROJECT.json
-[ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /dev-project first"
+[ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
 ROLES=$(jq -r '.roles | keys | join(",")' "$PCFG")
 TODAY=$(date -u +%F)
 case $KIND in ''|memory|reference) ;; *) die "--kind memory|reference";; esac
@@ -47,7 +47,7 @@ kinds=${KIND:-"memory reference"}
 store_of() { jq -r --arg k "$1" '.memory[$k + "_store"] // ""' "$PCFG"; }
 
 dump() { # store_id -> JSONL of full memories on stdout
-  if [ -n "${DEV_AGENT_CANON_FIXTURE_DIR:-}" ]; then cat "$DEV_AGENT_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
+  if [ -n "${QARGI_CANON_FIXTURE_DIR:-}" ]; then cat "$QARGI_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
   ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>/dev/null \
     | jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}'
 }

@@ -2,7 +2,7 @@
 
 The canon is the one layout every project's memory stores and agent skillset
 follow. It is versioned. The current version is **2**. A store records the
-version it conforms to in `/CANON.md`; `dev-agent canon` compares a store with
+version it conforms to in `/CANON.md`; `qargi canon` compares a store with
 the current canon and, with approval, brings it in line without losing content.
 
 ## Stores
@@ -103,8 +103,8 @@ written as four numbers after a space looks like an address). In a memory store 
 that suggests backlog or planning material warns; a reference store may hold plans on
 purpose.
 
-The reconciler's mechanical checks are the whole of this list; `dev-agent canon check`
-runs it, and so does `dev-agent memory lint`.
+The reconciler's mechanical checks are the whole of this list; `qargi canon check`
+runs it, and so does `qargi memory lint`.
 
 ## Role rules
 
@@ -118,10 +118,10 @@ runs it, and so does `dev-agent memory lint`.
   read or write another role's folder if it ignores its instructions. If a role must be
   truly separate, give it its own stores.
 - It is by convention and made auditable, not enforced: It is made auditable,
-  not enforced: `dev-agent canon audit` reads the memory version history and
+  not enforced: `qargi canon audit` reads the memory version history and
   reports a session titled for one role (`<project>-<role>-<task>`) writing under
   another role's folder.
-- Promote content that turns out to serve every role with `dev-agent canon
+- Promote content that turns out to serve every role with `qargi canon
   promote`; never copy it.
 
 ## Skillset
@@ -129,13 +129,13 @@ runs it, and so does `dev-agent memory lint`.
 Per role, `canon/layout.json` lists the Anthropic skills the agent carries (`pdf`
 for docs) and the custom skills the tool ships for that role (none yet; the docs
 role's generic methodology skills are the next addition). The project's stored
-answers choose among them and `dev-agent provision` attaches them to the agent.
+answers choose among them and `qargi provision` attaches them to the agent.
 Checking an existing agent's skills against its role is not done by the
 reconciler yet; the layout manifest is where that will read from.
 
 ## Reconciling
 
-`dev-agent canon plan` reads a store, determines the canon version it conforms
+`qargi canon plan` reads a store, determines the canon version it conforms
 to (a store without `/CANON.md` is recognised by its layout: `legacy`), and
 prints every step needed to reach the current version. `apply` runs the same
 plan with approval. Rules the reconciler always follows:
@@ -176,13 +176,13 @@ body, placing each in the canonical order after the fields already there. It ren
 `Load when` header to `Load`, replaces the root README and the template with the version 2
 text (one that differs from the seed of the version it came from is first copied to
 `/_conflicts/<date>/`, in every chain), and writes the marker last. A marker newer than
-this dev-agent knows is reported and left alone, never downgraded. A note without a
+this qargi knows is reported and left alone, never downgraded. A note without a
 `Check:` or `Verified:` where its kind needs one is reported by `canon check`, not
 invented.
 
 ## Importing a foreign store
 
-`dev-agent canon import SOURCE --role ROLE --map NAME` merges an existing store
+`qargi canon import SOURCE --role ROLE --map NAME` merges an existing store
 (for example an older documentation store) into the project's stores under
 `roles/<role>/`, using a named mapping (`docs-v0` for the documentation store
 layout). Curated parts go to the reference store, run history to the memory

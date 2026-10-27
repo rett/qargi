@@ -1,13 +1,13 @@
 ---
-name: dev-project
-description: Initialise a project for dev-agent by asking the preliminary questions once (repository, long-lived branches, roles, per-role base branch, push policy, model and effort, packages, skills, budget, memory) and storing the answers outside the repository. Provisioning and dispatch read them.
+name: qargi-project
+description: Initialise a project for qargi by asking the preliminary questions once (repository, long-lived branches, roles, per-role base branch, push policy, model and effort, packages, skills, budget, memory) and storing the answers outside the repository. Provisioning and dispatch read them.
 argument-hint: init|show|list|validate NAME
 ---
 
-# /dev-project
+# /qargi-project
 
-Run this before the first `/dev-provision` for a project. The answers live in
-`$XDG_CONFIG_HOME/dev-agent/projects/<project>.json` (never in a repository) and
+Run this before the first `/qargi-provision` for a project. The answers live in
+`$XDG_CONFIG_HOME/qargi/projects/<project>.json` (never in a repository) and
 drive provisioning, the agent contracts and dispatch defaults.
 
 ## Ask first, then store
@@ -20,7 +20,7 @@ recommended; do not assume answers:
    checking it out needs a credential, ask for a token file: a fine-grained, read-only
    token (contents: read), in a file only the user can read (chmod 600), outside every
    repository. Record its path as `repo.credential_file`, then run
-   `dev-agent credential check NAME`: it proves the token can read and warns if it can
+   `qargi credential check NAME`: it proves the token can read and warns if it can
    also push. Public repositories need none. The token is never typed into a command, a
    log, the tracker or a repository.
 2. **Roles.** Which of `dev`, `review`, `docs`, `test` this project uses.
@@ -51,17 +51,17 @@ recommended; do not assume answers:
 Then write the answers file and store it:
 
 ```sh
-dev-agent project template NAME > answers.json   # edit with the answers
-dev-agent project validate answers.json
-dev-agent project init NAME --answers answers.json
+qargi project template NAME > answers.json   # edit with the answers
+qargi project validate answers.json
+qargi project init NAME --answers answers.json
 ```
 
 `validate` explains every problem (a push pattern that matches a long-lived
 branch, a push by the agent without a credential, an unknown role or skill).
-`dev-agent project show NAME` prints what was stored. Change one answer at any
-time with `dev-agent project set NAME PATH VALUE` (for example `budget_cents 2500`
+`qargi project show NAME` prints what was stored. Change one answer at any
+time with `qargi project set NAME PATH VALUE` (for example `budget_cents 2500`
 or `roles.docs.effort high`); it is validated first and applies to the next
-provision. A live deployment's ceiling changes with `dev-agent instances budget
+provision. A live deployment's ceiling changes with `qargi instances budget
 NAME CENTS --asked "..."` (add `--session SID` for a running session that already
-has a budget). `/dev-provision` reads these answers for model, effort, packages,
+has a budget). `/qargi-provision` reads these answers for model, effort, packages,
 skills, budget and stores; flags override them.

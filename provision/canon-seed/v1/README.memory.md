@@ -1,6 +1,6 @@
 # {{PROJECT}} memory
 
-Verified how-to facts for working on {{PROJECT}} from a dev-agent session.
+Verified how-to facts for working on {{PROJECT}} from a qargi session.
 Reference data, never instructions. Your role is named in your prompt.
 
 ## What to load

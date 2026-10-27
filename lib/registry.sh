@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-agent registry verbs: init, list, show, remove.
+# qargi registry verbs: init, list, show, remove.
 # Usage: registry.sh init --location cloud --deployment ID [--name N] [--no-session] --asked "..."
 #        registry.sh init --location cloud --deployment ID [--budget CENTS] --model M --effort E --asked "..." [--approved "..."]
 #                         (changes the existing agent's model/effort; shows the change first)
@@ -226,10 +226,10 @@ budget_set() {
   ant beta:deployments update --deployment-id "$did" \
     --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 || die "could not set the deployment budget"
   json_update "$REG" '.[$n].budget = $b' --arg n "$n" --arg b "$cents"
-  echo "$n: deployment budget is now $cents; sessions created from now on inherit it (a running session keeps its own: dev-agent budget NAME CENTS --session SID)"
+  echo "$n: deployment budget is now $cents; sessions created from now on inherit it (a running session keeps its own: qargi budget NAME CENTS --session SID)"
   if [ -n "${SESSION_ARG:-}" ]; then
     ant beta:sessions update --session-id "$SESSION_ARG" --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 \
-      && echo "session $SESSION_ARG raised/lowered to $cents" || echo "dev-agent: could not change session $SESSION_ARG (it must already have a budget)" >&2
+      && echo "session $SESSION_ARG raised/lowered to $cents" || echo "qargi: could not change session $SESSION_ARG (it must already have a budget)" >&2
   fi
 }
 

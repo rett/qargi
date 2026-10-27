@@ -1,4 +1,4 @@
-Cloud session specifics (this is the cloud backend of /dev-task):
+Cloud session specifics (this is the cloud backend of /qargi-task):
 - Wait for a task. Do no repository work until a coordinator message gives you
   TASK and DONE.
 - If the repository named in the task is already mounted under /workspace (the case

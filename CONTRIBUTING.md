@@ -15,7 +15,7 @@
 
 ## Layout
 
-`bin/dev-agent` is the single command; `lib/` holds the scripts behind it;
+`bin/qargi` is the single command; `lib/` holds the scripts behind it;
 `skills/dev-*` are the skills (each a short guide that calls the command);
 `agents/` the local subagent; `provision/` the resource and memory templates;
 `examples/` sample repository profiles.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-agent cloud session verbs: track, start, send, status, stop, mark, close.
+# qargi cloud session verbs: track, start, send, status, stop, mark, close.
 # Every verb that creates or drives a session needs --asked "<user's request>".
 #   session.sh start NAME [--label L] --asked "..."
 #   session.sh send NAME "<task text>" [--label L] [--session SID] [--new] --asked "..."
@@ -39,7 +39,7 @@ check_budget() {
   if [ -n "$b" ]; then
     json_update "$TRK" '.[$s].budget = $b' --arg s "$sid" --arg b "$b"
   else
-    echo "dev-agent: warning: session $sid has NO budget; set one on the deployment (registry.sh init ... --budget CENTS) before the next session" >&2
+    echo "qargi: warning: session $sid has NO budget; set one on the deployment (registry.sh init ... --budget CENTS) before the next session" >&2
     json_update "$TRK" '.[$s].budget = "none"' --arg s "$sid"
   fi
 }
@@ -48,7 +48,7 @@ check_budget() {
 set_title() { # sid instance label
   [ -n "$3" ] || return 0
   ant beta:sessions update --session-id "$1" --title "$2-$3" >/dev/null 2>&1 \
-    || echo "dev-agent: warning: could not set the title of $1" >&2
+    || echo "qargi: warning: could not set the title of $1" >&2
 }
 
 track() {
@@ -79,7 +79,7 @@ start_with_repo() { # name credential-file -> session id
       initial_events: $d.initial_events, metadata: {deployment_id: $d.id}}
       + (if $d.budget then {budget: $d.budget} else {} end)')
   audit_log session-with-repo "$1 credential file $(basename "$2")"
-  if [ -n "${DEV_AGENT_DRY_RUN:-}" ]; then jq '.resources |= map(if .authorization_token then .authorization_token="***" else . end)' <<<"$body"; return 0; fi
+  if [ -n "${QARGI_DRY_RUN:-}" ]; then jq '.resources |= map(if .authorization_token then .authorization_token="***" else . end)' <<<"$body"; return 0; fi
   printf '%s' "$body" | ant beta:sessions create 2>/dev/null | jq -r '.id // empty'
 }
 
@@ -90,8 +90,8 @@ start() {
   split_instance "$name"; cf=$(cred_file "$PROJECT")
   if [ -n "$cf" ]; then
     sid=$(start_with_repo "$name" "$cf") || exit 1
-    [ -n "${DEV_AGENT_DRY_RUN:-}" ] && exit 0
-    [ -n "$sid" ] || die "could not create the session with the repository mounted (check: dev-agent credential check $PROJECT)"
+    [ -n "${QARGI_DRY_RUN:-}" ] && exit 0
+    [ -n "$sid" ] || die "could not create the session with the repository mounted (check: qargi credential check $PROJECT)"
     track "$name" "$sid"; return 0
   fi
   run=$(ant beta:deployments run --deployment-id "$(jq -r .deployment_id <<<"$i")" 2>/dev/null) || die "deployments run failed"
@@ -115,7 +115,7 @@ send() {
   fi
   trk_refresh "$sid" || die "cannot read session $sid"
   check_budget "$sid" 2>/dev/null
-  [ "$(jq -r --arg s "$sid" '.[$s].budget' "$TRK")" != none ] || die "session $sid has no spend budget; set one on the deployment (dev-agent instances budget $name CENTS --asked ...) and start a new session"
+  [ "$(jq -r --arg s "$sid" '.[$s].budget' "$TRK")" != none ] || die "session $sid has no spend budget; set one on the deployment (qargi instances budget $name CENTS --asked ...) and start a new session"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" = idle ] || die "session $sid is not idle (see: status)"
   json_update "$TRK" '.[$s].label = $l' --arg s "$sid" --arg l "$LABEL"
   set_title "$sid" "$name" "$LABEL"

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Shared helpers for the dev-agent skill. Registry and tracker live outside
+# Shared helpers for the qargi skill. Registry and tracker live outside
 # the repository, under the XDG config and state directories.
 set -u
 
-# DEV_AGENT_CONF / DEV_AGENT_STATE override the locations (for tests); do not
+# QARGI_CONF / QARGI_STATE override the locations (for tests); do not
 # redirect XDG_CONFIG_HOME instead, because the ant CLI keeps its login there.
-DA_CONF=${DEV_AGENT_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/dev-agent}
-DA_STATE=${DEV_AGENT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/dev-agent}
+DA_CONF=${QARGI_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/qargi}
+DA_STATE=${QARGI_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/qargi}
 REG=$DA_CONF/instances.json
 TRK=$DA_STATE/sessions.json
 export BETA=managed-agents-2026-04-01
@@ -22,7 +22,7 @@ done
 # role comes from a fixed list. Memory stores belong to the project:
 # <project>-memory and <project>-reference. A session is named
 # <project>-<role>-<task-slug>.
-DA_ROLES=${DEV_AGENT_ROLES:-"dev review docs test"}
+DA_ROLES=${QARGI_ROLES:-"dev review docs test"}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 valid_role() { local r; for r in $DA_ROLES; do [ "$r" = "$1" ] && return 0; done; return 1; }
 valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
@@ -34,14 +34,14 @@ split_instance() {
   fi
 }
 
-die() { echo "dev-agent: $*" >&2; exit 1; }
+die() { echo "qargi: $*" >&2; exit 1; }
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.
 # Every approval-gated or cloud-driving verb leaves an append-only line here.
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${DEV_AGENT_NESTED:-}" \
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" \
     '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")}' >> "$f"
   chmod 600 "$f" 2>/dev/null || true
 }
@@ -51,7 +51,7 @@ audit_log() { # verb [detail]
 # apply (provisioning seeding its stores) skip it.
 plan_token() { sha256sum | cut -c1-12; }
 need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG
-  [ -z "${DEV_AGENT_NESTED:-}" ] || return 0
+  [ -z "${QARGI_NESTED:-}" ] || return 0
   [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
 }
 
@@ -101,7 +101,7 @@ cred_file() { # project -> expanded credential file path, or empty
 # git environment that authenticates over https with the token and nothing else.
 # Sets GIT_ASKPASS to a helper that reads the file at call time (the token is never in argv).
 git_auth_env() { # credential-file -> exports for the caller's subshell
-  ASKPASS=$(mktemp "${TMPDIR:-/tmp}/dev-agent-askpass.XXXXXX")
+  ASKPASS=$(mktemp "${TMPDIR:-/tmp}/qargi-askpass.XXXXXX")
   printf '#!/bin/sh\ncat %s\n' "$(printf '%q' "$1")" > "$ASKPASS"; chmod 700 "$ASKPASS"
   export GIT_ASKPASS=$ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
 }
@@ -111,8 +111,8 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 # build it the same way, so an agent can always be brought back in line with the tool.
 agent_prompt() { # role
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/dev-task/agent-contract.md
-  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; contract=$lib/skills/dev-task/agent-contract.md; }
+  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/qargi-task/agent-contract.md
+  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; contract=$lib/skills/qargi-task/agent-contract.md; }
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"; cat "$contract"; [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
 }
 

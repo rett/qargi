@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Table tests for `dev-agent project validate|set` (no API). Run: tests/test_project.sh
+# Table tests for `qargi project validate|set` (no API). Run: tests/test_project.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
-T=$(mktemp -d); export DEV_AGENT_CONF=$T/c DEV_AGENT_STATE=$T/s
-DA=./bin/dev-agent; fail=0
+T=$(mktemp -d); export QARGI_CONF=$T/c QARGI_STATE=$T/s
+DA=./bin/qargi; fail=0
 base=$($DA project template demo | jq '.repo.url="https://github.com/example/demo"')
 chk() { # name expected(0|1) jq-filter
   local f=$T/a.json; jq "$3" <<<"$base" > "$f"

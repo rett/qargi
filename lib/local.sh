@@ -45,7 +45,7 @@ case $verb in
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
     case $BASE in master|develop) ;; esac
-    RUN=$(mktemp -d "$SCR/dev-agent.XXXXXX")
+    RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
@@ -70,8 +70,8 @@ case $verb in
 exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false \\
   GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=false \\
-  GIT_AUTHOR_NAME=dev-agent GIT_COMMITTER_NAME=dev-agent \\
-  GIT_AUTHOR_EMAIL=dev-agent@example.invalid GIT_COMMITTER_EMAIL=dev-agent@example.invalid \\
+  GIT_AUTHOR_NAME=qargi GIT_COMMITTER_NAME=qargi \\
+  GIT_AUTHOR_EMAIL=qargi@example.invalid GIT_COMMITTER_EMAIL=qargi@example.invalid \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"

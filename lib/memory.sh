@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Manage the structure of a dev-agent recipes memory store.
+# Manage the structure of a qargi recipes memory store.
 #   memory.sh lint STORE_ID [--kind recipes|reference]   read-only structure and content check
-# Checks stores in the pre-canon layout; canon stores are handed to `dev-agent canon check`
+# Checks stores in the pre-canon layout; canon stores are handed to `qargi canon check`
 # (structure, note format, indexes and hygiene).
 . "$(dirname "$0")/lib.sh"
 
@@ -16,10 +16,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 case $store in memstore_*) ;; *) die "usage: memory.sh lint memstore_ID";; esac
-[ -n "${DEV_AGENT_MEMORY_FIXTURE:-}" ] || ant_ok
+[ -n "${QARGI_MEMORY_FIXTURE:-}" ] || ant_ok
 
 mem_list() {
-  if [ -n "${DEV_AGENT_MEMORY_FIXTURE:-}" ]; then cat "$DEV_AGENT_MEMORY_FIXTURE"; return; fi   # tests
+  if [ -n "${QARGI_MEMORY_FIXTURE:-}" ]; then cat "$QARGI_MEMORY_FIXTURE"; return; fi   # tests
   ant beta:memory-stores:memories list --memory-store-id "$store" --path-prefix / \
     --view "$1" --max-items -1 2>/dev/null | jq -c 'select(.type=="memory")'
 }
@@ -31,7 +31,7 @@ create() { # path file
 
 case $verb in
   lint)
-    if [ -z "${DEV_AGENT_MEMORY_FIXTURE:-}" ]; then
+    if [ -z "${QARGI_MEMORY_FIXTURE:-}" ]; then
       ctmp=$(mktemp); mem_list full | jq -c '{type, id, path, content}' > "$ctmp"
       if jq -e 'select(.path=="/CANON.md")' "$ctmp" >/dev/null 2>&1; then
         marker=$(jq -r 'select(.path=="/CANON.md")|.content' "$ctmp")
@@ -51,7 +51,7 @@ fails, warns = [], []
 F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
 W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
 readme = mems.get("/README.md")
-if readme is None: F("/README.md", "missing (run: dev-agent canon plan)")
+if readme is None: F("/README.md", "missing (run: qargi canon plan)")
 secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}", r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
 for p, c in sorted(mems.items()):
     for pat in secrets:
@@ -85,7 +85,7 @@ today = datetime.date.today()
 
 readme = mems.get("/README.md")
 if readme is None:
-    F("/README.md", "missing (run: dev-agent canon plan)")
+    F("/README.md", "missing (run: qargi canon plan)")
 else:
     if len(readme) > 3000: F("/README.md", "%d chars, limit 3000; move detail into INDEX.md" % len(readme))
 if "/_template.md" not in mems: W("/_template.md", "missing")
@@ -157,5 +157,5 @@ print("\n".join(out) if out else "clean: %d memories" % len(mems))
 print("%d fail, %d warn, %d memories" % (len(fails), len(warns), len(mems)))
 sys.exit(1 if fails else 0)
 ';;
-  *) die "usage: memory.sh lint memstore_ID (stores are created and seeded by dev-agent canon)";;
+  *) die "usage: memory.sh lint memstore_ID (stores are created and seeded by qargi canon)";;
 esac

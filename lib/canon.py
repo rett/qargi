@@ -70,7 +70,7 @@ def detect(kind, mems):
         if 1 <= n < LATEST:
             return n, "canon version %d" % n
         if n > LATEST:
-            return "unknown", "written by a newer dev-agent (canon %d); this one knows %d" % (n, LATEST)
+            return "unknown", "written by a newer qargi (canon %d); this one knows %d" % (n, LATEST)
         return "draft", "marker from an earlier draft of the canon (%d)" % n
     paths = list(mems)
     if not paths:
@@ -539,7 +539,7 @@ def cmd_check(a):
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
     if ver != LATEST:
-        F("/CANON.md", "store is %s (%s); the canon is at version %d: run `dev-agent canon plan`" % (ver, why, LATEST))
+        F("/CANON.md", "store is %s (%s); the canon is at version %d: run `qargi canon plan`" % (ver, why, LATEST))
     else:
         d = parse_marker(mems["/CANON.md"]["content"])
         if d.get("kind") != a.kind: F("/CANON.md", "kind is %s, expected %s" % (d.get("kind"), a.kind))

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Skills and tools ("packs"): one library, names globally unique, attached by scope links.
 #
-#   library   $XDG_CONFIG_HOME/dev-agent/packs/skills/<name>/   (a directory with SKILL.md)
-#             $XDG_CONFIG_HOME/dev-agent/packs/tools/<name>.json (an MCP server with an allowlist)
-#   links     $XDG_CONFIG_HOME/dev-agent/packs/links.json
+#   library   $XDG_CONFIG_HOME/qargi/packs/skills/<name>/   (a directory with SKILL.md)
+#             $XDG_CONFIG_HOME/qargi/packs/tools/<name>.json (an MCP server with an allowlist)
+#   links     $XDG_CONFIG_HOME/qargi/packs/links.json
 #
 # A link attaches a pack at a scope: user (every project and role), user-role (one role of every
 # project), project (every role of one project), project-role (one role of one project). A role
@@ -131,7 +131,7 @@ if [ "$KIND" = packs ]; then
       while read -r e; do
         [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
         [ -e "$P" ] || die "attached pack $e is not in the library"
-        review "$k" "$P" >/dev/null || die "attached pack $e fails its review (dev-agent $k check $PRJ $ROL)"
+        review "$k" "$P" >/dev/null || die "attached pack $e fails its review (qargi $k check $PRJ $ROL)"
         want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
         { [ -z "$want" ] || [ "$want" = "$(content_hash "$P")" ]; } || die "attached pack $e changed since it was approved (drift); review it and re-import"
         if [ "$k" = skill ]; then cp -r "$P" "$OUT/skills/$n"; rm -f "$OUT/skills/$n/.pack.json"; echo "$n" >> "$OUT/custom_skills.txt"
@@ -193,7 +193,7 @@ case "$VERB" in
       mkdir -p "$P"; printf -- '---\nname: %s\ndescription: <when to use this skill, in one or two sentences>\n---\n\n# %s\n\n<the instructions the agent follows>\n' "$NAME" "$NAME" > "$P/SKILL.md"
     else printf '%s\n' "${TEMPLATE_TOOL//NAME/$NAME}" | jq . > "$P"; fi
     write_record "$P" "$KIND" created; audit_log "$KIND-new" "$NAME"
-    echo "created $KIND $NAME: $P"; echo "edit it, then link it: dev-agent $KIND link $NAME --scope S ...";;
+    echo "created $KIND $NAME: $P"; echo "edit it, then link it: qargi $KIND link $NAME --scope S ...";;
   import)
     SRC=${ARGS[0]:-}; [ -n "$SRC" ] || die "import needs a SOURCE (a directory or file, or an https git URL)"
     T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; SRCREC=$SRC
@@ -240,9 +240,9 @@ case "$VERB" in
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     L=$(link_args "$KIND:$NAME")
     if [ "$VERB" = link ]; then
-      review "$KIND" "$P" >/dev/null || die "the pack fails its review: dev-agent $KIND show $NAME"
+      review "$KIND" "$P" >/dev/null || die "the pack fails its review: qargi $KIND show $NAME"
       want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
-      [ "$want" = "$(content_hash "$P")" ] || die "$NAME changed since it was approved; review and approve it: dev-agent $KIND seal $NAME"
+      [ "$want" = "$(content_hash "$P")" ] || die "$NAME changed since it was approved; review and approve it: qargi $KIND seal $NAME"
       json_update "$LINKS" '.links = ((.links + [$l]) | unique)' --argjson l "$L"
     else json_update "$LINKS" '.links = (.links | map(select(. != $l)))' --argjson l "$L"; fi
     audit_log "$KIND-$VERB" "$L"; echo "$VERB: $L";;
@@ -268,7 +268,7 @@ case "$VERB" in
     exit $rc;;
   remove)
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
-    [ "$(jq -r --arg k "$KIND:$NAME" '[.links[] | select(.pack==$k)] | length' "$LINKS")" = 0 ] || die "$NAME is linked; unlink it from every scope first (dev-agent $KIND show $NAME)"
+    [ "$(jq -r --arg k "$KIND:$NAME" '[.links[] | select(.pack==$k)] | length' "$LINKS")" = 0 ] || die "$NAME is linked; unlink it from every scope first (qargi $KIND show $NAME)"
     audit_log "$KIND-remove" "$NAME"; rm -rf "$P" "$(record_of "$P")"; echo "removed $KIND $NAME";;
   *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...";;
 esac

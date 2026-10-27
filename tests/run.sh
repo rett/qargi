@@ -15,5 +15,5 @@ run python3 tests/role_seed_sim.py dev
 run python3 tests/role_seed_sim.py docs
 run python3 tests/role_seed_sim.py review
 run python3 tests/role_seed_sim.py test
-run shellcheck -x -S warning lib/*.sh bin/dev-agent install.sh tests/*.sh
+run shellcheck -x -S warning lib/*.sh bin/qargi install.sh tests/*.sh
 exit $rc

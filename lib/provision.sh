@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provision the cloud resources for a dev-agent instance with `ant apply`:
+# Provision the cloud resources for a qargi instance with `ant apply`:
 # environment, agent, memory store and deployment, then register the instance.
 #
 #   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
@@ -50,10 +50,10 @@ export PLAN_ARG
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
 [ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
-# The project's stored answers (dev-agent project init) give the defaults; flags win.
+# The project's stored answers (qargi project init) give the defaults; flags win.
 PCFG=$DA_CONF/projects/$PROJECT.json
 if [ -f "$PCFG" ]; then
-  jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (dev-agent project show $PROJECT)"
+  jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (qargi project show $PROJECT)"
   cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
   MODEL=${MODEL:-$(cfg '.roles[$r].model')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
   [ -n "$APT_SET" ] || APT=$(cfg '.roles[$r].apt | join(" ")')
@@ -130,18 +130,18 @@ plan_hash() {
 }
 
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
-# recorded in the project's stored answers so `dev-agent canon` finds them.
+# recorded in the project's stored answers so `qargi canon` finds them.
 canonise() {
   if [ ! -f "$PCFG" ]; then
-    echo "dev-agent: warning: no stored answers for $PROJECT, so the new stores are empty; run /dev-project, then: dev-agent canon apply $PROJECT --approved \"...\"" >&2
+    echo "qargi: warning: no stored answers for $PROJECT, so the new stores are empty; run /qargi-project, then: qargi canon apply $PROJECT --approved \"...\"" >&2
     return 0
   fi
   [ -z "${store:-}" ] || "$here/project.sh" set "$PROJECT" memory.memory_store "$store" >/dev/null
   [ -z "${refstore:-}" ] || "$here/project.sh" set "$PROJECT" memory.reference_store "$refstore" >/dev/null
-  DEV_AGENT_NESTED=1 "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not bring the new stores to the canon" >&2
+  QARGI_NESTED=1 "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "qargi: warning: could not bring the new stores to the canon" >&2
   local r
   for r in shared $(jq -r '.roles | keys[]' "$PCFG"); do
-    DEV_AGENT_NESTED=1 "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not seed role $r" >&2
+    QARGI_NESTED=1 "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "qargi: warning: could not seed role $r" >&2
   done
 }
 

@@ -1,7 +1,14 @@
-# dev-agent
+# qargi
 
-A Claude Code skill that dispatches one-off, task-scoped development tasks to
-sandboxed agents and takes the work back as reviewable patches. An agent
+**A gathering place for agent work: dispatch, review, remember.**
+
+*Qargi* is the Iñupiaq word for the traditional community house, where a village
+gathered to make and mend its tools, decide together and hand knowledge on. Here the
+work of agents gathers in the same way: tasks go out, patches come back for review,
+and what was learned is kept in memory.
+
+Qargi is a set of Claude Code skills and a CLI that dispatch one-off, task-scoped
+development tasks to sandboxed agents and take the work back as reviewable patches. An agent
 works on one task in its own clone and never pushes; the dispatching session
 verifies the result and applies it.
 
@@ -30,23 +37,23 @@ Every name follows from the project, so resources are identifiable at a glance.
 Memory belongs to the project, not the instance: every instance of a project
 mounts the same recipes store (read-write) and reference store (read-only), so
 what one agent learns serves the next. Provisioning attaches existing stores of
-that name and creates them only for a new project. `dev-agent instances normalize
+that name and creates them only for a new project. `qargi instances normalize
 NAME` renames an existing instance's resources to match, and `instances show`
-lists the deviations. The role list can be extended with `DEV_AGENT_ROLES`.
+lists the deviations. The role list can be extended with `QARGI_ROLES`.
 
 ## Skills and command
 
-Seven skills, all prefixed `dev-`, drive one `dev-agent` command. `/dev-task` dispatches work; the others configure and manage:
+Seven skills, all prefixed `dev-`, drive one `qargi` command. `/qargi-task` dispatches work; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
-| `/dev-task` | dispatch (`/dev-task "<task>" --done "<check>"`) and session lifecycle: `send`, `start`, `status`, `watch`, `collect`, `stop`, `close` |
-| `/dev-project` | the one-time project questionnaire: repository, roles, per-role push policy, models, skills, budget, memory |
-| `/dev-instances` | `init`, `list`, `show`, `remove`, `normalize` |
-| `/dev-provision` | `plan`, `apply`, `add-reference` |
-| `/dev-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), reviewed at import, checked for drift |
-| `/dev-memory` | `seed`, `seed-reference`, `lint`, migrating a flat store |
-| `/dev-review` | verifying and applying returned patches |
+| `/qargi-task` | dispatch (`/qargi-task "<task>" --done "<check>"`) and session lifecycle: `send`, `start`, `status`, `watch`, `collect`, `stop`, `close` |
+| `/qargi-project` | the one-time project questionnaire: repository, roles, per-role push policy, models, skills, budget, memory |
+| `/qargi-instances` | `init`, `list`, `show`, `remove`, `normalize` |
+| `/qargi-provision` | `plan`, `apply`, `add-reference` |
+| `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), reviewed at import, checked for drift |
+| `/qargi-memory` | `seed`, `seed-reference`, `lint`, migrating a flat store |
+| `/qargi-review` | verifying and applying returned patches |
 
 ## Install
 
@@ -56,14 +63,14 @@ Seven skills, all prefixed `dev-`, drive one `dev-agent` command. `/dev-task` di
 ```
 
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
-files (the whole tool is copied to `~/.local/share/dev-agent` for `--user`),
+files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove (copies need `--force`). An existing real directory is
 never replaced without `--force`. Install at one level only. The command is
 always user-level, so install `--user` before `--project`. The instance
 registry, session tracker and profiles are per user, under the XDG config and
 state directories, whichever level installs the skills. Repository rules for
-agents go in a profile under `$XDG_CONFIG_HOME/dev-agent/profiles/`, also
-outside the repository: nothing dev-agent related is added to a project's
+agents go in a profile under `$XDG_CONFIG_HOME/qargi/profiles/`, also
+outside the repository: nothing qargi related is added to a project's
 committed files. `--project` installs are hidden from git through the
 repository's local `.git/info/exclude`.
 

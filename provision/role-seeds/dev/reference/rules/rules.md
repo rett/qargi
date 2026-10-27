@@ -2,7 +2,7 @@
 
 Kind: rule
 Applies to: any
-Sources: dev-agent seed
+Sources: qargi seed
 
 ## Contents
 

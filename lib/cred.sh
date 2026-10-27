@@ -27,7 +27,7 @@ case $verb in
       authurl=${url/https:\/\//https://x-access-token@}
       if timeout 60 git ls-remote "$authurl" HEAD >/dev/null 2>"$tmp/read.err" </dev/null; then echo "read:  ok (the token can read $url)"; else echo "read:  FAILED (the token cannot read $url)"; exit 3; fi
       git -C "$tmp" init -q -b probe && git -C "$tmp" -c user.name=probe -c user.email=probe@example.invalid commit -q --allow-empty -m probe
-      if timeout 60 git -C "$tmp" push --dry-run "$authurl" HEAD:refs/heads/dev-agent-write-probe >/dev/null 2>&1 </dev/null; then
+      if timeout 60 git -C "$tmp" push --dry-run "$authurl" HEAD:refs/heads/qargi-write-probe >/dev/null 2>&1 </dev/null; then
         echo "write: the token CAN push (not read-only)"; exit 4
       else echo "write: refused (the token is read-only, as it should be)"; fi
     ); rc=$?

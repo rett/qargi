@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# qargi: one entry point for the helper scripts behind the dev-* skills.
+#
+#   qargi project template|init|show|list|validate ...      (skill: qargi-project)
+#   qargi instances init|list|show|remove|normalize ...   (skill: qargi-instances)
+#   qargi provision plan|apply|add-reference ...           (skill: qargi-provision)
+#   qargi memory seed|seed-reference|lint ...              (skill: qargi-memory)
+#   qargi canon check|plan|apply|import|promote PROJECT ... (skill: qargi-memory)
+#   qargi review check RUN_DIR                              (skill: qargi-review)
+#   qargi skill|tool new|import|list|show|link|unlink|enable|disable|effective|check|remove ...   (skill: qargi-packs)
+#   qargi packs render|apply ...                          (skill: qargi-packs)
+#   qargi credential check PROJECT [--allow-write-token]   (skill: qargi-project)
+#   qargi local prepare|verify ...                         (skill: qargi-task)
+#   qargi start|send|status|stop|mark|close ...            (skill: qargi-task)
+#   qargi watch SID [MAX_SECONDS]
+#   qargi collect SID DIR
+#   qargi version
+set -eu
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+lib=$root/lib
+
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+area=${1:-}; [ -n "$area" ] || usage; shift
+case $area in
+  project) exec "$lib/project.sh" "$@";;
+  instances) exec "$lib/registry.sh" "$@";;
+  provision) exec "$lib/provision.sh" "$@";;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; *) usage;; esac;;
+  skill|tool) exec "$lib/packs.sh" "$area" "$@";;
+  packs) exec "$lib/packs.sh" packs "$@";;
+  credential) exec "$lib/cred.sh" "$@";;
+  local) exec "$lib/local.sh" "$@";;
+  canon) exec "$lib/canon.sh" "$@";;
+  memory) exec "$lib/memory.sh" "$@";;
+  start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
+  watch) exec "$lib/watch.sh" "$@";;
+  collect) exec "$lib/collect.sh" "$@";;
+  version) cat "$root/VERSION";;
+  *) usage;;
+esac

@@ -1,15 +1,15 @@
 ---
-name: dev-review
+name: qargi-review
 description: Coordinator procedure for verifying and applying the patches a dev agent returned (local or cloud): check the manifest, scrub, apply on a scratch branch, re-run gates and the DONE check yourself, then report and apply only with the user's approval.
 argument-hint: <run directory with patches/ and manifest.json>
 ---
 
-# /dev-review (you are the coordinator)
+# /qargi-review (you are the coordinator)
 
-Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/dev-agent/profiles/<repo>.md`;
+Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/qargi/profiles/<repo>.md`;
 examples in `examples/`); without one, use the repository's own documented checks.
 
-0. `dev-agent review check RUN_DIR`: confirms the output is a numbered series with one patch
+0. `qargi review check RUN_DIR`: confirms the output is a numbered series with one patch
    per commit, each with its own message body, a manifest that matches, patch groups and
    a `series.md`, and flags a monolithic patch or a batch of commits made at the end. A FAIL
    means send it back to the agent; do not review a monolithic patch.
@@ -34,5 +34,5 @@ examples in `examples/`); without one, use the repository's own documented check
    unrelated changes, send it back to the agent to split, or split it by file yourself; do not
    fold commits together to tidy history. Check that each commit builds
    (`git rebase --exec 'go build ./...' <base>`, or the profile's equivalent) before you report. Ask before any push. Never merge to a
-   long-lived branch unless told. Then `dev-agent mark SID applied|rejected`
-   and `dev-agent close SID` for cloud sessions.
+   long-lived branch unless told. Then `qargi mark SID applied|rejected`
+   and `qargi close SID` for cloud sessions.

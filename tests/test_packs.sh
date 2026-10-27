@@ -5,9 +5,9 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
-export DEV_AGENT_CONF=$T/c DEV_AGENT_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s" "$T/bin"
+export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s" "$T/bin"
 printf '#!/usr/bin/env bash\ncase "$1" in auth) exit 0;; *) echo "{}";; esac\n' > "$T/bin/ant"; chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
-DA=./bin/dev-agent
+DA=./bin/qargi
 proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{dev:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
          docs:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:["pdf"]}},

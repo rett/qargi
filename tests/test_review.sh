@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# `dev-agent review check`: a series of change-specific patches passes; monolithic or unexplained
+# `qargi review check`: a series of change-specific patches passes; monolithic or unexplained
 # ones do not. Run: tests/test_review.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
-T=$(mktemp -d); fail=0; DA=$PWD/bin/dev-agent
+T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 git init -q -b main "$T/r"; cd "$T/r" || exit 1
 git config user.name t; git config user.email t@example.net

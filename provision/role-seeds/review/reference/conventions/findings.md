@@ -2,7 +2,7 @@
 
 Kind: convention
 Applies to: any
-Sources: dev-agent seed
+Sources: qargi seed
 
 ## Contents
 

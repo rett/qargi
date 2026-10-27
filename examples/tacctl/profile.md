@@ -1,6 +1,6 @@
 # Example profile: a Go CLI project
 
-Copy to `$XDG_CONFIG_HOME/dev-agent/profiles/<repository-name>.md` (outside
+Copy to `$XDG_CONFIG_HOME/qargi/profiles/<repository-name>.md` (outside
 the repository) and adapt. The coordinator inlines it in each task.
 
 ## Rules
