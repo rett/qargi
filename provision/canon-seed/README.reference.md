@@ -1,36 +1,18 @@
 # {{PROJECT}} reference
 
-Curated rules, workflow, conventions and architecture for {{PROJECT}}. Read-only:
-never write here; propose changes in your report. Your role is named in your
-prompt.
+Curated rules, workflow and conventions for {{PROJECT}}. Read-only: never write here; propose changes in your report.
 
 ## What to load
 
 1. This file.
-2. `shared/INDEX.md`: what every role follows.
-3. `roles/<your role>/INDEX.md`: what your role follows.
-Then only what the task needs. Never read another role's folder. Roles in this
-project:
+2. `shared/INDEX.md`, then `roles/<your role>/INDEX.md`. Load a note when its Load column says so. Never read another role's folder.
+
+Roles in this project:
 
 {{ROLES}}
 
-## Layout
-
-```
-CANON.md                 canon version marker
-_template.md             the note shape every file follows
-shared/                  folders named for their scope (rules/, workflow/, ...) for every role
-roles/<role>/            the same for that role, its INDEX.md, tools/
-```
-
 ## Rules
 
-1. One home per fact. Every note starts with Kind, Applies to and Sources (for
-   example `docs/x.md@abc1234`), following `_template.md`. A note without
-   sources is not trusted.
-2. The repository's own files win over this store.
-3. No secrets, private names, per-run data, backlog or plans.
-4. The coordinator curates; `dev-agent canon promote` moves a role's note to
-   `shared/` when every role needs it.
-5. Add the row (Path, Purpose, Load) to the matching `INDEX.md` in the same
-   change as the note.
+1. One home per fact. Every note starts with Kind, Applies to and Sources (`_template.md`); the repository's own files win.
+2. No secrets, private names, per-run data, backlog or plans.
+3. The coordinator curates, and adds a note's row (Path, Purpose, Load) to its INDEX.md in the same change.
