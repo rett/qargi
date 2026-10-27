@@ -2,7 +2,7 @@ name: {{NAME}}-deployment
 description: Manual-run deployment for {{NAME}}. No schedule; each run starts a standby session.
 agent: ./agent.md
 environment_id: ./environment.yaml
-vault_ids: []
+{{VAULT_IDS}}
 budget: {type: limit, max_list_cost: {amount: "{{BUDGET}}", currency: USD}}
 {{RESOURCES}}
 initial_events:

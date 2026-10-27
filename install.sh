@@ -19,7 +19,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-skills="dev-task dev-project dev-instances dev-provision dev-memory dev-review"
+skills="dev-task dev-project dev-instances dev-provision dev-memory dev-packs dev-review"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -48,7 +48,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/dev-agent.md | grep -E '(^|/)(dev|dev-agent|dev-task|dev-project|dev-instances|dev-provision|dev-memory|dev-review)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/dev-agent.md | grep -E '(^|/)(dev|dev-agent|dev-task|dev-project|dev-instances|dev-provision|dev-memory|dev-packs|dev-review)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: dev-agent paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi

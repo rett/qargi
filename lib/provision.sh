@@ -86,18 +86,29 @@ render() {
   apt_list="[$(printf '%s' "$APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
+  rm -rf "$W/packs-out"; "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"
   sys=$(sed "s/{{ROLE}}/$ROLE/g" "$TPL/cloud-preamble.md"; cat "$here/../skills/dev-task/agent-contract.md"; [ ! -f "$RS/contract.md" ] || cat "$RS/contract.md")
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" <<'EOF'
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills = sys.argv[1:14]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out = sys.argv[1:15]
+import json, os, shutil
 t = pathlib.Path(tpl); o = pathlib.Path(out)
 res = []
 if not have_mem: res.append("  - ./memory_store-recipes.yaml")
 if not have_ref: res.append("  - ./memory_store-reference.yaml")
 resources = ("resources:\n" + "\n".join(res)) if res else "resources: []"
 sk = "".join("\n  - {type: anthropic, skill_id: %s, version: latest}" % x for x in skills.split())
+custom = open(packs_out + "/custom_skills.txt").read().split() if os.path.exists(packs_out + "/custom_skills.txt") else []
+mcp = json.load(open(packs_out + "/mcp.json")) if os.path.exists(packs_out + "/mcp.json") else []
+sk += "".join("\n  - ./skills/%s" % n for n in custom)
 skills_yaml = ("skills:" + sk) if sk else "skills: []"
-sub = {"{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
+mcp_servers = ("mcp_servers:" + "".join("\n  - {type: url, name: %s, url: %s}" % (json.dumps(t["name"]), json.dumps(t["url"])) for t in mcp)) if mcp else ""
+mcp_tools = "".join("\n  - type: mcp_toolset\n    mcp_server_name: %s\n    default_config: {enabled: false}\n    configs:%s" % (json.dumps(t["name"]), "".join("\n      - {name: %s, enabled: true, permission_policy: {type: %s}}" % (json.dumps(k), v) for k, v in t["tools"].items())) for t in mcp)
+vaults = sorted({v for t in mcp for v in t.get("vault_ids", [])})
+vault_yaml = "vault_ids: [%s]" % ", ".join(vaults)
+shutil.rmtree(out + "/skills", ignore_errors=True)
+if os.path.isdir(packs_out + "/skills") and custom: shutil.copytree(packs_out + "/skills", out + "/skills")
+sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
        "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
 def r(src, dst, extra=None):
     s = (t / src).read_text()

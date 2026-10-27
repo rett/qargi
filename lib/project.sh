@@ -69,6 +69,8 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
     need(mode in ("none", "coordinator", "agent"), "%s.push.mode: none (the only implemented policy)" % p)
     if mode in ("coordinator", "agent"):
         bad.append("%s.push.mode: only 'none' is implemented; the coordinator and agent push policies are not built yet" % p)
+    po = cfg.get("packs_off", [])
+    need(isinstance(po, list) and all(isinstance(x, str) and re.fullmatch(r"(skill|tool):[a-z0-9][a-z0-9-]{0,40}", x) for x in po), "%s.packs_off: a list like [\"skill:name\", \"tool:name\"]" % p)
     need(re.fullmatch(r"claude-[a-z0-9.-]+", cfg.get("model", "") or ""), "%s.model: a model id like claude-sonnet-5-5" % p)
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
