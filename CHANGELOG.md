@@ -18,3 +18,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   agent, recipes memory store, manual-run deployment) from templates with
   `ant apply`, with a plan step that changes nothing and an apply step that
   needs the user's go-ahead; the lock file stays in the state directory.
+- `install.sh --user` and `--project DIR`, with symlink (default) or `--copy`
+  installs, `--uninstall`, and a refusal to replace existing real files
+  without `--force`.
