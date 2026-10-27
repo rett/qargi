@@ -48,6 +48,7 @@ config and state directories, never in the repository.
 | stop | `S stop SID` | `user.interrupt`; the session returns to idle. |
 | close | `S mark SID applied\|rejected` then `S close SID [--no-outputs]` | Archives (never deletes). Refuses while running, uncollected (unless `--no-outputs`, for tasks that produce no files such as memory curation), or with the verdict pending. |
 | remove | `R remove NAME` | Registry entry only; refuses with open sessions. |
+| normalize | `R normalize NAME --asked "..." [--approved "..."]` | Renames an instance's agent, environment, memory store and deployment to `<NAME>-agent`, `-environment`, `-memory`, `-deployment`. Prints the plan first; renames only with `--approved`. A renamed memory store mounts under its new name in new sessions. |
 | provision (plan) | `provision.sh plan NAME [--model M] [--effort E] [--apt "pkg ..."] [--networking unrestricted\|limited]` | Renders environment, agent, recipes memory store and manual-run deployment files and prints the `ant apply --dry-run` plan. Changes nothing. |
 | provision (apply) | `provision.sh apply NAME --asked "..." --approved "<user's go-ahead for that plan>"` | Creates the resources with `ant apply --yes`, seeds the store README, registers the instance. Show the user the plan first; `--approved` is their approval, not yours. Existing Console- or CLI-created resources cannot be adopted: this creates new ones. |
 

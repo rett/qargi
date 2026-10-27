@@ -10,6 +10,7 @@
 #        registry.sh list [--reconcile]
 #        registry.sh show NAME [--reconcile]
 #        registry.sh remove NAME
+#        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <NAME>-agent|environment|memory|deployment)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
@@ -153,7 +154,46 @@ reconcile() {
     done
 }
 
+normalize() {
+  need_asked; ant_ok
+  local n=$1 i aid eid mid did ag env mem dep aver changes=0
+  i=$(inst_get "$n") || exit 1
+  [ "$(jq -r .location <<<"$i")" = cloud ] || die "normalize applies to cloud instances"
+  printf '%s' "$n" | grep -Eq '^[a-z][a-z0-9]*(-[a-z0-9]+)+$' || die "instance name must be <project>-<role> (kebab-case)"
+  aid=$(jq -r .agent.id <<<"$i"); eid=$(jq -r .environment_id <<<"$i"); did=$(jq -r .deployment_id <<<"$i")
+  mid=$(jq -r '[.resources[] | select(.type=="memory_store" and .access=="read_write")][0].memory_store_id // empty' <<<"$i")
+  ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null) || die "cannot read agent"
+  env=$(ant beta:environments retrieve --environment-id "$eid" 2>/dev/null) || die "cannot read environment"
+  dep=$(ant beta:deployments retrieve --deployment-id "$did" 2>/dev/null) || die "cannot read deployment"
+  aver=$(jq -r .version <<<"$ag")
+  show() { # kind old new
+    if [ "$2" = "$3" ]; then echo "  $1: $2 (ok)"; else echo "  $1: $2 -> $3"; changes=1; fi
+  }
+  echo "PLAN: resource names for $n"
+  show agent "$(jq -r .name <<<"$ag")" "$n-agent"
+  show environment "$(jq -r .name <<<"$env")" "$n-environment"
+  if [ -n "$mid" ]; then
+    mem=$(ant beta:memory-stores retrieve --memory-store-id "$mid" 2>/dev/null) || die "cannot read memory store"
+    show memory "$(jq -r .name <<<"$mem")" "$n-memory"
+    [ "$(jq -r .name <<<"$mem")" = "$n-memory" ] || echo "  note: the memory mount path becomes /mnt/memory/$n-memory in NEW sessions; check the agent's system prompt for the old path"
+  fi
+  show deployment "$(jq -r .name <<<"$dep")" "$n-deployment"
+  [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
+  [ -n "$APPROVED" ] || { echo "re-run with --approved \"<the user's go-ahead>\" to rename; nothing changed"; return 0; }
+  if [ "$(jq -r .name <<<"$ag")" != "$n-agent" ]; then
+    ant beta:agents update --agent-id "$aid" --version "$aver" --name "$n-agent" >/dev/null 2>&1 || die "agent rename failed"
+    ant beta:deployments update --deployment-id "$did" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was renamed)"
+  fi
+  [ "$(jq -r .name <<<"$env")" = "$n-environment" ] || ant beta:environments update --environment-id "$eid" --name "$n-environment" >/dev/null 2>&1 || die "environment rename failed"
+  [ -z "$mid" ] || [ "$(jq -r .name <<<"$mem")" = "$n-memory" ] || ant beta:memory-stores update --memory-store-id "$mid" --name "$n-memory" >/dev/null 2>&1 || die "memory store rename failed"
+  [ "$(jq -r .name <<<"$dep")" = "$n-deployment" ] || ant beta:deployments update --deployment-id "$did" --name "$n-deployment" >/dev/null 2>&1 || die "deployment rename failed"
+  dep=$(ant beta:deployments retrieve --deployment-id "$did" 2>/dev/null)
+  json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$(jq .agent.version <<<"$dep")"
+  echo "renamed; the deployment now pins agent v$(jq -r .agent.version <<<"$dep")"
+}
+
 case $verb in
+  normalize) [ -n "$ARG" ] || die "normalize needs NAME"; normalize "$ARG";;
   init)
     case $LOC in
       cloud) if [ -n "$PROVISION" ]; then init_provision; else init_cloud; fi;;

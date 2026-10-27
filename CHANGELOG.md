@@ -45,3 +45,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   default 500) and sessions inherit it. The tracker records the session's
   actual budget and warns when a session has none.
 - `session.sh close --no-outputs` for tasks that produce no files (memory curation), recorded as not-applicable in the tracker.
+- Resources are named `<project>-<role>-<component>` (agent, environment,
+  memory, deployment); `provision.sh --project P --role R` creates them that
+  way and `registry.sh normalize NAME` renames an existing instance to match.

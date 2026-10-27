@@ -13,6 +13,15 @@ Two kinds of agent instance are supported and registered by name:
 Local is the default. Cloud is used only when the user asks for it in that
 request.
 
+## Resource names
+
+Every cloud resource is named `<project>-<role>-<component>`, where
+`<project>-<role>` is also the instance name in the registry (for example
+`tacctl-dev`) and the component is one of `agent`, `environment`, `memory`,
+`deployment` (`vault` when one is managed). Provisioning
+(`--project P --role R`, role defaults to `dev`) creates them that way, and
+`registry.sh normalize NAME` renames an existing instance's resources to match.
+
 ## Install
 
 ```sh

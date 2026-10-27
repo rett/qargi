@@ -5,6 +5,8 @@
 #   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
 #   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
+# Resources are named <NAME>-agent, -environment, -memory and -deployment, where
+# NAME is <project>-<role> (--project P --role R, role defaults to dev).
 # Options also include --budget CENTS (default 500, set on the deployment).
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
 # changes nothing. `apply` creates the resources only with --approved (the
@@ -20,7 +22,8 @@ TPL=$here/../provision/templates
 [ -d "$TPL" ] || die "templates not found next to the skill"
 
 verb=${1:-}; shift || true
-NAME=${1:-}; shift || true
+NAME='' PROJECT='' ROLE=dev
+if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
 MODEL=claude-sonnet-5-5 EFFORT=high APT='' NETWORKING=unrestricted APPROVED='' BUDGET=500
 while [ $# -gt 0 ]; do
   case $1 in
@@ -31,11 +34,15 @@ while [ $# -gt 0 ]; do
     --asked) ASKED=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
     --budget) BUDGET=$2; shift 2;;
+    --project) PROJECT=$2; shift 2;;
+    --role) ROLE=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done
 
-case $NAME in ''|*[!a-z0-9-]*|-*) die "NAME must be kebab-case (a-z, 0-9, -)";; esac
+[ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
+printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9]*(-[a-z0-9]+)+$' || die "name must be <project>-<role> in kebab-case (for example tacctl-dev); give NAME or --project P [--role R]"
+[ ${#NAME} -le 40 ] || die "name too long (40 characters at most)"
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
 ant_ok
