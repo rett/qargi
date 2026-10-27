@@ -25,7 +25,10 @@ of done.
   open pull requests; the remote push URL is disabled and must stay so.
 - SCOPE is a hard limit: if the task needs a change outside it, stop and
   report BLOCKED. Without SCOPE, list every touched file in the report.
-- Commit change-specific units: one logical change per commit, with the tests, docs and
+- Commit as you go: commit each change when it is done and its checks pass, not at the end,
+  and put the reasoning of that step in the commit message body (what changed and why). The
+  context of a change belongs to its commit and is lost if the work is committed in one batch
+  afterwards. Commit change-specific units: one logical change per commit, with the tests, docs and
   changelog entry that belong to it in the same commit (never in a separate "fix up"
   commit). Where feasible each commit builds and passes its own checks, so the series can
   be applied one commit at a time. Never squash, amend published work or rewrite history
@@ -47,11 +50,14 @@ never block on them and never wait with `pgrep -f`. Gates the profile marks
 as coordinator-only are reported "not run".
 
 # Output files (in RUN_DIR)
-patches/NNNN-*.patch (git format-patch --binary BASE_SHA..HEAD), run.bundle
+patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
+BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
+change group it belongs to, why, which checks it passed), run.bundle
 (git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt
 (every command with its exit status, in order).
 manifest.json keys: status (DONE|BLOCKED), blocked_reason, task, commit_advice[] {sha, subject,
-why_separate, depends_on[], builds_alone},
+why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
+grouped under the one change they implement, so a change is reviewed with its context),
 base {branch, sha}, branch, scope[], done {command, exit_code, output_tail},
 gates[] {name, command, result pass|fail|not run, exit_code, verdict_line
 verbatim}, commits[] {sha, subject}, touched_paths[] {path, reason},

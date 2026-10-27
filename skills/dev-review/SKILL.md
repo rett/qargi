@@ -9,6 +9,10 @@ argument-hint: <run directory with patches/ and manifest.json>
 Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/dev-agent/profiles/<repo>.md`;
 examples in `examples/`); without one, use the repository's own documented checks.
 
+0. `dev-agent review check RUN_DIR`: confirms the output is a numbered series with one patch
+   per commit, each with its own message body, a manifest that matches, patch groups and
+   a `series.md`, and flags a monolithic patch or a batch of commits made at the end. A FAIL
+   means send it back to the agent; do not review a monolithic patch.
 1. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate
    verdict lines; touched paths inside SCOPE; status DONE.
 2. Read every patch, each commit's diff on its own and not just the series, and the agent's

@@ -40,8 +40,10 @@ registered local one. A cloud instance only when the user's request named it.
   Every gated verb is also logged in `$XDG_STATE_HOME/dev-agent/audit.log`.
 - A cloud session without a spend budget is refused (`send`) or not registered (`init`).
 - Every submitted patch is reviewed (`/dev-review`) before it is applied, and it is applied as
-  separate, change-specific commits, never squashed. The agent advises how its work should be
-  committed; the coordinator decides.
+  separate, change-specific commits, never squashed. The agent commits as it goes and returns
+  one patch per commit (with each commit's reasoning in its message), grouped by the change
+  they implement, never one combined patch; `dev-agent review check RUN_DIR` verifies it. The
+  agent advises how its work should be committed; the coordinator decides.
 
 ## Commands
 
