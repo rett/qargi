@@ -1,0 +1,13 @@
+name: {{NAME}}-deployment
+description: Manual-run deployment for the {{NAME}} dev-agent. No schedule; each run starts a standby session.
+agent: ./agent.md
+environment_id: ./environment.yaml
+vault_ids: []
+resources:
+  - ./memory_store-recipes.yaml
+initial_events:
+  - type: user.message
+    content:
+      - type: text
+        text: |
+          You are on standby for the /dev-agent cloud backend. Do no repository work until the coordinator sends a task with a --done check. Reply only: ready.

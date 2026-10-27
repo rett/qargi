@@ -14,3 +14,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Agent contract and a per-repository profile (`.dev-agent/profile.md`) for
   gates and rules; an example profile for a Go CLI project.
 - `install.sh` to symlink the skill and the local subagent into a project.
+- `provision.sh`: create the cloud resources for an instance (environment,
+  agent, recipes memory store, manual-run deployment) from templates with
+  `ant apply`, with a plan step that changes nothing and an apply step that
+  needs the user's go-ahead; the lock file stays in the state directory.
