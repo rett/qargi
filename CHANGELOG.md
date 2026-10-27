@@ -44,3 +44,4 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   set on the deployment (`init --budget CENTS`, or `provision.sh --budget`,
   default 500) and sessions inherit it. The tracker records the session's
   actual budget and warns when a session has none.
+- `session.sh close --no-outputs` for tasks that produce no files (memory curation), recorded as not-applicable in the tracker.

@@ -46,7 +46,7 @@ config and state directories, never in the repository.
 | collect | `collect.sh SID DIR` | Downloads the session's outputs into a fresh directory; marks collected only if `manifest.json` is there. |
 | review | see Review | The coordinator's verification, both backends. |
 | stop | `S stop SID` | `user.interrupt`; the session returns to idle. |
-| close | `S mark SID applied\|rejected` then `S close SID` | Archives (never deletes). Refuses while running, uncollected, or with the verdict pending. |
+| close | `S mark SID applied\|rejected` then `S close SID [--no-outputs]` | Archives (never deletes). Refuses while running, uncollected (unless `--no-outputs`, for tasks that produce no files such as memory curation), or with the verdict pending. |
 | remove | `R remove NAME` | Registry entry only; refuses with open sessions. |
 | provision (plan) | `provision.sh plan NAME [--model M] [--effort E] [--apt "pkg ..."] [--networking unrestricted\|limited]` | Renders environment, agent, recipes memory store and manual-run deployment files and prints the `ant apply --dry-run` plan. Changes nothing. |
 | provision (apply) | `provision.sh apply NAME --asked "..." --approved "<user's go-ahead for that plan>"` | Creates the resources with `ant apply --yes`, seeds the store README, registers the instance. Show the user the plan first; `--approved` is their approval, not yours. Existing Console- or CLI-created resources cannot be adopted: this creates new ones. |

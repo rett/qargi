@@ -6,17 +6,18 @@
 #   session.sh status [SID|NAME]
 #   session.sh stop SID
 #   session.sh mark SID applied|rejected|pending
-#   session.sh close SID
+#   session.sh close SID [--no-outputs]   (--no-outputs: the task produced no files, e.g. memory curation)
 #   session.sh track NAME SID --asked "..."     (used by init)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-LABEL= SESSION= NEW= ASKED= POS=()
+LABEL='' SESSION='' NEW='' ASKED='' NOOUT='' POS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --label) LABEL=$2; shift 2;;
     --session) SESSION=$2; shift 2;;
     --new) NEW=1; shift;;
+    --no-outputs) NOOUT=1; shift;;
     --asked) ASKED=$2; shift 2;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
@@ -120,7 +121,11 @@ close() {
   row=$(jq -e --arg s "$sid" '.[$s]' "$TRK") || die "session $sid is not tracked"
   trk_refresh "$sid" || die "cannot read $sid"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" != running ] || die "session is running; stop it first"
-  [ "$(jq -r .outputs_collected <<<"$row")" = true ] || die "outputs not collected; run collect.sh first"
+  if [ -z "$NOOUT" ]; then
+    [ "$(jq -r .outputs_collected <<<"$row")" = true ] || die "outputs not collected; run collect.sh first (or pass --no-outputs if the task produced no files)"
+  else
+    json_update "$TRK" '.[$s].outputs_collected = "not-applicable"' --arg s "$sid"
+  fi
   [ "$(jq -r --arg s "$sid" '.[$s].review_state' "$TRK")" != pending ] || die "review verdict pending; mark applied or rejected first"
   ant beta:sessions archive --session-id "$sid" >/dev/null || die "archive failed"
   json_update "$TRK" '.[$s].closed_at = $t | .[$s].status = "archived"' --arg s "$sid" --arg t "$(now)"
