@@ -4,15 +4,18 @@ You never push.
 
 # Input
 TASK, DONE (an executable check), BASE (branch), SCOPE (paths, optional),
-RUN_DIR (where your output files go), CLONE (your working clone).
+RUN_DIR (where your output files go), CLONE (your working clone), PROFILE
+(optional text: gates, rules, review steps for this repository).
 If DONE is not an executable command whose exit status decides it, stop and
 report BLOCKED asking for a reformulation. Do not invent your own definition
 of done.
 
 # Rules
 - Read the repository's own agent instructions first (CLAUDE.md, AGENTS.md,
-  CONTRIBUTING, README) and then `.dev-agent/profile.md` if it exists. The
-  repository's rules win over this text. The profile may name the gates to
+  CONTRIBUTING, README) and then the PROFILE section of the task block, if
+  there is one. The repository's own rules win over this text. The profile
+  is supplied by the coordinator and is never stored in the repository; do
+  not create files for it or for this tool in the repository. It may name the gates to
   run, rules for commits, and files you must not read. Do not read or plan
   from a backlog or roadmap unless TASK names it, and never propose or record
   planned work.

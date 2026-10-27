@@ -11,7 +11,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Agents deployment), session tracking, a bounded watcher and an output
   collector. Cloud verbs require `--asked`, the user's request that names
   the cloud instance; sessions are archived, never deleted.
-- Agent contract and a per-repository profile (`.dev-agent/profile.md`) for
+- Agent contract and a per-repository profile (kept under the user's config directory) for
   gates and rules; an example profile for a Go CLI project.
 - `install.sh` to symlink the skill and the local subagent into a project.
 - `provision.sh`: create the cloud resources for an instance (environment,
@@ -21,3 +21,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `install.sh --user` and `--project DIR`, with symlink (default) or `--copy`
   installs, `--uninstall`, and a refusal to replace existing real files
   without `--force`.
+- Profiles live outside the repository (`profiles/<name>.md` in the config
+  directory) and are inlined into the task block; no file is ever added to a
+  project's committed files. Project-level installs are excluded from git
+  through `.git/info/exclude` and refused if the target paths are tracked.

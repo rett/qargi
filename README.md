@@ -26,7 +26,10 @@ shared), `--uninstall` to remove. An existing real directory is never
 replaced without `--force`. Install at one level only. The instance registry
 and session tracker are always per user, under the XDG config and state
 directories, whichever level installs the skill. Repository rules for
-agents go in `.dev-agent/profile.md` in the target repository.
+agents go in a profile under `$XDG_CONFIG_HOME/dev-agent/profiles/`, also
+outside the repository: nothing dev-agent related is added to a project's
+committed files. `--project` installs are hidden from git through the
+repository's local `.git/info/exclude`.
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).

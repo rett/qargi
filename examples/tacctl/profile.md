@@ -1,6 +1,7 @@
 # Example profile: a Go CLI project
 
-Copy to `.dev-agent/profile.md` in the target repository and adapt.
+Copy to `$XDG_CONFIG_HOME/dev-agent/profiles/<repository-name>.md` (outside
+the repository) and adapt. The coordinator inlines it in each task.
 
 ## Rules
 - Skip the repository's "start with the backlog and release plan" line; read

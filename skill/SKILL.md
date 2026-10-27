@@ -53,8 +53,18 @@ config and state directories, never in the repository.
 ## Task block (the `send` text)
 
 TASK, DONE (executable check; if the user gave prose, get an executable form
-first), BASE (default: the dispatching session's branch; explicit if that is
+first), PROFILE (the text of the repository's profile, inlined; see Profiles), BASE (default: the dispatching session's branch; explicit if that is
 master or develop), base SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
+
+## Profiles (kept outside the repository)
+
+A profile holds a repository's gates, rules and coordinator review steps. It
+lives under the user's config directory, never in the project:
+`$XDG_CONFIG_HOME/dev-agent/profiles/<name>.md`, where `<name>` is the
+repository directory's name (override with `--profile NAME|FILE`). Before a
+`send`, read it and inline its text as the PROFILE part of the task block.
+No profile is fine: the agent then follows the repository's own documentation.
+Nothing dev-agent related is ever added to a project's committed files.
 
 ## Cloud flow (user asked for it)
 
@@ -79,8 +89,8 @@ master or develop), base SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
 
 ## Review (both backends; you are the coordinator)
 
-Gates come from the target repository's `.dev-agent/profile.md` (see
-`examples/`); without a profile, use the repository's own documented checks.
+Gates come from the repository's profile (see Profiles; examples in
+`examples/`); without one, use the repository's own documented checks.
 
 1. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate
    verdict lines; touched paths inside SCOPE; status DONE.
