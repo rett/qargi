@@ -1,27 +1,25 @@
 ---
 name: dev-memory
-description: Seed and lint the two dev-agent memory stores: the agent-written recipes store (layered how-to facts with Check and Verified lines) and the curated, read-only development reference store (numbered folders of rules, workflow, conventions, architecture). Also covers migrating a flat store.
-argument-hint: seed|seed-reference|lint STORE_ID [--kind recipes|reference] [--repo NAME]
+description: Check, reconcile and curate the two dev-agent memory stores of a project: the agent-written recipes store (<project>-memory) and the curated, read-only reference store (<project>-reference), both laid out by the versioned canon (shared/ plus roles/<role>/). Lint, plan/apply a migration, import a foreign store, seed a role, promote a file to shared, audit cross-role writes.
+argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lint STORE_ID
 ---
 
 # /dev-memory
 
-**Recipes store** (`<NAME>-memory`, agent read-write): `README.md` index
-(under 3 KB), `sandbox/<topic>.md`, `repos/<repo>/{INDEX.md,setup,gates,pitfalls}/`
-and `_template.md`. One verified fact per file with `Kind`, `Applies to`,
-`Check`, `Verified`. No secrets, per-run data, backlog or plans. Agents load
-the README at session start and the rest on demand.
+**Memory store** (`<project>-memory`, agents read-write): verified how-to facts. A recipe file
+carries `Kind`, `Applies to`, `Check`, `Verified`. No secrets, per-run data, backlog or
+plans. Agents load the README at session start and the rest on demand.
 
-**Reference store** (`<NAME>-reference`, agent read-only): numbered folders
-`01-rules` … `07-review` plus a README with a "load by task" table. Every
-statement carries a source tag. Agents propose changes in their report; the
-coordinator applies them (write with `ant beta:memory-stores:memories`).
+**Reference store** (`<project>-reference`, agents read-only): curated rules, workflow,
+conventions and architecture in folders named for their scope (no numbered prefixes), with
+an index that has a Load column. Every statement carries a source tag. Agents propose
+changes in their report; the coordinator applies them (write with
+`ant beta:memory-stores:memories`).
 
-| Verb | Command | Notes |
-|---|---|---|
-| seed | `dev-agent memory seed STORE_ID [--repo NAME]` | README, `_template.md` and `repos/NAME/INDEX.md`; never overwrites. |
-| seed-reference | `dev-agent memory seed-reference STORE_ID` | The reference skeleton; never overwrites. |
-| lint | `dev-agent memory lint STORE_ID [--kind recipes\|reference]` | Read-only: layout, index coverage, required fields, size, secrets, staleness. Exit 1 on any FAIL. |
+Stores are created and seeded by `/dev-provision`, which uses the canon. The fuller
+content rules for recipe files (fields, staleness, size, address patterns) are not part of
+canon version 1; `dev-agent memory lint STORE_ID` runs them next to `canon check` and
+exits 1 on any FAIL.
 
 ## The canon and the reconciler
 
@@ -40,12 +38,5 @@ only its own role's index, never another role's folder.
 | promote | `dev-agent canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
 | audit | `dev-agent canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder. |
 
-`dev-agent memory lint` hands canon stores to `canon check` and checks only the
-pre-canon layouts itself. Stores are created and seeded by `/dev-provision`, which
-uses the canon. A new canon version means a new migration; see `canon/CANON.md`
-§ Changing the canon.
-
-Migrating a flat store (pre-canon): seed, replace the old README, have the cloud agent
-move each file to its new place re-running each `Check` (cheap ones; expensive
-ones keep their date marked "not re-run"), then lint and close the session with
-`dev-agent close SID --no-outputs`.
+`dev-agent memory lint` runs `canon check` (structure) and the fuller content rules.
+A new canon version means a new migration; see `canon/CANON.md` § Changing the canon.

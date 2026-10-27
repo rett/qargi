@@ -27,7 +27,7 @@ TPL=$here/../provision/templates
 verb=${1:-}; shift || true
 NAME='' PROJECT='' ROLE=dev
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
-MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
+PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
 while [ $# -gt 0 ]; do
   case $1 in
     --model) MODEL=$2; shift 2;;
@@ -36,6 +36,7 @@ while [ $# -gt 0 ]; do
     --networking) NETWORKING=$2; shift 2;;
     --asked) ASKED=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
+    --plan) PLAN_ARG=$2; shift 2;;
     --budget) BUDGET=$2; shift 2;;
     --project) PROJECT=$2; shift 2;;
     --role) ROLE=$2; shift 2;;
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+export PLAN_ARG
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
 [ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
@@ -64,9 +66,12 @@ case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|l
 ant_ok
 
 # Project-level stores: attach the ones that exist, create the others.
-find_store() { ant beta:memory-stores list --max-items -1 2>/dev/null | jq -r --arg n "$1" 'select(.name==$n and (.archived_at // null)==null) | .id' | head -1; }
-MEMID=${MEMORY_STORE:-$(find_store "$PROJECT-memory")}
-REFID=${REFERENCE_STORE:-$(find_store "$PROJECT-reference")}
+find_store() {
+  local l; l=$(ant beta:memory-stores list --max-items -1 2>/dev/null) || return 1
+  jq -r --arg n "$1" 'select(.name==$n and (.archived_at // null)==null) | .id' <<<"$l" | head -1
+}
+if [ -n "$MEMORY_STORE" ]; then MEMID=$MEMORY_STORE; else MEMID=$(find_store "$PROJECT-memory") || die "cannot list memory stores; nothing was changed"; fi
+if [ -n "$REFERENCE_STORE" ]; then REFID=$REFERENCE_STORE; else REFID=$(find_store "$PROJECT-reference") || die "cannot list memory stores; nothing was changed"; fi
 store_note() { # kind name id
   if [ -n "$3" ]; then echo "$1 store: attach existing store $3 (convention name $2)"; else echo "$1 store: create $2"; fi
 }
@@ -109,6 +114,11 @@ EOF
 
 FILES=(agents/"$NAME"/deployment-standby.yaml)
 
+# What apply would create: the rendered files, the stores it attaches, the budget.
+plan_hash() {
+  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME"; } | plan_token
+}
+
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
 # recorded in the project's stored answers so `dev-agent canon` finds them.
 canonise() {
@@ -118,10 +128,10 @@ canonise() {
   fi
   [ -z "${store:-}" ] || "$here/project.sh" set "$PROJECT" memory.memory_store "$store" >/dev/null
   [ -z "${refstore:-}" ] || "$here/project.sh" set "$PROJECT" memory.reference_store "$refstore" >/dev/null
-  "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not bring the new stores to the canon" >&2
+  DEV_AGENT_NESTED=1 "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not bring the new stores to the canon" >&2
   local r
   for r in $(jq -r '.roles | keys[]' "$PCFG"); do
-    "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not seed role $r" >&2
+    DEV_AGENT_NESTED=1 "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not seed role $r" >&2
   done
 }
 
@@ -131,11 +141,13 @@ case $verb in
     echo "files rendered in $D"
     store_note memory "$PROJECT-memory" "$MEMID"
     store_note reference "$PROJECT-reference" "$REFID"
+    echo "plan token: $(plan_hash)   (apply with: --plan <token> --approved \"...\")"
     (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}");;
   apply)
     need_asked
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan $NAME>\""
     render
+    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME"
     (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     dep=$(key 'deployment-standby')
@@ -152,11 +164,15 @@ case $verb in
       ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
         || die "could not set the stores' access on the deployment; fix it before running a session"
     fi
+    if [ -f "$PCFG" ]; then   # record the ids of attached stores too
+      [ "$(jq -r '.memory.memory_store // ""' "$PCFG")" = "$store" ] || "$here/project.sh" set "$PROJECT" memory.memory_store "$store" >/dev/null
+      [ "$(jq -r '.memory.reference_store // ""' "$PCFG")" = "$refstore" ] || "$here/project.sh" set "$PROJECT" memory.reference_store "$refstore" >/dev/null
+    fi
     if [ -n "$newstores" ]; then canonise; fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
   add-reference)
-    need_asked
+    need_asked; audit_log provision-add-reference "$NAME"
     [ -n "$APPROVED" ] || die "add-reference needs --approved \"<the user's go-ahead>\" (it creates a memory store and changes the deployment)"
     inst=$(jq -e --arg n "$NAME" '.[$n]' "$REG") || die "no instance named $NAME"
     dep=$(jq -r .deployment_id <<<"$inst")

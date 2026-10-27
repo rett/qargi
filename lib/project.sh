@@ -10,8 +10,9 @@
 #                                         roles.docs.effort high (VALUE is JSON, or a plain string)
 #   project.sh show NAME | list | validate FILE
 #
-# Push policy per role (push.mode). The default for every role is none: an agent
-# never pushes unless the user chose otherwise, explicitly, at project init.
+# Push policy per role (push.mode). Only "none" is implemented: an agent never
+# pushes. The "coordinator" and "agent" policies below are designed but not built, so
+# the validator refuses them rather than accept an answer nothing would honour.
 #
 #   none         the agent returns patches; nothing is pushed unless the user asks
 #   coordinator  the agent returns patches; after review the coordinator pushes a
@@ -53,17 +54,9 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
     need(isinstance(cfg.get("base"), str) and cfg["base"], "%s.base: base branch, or @dispatcher for the dispatching session's branch" % p)
     push = cfg.get("push", {})
     mode = push.get("mode")
-    need(mode in ("none", "coordinator", "agent"), "%s.push.mode: none, coordinator or agent" % p)
+    need(mode in ("none", "coordinator", "agent"), "%s.push.mode: none (the only implemented policy)" % p)
     if mode in ("coordinator", "agent"):
-        pat = push.get("branch_pattern", "")
-        need("<slug>" in pat, "%s.push.branch_pattern must contain <slug> (e.g. docs/<slug>)" % p)
-        head = pat.split("<slug>")[0].rstrip("/")
-        need(head and head not in ll and not any(pat == b or pat.startswith(b + "/") for b in ll),
-             "%s.push.branch_pattern must not match a long-lived branch" % p)
-    if mode == "agent":
-        need(isinstance(push.get("credential"), str) and push["credential"] and "<" not in push["credential"], "%s.push.credential: how the agent authenticates (replace the placeholder, e.g. vault:vlt_...); required when the agent pushes" % p)
-        need(push.get("credential_file", "") == "" or isinstance(push.get("credential_file"), str), "%s.push.credential_file: path of the token file read at session start (kept outside any repository)" % p)
-    need(isinstance(cfg.get("vault_ids", []), list) and all(isinstance(x, str) and re.fullmatch(r"vlt_[A-Za-z0-9]+", x) for x in cfg.get("vault_ids", [])), "%s.vault_ids: vault ids to attach to the role's sessions (for example the GitHub MCP vault)" % p)
+        bad.append("%s.push.mode: only 'none' is implemented; the coordinator and agent push policies are not built yet" % p)
     need(re.fullmatch(r"claude-[a-z0-9.-]+", cfg.get("model", "") or ""), "%s.model: a model id like claude-sonnet-5-5" % p)
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
@@ -86,14 +79,14 @@ case $verb in
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", long_lived: ["master", "develop"]},
       roles: {
-        dev:  {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: [], profile: $n},
-        docs: {base: "gh-pages", push: {mode: "none"}, vault_ids: [], model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"], profile: ($n + "-docs")}
+        dev:  {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
+        docs: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}
       },
       memory: {memory_store: "", reference_store: ""},
       budget_cents: 500}';;
   init)
     n=${1:-}; shift || true; valid_project "$n" || die "init needs a project name"
-    ans= force=
+    ans='' force=''
     while [ $# -gt 0 ]; do case $1 in --answers) ans=$2; shift 2;; --force) force=1; shift;; *) die "unknown option $1";; esac; done
     [ -f "$ans" ] || die "init needs --answers FILE (see: project template $n)"
     out=$(validate "$ans") || { echo "$out" >&2; die "the answers are not valid; nothing stored"; }
@@ -109,7 +102,7 @@ case $verb in
     [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.docs.effort"
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
-    tmp=$(mktemp); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
+    tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX"); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }
     chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
     echo "$n: $path = $val (applies to the next provision; use 'instances budget' for a live deployment)";;

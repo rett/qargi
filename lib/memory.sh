@@ -35,7 +35,9 @@ case $verb in
       if jq -e 'select(.path=="/CANON.md")' "$ctmp" >/dev/null 2>&1; then
         marker=$(jq -r 'select(.path=="/CANON.md")|.content' "$ctmp")
         ck=$(sed -n 's/^kind: *//p' <<<"$marker"); cp=$(sed -n 's/^project: *//p' <<<"$marker"); cr=$(sed -n 's/^roles: *//p' <<<"$marker" | tr ' ' ',')
-        python3 -I "$here/canon.py" check --kind "$ck" --project "$cp" --roles "$cr" --store "$ctmp"; rc=$?; rm -f "$ctmp"; exit $rc
+        python3 -I "$here/canon.py" check --kind "$ck" --project "$cp" --roles "$cr" --store "$ctmp"; rc=$?
+        python3 -I "$here/canon.py" content --kind "$ck" --store "$ctmp" || rc=1
+        rm -f "$ctmp"; exit $rc
       fi
       rm -f "$ctmp"
     fi

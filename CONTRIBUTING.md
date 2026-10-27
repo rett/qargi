@@ -20,6 +20,11 @@
 `agents/` the local subagent; `provision/` the resource and memory templates;
 `examples/` sample repository profiles.
 
+## Tests
+
+`tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
+role seeds, shellcheck). It needs no API access and no private data.
+
 ## Changing the canon
 
 The layout of memory stores is versioned (`canon/CANON.md`, `canon/layout.json`).

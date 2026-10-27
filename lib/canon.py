@@ -57,6 +57,10 @@ def detect(kind, mems):
     paths = list(mems)
     if not paths:
         return "legacy", "empty store"
+    if any(p.startswith(("/shared/", "/roles/")) for p in paths):
+        return "legacy", "no marker but canon folders exist: an interrupted migration, resumed"
+    if set(paths) <= {"/README.md", "/_template.md"}:
+        return "legacy", "only an index file"
     if kind == "memory":
         if any(p.startswith(("/sandbox/", "/repos/")) for p in paths):
             return "legacy", "layout: sandbox/ and repos/ at the root"
@@ -236,6 +240,32 @@ def migrate_draft(kind, mems, project, roles, default_role, seed, today):
 CHAINS = {"legacy": [migrate_legacy, migrate_draft], "draft": [migrate_draft]}
 
 
+def maintain(kind, mems, project, roles, seed, today):
+    """At the current version: create missing indexes, keep the marker's roles current."""
+    ops, notes = [], []
+    subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
+    if "/shared/INDEX.md" not in mems:
+        ops.append({"op": "create", "path": "/shared/INDEX.md", "content": seed_text(seed, "INDEX.shared.%s.md" % kind, subs)})
+    for r in roles:
+        p = "/roles/%s/INDEX.md" % r
+        if p not in mems:
+            ops.append({"op": "create", "path": p, "content": seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))})
+    d = parse_marker(mems["/CANON.md"]["content"])
+    if sorted(d.get("roles", "").split()) != sorted(roles):
+        ops.append({"op": "marker", "path": "/CANON.md", "id": mems["/CANON.md"]["id"],
+                    "content": canon_marker(kind, project, roles, LATEST, "roles %s" % d.get("roles", ""), today)})
+    known = set(roles)
+    for p in sorted(mems):
+        parts = p.strip("/").split("/")
+        if parts[0] == "roles" and len(parts) > 2 and parts[1] not in known:
+            notes.append("role folder left in place, the project does not use that role: /roles/%s/" % parts[1])
+    readme = mems.get("/README.md", {}).get("content", "")
+    for r in roles:
+        if "roles/%s/INDEX.md" % r not in readme:
+            notes.append("the README does not list roles/%s/INDEX.md (edit it, the reconciler does not rewrite a README at the current version)" % r)
+    return ops, sorted(set(notes))
+
+
 def cmd_plan(a):
     mems = load(a.store)
     roles = a.roles.split(",")
@@ -245,6 +275,8 @@ def cmd_plan(a):
     if state == "unknown":
         out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
         print(json.dumps(out)); return 0
+    if state == LATEST:
+        out["ops"], out["notes"] = maintain(a.kind, mems, a.project, roles, a.seed, today)
     if state != LATEST:
         cur = mems
         for step in CHAINS[state]:
@@ -322,6 +354,42 @@ def cmd_check(a):
     return 1 if fails else 0
 
 
+def cmd_content(a):
+    """The fuller content rules for recipe files and stores. Not part of canon version 1:
+    they become canon 2 when complete. `dev-agent memory lint` runs them next to `check`."""
+    mems = load(a.store)
+    fails, warns = [], []
+    F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
+    W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
+    secrets = [r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
+    docip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.|10\.|172\.|192\.168\.)")
+    today = datetime.date.today()
+    for p, m in sorted(mems.items()):
+        c = m["content"]
+        for pat in secrets:
+            if re.search(pat, c): F(p, "looks like a secret")
+        if re.search(r"/home/[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
+        for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
+            if all(int(x) <= 255 for x in ip.split(".")) and not docip.match(ip):
+                W(p, "contains address %s (use documentation addresses)" % ip)
+        if p.endswith("INDEX.md") or p in ("/README.md", "/CANON.md", "/_template.md"):
+            continue
+        if re.search(r"(?m)^Kind:\s*\S", c):          # a file that declares itself a recipe
+            for fld in ("Applies to", "Check"):
+                if not re.search(r"(?m)^%s:\s*\S" % fld, c): F(p, "no %s: line" % fld)
+            v = re.search(r"(?m)^Verified:\s*(\d{4}-\d{2}-\d{2})", c)
+            if not v: F(p, "no Verified: YYYY-MM-DD line")
+            else:
+                d = datetime.date.fromisoformat(v.group(1))
+                if d > today: F(p, "Verified date is in the future")
+                elif (today - d).days > 90: W(p, "verified %d days ago; re-check" % (today - d).days)
+            if a.kind == "memory" and len(c) > 3000: W(p, "%d chars; one fact per file, split it" % len(c))
+    out = fails + warns
+    print("\n".join(out) if out else "content rules: clean, %d files" % len(mems))
+    print("%d fail, %d warn" % (len(fails), len(warns)))
+    return 1 if fails else 0
+
+
 def rename_top(p, folders):
     top = p.strip('/').split('/')[0]
     return '/' + folders.get(top, top) + p[len(top) + 1:]
@@ -384,6 +452,9 @@ def main():
         if name == "plan":
             s.add_argument("--default-role", required=True)
             s.add_argument("--seed", required=True)
+    s = sub.add_parser("content")
+    s.add_argument("--kind", choices=KINDS, required=True)
+    s.add_argument("--store", required=True)
     s = sub.add_parser("import")
     s.add_argument("--map", required=True, choices=["docs-v0"])
     s.add_argument("--role", required=True)
@@ -392,7 +463,7 @@ def main():
     s.add_argument("--reference", required=True)
     s.add_argument("--today")
     a = ap.parse_args()
-    sys.exit({"plan": cmd_plan, "check": cmd_check, "import": import_docs_v0}[a.cmd](a))
+    sys.exit({"plan": cmd_plan, "check": cmd_check, "content": cmd_content, "import": import_docs_v0}[a.cmd](a))
 
 
 if __name__ == "__main__":

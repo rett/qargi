@@ -61,6 +61,7 @@ track() {
   set_title "$sid" "$name" "${LABEL:-standby}"
   trk_refresh "$sid"
   check_budget "$sid"
+  LAST_SID=$sid
   echo "tracking session $sid for $name (budget $(jq -r --arg s "$sid" '.[$s].budget' "$TRK"))"
 }
 
@@ -81,13 +82,15 @@ send() {
   i=$(cloud_inst "$name") || exit 1
   [ -n "$task" ] || die "send needs the task text"
   if [ -n "$NEW" ]; then
-    start "$name" | tail -1
-    sid=$(jq -r --arg n "$name" '[to_entries[]|select(.value.instance==$n and .value.closed_at==null)]|sort_by(.value.created)|last|.key' "$TRK")
+    start "$name" >/dev/null
+    sid=$LAST_SID
   else
     sid=${SESSION:-$(inst_idle_session "$name")}
     [ -n "$sid" ] || die "no idle tracked session for $name; use --new or start"
   fi
   trk_refresh "$sid" || die "cannot read session $sid"
+  check_budget "$sid" 2>/dev/null
+  [ "$(jq -r --arg s "$sid" '.[$s].budget' "$TRK")" != none ] || die "session $sid has no spend budget; set one on the deployment (dev-agent instances budget $name CENTS --asked ...) and start a new session"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" = idle ] || die "session $sid is not idle (see: status)"
   json_update "$TRK" '.[$s].label = $l' --arg s "$sid" --arg l "$LABEL"
   set_title "$sid" "$name" "$LABEL"

@@ -15,7 +15,7 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-SESSION_ARG='' ARG2=''
+PLAN_ARG='' SESSION_ARG='' ARG2=''
 LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -32,6 +32,7 @@ while [ $# -gt 0 ]; do
     --apt) APT=$2; shift 2;;
     --networking) NETWORKING=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
+    --plan) PLAN_ARG=$2; shift 2;;
     --budget) BUDGET=$2; shift 2;;
     --session) SESSION_ARG=$2; shift 2;;
     -*) die "unknown option $1";;
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+export PLAN_ARG
 case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
 [ -z "$MODEL" ] || printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
 
@@ -59,15 +61,17 @@ init_cloud() {
     d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot re-read deployment"
     echo "deployment budget set to $BUDGET"
   fi
-  [ "$(jq -r '.budget // empty' <<<"$d")" != "" ] || echo "dev-agent: warning: the deployment has no budget; pass --budget CENTS" >&2
+  [ "$(jq -r '.budget // empty' <<<"$d")" != "" ] || die "the deployment has no spend budget; pass --budget CENTS (sessions would otherwise run unbounded)"
   aid=$(jq -r .agent.id <<<"$d")
   ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null) || die "cannot read agent $aid"
   aver=$(jq -r .version <<<"$ag"); cur_m=$(jq -r .model.id <<<"$ag"); cur_e=$(jq -r '.model.effort.type // "default"' <<<"$ag")
   new_m=${MODEL:-$cur_m}; new_e=${EFFORT:-$cur_e}
   if [ "$new_m" != "$cur_m" ] || { [ -n "$EFFORT" ] && [ "$new_e" != "$cur_e" ]; }; then
     echo "PLAN: agent $aid v$aver: model $cur_m -> $new_m, effort $cur_e -> $new_e (creates a new agent version and re-points the deployment)"
-    [ -n "$APPROVED" ] || { echo "re-run with --approved \"<the user's go-ahead>\" to apply; nothing changed"; return 0; }
-    ant beta:agents update --agent-id "$aid" --version "$aver" --model "{id: $new_m, effort: $new_e}" >/dev/null 2>&1 || die "agent update failed"
+    ptok=$(printf '%s' "$aid|$aver|$new_m|$new_e" | plan_token)
+    [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
+    need_plan "$ptok"; audit_log agent-update "$aid $cur_m->$new_m $cur_e->$new_e"
+    ant beta:agents update --agent-id "$aid" --version "$aver" --model "{id: $new_m$([ "$new_e" = default ] || printf ', effort: %s' "$new_e")}" >/dev/null 2>&1 || die "agent update failed"
     ant beta:deployments update --deployment-id "$DEP" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was updated)"
     d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot re-read deployment"
     ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null)
@@ -103,10 +107,10 @@ init_provision() {
   [ -z "$BUDGET" ] || args+=(--budget "$BUDGET")
   if [ -z "$APPROVED" ]; then
     "$(dirname "$0")/provision.sh" plan "${args[@]}"
-    echo "plan only; show it to the user, then re-run with --approved \"<the user's go-ahead>\""
+    echo "plan only; show it to the user, then re-run with --plan <token from the plan> --approved \"<the user's go-ahead>\""
     return 0
   fi
-  "$(dirname "$0")/provision.sh" apply "${args[@]}" --asked "$ASKED" --approved "$APPROVED" || return 1
+  "$(dirname "$0")/provision.sh" apply "${args[@]}" --asked "$ASKED" --approved "$APPROVED" --plan "$PLAN_ARG" || return 1
   [ -n "$NOSESS" ] || "$(dirname "$0")/session.sh" start "$NAME" --asked "$ASKED"
 }
 
@@ -171,8 +175,9 @@ normalize() {
   env=$(ant beta:environments retrieve --environment-id "$eid" 2>/dev/null) || die "cannot read environment"
   dep=$(ant beta:deployments retrieve --deployment-id "$did" 2>/dev/null) || die "cannot read deployment"
   aver=$(jq -r .version <<<"$ag")
+  local plan_text=''
   show() { # kind old new
-    if [ "$2" = "$3" ]; then echo "  $1: $2 (ok)"; else echo "  $1: $2 -> $3"; changes=1; fi
+    if [ "$2" = "$3" ]; then echo "  $1: $2 (ok)"; else echo "  $1: $2 -> $3"; changes=1; plan_text+="$1:$2>$3;"; fi
   }
   echo "PLAN: resource names for $n"
   show agent "$(jq -r .name <<<"$ag")" "$n-agent"
@@ -193,7 +198,9 @@ normalize() {
   show deployment "$(jq -r .name <<<"$dep")" "$n-deployment"
   [ "${2:-}" != plan ] || return 0
   [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
-  [ -n "$APPROVED" ] || { echo "re-run with --approved \"<the user's go-ahead>\" to rename; nothing changed"; return 0; }
+  local ntok; ntok=$(printf '%s|%s' "$n" "$plan_text" | plan_token)
+  [ -n "$APPROVED" ] || { echo "plan token: $ntok   (re-run with --plan $ntok --approved \"<the user's go-ahead>\" to rename; nothing changed)"; return 0; }
+  need_plan "$ntok"; audit_log normalize "$n"
   if [ "$(jq -r .name <<<"$ag")" != "$n-agent" ]; then
     ant beta:agents update --agent-id "$aid" --version "$aver" --name "$n-agent" >/dev/null 2>&1 || die "agent rename failed"
     ant beta:deployments update --deployment-id "$did" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was renamed)"
@@ -210,6 +217,7 @@ normalize() {
 budget_set() {
   need_asked; ant_ok
   local n=$1 cents=${2:-} i did
+  audit_log budget "$n $cents"
   case $cents in ''|*[!0-9]*) die "budget needs NAME CENTS (a whole number)";; esac
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "budget applies to cloud instances"

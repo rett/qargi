@@ -55,3 +55,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   names the agent's role and the folders it may load.
 - A generic `docs` role skeleton (`provision/role-seeds/docs/`): a contract addendum (accuracy first, profile-defined checks and formats, conflict resolution, history logging), reference files for rules, workflow with the definition of done, per-release sync and review, writing conventions, styling, facts and preferences, and memory files for history and open items, distilled from a working documentation methodology. A role's contract addendum is appended to its agent prompt; `tests/role_seed_sim.py ROLE` proves a role seed conforms to the canon.
 - Cross-role content of a project's reference store lives in `shared/` (rules every role follows, the approved example values, architecture, source map, checked facts); a role's folder holds only that role's own.
+- Approvals bind to the plan: plans print a token, the matching apply needs `--plan TOKEN` and refuses if the plan changed; every gated verb is appended to an audit log. Sessions without a spend budget are refused.
+- Local dispatch has a technical barrier (`dev-agent local prepare|verify`): a clone of a remote-less bare copy, a credential-less git wrapper, and a comparison of every ref of the real repository and its remote before and after.
+- The push policies `coordinator` and `agent` are designed but not built; the project validator refuses them instead of accepting an answer nothing honours. The unused `vault_ids`, `profile` and credential answers were removed.
+- Gates have one source of truth, the repository profile; the reference store explains them.
+- Canon version 1 is structure only; the fuller recipe content rules run in `memory lint` and become canon 2 when complete. Reconciler fixes: interrupted migrations resume, maintenance creates missing role indexes, an unrecognised layout is an error. `tests/run.sh` runs the whole suite.
+

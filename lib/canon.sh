@@ -21,12 +21,13 @@ SEED=$here/../provision/canon-seed
 
 verb=${1:-}; shift || true
 PROJECT=${1:-}; shift || true
-KIND='' DEFAULT_ROLE=dev APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
+KIND='' DEFAULT_ROLE=dev PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
     --kind) KIND=$2; shift 2;;
     --default-role) DEFAULT_ROLE=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
+    --plan) PLAN_ARG=$2; shift 2;;
     --from) FROM=$2; shift 2;;
     --role) ROLE=$2; shift 2;;
     --map) MAP=$2; shift 2;;
@@ -34,6 +35,7 @@ while [ $# -gt 0 ]; do
     *) die "unknown option $1";;
   esac
 done
+export PLAN_ARG
 valid_project "$PROJECT" || die "usage: canon.sh check|plan|apply|import|promote PROJECT ..."
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /dev-project first"
@@ -87,6 +89,9 @@ make_plan() { # kind -> prints plan json path
   dump "$store" > "$tmp/s.jsonl"
   python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" --default-role "$DEFAULT_ROLE" \
     --store "$tmp/s.jsonl" --seed "$SEED" --today "$TODAY" > "$tmp/plan.json" || die "planning failed for $k"
+  if [ "$(jq -r .from_version "$tmp/plan.json")" = unknown ] && [ "$verb" = apply ]; then
+    jq -r '.notes[]' "$tmp/plan.json" >&2; die "the $k store has an unrecognised layout; nothing was changed"
+  fi
   echo "$tmp/plan.json"
 }
 
@@ -102,10 +107,14 @@ case $verb in
     done
     exit $rc;;
   plan)
-    for k in $kinds; do echo "== $k"; p=$(make_plan "$k"); show_plan "$p"; done;;
+    tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
+    for k in $kinds; do echo "== $k"; p=$(make_plan "$k"); show_plan "$p"; done
+    echo "plan token: $tok   (apply with: --plan $tok --approved \"...\")";;
   apply)
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan>\""
     ant_ok
+    tok=$(for k in $kinds; do p=$(make_plan "$k"); jq -S -c .ops "$p"; done | plan_token)
+    need_plan "$tok"; audit_log canon-apply "$PROJECT"
     for k in $kinds; do
       echo "== $k"; p=$(make_plan "$k"); show_plan "$p"
       [ "$(jq '.ops|length' "$p")" = 0 ] && { echo "nothing to do"; continue; }
@@ -124,12 +133,13 @@ case $verb in
       jq -r '.ops[] | "  create \(.path)  (\(.content|length) chars)"' "$tmp/$k.plan.json" | head -60
     done
     jq -r '.notes[] | "  note: " + .' "$tmp/imp.json"
+    tok=$(cat "$tmp/memory.plan.json" "$tmp/reference.plan.json" | jq -S -c .ops | plan_token)
     if [ -n "$APPROVED" ]; then
-      ant_ok
+      ant_ok; need_plan "$tok"; audit_log canon-import "$PROJECT from $FROM into $ROLE"
       for k in memory reference; do [ "$(jq '.ops|length' "$tmp/$k.plan.json")" = 0 ] || exec_ops "$(store_of "$k")" "$tmp/$k.plan.json"; done
       echo "imported $FROM into $PROJECT roles/$ROLE (approved: $APPROVED); the source is untouched"
     else
-      echo "plan only: re-run with --approved \"<the user's go-ahead>\""
+      echo "plan only; plan token: $tok   (apply with: --plan $tok --approved \"...\")"
     fi;;
   seed-role)
     [ -n "$ROLE" ] || die "seed-role needs --role R"
@@ -183,7 +193,7 @@ case $verb in
     [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || die "promote needs --kind K --path /roles/R/..."
     [ -n "$APPROVED" ] || die "promote needs --approved \"<go-ahead>\""
     case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
-    store=$(store_of "$KIND"); ant_ok
+    store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
     dest="/shared/${PATH_ARG#/roles/*/}"
     tmp=$(mktemp); dump "$store" > "$tmp"
     id=$(jq -r --arg p "$PATH_ARG" 'select(.path==$p)|.id' "$tmp"); [ -n "$id" ] || die "no such file: $PATH_ARG"

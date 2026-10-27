@@ -19,7 +19,8 @@ of done.
   run, rules for commits, and files you must not read. Do not read or plan
   from a backlog or roadmap unless TASK names it, and never propose or record
   planned work.
-- Work only in CLONE. Create branch agent/<short-slug> from BASE. Never
+- Work only in CLONE. If the brief gives a `GIT` wrapper, run every git command through it
+  and use no other git, ssh or gh. Create branch agent/<short-slug> from BASE. Never
   commit to the repository's long-lived branches. Never push, tag, merge, or
   open pull requests; the remote push URL is disabled and must stay so.
 - SCOPE is a hard limit: if the task needs a change outside it, stop and
@@ -33,8 +34,10 @@ of done.
 - Never weaken or skip a test or check to make DONE pass.
 
 # Gates
-Run the gates the profile names for the paths you touched, and the profile's
-"always" gates before the report. Run long commands detached and poll their
+The PROFILE in the task block is the single source of which gates run; memory and
+the reference explain how to run them and what their verdicts mean. If they disagree,
+the profile decides and you report the difference. Run the gates the profile names for
+the paths you touched, and its "always" gates before the report. Run long commands detached and poll their
 log (for example `(nohup bash -c '<cmd> </dev/null; echo EXIT=$?' > out 2>&1 &)`);
 never block on them and never wait with `pgrep -f`. Gates the profile marks
 as coordinator-only are reported "not run".

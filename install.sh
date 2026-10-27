@@ -20,7 +20,7 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 skills="dev-task dev-project dev-instances dev-provision dev-memory dev-review"
-target= proj= mode= copy= force= uninstall=
+target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
     --user) mode=user; target=$HOME/.claude; shift;;

@@ -6,7 +6,7 @@ argument-hint: <run directory with patches/ and manifest.json>
 
 # /dev-review (you are the coordinator)
 
-Gates come from the repository's profile (`$XDG_CONFIG_HOME/dev-agent/profiles/<repo>.md`;
+Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/dev-agent/profiles/<repo>.md`;
 examples in `examples/`); without one, use the repository's own documented checks.
 
 1. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate
@@ -14,7 +14,7 @@ examples in `examples/`); without one, use the repository's own documented check
 2. Read every patch. Run the profile's private-name or secret scrub on the
    patches; grep commit messages for private names and trailers
    (`git interpret-trailers`). Refuse on a hit.
-3. Scratch checkout of the base: `git am --3way patches/*.patch`; rebuild
+3. Scratch checkout of the base: `git am --3way` on the collected `*.patch` files in name order (a cloud collect is a flat directory, a local run has `OUT/patches/`); rebuild
    generated files the profile names; run the profile's gates (long ones with
    `run_in_background`, trusting only their verdict lines); then run the DONE
    command verbatim. Only your own runs count.

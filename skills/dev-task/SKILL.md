@@ -33,6 +33,12 @@ registered local one. A cloud instance only when the user's request named it.
   sessions are archived, only after outputs are collected and a verdict exists.
 - Run `dev-agent watch` with the Bash tool's `run_in_background`; no
   foreground sleeps.
+- An approval applies to the plan the user saw. Plans print a `plan token`; the matching
+  apply (`provision apply`, `canon apply|import`, `instances normalize`, an agent update)
+  must be given `--plan TOKEN` and refuses if the plan has changed. Never allow-list these
+  verbs in the Claude Code settings: the permission prompt is the user's real control.
+  Every gated verb is also logged in `$XDG_STATE_HOME/dev-agent/audit.log`.
+- A cloud session without a spend budget is refused (`send`) or not registered (`init`).
 
 ## Commands
 
@@ -77,12 +83,23 @@ dev-agent related is ever added to a project's committed files.
 
 ## Local flow (default)
 
-1. Scratch dir under the session scratchpad: `RUN`, `CLONE=$RUN/clone`,
-   `OUT=$RUN/out`. `git clone --no-hardlinks <repo> $CLONE`, then
-   `git -C $CLONE remote set-url --push origin DISABLED`, then
-   `git -C $CLONE checkout -b agent/<slug> origin/<base>`; note the base SHA.
-2. Spawn the `dev-agent` subagent (Agent tool, subagent_type `dev-agent`) with
-   the task block; pass the instance's recorded model (and effort, if set) as
-   the Agent tool's `model` and `effort`: the user chose them at init. No
-   opinions on the solution.
-3. When it reports, run `/dev-review` on `$OUT`.
+The local agent gets no way to push, and you check afterwards that it did not.
+
+1. `dev-agent local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad>`
+   makes a bare copy of the repository with no remote, a clone of that copy on
+   `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
+   runs with no credentials (no home, no global config, no ssh, no prompts). It prints
+   `RUN`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, and records every ref of the real
+   repository and of its remote.
+2. Spawn the `dev-agent` subagent (Agent tool, subagent_type `dev-agent`) with the task
+   block plus `CLONE`, `OUT`, `GIT` and `BASE_SHA`; pass the instance's recorded model
+   (and effort, if set) as the Agent tool's `model` and `effort`. The agent must run
+   every git command through `GIT`. No opinions on the solution.
+3. When it reports, run `dev-agent local verify <RUN>` **first**: it compares all refs
+   of the real repository and its remote with the snapshot. A change means the agent
+   (or something it ran) pushed or wrote to the real repository: stop, tell the user,
+   and do not review further until they have seen it.
+4. Then `/dev-review` on `OUT`.
+
+The barrier stops every ordinary push. It is not a sandbox against an agent that goes
+out of its way (it runs as your user); `verify` is what makes that visible.

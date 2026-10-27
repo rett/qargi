@@ -42,6 +42,17 @@ bindingness are stated in the index (its Load column), not in names. A folder ma
 keep a number only when its whole content is a sequence that needs it, and that
 is listed in `canon/layout.json` under `ordered_folders`.
 
+## What version 1 requires
+
+Only the structure: `/CANON.md`, `/README.md`, `shared/INDEX.md`, one
+`roles/<role>/INDEX.md` per configured role, nothing outside `shared/`, `roles/`
+and `_conflicts/`, no folder for a role the project does not use, and no secrets.
+Version 1 is deliberately minimal. The fuller rules for the files themselves
+(recipe fields `Kind`, `Applies to`, `Check`, `Verified`, staleness, size, home
+paths and address patterns) are not part of it: they are being completed and become
+**canon version 2**. Until then `dev-agent memory lint` runs them next to `canon
+check` so nothing is dropped.
+
 ## Role rules
 
 - The role is named in the agent's prompt. An agent loads `/README.md`,
@@ -50,7 +61,10 @@ is listed in `canon/layout.json` under `ordered_folders`.
 - Roles come from the fixed list (`dev`, `review`, `docs`, `test`) and from the
   project's stored answers. A role folder for a role the project does not use is a
   deviation.
-- This isolation is by convention: a store mounts whole. It is made auditable,
+- This isolation is hygiene, not a trust boundary: a store mounts whole, so an agent can
+  read or write another role's folder if it ignores its instructions. If a role must be
+  truly separate, give it its own stores.
+- It is by convention and made auditable, not enforced: It is made auditable,
   not enforced: `dev-agent canon audit` reads the memory version history and
   reports a session titled for one role (`<project>-<role>-<task>`) writing under
   another role's folder.

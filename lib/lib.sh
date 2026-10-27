@@ -38,7 +38,25 @@ die() { echo "dev-agent: $*" >&2; exit 1; }
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.
+# Every approval-gated or cloud-driving verb leaves an append-only line here.
+audit_log() { # verb [detail]
+  local f=$DA_STATE/audit.log
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${DEV_AGENT_NESTED:-}" \
+    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")}' >> "$f"
+  chmod 600 "$f" 2>/dev/null || true
+}
+
+# An approval applies to the plan the user saw: plans print a token (a hash of what
+# would be done) and apply must be given that token. Calls nested inside an approved
+# apply (provisioning seeding its stores) skip it.
+plan_token() { sha256sum | cut -c1-12; }
+need_plan() { # expected-token; the caller's --plan value is $PLAN_ARG
+  [ -z "${DEV_AGENT_NESTED:-}" ] || return 0
+  [ "${PLAN_ARG:-}" = "$1" ] || die "the plan changed or --plan is missing: run the plan, show it to the user, then apply exactly that with --plan $1"
+}
+
 need_asked() {
+  audit_log "asked:${verb:-cmd}" "${NAME:-${ARG:-}}"
   [ -n "${ASKED:-}" ] || die "cloud verbs need --asked \"<the user's request that names this cloud instance>\"; cloud is never chosen automatically"
 }
 
