@@ -2,19 +2,23 @@
 # Manage the structure of a dev-agent recipes memory store.
 #   memory.sh seed STORE_ID [--repo NAME]   write README.md and _template.md (and
 #                                           repos/NAME/INDEX.md); never overwrites
-#   memory.sh lint STORE_ID                 read-only structure and content check
+#   memory.sh seed-reference STORE_ID       write the development-reference skeleton; never overwrites
+#   memory.sh lint STORE_ID [--kind recipes|reference]   read-only structure and content check
 # The structure is described by provision/memory-seed/README.md.
 . "$(dirname "$0")/lib.sh"
 
 here=$(dirname "$(readlink -f "$0")")
 SEED=$here/../provision/memory-seed
 [ -d "$SEED" ] || SEED=$here/provision/memory-seed
+REFSEED=$here/../provision/reference-seed
+[ -d "$REFSEED" ] || REFSEED=$here/provision/reference-seed
 
 verb=${1:-}; store=${2:-}; shift 2 || true
-REPO=
+REPO='' KIND=recipes
 while [ $# -gt 0 ]; do
   case $1 in
     --repo) REPO=$2; shift 2;;
+    --kind) KIND=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done
@@ -33,6 +37,15 @@ create() { # path file
 }
 
 case $verb in
+  seed-reference)
+    [ -d "$REFSEED" ] || die "reference seed not found"
+    have=$(mem_list basic | jq -r .path)
+    (cd "$REFSEED" && find . -type f | sort) | while read -r f; do
+      p=/${f#./}
+      if grep -qx -F "$p" <<<"$have"; then echo "kept    $p"
+      elif create "$p" "$REFSEED/${f#./}"; then echo "created $p"
+      else echo "FAILED  $p" >&2; fi
+    done;;
   seed)
     [ -d "$SEED" ] || die "seed files not found"
     have=$(mem_list basic | jq -r .path)
@@ -49,6 +62,38 @@ case $verb in
       put "/repos/$REPO/INDEX.md" "$tmp"; rm -f "$tmp"
     fi;;
   lint)
+    if [ "$KIND" = reference ]; then
+      mem_list full | python3 -I -c '
+import sys, json, re
+mems = {}
+for line in sys.stdin:
+    m = json.loads(line); mems[m["path"]] = m.get("content", "")
+fails, warns = [], []
+F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
+W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
+readme = mems.get("/README.md")
+if readme is None: F("/README.md", "missing (run: memory.sh seed-reference)")
+secrets = [r"sk-ant-[A-Za-z0-9_-]{8,}", r"gh[pousr]_[A-Za-z0-9]{20,}", r"github_pat_[A-Za-z0-9_]{20,}", r"AKIA[0-9A-Z]{16}", r"-----BEGIN [A-Z ]*PRIVATE KEY", r"(?i)(password|passwd|secret|token)\s*[:=]\s*\S{8,}"]
+for p, c in sorted(mems.items()):
+    for pat in secrets:
+        if re.search(pat, c): F(p, "looks like a secret")
+    if re.search(r"/home/[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
+    if p == "/README.md": continue
+    if not re.fullmatch(r"/\d\d-[a-z0-9-]+/[a-z0-9._-]+\.md", p): F(p, "expected /NN-folder/file.md"); continue
+    if readme is not None and p.lstrip("/") not in readme: F(p, "not listed in README.md")
+    if "<Fill in from" in c: W(p, "still the empty skeleton")
+    elif not re.search(r"(?m)^Sources:\s*\S", c) or "<list the repository files" in c: F(p, "no Sources: line")
+    if len(c) > 40000: W(p, "%d chars; split it" % len(c))
+if readme:
+    for ref in set(re.findall(r"`(\d\d-[a-z0-9-]+/[a-z0-9._-]+\.md)`", readme)):
+        if "/" + ref not in mems: W("/README.md", "lists %s, which does not exist" % ref)
+out = fails + warns
+print("\n".join(out) if out else "clean: %d files" % len(mems))
+print("%d fail, %d warn, %d files" % (len(fails), len(warns), len(mems)))
+sys.exit(1 if fails else 0)
+'
+      exit $?
+    fi
     mem_list full | python3 -I -c '
 import sys, json, re, datetime
 mems = {}

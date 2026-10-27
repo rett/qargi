@@ -48,3 +48,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Resources are named `<project>-<role>-<component>` (agent, environment,
   memory, deployment); `provision.sh --project P --role R` creates them that
   way and `registry.sh normalize NAME` renames an existing instance to match.
+- Development reference store (`<project>-<role>-reference`): a curated,
+  read-only, numbered-folder reference for application development (rules,
+  workflow, gates, code/test/change/commit conventions, architecture, checked
+  facts, preferences, review checklist), mirroring the structure of a
+  documentation store. `provision/reference-seed/` is the skeleton;
+  provisioning creates and attaches it read-only; `provision.sh add-reference`
+  adds it to an existing instance; `memory.sh seed-reference` and
+  `memory.sh lint --kind reference` seed and check it.

@@ -71,6 +71,7 @@ def r(src, dst, extra=None):
 r("agent.md.tmpl", "agent.md", {"{{SYSTEM}}": system})
 r("environment.yaml.tmpl", "environment.yaml")
 r("memory_store-recipes.yaml.tmpl", "memory_store-recipes.yaml")
+r("memory_store-reference.yaml.tmpl", "memory_store-reference.yaml")
 r("deployment-standby.yaml.tmpl", "deployment-standby.yaml")
 EOF
 }
@@ -88,12 +89,36 @@ case $verb in
     render
     (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
-    dep=$(key 'deployment-standby'); store=$(key 'memory_store-recipes')
+    dep=$(key 'deployment-standby'); store=$(key 'memory_store-recipes'); refstore=$(key 'memory_store-reference')
     [ -n "$dep" ] || die "deployment id not found in $LOCK"
     if [ -n "$store" ]; then
       "$here/memory.sh" seed "$store" || echo "dev-agent: warning: could not seed the memory store" >&2
     fi
+    if [ -n "$refstore" ]; then
+      # ant apply attaches a referenced store read-write; the reference store must be read-only.
+      arr=$(jq -nc --arg r "$store" --arg f "$refstore" '[
+        {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs."},
+        {type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]')
+      ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
+        || die "could not set the reference store read-only on the deployment; fix it before running a session"
+      "$here/memory.sh" seed-reference "$refstore" || echo "dev-agent: warning: could not seed the reference store" >&2
+    fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
+  add-reference)
+    need_asked
+    [ -n "$APPROVED" ] || die "add-reference needs --approved \"<the user's go-ahead>\" (it creates a memory store and changes the deployment)"
+    inst=$(jq -e --arg n "$NAME" '.[$n]' "$REG") || die "no instance named $NAME"
+    dep=$(jq -r .deployment_id <<<"$inst")
+    cur=$(ant beta:deployments retrieve --deployment-id "$dep" 2>/dev/null) || die "cannot read the deployment"
+    desc=$(sed -n 's/^description: //p' "$TPL/memory_store-reference.yaml.tmpl")
+    refstore=$(ant beta:memory-stores create --name "$NAME-reference" --description "$desc" 2>/dev/null | jq -r .id)
+    [ -n "$refstore" ] && [ "$refstore" != null ] || die "could not create the reference store"
+    "$here/memory.sh" seed-reference "$refstore" || die "could not seed $refstore"
+    arr=$(jq -c --arg f "$refstore" '.resources + [{type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]' <<<"$cur")
+    ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 || die "could not attach $refstore to the deployment (store created: $refstore)"
+    new=$(ant beta:deployments retrieve --deployment-id "$dep" 2>/dev/null | jq -c '.resources')
+    json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
+    echo "reference store $refstore ($NAME-reference) created, seeded and attached read-only to $dep (approved: $APPROVED)";;
   *) die "usage: provision.sh plan|apply NAME [options]";;
 esac
