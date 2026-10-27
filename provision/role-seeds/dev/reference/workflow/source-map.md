@@ -1,11 +1,23 @@
 # Source map
 
-Where each kind of fact lives: source packages, tests, docs, generated files, scripts, CI.
+Where each kind of fact lives in the repository, so the answer is read rather than guessed.
 
 Kind: workflow
-Applies to: <project and ref range, or "any">
-Sources: <list the repository files and commits this file was written from>
+Applies to: any
+Sources: the dev-agent baseline for this role (agent contract and common engineering practice); the project's own files override it
 
 ## Contents
 
-<Fill in from: a directory listing and the build files. One statement per bullet, each tagged with its source.>
+Look in the project's own files first, in this order: agent instructions, README, contributing guide, build file, CI workflows, the code, then the tests. When two disagree, the code and the CI configuration describe what actually runs.
+
+### Project specifics
+
+| Question | Where |
+|---|---|
+| How is it built? | <build file or command> |
+| How are tests run, and which are slow? | <test README, Makefile target> |
+| Which linters and generators run? | <config files, CI workflow> |
+| Where is the changelog and what format? | <file> |
+| Where are user-facing docs? | <directory> |
+| Which files are generated? | <paths and generator> |
+| How is a release made? | <doc> |
