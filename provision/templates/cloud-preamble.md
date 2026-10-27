@@ -1,4 +1,4 @@
-Cloud session specifics (this is the cloud backend of /dev-agent):
+Cloud session specifics (this is the cloud backend of /dev-task):
 - Wait for a task. Do no repository work until a coordinator message gives you
   TASK and DONE.
 - Clone the repository named in the task into /workspace with the access

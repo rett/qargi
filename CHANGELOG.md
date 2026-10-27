@@ -62,3 +62,4 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (skills, subagent and command) or per project (skills and subagent, hidden
   from git).
 - Fixed `collect`: `ant` reads a piped stdin as a request body, which truncated multi-file downloads; collected output is a flat directory (the file listing has base names only).
+- The dispatch skill is now `/dev-task` (`/dev-task "<task>" --done "<check>"`), alongside `/dev-instances`, `/dev-provision`, `/dev-memory` and `/dev-review`. `install.sh` removes leftover `dev-agent` and `dev` skill links. The command, project and subagent keep the name `dev-agent`.

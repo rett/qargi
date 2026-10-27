@@ -1,10 +1,10 @@
 ---
-name: dev-agent
-description: Dispatch a one-off, task-scoped development task to a registered dev agent (local subagent or cloud Managed Agents deployment) and manage its sessions: send, start, status, watch, collect, stop, close. Agents work in their own clone, return patches, never push. Local is the default; cloud only when the user's request names a cloud instance.
-argument-hint: send|start|status|watch|collect|stop|close ... [--instance NAME]
+name: dev-task
+description: Dispatch a one-off, task-scoped development task to a registered dev agent (local subagent or cloud Managed Agents deployment) with /dev-task "<task>" --done "<check>", and manage its sessions: send, start, status, watch, collect, stop, close. Agents work in their own clone, return patches, never push. Local is the default; cloud only when the user's request names a cloud instance.
+argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope PATHS] | send|start|status|watch|collect|stop|close ...
 ---
 
-# /dev-agent (dispatch and session lifecycle)
+# /dev-task (dispatch and session lifecycle)
 
 An **instance** is a named, registered agent (see `/dev-instances`). All
 instances obey the contract in `agent-contract.md` (this directory): one task,
@@ -12,6 +12,14 @@ own clone, patches back, never push, no backlog. The CLI is `dev-agent` on
 PATH; related skills: `/dev-instances` (register, list), `/dev-provision`
 (create cloud resources), `/dev-memory` (memory stores), `/dev-review`
 (verify and apply returned patches).
+
+## Quick form
+
+`/dev-task "<task>" --done "<executable check>" [--instance NAME] [--base BRANCH] [--scope PATHS]`
+
+If the first argument is not one of the verbs below, it is a task: build the
+task block (see below) and send it to the instance, which defaults to the
+registered local one. A cloud instance only when the user's request named it.
 
 ## Hard rules
 

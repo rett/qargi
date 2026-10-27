@@ -56,7 +56,7 @@ render() {
   # YAML flow list from the space-separated package names
   apt_list="[$(printf '%s' "$APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
-  sys=$(cat "$TPL/cloud-preamble.md" "$here/../skills/dev-agent/agent-contract.md")
+  sys=$(cat "$TPL/cloud-preamble.md" "$here/../skills/dev-task/agent-contract.md")
   python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" <<'EOF'
 import sys, pathlib
 tpl, out, name, model, effort, apt, net, budget, system = sys.argv[1:10]

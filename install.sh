@@ -19,7 +19,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-skills="dev-agent dev-instances dev-provision dev-memory dev-review"
+skills="dev-task dev-instances dev-provision dev-memory dev-review"
 target= proj= mode= copy= force= uninstall=
 while [ $# -gt 0 ]; do
   case $1 in
@@ -48,7 +48,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/dev-agent.md | grep -E '(^|/)dev-(agent|instances|provision|memory|review)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/dev-agent.md | grep -E '(^|/)(dev|dev-agent|dev-task|dev-instances|dev-provision|dev-memory|dev-review)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: dev-agent paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
@@ -63,6 +63,7 @@ if [ -n "$uninstall" ]; then
     grep -v -x -F "$entries" "$exclude_file" > "$exclude_file.tmp" || true
     mv "$exclude_file.tmp" "$exclude_file"
   fi
+  for old in dev-agent dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
   for p in "${paths[@]}"; do
     if [ -L "$p" ] || { [ -e "$p" ] && [ -n "$force" ]; }; then rm -rf "$p"; echo "removed $p"
     elif [ -e "$p" ]; then echo "kept $p (not a symlink; use --force to remove)"; fi
@@ -83,6 +84,8 @@ if [ -n "$copy" ] && [ "$mode" = user ]; then
 fi
 
 mkdir -p "$target/skills" "$target/agents"
+# the dispatch skill had other names before: drop leftover symlinks
+for old in dev-agent dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
 for s in $skills; do
   rm -rf "${target:?}/skills/$s"
   if [ -n "$copy" ]; then cp -r "$src/skills/$s" "$target/skills/$s"; else ln -s "$src/skills/$s" "$target/skills/$s"; fi

@@ -4,7 +4,7 @@
 #   dev-agent instances init|list|show|remove|normalize ...   (skill: dev-instances)
 #   dev-agent provision plan|apply|add-reference ...           (skill: dev-provision)
 #   dev-agent memory seed|seed-reference|lint ...              (skill: dev-memory)
-#   dev-agent start|send|status|stop|mark|close ...            (skill: dev-agent)
+#   dev-agent start|send|status|stop|mark|close ...            (skill: dev-task)
 #   dev-agent watch SID [MAX_SECONDS]
 #   dev-agent collect SID DIR
 #   dev-agent version
