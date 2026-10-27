@@ -105,3 +105,14 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
   printf '#!/bin/sh\ncat %s\n' "$(printf '%q' "$1")" > "$ASKPASS"; chmod 700 "$ASKPASS"
   export GIT_ASKPASS=$ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
 }
+
+# The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
+# contract, and the role's contract addendum if it has one. Provisioning and refresh-prompt
+# build it the same way, so an agent can always be brought back in line with the tool.
+agent_prompt() { # role
+  local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/dev-task/agent-contract.md
+  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; contract=$lib/skills/dev-task/agent-contract.md; }
+  sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"; cat "$contract"; [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
+}
+

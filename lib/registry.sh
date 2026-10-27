@@ -11,6 +11,7 @@
 #        registry.sh show NAME [--reconcile]
 #        registry.sh remove NAME
 #        registry.sh budget NAME CENTS --asked "..."   (change the spend ceiling of the instance's deployment)
+#        registry.sh refresh-prompt NAME --asked "..." [--plan TOKEN --approved "..."]   (rebuild the agent's prompt from the current contract)
 #        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <NAME>-agent|environment|memory|deployment)
 . "$(dirname "$0")/lib.sh"
 
@@ -232,7 +233,29 @@ budget_set() {
   fi
 }
 
+refresh_prompt() {
+  need_asked; ant_ok
+  local n=$1 i aid ag cur new aver ptok nv
+  i=$(inst_get "$n") || exit 1
+  [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
+  split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
+  ag=$(ant beta:agents retrieve --agent-id "$aid" </dev/null 2>/dev/null) || die "cannot read the agent"
+  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE")
+  [ "$cur" != "$new" ] || { echo "the prompt of $aid v$aver is current"; return 0; }
+  echo "PLAN: rebuild the system prompt of $aid v$aver ($PROJECT/$ROLE) from the current contract; changes:"
+  diff <(printf '%s\n' "$cur") <(printf '%s\n' "$new") | grep -E '^[<>]' | sed 's/^</  -/;s/^>/  +/' | cut -c1-150 | head -60
+  ptok=$(printf '%s|%s' "$aver" "$new" | plan_token)
+  [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
+  need_plan "$ptok"; audit_log refresh-prompt "$n $aid v$aver"
+  ant beta:agents update --agent-id "$aid" --version "$aver" --system "$new" </dev/null >/dev/null 2>&1 || die "agent update failed"
+  ant beta:deployments update --deployment-id "$(jq -r .deployment_id <<<"$i")" --agent "$aid" </dev/null >/dev/null 2>&1 || die "agent updated but re-pointing the deployment failed"
+  nv=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null | jq .agent.version)
+  json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$nv"
+  echo "prompt refreshed; the deployment now pins agent v$nv"
+}
+
 case $verb in
+  refresh-prompt) [ -n "$ARG" ] || die "refresh-prompt needs NAME"; refresh_prompt "$ARG";;
   budget) [ -n "$ARG" ] || die "budget needs NAME CENTS"; budget_set "$ARG" "${ARG2:-}";;
   normalize) [ -n "$ARG" ] || die "normalize needs NAME"; normalize "$ARG";;
   init)

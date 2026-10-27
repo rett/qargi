@@ -20,6 +20,7 @@ after you have shown the printed PLAN.
 | list | `dev-agent instances list [--reconcile]` | Instances plus active sessions; `--reconcile` flags live sessions missing from the tracker (ORPHAN, never touched). |
 | show | `dev-agent instances show NAME [--reconcile]` | Full record plus staleness: agent newer than pinned, agent file changed, deployment/agent archived or paused. |
 | budget | `dev-agent instances budget NAME CENTS --asked "..." [--session SID]` | Sets the spend ceiling on the instance's deployment; new sessions inherit it. `--session` also changes a running session that already has a budget (a session cannot gain one after creation). |
+| refresh-prompt | `dev-agent instances refresh-prompt NAME --asked "..." [--plan TOKEN --approved "..."]` | Rebuilds the cloud agent's system prompt from the current contract, preamble and role addendum; prints what changes and a plan token. Applying creates a new agent version and re-points the deployment. Run it after the contract changes. |
 | normalize | `dev-agent instances normalize NAME --asked "..." [--approved "..."]` | Renames the agent, environment and deployment to `<NAME>-agent`, `-environment`, `-deployment` and the memory and reference stores to `<project>-memory`, `<project>-reference`; plan first. `show` lists the deviations as NAMING lines. |
 | remove | `dev-agent instances remove NAME` | Registry entry only; refuses with open sessions. |
 
