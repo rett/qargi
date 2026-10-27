@@ -5,8 +5,11 @@
 #   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
 #   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
-# Resources are named <NAME>-agent, -environment, -memory and -deployment, where
-# NAME is <project>-<role> (--project P --role R, role defaults to dev).
+# NAME is <project>-<role> (--project P --role R, role defaults to dev; roles come
+# from a fixed list). The agent, environment and deployment are named
+# <NAME>-agent, -environment and -deployment. The memory stores belong to the
+# project: <project>-memory (recipes) and <project>-reference. Existing ones are
+# attached, not duplicated; --memory-store ID and --reference-store ID name them.
 # Options also include --budget CENTS (default 500, set on the deployment).
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
 # changes nothing. `apply` creates the resources only with --approved (the
@@ -24,7 +27,7 @@ TPL=$here/../provision/templates
 verb=${1:-}; shift || true
 NAME='' PROJECT='' ROLE=dev
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
-MODEL=claude-sonnet-5-5 EFFORT=high APT='' NETWORKING=unrestricted APPROVED='' BUDGET=500
+MODEL=claude-sonnet-5-5 EFFORT=high APT='' NETWORKING=unrestricted APPROVED='' BUDGET=500 MEMORY_STORE='' REFERENCE_STORE=''
 while [ $# -gt 0 ]; do
   case $1 in
     --model) MODEL=$2; shift 2;;
@@ -36,16 +39,26 @@ while [ $# -gt 0 ]; do
     --budget) BUDGET=$2; shift 2;;
     --project) PROJECT=$2; shift 2;;
     --role) ROLE=$2; shift 2;;
+    --memory-store) MEMORY_STORE=$2; shift 2;;
+    --reference-store) REFERENCE_STORE=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done
 
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
-printf '%s' "$NAME" | grep -Eq '^[a-z][a-z0-9]*(-[a-z0-9]+)+$' || die "name must be <project>-<role> in kebab-case (for example tacctl-dev); give NAME or --project P [--role R]"
-[ ${#NAME} -le 40 ] || die "name too long (40 characters at most)"
+[ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
+split_instance "$NAME"
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
 ant_ok
+
+# Project-level stores: attach the ones that exist, create the others.
+find_store() { ant beta:memory-stores list --max-items -1 2>/dev/null | jq -r --arg n "$1" 'select(.name==$n and (.archived_at // null)==null) | .id' | head -1; }
+MEMID=${MEMORY_STORE:-$(find_store "$PROJECT-memory")}
+REFID=${REFERENCE_STORE:-$(find_store "$PROJECT-reference")}
+store_note() { # kind name id
+  if [ -n "$3" ]; then echo "$1 store: attach existing $2 ($3)"; else echo "$1 store: create $2"; fi
+}
 
 W=$DA_STATE/provision/$NAME
 D=$W/agents/$NAME
@@ -57,11 +70,15 @@ render() {
   apt_list="[$(printf '%s' "$APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   sys=$(cat "$TPL/cloud-preamble.md" "$here/../skills/dev-task/agent-contract.md")
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" <<'EOF'
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system = sys.argv[1:10]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref = sys.argv[1:13]
 t = pathlib.Path(tpl); o = pathlib.Path(out)
-sub = {"{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
+res = []
+if not have_mem: res.append("  - ./memory_store-recipes.yaml")
+if not have_ref: res.append("  - ./memory_store-reference.yaml")
+resources = ("resources:\n" + "\n".join(res)) if res else "resources: []"
+sub = {"{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
        "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
 def r(src, dst, extra=None):
     s = (t / src).read_text()
@@ -70,8 +87,8 @@ def r(src, dst, extra=None):
     (o / dst).write_text(s)
 r("agent.md.tmpl", "agent.md", {"{{SYSTEM}}": system})
 r("environment.yaml.tmpl", "environment.yaml")
-r("memory_store-recipes.yaml.tmpl", "memory_store-recipes.yaml")
-r("memory_store-reference.yaml.tmpl", "memory_store-reference.yaml")
+if not have_mem: r("memory_store-recipes.yaml.tmpl", "memory_store-recipes.yaml")
+if not have_ref: r("memory_store-reference.yaml.tmpl", "memory_store-reference.yaml")
 r("deployment-standby.yaml.tmpl", "deployment-standby.yaml")
 EOF
 }
@@ -82,6 +99,8 @@ case $verb in
   plan)
     render
     echo "files rendered in $D"
+    store_note memory "$PROJECT-memory" "$MEMID"
+    store_note reference "$PROJECT-reference" "$REFID"
     (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}");;
   apply)
     need_asked
@@ -89,19 +108,24 @@ case $verb in
     render
     (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
-    dep=$(key 'deployment-standby'); store=$(key 'memory_store-recipes'); refstore=$(key 'memory_store-reference')
+    dep=$(key 'deployment-standby')
     [ -n "$dep" ] || die "deployment id not found in $LOCK"
-    if [ -n "$store" ]; then
+    store=$MEMID; refstore=$REFID
+    if [ -z "$store" ]; then
+      store=$(key 'memory_store-recipes')
       "$here/memory.sh" seed "$store" || echo "dev-agent: warning: could not seed the memory store" >&2
     fi
-    if [ -n "$refstore" ]; then
+    if [ -z "$refstore" ]; then
+      refstore=$(key 'memory_store-reference')
+      "$here/memory.sh" seed-reference "$refstore" || echo "dev-agent: warning: could not seed the reference store" >&2
+    fi
+    if [ -n "$refstore" ] && [ -n "$store" ]; then
       # ant apply attaches a referenced store read-write; the reference store must be read-only.
       arr=$(jq -nc --arg r "$store" --arg f "$refstore" '[
         {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs."},
         {type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]')
       ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
-        || die "could not set the reference store read-only on the deployment; fix it before running a session"
-      "$here/memory.sh" seed-reference "$refstore" || echo "dev-agent: warning: could not seed the reference store" >&2
+        || die "could not set the stores' access on the deployment; fix it before running a session"
     fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
@@ -112,13 +136,13 @@ case $verb in
     dep=$(jq -r .deployment_id <<<"$inst")
     cur=$(ant beta:deployments retrieve --deployment-id "$dep" 2>/dev/null) || die "cannot read the deployment"
     desc=$(sed -n 's/^description: //p' "$TPL/memory_store-reference.yaml.tmpl")
-    refstore=$(ant beta:memory-stores create --name "$NAME-reference" --description "$desc" 2>/dev/null | jq -r .id)
+    refstore=$(ant beta:memory-stores create --name "$PROJECT-reference" --description "$desc" 2>/dev/null | jq -r .id)
     [ -n "$refstore" ] && [ "$refstore" != null ] || die "could not create the reference store"
     "$here/memory.sh" seed-reference "$refstore" || die "could not seed $refstore"
     arr=$(jq -c --arg f "$refstore" '.resources + [{type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]' <<<"$cur")
     ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 || die "could not attach $refstore to the deployment (store created: $refstore)"
     new=$(ant beta:deployments retrieve --deployment-id "$dep" 2>/dev/null | jq -c '.resources')
     json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
-    echo "reference store $refstore ($NAME-reference) created, seeded and attached read-only to $dep (approved: $APPROVED)";;
+    echo "reference store $refstore ($PROJECT-reference) created, seeded and attached read-only to $dep (approved: $APPROVED)";;
   *) die "usage: provision.sh plan|apply NAME [options]";;
 esac

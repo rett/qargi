@@ -13,14 +13,26 @@ Two kinds of agent instance are supported and registered by name:
 Local is the default. Cloud is used only when the user asks for it in that
 request.
 
-## Resource names
+## Naming convention
 
-Every cloud resource is named `<project>-<role>-<component>`, where
-`<project>-<role>` is also the instance name in the registry (for example
-`tacctl-dev`) and the component is one of `agent`, `environment`, `memory`,
-`deployment`, `reference` (`vault` when one is managed). Provisioning
-(`--project P --role R`, role defaults to `dev`) creates them that way, and
-`registry.sh normalize NAME` renames an existing instance's resources to match.
+Every name follows from the project, so resources are identifiable at a glance.
+
+| Thing | Name | Example |
+|---|---|---|
+| project | one lower-case token (letters, digits) | `tacctl` |
+| role | from a fixed list: `dev`, `review`, `docs`, `test` | `dev` |
+| instance (registry) | `<project>-<role>` | `tacctl-dev` |
+| agent, environment, deployment | `<instance>-agent`, `-environment`, `-deployment` | `tacctl-dev-agent` |
+| memory stores (project-level) | `<project>-memory` (recipes), `<project>-reference` | `tacctl-memory` |
+| session | `<instance>-<task-slug>` | `tacctl-dev-dots-in-usernames` |
+| branch (in the agent's clone) | `agent/<task-slug>`, the same slug | `agent/dots-in-usernames` |
+
+Memory belongs to the project, not the instance: every instance of a project
+mounts the same recipes store (read-write) and reference store (read-only), so
+what one agent learns serves the next. Provisioning attaches existing stores of
+that name and creates them only for a new project. `dev-agent instances normalize
+NAME` renames an existing instance's resources to match, and `instances show`
+lists the deviations. The role list can be extended with `DEV_AGENT_ROLES`.
 
 ## Skills and command
 

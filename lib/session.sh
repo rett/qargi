@@ -44,6 +44,13 @@ check_budget() {
   fi
 }
 
+# A session is named <instance>-<task-slug> (its title in the console and API).
+set_title() { # sid instance label
+  [ -n "$3" ] || return 0
+  ant beta:sessions update --session-id "$1" --title "$2-$3" >/dev/null 2>&1 \
+    || echo "dev-agent: warning: could not set the title of $1" >&2
+}
+
 track() {
   local name=$1 sid=$2 i
   i=$(cloud_inst "$name") || exit 1
@@ -51,6 +58,7 @@ track() {
       last_seen: $t, list_cost: null, budget: $b, outputs_collected: false, review_state: "pending",
       closed_at: null, asked: $a}' \
     --arg s "$sid" --arg n "$name" --arg l "$LABEL" --arg t "$(now)" --arg b "none" --arg a "$ASKED"
+  set_title "$sid" "$name" "${LABEL:-standby}"
   trk_refresh "$sid"
   check_budget "$sid"
   echo "tracking session $sid for $name (budget $(jq -r --arg s "$sid" '.[$s].budget' "$TRK"))"
@@ -69,6 +77,7 @@ start() {
 send() {
   need_asked; ant_ok
   local name=$1 task=$2 sid i
+  valid_slug "$LABEL" || die "send needs --label <task-slug> (lower-case letters, digits, '-'): the session is named <instance>-<task-slug>; use the same slug for the agent/<slug> branch"
   i=$(cloud_inst "$name") || exit 1
   [ -n "$task" ] || die "send needs the task text"
   if [ -n "$NEW" ]; then
@@ -80,7 +89,8 @@ send() {
   fi
   trk_refresh "$sid" || die "cannot read session $sid"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" = idle ] || die "session $sid is not idle (see: status)"
-  [ -z "$LABEL" ] || json_update "$TRK" '.[$s].label = $l' --arg s "$sid" --arg l "$LABEL"
+  json_update "$TRK" '.[$s].label = $l' --arg s "$sid" --arg l "$LABEL"
+  set_title "$sid" "$name" "$LABEL"
   ant beta:sessions:events send --session-id "$sid" \
     --event "$(jq -n --arg t "$task" '{type: "user.message", content: [{type: "text", text: $t}]}')" >/dev/null \
     || die "could not send the task"

@@ -39,7 +39,7 @@ registered local one. A cloud instance only when the user's request named it.
 | Verb | Command | Notes |
 |---|---|---|
 | start | `dev-agent start NAME [--label L] --asked "..."` | New cloud session via the deployment. The spend budget lives on the deployment (a session can only get one at creation). |
-| send | `dev-agent send NAME "<task block>" [--label L] [--session SID] [--new] --asked "..."` | Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
+| send | `dev-agent send NAME "<task block>" --label SLUG [--session SID] [--new] --asked "..."` | `--label` is required for cloud: the session is named `<instance>-<slug>`; use the same slug for the `agent/<slug>` branch. Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
 | status | `dev-agent status [SID\|NAME]` | Refreshes the tracker from the API. |
 | watch | `dev-agent watch SID [MAX_SECONDS]` | Bounded poller (default 7200 s); prints one `DEV-AGENT WATCH <sid> idle\|terminated\|budget_reached\|timeout\|auth` line. |
 | collect | `dev-agent collect SID DIR` | Downloads the session's outputs into a fresh directory; marked collected only if `manifest.json` is there. |

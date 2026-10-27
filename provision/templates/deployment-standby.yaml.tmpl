@@ -4,9 +4,7 @@ agent: ./agent.md
 environment_id: ./environment.yaml
 vault_ids: []
 budget: {type: limit, max_list_cost: {amount: "{{BUDGET}}", currency: USD}}
-resources:
-  - ./memory_store-recipes.yaml
-  - ./memory_store-reference.yaml
+{{RESOURCES}}
 initial_events:
   - type: user.message
     content:

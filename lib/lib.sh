@@ -17,6 +17,23 @@ for f in "$REG" "$TRK"; do
   [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
 done
 
+# Naming convention (see README): <project>-<role>-<component>. Project and role
+# are single lower-case tokens (no dashes) so a name parses unambiguously; the
+# role comes from a fixed list. Memory stores belong to the project:
+# <project>-memory and <project>-reference. A session is named
+# <project>-<role>-<task-slug>.
+DA_ROLES=${DEV_AGENT_ROLES:-"dev review docs test"}
+valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
+valid_role() { local r; for r in $DA_ROLES; do [ "$r" = "$1" ] && return 0; done; return 1; }
+valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
+# split_instance NAME: sets PROJECT and ROLE, or dies with the rule.
+split_instance() {
+  PROJECT=${1%%-*}; ROLE=${1#*-}
+  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
+    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
+  fi
+}
+
 die() { echo "dev-agent: $*" >&2; exit 1; }
 
 # Cloud verbs that create or drive a session need --asked "<what the user

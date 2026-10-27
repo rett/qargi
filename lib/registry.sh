@@ -72,6 +72,7 @@ init_cloud() {
   fi
   name=${NAME:-$(slug "$(jq -r '.name' <<<"$d")")}
   [ -n "$name" ] || die "empty instance name; pass --name"
+  split_instance "$name"
   rec=$(jq -n --argjson d "$d" --argjson ag "$ag" --arg t "$(now)" '{
       location: "cloud", created: $t, deployment_id: $d.id,
       agent: {id: $d.agent.id, version_pinned: $d.agent.version,
@@ -155,11 +156,12 @@ reconcile() {
 }
 
 normalize() {
-  need_asked; ant_ok
-  local n=$1 i aid eid mid did ag env mem dep aver changes=0
+  [ "${2:-}" = plan ] || need_asked
+  ant_ok
+  local n=$1 i aid eid mid did ag env mem dep aver changes=0 rid ref rname
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "normalize applies to cloud instances"
-  printf '%s' "$n" | grep -Eq '^[a-z][a-z0-9]*(-[a-z0-9]+)+$' || die "instance name must be <project>-<role> (kebab-case)"
+  split_instance "$n"
   aid=$(jq -r .agent.id <<<"$i"); eid=$(jq -r .environment_id <<<"$i"); did=$(jq -r .deployment_id <<<"$i")
   mid=$(jq -r '[.resources[] | select(.type=="memory_store" and .access=="read_write")][0].memory_store_id // empty' <<<"$i")
   ag=$(ant beta:agents retrieve --agent-id "$aid" 2>/dev/null) || die "cannot read agent"
@@ -174,10 +176,19 @@ normalize() {
   show environment "$(jq -r .name <<<"$env")" "$n-environment"
   if [ -n "$mid" ]; then
     mem=$(ant beta:memory-stores retrieve --memory-store-id "$mid" 2>/dev/null) || die "cannot read memory store"
-    show memory "$(jq -r .name <<<"$mem")" "$n-memory"
-    [ "$(jq -r .name <<<"$mem")" = "$n-memory" ] || echo "  note: the memory mount path becomes /mnt/memory/$n-memory in NEW sessions; check the agent's system prompt for the old path"
+    show memory "$(jq -r .name <<<"$mem")" "$PROJECT-memory"
+    [ "$(jq -r .name <<<"$mem")" = "$PROJECT-memory" ] || echo "  note: the memory mount path becomes /mnt/memory/$PROJECT-memory in NEW sessions"
+  fi
+  rid=$(jq -r '[.resources[]? | select(.type=="memory_store" and .access=="read_only") | .memory_store_id] | .[]' <<<"$i" | while read -r x; do
+      nm=$(ant beta:memory-stores retrieve --memory-store-id "$x" </dev/null 2>/dev/null | jq -r .name)
+      case $nm in *-reference) echo "$x"; break;; esac
+    done)
+  if [ -n "$rid" ]; then
+    ref=$(ant beta:memory-stores retrieve --memory-store-id "$rid" 2>/dev/null); rname=$(jq -r .name <<<"$ref")
+    show reference "$rname" "$PROJECT-reference"
   fi
   show deployment "$(jq -r .name <<<"$dep")" "$n-deployment"
+  [ "${2:-}" != plan ] || return 0
   [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
   [ -n "$APPROVED" ] || { echo "re-run with --approved \"<the user's go-ahead>\" to rename; nothing changed"; return 0; }
   if [ "$(jq -r .name <<<"$ag")" != "$n-agent" ]; then
@@ -185,7 +196,8 @@ normalize() {
     ant beta:deployments update --deployment-id "$did" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was renamed)"
   fi
   [ "$(jq -r .name <<<"$env")" = "$n-environment" ] || ant beta:environments update --environment-id "$eid" --name "$n-environment" >/dev/null 2>&1 || die "environment rename failed"
-  [ -z "$mid" ] || [ "$(jq -r .name <<<"$mem")" = "$n-memory" ] || ant beta:memory-stores update --memory-store-id "$mid" --name "$n-memory" >/dev/null 2>&1 || die "memory store rename failed"
+  [ -z "$mid" ] || [ "$(jq -r .name <<<"$mem")" = "$PROJECT-memory" ] || ant beta:memory-stores update --memory-store-id "$mid" --name "$PROJECT-memory" >/dev/null 2>&1 || die "memory store rename failed"
+  [ -z "$rid" ] || [ "$rname" = "$PROJECT-reference" ] || ant beta:memory-stores update --memory-store-id "$rid" --name "$PROJECT-reference" >/dev/null 2>&1 || die "reference store rename failed"
   [ "$(jq -r .name <<<"$dep")" = "$n-deployment" ] || ant beta:deployments update --deployment-id "$did" --name "$n-deployment" >/dev/null 2>&1 || die "deployment rename failed"
   dep=$(ant beta:deployments retrieve --deployment-id "$did" 2>/dev/null)
   json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$(jq .agent.version <<<"$dep")"
@@ -213,6 +225,9 @@ case $verb in
     inst_get "$ARG" | jq .
     jq --arg n "$ARG" 'to_entries | map(select(.value.instance==$n)) | map({session: .key} + .value)' "$TRK"
     stale_checks "$ARG"
+    if [ "$(jq -r .location <<<"$(inst_get "$ARG")")" = cloud ]; then
+      normalize "$ARG" plan 2>&1 | grep -E -- '->|note:|not a standard' | sed 's/^/NAMING: /' || true
+    fi
     [ -n "$RECON" ] && reconcile "$ARG"
     exit 0;;
   remove)
