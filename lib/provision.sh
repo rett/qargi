@@ -27,12 +27,12 @@ TPL=$here/../provision/templates
 verb=${1:-}; shift || true
 NAME='' PROJECT='' ROLE=dev
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
-MODEL=claude-sonnet-5-5 EFFORT=high APT='' NETWORKING=unrestricted APPROVED='' BUDGET=500 MEMORY_STORE='' REFERENCE_STORE=''
+MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
 while [ $# -gt 0 ]; do
   case $1 in
     --model) MODEL=$2; shift 2;;
     --effort) EFFORT=$2; shift 2;;
-    --apt) APT=$2; shift 2;;
+    --apt) APT=$2; APT_SET=1; shift 2;;
     --networking) NETWORKING=$2; shift 2;;
     --asked) ASKED=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
@@ -48,6 +48,17 @@ done
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
 [ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
+# The project's stored answers (dev-agent project init) give the defaults; flags win.
+PCFG=$DA_CONF/projects/$PROJECT.json
+if [ -f "$PCFG" ]; then
+  jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (dev-agent project show $PROJECT)"
+  cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
+  MODEL=${MODEL:-$(cfg '.roles[$r].model')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
+  [ -n "$APT_SET" ] || APT=$(cfg '.roles[$r].apt | join(" ")')
+  BUDGET=${BUDGET:-$(cfg '.budget_cents')}; SKILLS=$(cfg '.roles[$r].skills | join(" ")')
+  MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
+fi
+MODEL=${MODEL:-claude-sonnet-5-5}; EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
 ant_ok
@@ -57,7 +68,7 @@ find_store() { ant beta:memory-stores list --max-items -1 2>/dev/null | jq -r --
 MEMID=${MEMORY_STORE:-$(find_store "$PROJECT-memory")}
 REFID=${REFERENCE_STORE:-$(find_store "$PROJECT-reference")}
 store_note() { # kind name id
-  if [ -n "$3" ]; then echo "$1 store: attach existing $2 ($3)"; else echo "$1 store: create $2"; fi
+  if [ -n "$3" ]; then echo "$1 store: attach existing store $3 (convention name $2)"; else echo "$1 store: create $2"; fi
 }
 
 W=$DA_STATE/provision/$NAME
@@ -70,15 +81,17 @@ render() {
   apt_list="[$(printf '%s' "$APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   sys=$(cat "$TPL/cloud-preamble.md" "$here/../skills/dev-task/agent-contract.md")
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" <<'EOF'
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref = sys.argv[1:13]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills = sys.argv[1:14]
 t = pathlib.Path(tpl); o = pathlib.Path(out)
 res = []
 if not have_mem: res.append("  - ./memory_store-recipes.yaml")
 if not have_ref: res.append("  - ./memory_store-reference.yaml")
 resources = ("resources:\n" + "\n".join(res)) if res else "resources: []"
-sub = {"{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
+sk = "".join("\n  - {type: anthropic, skill_id: %s, version: latest}" % x for x in skills.split())
+skills_yaml = ("skills:" + sk) if sk else "skills: []"
+sub = {"{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
        "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
 def r(src, dst, extra=None):
     s = (t / src).read_text()

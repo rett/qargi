@@ -21,5 +21,5 @@ outside any repository. Resources created in the Console or with
 | apply | `dev-agent provision apply NAME [same options] --asked "..." --approved "<the user's go-ahead for that plan>"` | Creates the resources, seeds the recipes and reference stores, attaches the reference store read-only, registers the instance. `--approved` is the user's approval, not yours. |
 | add-reference | `dev-agent provision add-reference NAME --asked "..." --approved "..."` | Adds `<NAME>-reference` (read-only) to an existing instance. |
 
-Defaults: Sonnet 5.5, effort high, budget 500 (cents, set on the deployment).
+Defaults come from the project's stored answers (`/dev-project`): the role's model, effort, packages and Anthropic skills, the budget (cents, set on the deployment) and the memory stores; flags override them. Without stored answers: Sonnet 5.5, effort high, budget 500.
 Models and effort for an instance can be chosen at `init` (`/dev-instances`).

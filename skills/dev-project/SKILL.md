@@ -52,5 +52,10 @@ dev-agent project init NAME --answers answers.json
 
 `validate` explains every problem (a push pattern that matches a long-lived
 branch, a push by the agent without a credential, an unknown role or skill).
-`dev-agent project show NAME` prints what was stored; change an answer by
-editing and re-running `init --force`.
+`dev-agent project show NAME` prints what was stored. Change one answer at any
+time with `dev-agent project set NAME PATH VALUE` (for example `budget_cents 2500`
+or `roles.docs.effort high`); it is validated first and applies to the next
+provision. A live deployment's ceiling changes with `dev-agent instances budget
+NAME CENTS --asked "..."` (add `--session SID` for a running session that already
+has a budget). `/dev-provision` reads these answers for model, effort, packages,
+skills, budget and stores; flags override them.

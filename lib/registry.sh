@@ -10,10 +10,12 @@
 #        registry.sh list [--reconcile]
 #        registry.sh show NAME [--reconcile]
 #        registry.sh remove NAME
+#        registry.sh budget NAME CENTS --asked "..."   (change the spend ceiling of the instance's deployment)
 #        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <NAME>-agent|environment|memory|deployment)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
+SESSION_ARG='' ARG2=''
 LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -31,8 +33,9 @@ while [ $# -gt 0 ]; do
     --networking) NETWORKING=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
     --budget) BUDGET=$2; shift 2;;
+    --session) SESSION_ARG=$2; shift 2;;
     -*) die "unknown option $1";;
-    *) ARG=$1; shift;;
+    *) if [ -z "$ARG" ]; then ARG=$1; else ARG2=$1; fi; shift;;
   esac
 done
 
@@ -204,7 +207,25 @@ normalize() {
   echo "renamed; the deployment now pins agent v$(jq -r .agent.version <<<"$dep")"
 }
 
+budget_set() {
+  need_asked; ant_ok
+  local n=$1 cents=${2:-} i did
+  case $cents in ''|*[!0-9]*) die "budget needs NAME CENTS (a whole number)";; esac
+  i=$(inst_get "$n") || exit 1
+  [ "$(jq -r .location <<<"$i")" = cloud ] || die "budget applies to cloud instances"
+  did=$(jq -r .deployment_id <<<"$i")
+  ant beta:deployments update --deployment-id "$did" \
+    --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 || die "could not set the deployment budget"
+  json_update "$REG" '.[$n].budget = $b' --arg n "$n" --arg b "$cents"
+  echo "$n: deployment budget is now $cents; sessions created from now on inherit it (a running session keeps its own: dev-agent budget NAME CENTS --session SID)"
+  if [ -n "${SESSION_ARG:-}" ]; then
+    ant beta:sessions update --session-id "$SESSION_ARG" --budget "{type: limit, max_list_cost: {amount: \"$cents\", currency: USD}}" >/dev/null 2>&1 \
+      && echo "session $SESSION_ARG raised/lowered to $cents" || echo "dev-agent: could not change session $SESSION_ARG (it must already have a budget)" >&2
+  fi
+}
+
 case $verb in
+  budget) [ -n "$ARG" ] || die "budget needs NAME CENTS"; budget_set "$ARG" "${ARG2:-}";;
   normalize) [ -n "$ARG" ] || die "normalize needs NAME"; normalize "$ARG";;
   init)
     case $LOC in

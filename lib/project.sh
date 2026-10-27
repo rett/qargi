@@ -6,6 +6,8 @@
 #
 #   project.sh template NAME              print an answers file with defaults
 #   project.sh init NAME --answers FILE [--force]   validate and store
+#   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
+#                                         roles.docs.effort high (VALUE is JSON, or a plain string)
 #   project.sh show NAME | list | validate FILE
 #
 # Push policy per role (push.mode). The default for every role is none: an agent
@@ -101,6 +103,16 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model)/\(.value.effort)"' "$PROJ_DIR/$n.json";;
+  set)
+    n=${1:-}; path=${2:-}; val=${3:-}
+    [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
+    [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
+    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.docs.effort"
+    jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    tmp=$(mktemp); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
+    out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }
+    chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
+    echo "$n: $path = $val (applies to the next provision; use 'instances budget' for a live deployment)";;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f";;
