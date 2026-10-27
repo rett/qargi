@@ -53,3 +53,5 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Provisioning creates the project's stores in the canon layout and seeds each
   enabled role's skeleton (`provision/role-seeds/<role>/`); the cloud agent prompt
   names the agent's role and the folders it may load.
+- A generic `docs` role skeleton (`provision/role-seeds/docs/`): a contract addendum (accuracy first, profile-defined checks and formats, conflict resolution, history logging), reference files for rules, workflow with the definition of done, per-release sync and review, writing conventions, styling, facts and preferences, and memory files for history and open items, distilled from a working documentation methodology. A role's contract addendum is appended to its agent prompt; `tests/role_seed_sim.py ROLE` proves a role seed conforms to the canon.
+- Cross-role content of a project's reference store lives in `shared/` (rules every role follows, the approved example values, architecture, source map, checked facts); a role's folder holds only that role's own.

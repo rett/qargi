@@ -138,18 +138,21 @@ case $verb in
     RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
     [ -d "$RS" ] || { echo "no seed for role $ROLE (nothing to write)"; exit 0; }
     ant_ok
-    if [ -d "$RS/reference" ]; then
-      store=$(store_of reference); tmp=$(mktemp); dump "$store" > "$tmp"
-      (cd "$RS/reference" && find . -type f | sort) | while IFS= read -r f; do
+    for part in reference memory; do
+      [ -d "$RS/$part" ] || continue
+      store=$(store_of "$part"); [ -n "$store" ] || { echo "the project has no $part store recorded"; continue; }
+      tmp=$(mktemp); dump "$store" > "$tmp"
+      (cd "$RS/$part" && find . -type f | sort) | while IFS= read -r f; do
         rel=${f#./}; p="/roles/$ROLE/$rel"
         id=$(jq -r --arg p "$p" 'select(.path==$p)|.id' "$tmp")
         if [ -z "$id" ]; then
-          printf 'content: "@%s"\n' "$RS/reference/$rel" | ant beta:memory-stores:memories create --memory-store-id "$store" --path "$p" >/dev/null 2>&1 && echo "created $p" || echo "FAILED $p" >&2
+          printf 'content: "@%s"\n' "$RS/$part/$rel" | ant beta:memory-stores:memories create --memory-store-id "$store" --path "$p" >/dev/null 2>&1 && echo "created $p" || echo "FAILED $p" >&2
         elif [ "$rel" = INDEX.md ] && jq -e --arg p "$p" 'select(.path==$p and (.content|contains("| (none yet) | | |")))' "$tmp" >/dev/null; then
-          printf 'content: "@%s"\n' "$RS/reference/$rel" | ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" >/dev/null 2>&1 && echo "filled  $p" || echo "FAILED $p" >&2
+          printf 'content: "@%s"\n' "$RS/$part/$rel" | ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" >/dev/null 2>&1 && echo "filled  $p" || echo "FAILED $p" >&2
         else echo "kept    $p"; fi
       done
-    fi;;
+      rm -f "$tmp"
+    done;;
   audit)
     # Isolation between roles is by convention; the memory version history makes it auditable:
     # a session titled <project>-<role>-... that wrote under another role's folder is reported.
