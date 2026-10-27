@@ -13,6 +13,13 @@
   `git flow hotfix`.
 - Tags are the bare version number, for example `0.1.0`.
 
+## Layout
+
+`bin/dev-agent` is the single command; `lib/` holds the scripts behind it;
+`skills/dev-*` are the skills (each a short guide that calls the command);
+`agents/` the local subagent; `provision/` the resource and memory templates;
+`examples/` sample repository profiles.
+
 ## Versioning
 
 [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html), with the

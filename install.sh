@@ -1,85 +1,107 @@
 #!/usr/bin/env bash
-# Install or remove dev-agent at user level or in one repository.
+# Install or remove dev-agent: the five dev-* skills, the local subagent and the
+# `dev-agent` command.
 #
-#   install.sh --user [--copy] [--force]
-#   install.sh --project DIR [--copy] [--force]
+#   install.sh --user [--copy] [--force]          skills in ~/.claude, command in ~/.local/bin
+#   install.sh --project DIR [--copy] [--force]   skills and subagent in DIR/.claude only
 #   install.sh --user|--project DIR --uninstall
 #
-# User level puts the skill in ~/.claude/skills and the local subagent in
-# ~/.claude/agents, so every project sees it. Project level puts them in
-# DIR/.claude, so only that repository does. By default both are symlinks to
-# this checkout (updates follow `git pull`); --copy installs real files, which
-# is what to use when the project's .claude directory is committed or shared.
-# An existing real directory or file is never overwritten without --force.
-# A --project install never touches the repository's committed files: the two
-# paths are hidden through the repository's local .git/info/exclude (not a
-# tracked file), and the install is refused if either path is already tracked.
-# The instance registry and session tracker are always per user (XDG dirs),
-# whichever mode installs the skill; install at only one level, not both.
+# By default everything is a symlink to this checkout (updates follow `git pull`).
+# --copy installs real files: for --user the whole tool is copied to
+# $XDG_DATA_HOME/dev-agent (default ~/.local/share/dev-agent) and the skills and
+# command come from there; for --project the skill files are copied (the command
+# is user-level either way, so install --user first). An existing real file or
+# directory is never replaced without --force.
+# A --project install never touches the repository's committed files: the paths
+# are hidden through the repository's local .git/info/exclude, and the install
+# is refused if any of them is already tracked. The instance registry, session
+# tracker and profiles are always per user (XDG dirs). Install at one level only.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-target= proj= copy= force= uninstall=
+skills="dev-agent dev-instances dev-provision dev-memory dev-review"
+target= proj= mode= copy= force= uninstall=
 while [ $# -gt 0 ]; do
   case $1 in
-    --user) target=$HOME/.claude; shift;;
+    --user) mode=user; target=$HOME/.claude; shift;;
     --project) [ $# -ge 2 ] || { echo "--project needs DIR" >&2; exit 2; }
-               proj=$2; target=$2/.claude; shift 2;;
+               mode=project; proj=$2; target=$2/.claude; shift 2;;
     --copy) copy=1; shift;;
     --force) force=1; shift;;
     --uninstall) uninstall=1; shift;;
     *) echo "usage: install.sh --user|--project DIR [--copy] [--force] [--uninstall]" >&2; exit 2;;
   esac
 done
-[ -n "$target" ] || { echo "choose --user or --project DIR" >&2; exit 2; }
+[ -n "$mode" ] || { echo "choose --user or --project DIR" >&2; exit 2; }
 
-skill=$target/skills/dev-agent
-agent=$target/agents/dev-agent.md
+data=${XDG_DATA_HOME:-$HOME/.local/share}/dev-agent
+cmd=$HOME/.local/bin/dev-agent
+src=$here
+[ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
+
+paths=()
+for s in $skills; do paths+=("$target/skills/$s"); done
+paths+=("$target/agents/dev-agent.md")
+[ "$mode" != user ] || paths+=("$cmd")
 
 exclude_file=
-if [ -n "$proj" ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
+if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  if [ -n "$(git -C "$proj" ls-files -- .claude/skills/dev-agent .claude/agents/dev-agent.md)" ]; then
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/dev-agent.md | grep -E '(^|/)dev-(agent|instances|provision|memory|review)(/|\.md$)' || true)
+  if [ -n "$tracked" ]; then
     echo "refusing: dev-agent paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
 fi
-entries='/.claude/skills/dev-agent
-/.claude/agents/dev-agent.md'
+entries=
+for s in $skills; do entries="$entries/.claude/skills/$s
+"; done
+entries="$entries/.claude/agents/dev-agent.md"
 
 if [ -n "$uninstall" ]; then
   if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
     grep -v -x -F "$entries" "$exclude_file" > "$exclude_file.tmp" || true
     mv "$exclude_file.tmp" "$exclude_file"
   fi
-  for p in "$skill" "$agent"; do
+  for p in "${paths[@]}"; do
     if [ -L "$p" ] || { [ -e "$p" ] && [ -n "$force" ]; }; then rm -rf "$p"; echo "removed $p"
     elif [ -e "$p" ]; then echo "kept $p (not a symlink; use --force to remove)"; fi
   done
   exit 0
 fi
 
-for p in "$skill" "$agent"; do
+for p in "${paths[@]}"; do
   if [ -e "$p" ] && [ ! -L "$p" ] && [ -z "$force" ]; then
     echo "refusing to replace existing $p (use --force)" >&2; exit 1
   fi
 done
-mkdir -p "$target/skills" "$target/agents"
-rm -rf "$skill" "$agent"
-if [ -n "$copy" ]; then
-  cp -r "$here/skill" "$skill"
-  cp -r "$here/provision" "$skill/provision"   # provision.sh looks for templates here
-  cp "$here/agents/dev-agent.md" "$agent"
-  echo "copied into $target (skills/dev-agent, agents/dev-agent.md)"
-else
-  ln -s "$here/skill" "$skill"
-  ln -s "$here/agents/dev-agent.md" "$agent"
-  echo "linked into $target (symlinks to $here)"
+
+if [ -n "$copy" ] && [ "$mode" = user ]; then
+  rm -rf "$data"; mkdir -p "$data"
+  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/skills" "$here/agents" "$here/examples" "$here/VERSION" "$data/"
+  echo "copied the tool to $data"
 fi
+
+mkdir -p "$target/skills" "$target/agents"
+for s in $skills; do
+  rm -rf "${target:?}/skills/$s"
+  if [ -n "$copy" ]; then cp -r "$src/skills/$s" "$target/skills/$s"; else ln -s "$src/skills/$s" "$target/skills/$s"; fi
+done
+rm -rf "$target/agents/dev-agent.md"
+if [ -n "$copy" ]; then cp "$src/agents/dev-agent.md" "$target/agents/dev-agent.md"; else ln -s "$src/agents/dev-agent.md" "$target/agents/dev-agent.md"; fi
+kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
+if [ "$mode" = user ]; then
+  mkdir -p "$(dirname "$cmd")"; rm -f "$cmd"; ln -s "$src/bin/dev-agent" "$cmd"
+  echo "installed skills and subagent in $target, command at $cmd ($kind)"
+else
+  command -v dev-agent >/dev/null 2>&1 || echo "note: the dev-agent command is not on PATH; run: install.sh --user" >&2
+  echo "installed skills and subagent in $target ($kind)"
+fi
+
 if [ -n "$exclude_file" ]; then
-  mkdir -p "$(dirname "$exclude_file")"
-  touch "$exclude_file"
+  mkdir -p "$(dirname "$exclude_file")"; touch "$exclude_file"
   printf '%s\n' "$entries" | while IFS= read -r line; do
+    [ -n "$line" ] || continue
     grep -qx -F "$line" "$exclude_file" || printf '%s\n' "$line" >> "$exclude_file"
   done
   echo "hidden from git via $exclude_file (local only, nothing committed)"

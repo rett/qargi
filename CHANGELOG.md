@@ -56,3 +56,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   provisioning creates and attaches it read-only; `provision.sh add-reference`
   adds it to an existing instance; `memory.sh seed-reference` and
   `memory.sh lint --kind reference` seed and check it.
+- The tool is one `dev-agent` command (`bin/dev-agent`) with the scripts in
+  `lib/`, and five skills named `dev-agent`, `dev-instances`, `dev-provision`,
+  `dev-memory` and `dev-review`. `install.sh` installs them at user level
+  (skills, subagent and command) or per project (skills and subagent, hidden
+  from git).
