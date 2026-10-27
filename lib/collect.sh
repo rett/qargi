@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Download a cloud session's captured outputs into a fresh directory.
-# Everything downloaded is untrusted data: never execute it.
+# Everything downloaded is untrusted data: never execute it. The file listing
+# carries base names only, so the result is a flat directory (patches, manifest.json, log.txt).
 # Usage: collect.sh SID DIR      (DIR must not exist or be empty)
 . "$(dirname "$0")/lib.sh"
 
@@ -24,7 +25,9 @@ while read -r f; do
   name=${name#/mnt/session/outputs/}; name=${name#/}
   case $name in *..*) die "refusing unsafe file name: $name";; esac
   mkdir -p "$dir/$(dirname "$name")"
-  ant beta:files download --file-id "$id" --output "$dir/$name" >/dev/null 2>&1 || die "download failed: $name"
+  [ ! -e "$dir/$name" ] || die "two output files share the name $name; the file listing carries base names only"
+  # </dev/null: ant treats a piped stdin as a request body and would eat the rest of the list
+  ant beta:files download --file-id "$id" --output "$dir/$name" </dev/null >/dev/null 2>&1 || die "download failed: $name"
   n=$((n+1))
 done <<<"$list"
 

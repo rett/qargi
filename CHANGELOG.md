@@ -61,3 +61,4 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `dev-memory` and `dev-review`. `install.sh` installs them at user level
   (skills, subagent and command) or per project (skills and subagent, hidden
   from git).
+- Fixed `collect`: `ant` reads a piped stdin as a request body, which truncated multi-file downloads; collected output is a flat directory (the file listing has base names only).
