@@ -1,6 +1,6 @@
 ---
 name: dev-agent
-description: Register, run and track sandboxed dev agents (local subagents or cloud Managed Agents deployments) and dispatch one-off, task-scoped tacctl tasks to a named instance. Agents work in their own clone, return patches, never push. Verbs init, list, show, start, send, status, watch, collect, review, stop, close, remove. Local is the default; cloud only when the user's request names a cloud instance.
+description: Register, run and track sandboxed dev agents (local subagents or cloud Managed Agents deployments) and dispatch one-off, task-scoped development tasks to a named instance. Agents work in their own clone, return patches, never push. Verbs init, list, show, start, send, status, watch, collect, review, stop, close, remove. Local is the default; cloud only when the user's request names a cloud instance.
 argument-hint: init|list|show|start|send|status|watch|collect|review|stop|close|remove [--instance NAME] ...
 ---
 
@@ -77,17 +77,22 @@ master or develop), base SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
 
 ## Review (both backends; you are the coordinator)
 
+Gates come from the target repository's `.dev-agent/profile.md` (see
+`examples/`); without a profile, use the repository's own documented checks.
+
 1. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate
    verdict lines; touched paths inside SCOPE; status DONE.
-2. Read every patch. Run `tests/tools/no-private.sh` on the patches; grep
-   commit messages for private names and trailers (`git interpret-trailers`).
-   Refuse on a hit.
-3. Scratch checkout of the base: `git am --3way patches/*.patch`; `make man`
-   if man blocks changed; `make lint`; `make gate-go` (run_in_background, only
-   the final GATE-GO line counts); bats as the invoking user; then the DONE
+2. Read every patch. Run the profile's private-name or secret scrub on the
+   patches; grep commit messages for private names and trailers
+   (`git interpret-trailers`). Refuse on a hit.
+3. Scratch checkout of the base: `git am --3way patches/*.patch`; rebuild
+   generated files the profile names; run the profile's gates (long ones with
+   `run_in_background`, trusting only their verdict lines); then run the DONE
    command verbatim. Only your own runs count.
-4. Code under `internal/**` also gets an Opus review pass before applying.
+4. Anything the profile marks for a second-model review gets one before it is
+   applied.
 5. Report to the user: DONE or BLOCKED, evidence, deviations, the agent's
    "noticed, not acted on". On approval apply to the feature branch (`git am`),
-   renumber the CHANGELOG item, strip trailers, commit. Ask before any push.
-   Never merge to develop or master unless told.
+   apply the profile's coordinator steps (for example renumbering a changelog
+   item), strip trailers, commit. Ask before any push. Never merge to a
+   long-lived branch unless told.
