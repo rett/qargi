@@ -5,7 +5,7 @@
 #   canon.sh plan    PROJECT [--kind K] [--default-role R]
 #   canon.sh apply   PROJECT [--kind K] [--default-role R] --approved "<go-ahead>"
 #   canon.sh import  PROJECT --from STORE_ID --role R --map docs-v0 [--approved "<go-ahead>"]
-#   canon.sh seed-role PROJECT --role R --approved "..."   write the role's skeleton (provision/role-seeds/R/) without overwriting
+#   canon.sh seed-role PROJECT --role R|shared --approved "..."   write the role's baseline (provision/role-seeds/R/; "shared" seeds shared/) without overwriting
 #   canon.sh audit   PROJECT [--kind K]        who wrote under which role folder (read-only)
 #   canon.sh promote PROJECT --kind K --path /roles/R/... --approved "<go-ahead>"
 #
@@ -144,7 +144,7 @@ case $verb in
   seed-role)
     [ -n "$ROLE" ] || die "seed-role needs --role R"
     [ -n "$APPROVED" ] || die "seed-role needs --approved \"<go-ahead>\""
-    printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
+    [ "$ROLE" = shared ] || printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
     RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
     [ -d "$RS" ] || { echo "no seed for role $ROLE (nothing to write)"; exit 0; }
     ant_ok
@@ -153,7 +153,7 @@ case $verb in
       store=$(store_of "$part"); [ -n "$store" ] || { echo "the project has no $part store recorded"; continue; }
       tmp=$(mktemp); dump "$store" > "$tmp"
       (cd "$RS/$part" && find . -type f | sort) | while IFS= read -r f; do
-        rel=${f#./}; p="/roles/$ROLE/$rel"
+        rel=${f#./}; p="/roles/$ROLE/$rel"; [ "$ROLE" != shared ] || p="/shared/$rel"
         id=$(jq -r --arg p "$p" 'select(.path==$p)|.id' "$tmp")
         if [ -z "$id" ]; then
           printf 'content: "@%s"\n' "$RS/$part/$rel" | ant beta:memory-stores:memories create --memory-store-id "$store" --path "$p" >/dev/null 2>&1 && echo "created $p" || echo "FAILED $p" >&2

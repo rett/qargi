@@ -39,6 +39,15 @@ only its own role's index, never another role's folder.
 | audit | `dev-agent canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder. |
 
 `dev-agent memory lint` runs `canon check` (structure, note format, indexes and hygiene).
+A new project's stores start from `provision/role-seeds/`: `shared/` (gates, source map, test
+conventions) and one folder per role. A seed file ships only when it has baseline content; the
+notes below have none, so write each one when you have its content, from the repository, with
+`Sources:` and an index row: `shared/architecture/overview.md` (components, data flow,
+boundaries), `shared/knowledge/facts.md` (checked behaviour that cost time),
+`roles/<role>/preferences/preferences.md` (what the maintainer stated, never inferred).
+Each seed file ends with a `### Project specifics` slot: a project statement replaces the
+baseline bullet it covers.
+
 A store at an older version gets a plan that only adds what a note lacks (`Kind`, `Applies to`,
 `Sources` from its folder and `Verified:` line) and never edits a body.
 A new canon version means a new migration; see `canon/CANON.md` § Changing the canon.

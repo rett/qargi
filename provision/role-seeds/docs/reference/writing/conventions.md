@@ -12,8 +12,7 @@ Sources: <list the project files and the maintainer's instructions this was writ
 - One document type per page: tutorial, how-to, reference or explanation.
 - Start with who it is for and what the reader will be able to do; then the steps in
   the order the reader performs them.
-- Order sections by the reader's task (health check, people, devices, emergencies,
-  recovery, reference), not by command name.
+- Order sections by the reader's task, not by command name.
 
 ### Voice and format (defaults until the project says otherwise)
 - Short sentences, active voice, second person; one idea per paragraph.

@@ -10,6 +10,7 @@ run bash tests/test_local.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
 run bash tests/test_review.sh
+run python3 tests/role_seed_sim.py shared
 run python3 tests/role_seed_sim.py dev
 run python3 tests/role_seed_sim.py docs
 run python3 tests/role_seed_sim.py review

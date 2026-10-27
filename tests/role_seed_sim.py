@@ -9,6 +9,7 @@ canon = os.path.join(here, "..", "lib", "canon.py")
 seed = os.path.join(here, "..", "provision", "canon-seed")
 rs = os.path.join(here, "..", "provision", "role-seeds", role)
 roles = "dev,docs,review,test"
+roles = "dev,docs,review,test"
 sys.path.insert(0, os.path.join(here, "..", "lib"))
 import canon as C
 for kind, part in (("reference", "reference"), ("memory", "memory")):
@@ -22,7 +23,7 @@ for kind, part in (("reference", "reference"), ("memory", "memory")):
         for d, _, fs in os.walk(base):
             for f in fs:
                 rel = os.path.relpath(os.path.join(d, f), base)
-                p = "/roles/%s/%s" % (role, rel)
+                p = ("/shared/%s" if role == "shared" else "/roles/" + role + "/%s") % rel
                 c = open(os.path.join(d, f)).read()
                 mems[p] = {"type": "memory", "id": "seed_%s" % rel, "path": p, "content": c, "content_sha256": ""}
     with open(st, "w") as f:

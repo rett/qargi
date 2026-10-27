@@ -140,7 +140,7 @@ canonise() {
   [ -z "${refstore:-}" ] || "$here/project.sh" set "$PROJECT" memory.reference_store "$refstore" >/dev/null
   DEV_AGENT_NESTED=1 "$here/canon.sh" apply "$PROJECT" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not bring the new stores to the canon" >&2
   local r
-  for r in $(jq -r '.roles | keys[]' "$PCFG"); do
+  for r in shared $(jq -r '.roles | keys[]' "$PCFG"); do
     DEV_AGENT_NESTED=1 "$here/canon.sh" seed-role "$PROJECT" --role "$r" --approved "provisioning $NAME" >/dev/null || echo "dev-agent: warning: could not seed role $r" >&2
   done
 }
