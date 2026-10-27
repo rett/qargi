@@ -21,8 +21,8 @@ recommended; do not assume answers:
 3. **Per role, base branch.** `@dispatcher` (the dispatching session's branch)
    for dev; the docs branch (for example `gh-pages`) for docs.
 4. **Per role, push policy** (the question that matters most):
-   - `none` (default): the agent returns patches; nothing is pushed unless the
-     user asks.
+   - `none` (the default for every role, always recommended): the agent returns
+     patches; nothing is pushed unless the user asks.
    - `coordinator`: the agent returns patches; after review the coordinator
      pushes one branch matching a pattern such as `docs/<slug>`, with the
      user's go-ahead each time. Ask for the pattern.
@@ -30,7 +30,11 @@ recommended; do not assume answers:
      credential. Only if the user insists; ask which credential (a vault id) and
      whether the repository's rulesets limit that credential to the pattern.
      Warn that the tool cannot enforce this server-side.
-   Never offer merging, tagging or pushing long-lived branches.
+   Never offer merging, tagging or pushing long-lived branches. `coordinator` and
+   `agent` are offered only when the user wants them. If a role already behaves
+   that way (a docs agent that pushes `docs/<slug>`), keeping it is an explicit
+   choice the user makes and you record, with its token file and vault ids; it is
+   never assumed.
 5. **Per role, model and effort**, extra apt packages, and Anthropic skills
    (`pdf`, `docx`, `pptx`, `xlsx`; the docs role defaults to `pdf`).
 6. **Budget** per cloud session in cents (default 500, set on the deployment).

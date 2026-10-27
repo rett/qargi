@@ -8,13 +8,18 @@
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh show NAME | list | validate FILE
 #
-# Push policy per role (push.mode):
+# Push policy per role (push.mode). The default for every role is none: an agent
+# never pushes unless the user chose otherwise, explicitly, at project init.
+#
 #   none         the agent returns patches; nothing is pushed unless the user asks
 #   coordinator  the agent returns patches; after review the coordinator pushes a
 #                branch matching push.branch_pattern (e.g. docs/<slug>), with the
 #                user's go-ahead each time
 #   agent        the agent itself may push branches matching push.branch_pattern,
-#                with the credential named in push.credential; never anything else
+#                with the credential named in push.credential (a token read from
+#                push.credential_file when a session starts); never anything else.
+#                Choose it only on purpose, for example for a docs agent that
+#                already pushes docs/<slug> and should keep doing so.
 . "$(dirname "$0")/lib.sh"
 
 PROJ_DIR=$DA_CONF/projects
@@ -54,7 +59,9 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
         need(head and head not in ll and not any(pat == b or pat.startswith(b + "/") for b in ll),
              "%s.push.branch_pattern must not match a long-lived branch" % p)
     if mode == "agent":
-        need(isinstance(push.get("credential"), str) and push["credential"], "%s.push.credential: how the agent authenticates (e.g. a vault id); required when the agent pushes" % p)
+        need(isinstance(push.get("credential"), str) and push["credential"] and "<" not in push["credential"], "%s.push.credential: how the agent authenticates (replace the placeholder, e.g. vault:vlt_...); required when the agent pushes" % p)
+        need(push.get("credential_file", "") == "" or isinstance(push.get("credential_file"), str), "%s.push.credential_file: path of the token file read at session start (kept outside any repository)" % p)
+    need(isinstance(cfg.get("vault_ids", []), list) and all(isinstance(x, str) and re.fullmatch(r"vlt_[A-Za-z0-9]+", x) for x in cfg.get("vault_ids", [])), "%s.vault_ids: vault ids to attach to the role's sessions (for example the GitHub MCP vault)" % p)
     need(re.fullmatch(r"claude-[a-z0-9.-]+", cfg.get("model", "") or ""), "%s.model: a model id like claude-sonnet-5-5" % p)
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
@@ -78,7 +85,7 @@ case $verb in
       repo: {url: "https://github.com/OWNER/REPO", path: "", long_lived: ["master", "develop"]},
       roles: {
         dev:  {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: [], profile: $n},
-        docs: {base: "gh-pages", push: {mode: "coordinator", branch_pattern: "docs/<slug>"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"], profile: ($n + "-docs")}
+        docs: {base: "gh-pages", push: {mode: "none"}, vault_ids: [], model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"], profile: ($n + "-docs")}
       },
       memory: {memory_store: "", reference_store: ""},
       budget_cents: 500}';;
