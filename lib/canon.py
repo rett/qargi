@@ -69,6 +69,8 @@ def detect(kind, mems):
             return LATEST, "marker"
         if 1 <= n < LATEST:
             return n, "canon version %d" % n
+        if n > LATEST:
+            return "unknown", "written by a newer dev-agent (canon %d); this one knows %d" % (n, LATEST)
         return "draft", "marker from an earlier draft of the canon (%d)" % n
     paths = list(mems)
     if not paths:
@@ -90,14 +92,28 @@ def is_note(p):
     """A note is a Markdown file under shared/ or roles/<role>/ that is not an index and not under tools/."""
     parts = p.strip("/").split("/")
     return (parts[0] in ("shared", "roles") and len(parts) > 1 and parts[-1].endswith(".md")
-            and parts[-1] != "INDEX.md" and "tools" not in parts[:-1])
+            and parts[-1] != "INDEX.md" and not (parts[0] == "roles" and "tools" in parts[2:-1]))
+
+
+def fenced(lines):
+    """Indexes of the lines inside a fenced code block (the fence lines included)."""
+    inside, out = False, set()
+    for i, l in enumerate(lines):
+        if l.lstrip().startswith(("```", "~~~")):
+            inside = not inside
+            out.add(i)
+        elif inside:
+            out.add(i)
+    return out
 
 
 def note_fields(c):
     out = {}
-    for line in c.splitlines():
+    lines = c.splitlines()
+    skip = fenced(lines)
+    for i, line in enumerate(lines):
         m = FIELD.match(line)
-        if m and m.group(1) not in out:
+        if m and i not in skip and m.group(1) not in out:
             out[m.group(1)] = m.group(2).strip()
     return out
 
@@ -111,6 +127,8 @@ def kind_for(kind, p):
             if part in MEM_FOLDER_KIND:
                 return MEM_FOLDER_KIND[part]
         return MEM_STEM_KIND.get(inner[-1][:-3]) if inner else None
+    if len(inner) > 2 and inner[0] == "repos":
+        inner = inner[2:]
     return REF_FOLDER_KIND.get(inner[0], "guide") if len(inner) > 1 else "guide"
 
 
@@ -138,29 +156,40 @@ def add_header(kind, p, content, project, today):
         want.append(("Sources", src))
     if not want:
         return content, []
-    lines = ["%s: %s" % kv for kv in want]
     L = content.split("\n")
-    t = next((i for i, l in enumerate(L) if l.startswith("# ")), -1)
-    h = next((i for i, l in enumerate(L) if i > t and FIELD.match(l)), None)
-    if h is not None and h - t <= 8:
-        L[h:h] = lines
-    else:
-        ins = ([""] if t >= 0 else []) + lines
-        if t + 1 < len(L) and L[t + 1].strip():
-            ins.append("")
-        L[t + 1:t + 1] = ins
+    for name, val in want:                        # in canonical order, each after the nearest field before it
+        skip = fenced(L)
+        t = next((i for i, l in enumerate(L) if l.startswith("# ") and i not in skip), -1)
+        pos = {FIELD.match(l).group(1): i for i, l in reversed(list(enumerate(L))) if FIELD.match(l) and i not in skip and i > t}
+        before = [pos[f] for f in HEADER[:HEADER.index(name)] if f in pos and pos[f] - t <= 8]
+        later = [pos[f] for f in HEADER[HEADER.index(name) + 1:] if f in pos and pos[f] - t <= 8]
+        line = "%s: %s" % (name, val)
+        if before:
+            L.insert(max(before) + 1, line)
+        elif later:
+            L.insert(min(later), line)
+        else:
+            ins = ([""] if t >= 0 else []) + [line]
+            if t + 1 < len(L) and L[t + 1].strip():
+                ins.append("")
+            L[t + 1:t + 1] = ins
     return "\n".join(L), [k for k, _ in want]
 
 
-LOAD_WHEN = re.compile(r"(?m)^(\|[^\n]*\bPath\b[^\n]*)\bLoad when\b")
+LOAD_WHEN = re.compile(r"(?m)^(\|\s*Path\s*\|\s*Purpose\s*\|\s*)Load when(\s*\|)")
 
 
 def fix_index(content):
-    return LOAD_WHEN.sub(r"\1Load", content)
+    return LOAD_WHEN.sub(r"\1Load\2", content)
+
+
+def slurp(path):
+    with open(path) as f:
+        return f.read()
 
 
 def seed_text(seed, name, subs):
-    s = open("%s/%s" % (seed, name)).read()
+    s = slurp("%s/%s" % (seed, name))
     for k, v in subs.items():
         s = s.replace(k, v)
     return s
@@ -231,7 +260,7 @@ def migrate_legacy(kind, mems, project, roles, default_role, seed, today):
             new.append((p, seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))))
             taken.add(p)
     if "/_template.md" not in mems:
-        new.append(("/_template.md", open("%s/_template.%s.md" % (seed, kind)).read()))
+        new.append(("/_template.md", slurp("%s/_template.%s.md" % (seed, kind))))
     for p, c in new:
         ops.append({"op": "create", "path": p, "content": c})
 
@@ -314,12 +343,18 @@ def migrate_draft(kind, mems, project, roles, default_role, seed, today):
                 ops.append({"op": "update", "id": m["id"], "path": moved.get(p, p), "content": new,
                             "sha": m.get("content_sha256", "")})
         notes.append("%s: %s" % (scope, ", ".join("%s -> %s" % kv for kv in sorted(folders.items()))))
-    # the root README is regenerated from the seed (it names the layout)
+    # the root README is regenerated from the seed (it names the layout); a text that is
+    # not the seed's stays available under _conflicts
     old = mems.get("/README.md")
     if old:
         subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
         new = seed_text(seed, "README.%s.md" % kind, subs)
         if new != old["content"]:
+            was = seed_text(seed, "v1/README.%s.md" % kind, subs)
+            keep = "/_conflicts/%s/README.md" % today
+            if old["content"] != was and keep not in mems:
+                ops.append({"op": "create", "path": keep, "content": old["content"]})
+                notes.append("the root README is replaced; the old text is kept at %s" % keep)
             ops.append({"op": "update", "id": old["id"], "path": "/README.md", "content": new,
                         "sha": old.get("content_sha256", "")})
     return ops, notes
@@ -341,22 +376,18 @@ def migrate_v2(kind, mems, project, roles, default_role, seed, today):
             ops.append({"op": "update", "id": m["id"], "path": p, "content": new, "sha": m.get("content_sha256", "")})
     for name, v1, v2 in (("README.md", "%s/v1/README.%s.md" % (seed, kind), seed_text(seed, "README.%s.md" % kind, subs)),
                          ("_template.md", "%s/v1/_template.md" % seed if kind == "memory" else None,
-                          open("%s/_template.%s.md" % (seed, kind)).read())):
+                          slurp("%s/_template.%s.md" % (seed, kind)))):
         cur = mems.get("/" + name)
         if cur is None:
             ops.append({"op": "create", "path": "/" + name, "content": v2})
         elif cur["content"] != v2:
-            was = open(v1).read() if v1 else ""
+            was = slurp(v1) if v1 else ""
             for k_, v_ in subs.items():
                 was = was.replace(k_, v_)
-            if cur["content"] != was and name == "README.md":
-                keep = "/_conflicts/%s/README.md" % today
-                if keep not in mems:
-                    ops.append({"op": "create", "path": keep, "content": cur["content"]})
-                notes.append("the root README differed from the version 1 seed: the old text is kept at %s" % keep)
-            elif cur["content"] != was:
-                notes.append("%s differs from the version 1 seed and was left as it is" % name)
-                continue
+            keep = "/_conflicts/%s/%s" % (today, name)
+            if cur["content"] != was and keep not in mems:
+                ops.append({"op": "create", "path": keep, "content": cur["content"]})
+                notes.append("%s differed from the version 1 seed: the old text is kept at %s" % (name, keep))
             ops.append({"op": "update", "id": cur["id"], "path": "/" + name, "content": v2, "sha": cur.get("content_sha256", "")})
     return ops, notes
 
@@ -430,11 +461,11 @@ def notes_check(kind, mems, roles, F, W):
             if re.search(r"\d", v) and re.search(r"[A-Za-z]", v):
                 F(p, "looks like a secret (%s assigned a long mixed value)" % g.group(1).lower()); break
         if re.search(r"/home/(?!user/|u/)[a-z][a-z0-9_-]*/", c): W(p, "contains a home path")
-        for ip in re.findall(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", c):
+        for ip in re.findall(r"(?<![\w.-])(\d{1,3}(?:\.\d{1,3}){3})(?![\w.-])", c):
             if all(int(x) <= 255 for x in ip.split(".")) and not docip.match(ip):
                 W(p, "contains address %s (use documentation addresses)" % ip)
         if p.endswith("/INDEX.md"):
-            if re.search(r"(?m)^\|[^\n]*\bLoad when\b", c):
+            if LOAD_WHEN.search(c):
                 W(p, "the index column is `Load when`; canon 2 names it `Load`")
             elif not re.search(r"(?m)^\|\s*Path\s*\|\s*Purpose\s*\|\s*Load\s*\|", c):
                 W(p, "no `| Path | Purpose | Load |` table")
@@ -576,8 +607,10 @@ def import_docs_v0(a):
         else:
             notes.append("not imported, unknown part of the source layout: %s" % p)
             continue
-        if is_note(dest) and not p.endswith("INDEX.md") and kind_for(kind, dest):
+        if is_note(dest) and not p.endswith("INDEX.md"):
             content, _ = add_header(kind, dest, content, a.project, today)
+            if "Kind" not in note_fields(content):
+                notes.append("kind not derivable from the path, set Kind: by hand: %s" % dest)
         if dest in taken[kind]:
             existing = (ref if kind == "reference" else mem).get(dest)
             if existing and existing["content"] == content:

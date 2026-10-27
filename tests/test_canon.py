@@ -82,7 +82,7 @@ class Canon(unittest.TestCase):
         self.assertTrue(after["/roles/dev/rules/rules.md"].endswith("\nsee workflow/w.md\n"))
 
     def test_draft_marker_is_migrated(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 3\nkind: reference\nproject: demo\nroles: dev docs\n",
+        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: reference\nproject: demo\nroles: dev docs\n",
                  "/README.md": "r", "/shared/INDEX.md": "s", "/roles/dev/INDEX.md": "d", "/roles/docs/INDEX.md": "d",
                  "/roles/dev/01-rules/rules.md": "# R\n\nx 01-rules y\n"}
         p, after = self.assertConverges("reference", files)
@@ -205,6 +205,63 @@ class Canon(unittest.TestCase):
             self.assertEqual(tuple(lay["note_kinds"][k]["document"]), C.DOCUMENT[k])
         self.assertEqual(lay["limits"], C.LIMITS)
         self.assertEqual(tuple(lay["header"]), C.HEADER)
+
+    def test_header_fields_are_inserted_in_canonical_order(self):
+        c, added = C.add_header("memory", "/shared/sandbox/a.md",
+                                "# a\n\nKind: sandbox\nApplies to: any\n\nFact: f\n\nCheck: true\nVerified: 2026-10-01 by r on x\n", "demo", TODAY)
+        self.assertEqual(added, ["Sources"])
+        self.assertTrue(c.startswith("# a\n\nKind: sandbox\nApplies to: any\nSources: r, 2026-10-01\n\nFact: f"), c)
+
+    def test_fenced_lines_are_not_header_fields(self):
+        body = "# b\n\n```\n$ make gate\nCheck: ok\n```\n"
+        self.assertEqual(C.note_fields(body), {})
+        c, _ = C.add_header("memory", "/shared/sandbox/b.md", body, "demo", TODAY)
+        self.assertTrue(c.startswith("# b\n\nKind: sandbox\nApplies to: any\nSources:"), c)
+        self.assertTrue(c.endswith(body.split("\n\n", 1)[1]))
+
+    def test_customised_readme_survives_the_draft_chain(self):
+        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: memory\nproject: demo\nroles: dev docs\n", "/README.md": "my custom readme\n",
+                 "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        p, after = self.assertConverges("memory", files)
+        self.assertEqual(after["/_conflicts/%s/README.md" % TODAY], "my custom readme\n")
+
+    def test_customised_template_is_kept_in_conflicts(self):
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n", "/_template.md": "mine\n", "/README.md": "r",
+              "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        p, after = self.assertConverges("memory", v1)
+        self.assertEqual(after["/_conflicts/%s/_template.md" % TODAY], "mine\n")
+        self.assertIn("Sources:", after["/_template.md"])
+
+    def test_a_newer_marker_is_not_downgraded(self):
+        files = {"/CANON.md": "# Canon\n\ncanon: 5\nkind: memory\nproject: demo\nroles: dev\n", "/README.md": "r"}
+        p = plan("memory", files, roles="dev")
+        self.assertEqual(p["from_version"], "unknown")
+        self.assertEqual(p["ops"], [])
+
+    def test_index_edit_is_anchored_to_the_header_row(self):
+        t = "| Path | Purpose | Load when |\n|---|---|---|\n| a.md | Path map of demo | Load when touching demo |\n"
+        self.assertEqual(C.fix_index(t), "| Path | Purpose | Load |\n|---|---|---|\n| a.md | Path map of demo | Load when touching demo |\n")
+
+    def test_role_readme_is_a_note_and_repo_rules_are_rules(self):
+        self.assertTrue(C.is_note("/roles/docs/maintainer/README.md"))
+        self.assertFalse(C.is_note("/roles/docs/tools/README.md"))
+        self.assertTrue(C.is_note("/shared/tools/x.md"))
+        self.assertEqual(C.kind_for("reference", "/shared/repos/demo/rules/x.md"), "rule")
+
+    def test_version_strings_are_not_addresses(self):
+        _, after = self.assertConverges("memory", {})
+        after["/shared/INDEX.md"] += "| sandbox/v.md | v | x |\n"
+        after["/shared/sandbox/v.md"] = "# v\n" + GOOD + "pam-tacplus-1.7.0.1 and v1.2.3.4 and 8.8.4.4\n"
+        out = run("check", "memory", after).stdout
+        self.assertIn("address 8.8.4.4", out)
+        self.assertNotIn("1.7.0.1", out)
+        self.assertNotIn("1.2.3.4", out)
+
+    def test_import_reports_an_underivable_kind(self):
+        src = {"/README.md": "# i\n", "/07-project/notes.md": "# N\n\nx\n"}
+        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo", "--role", "docs",
+                              "--src", write(src), "--memory", write({}), "--reference", write({}), "--today", TODAY], capture_output=True, text=True)
+        self.assertTrue(any("set Kind: by hand" in n for n in json.loads(out.stdout)["notes"]))
 
     def test_import_adds_the_header(self):
         src = {"/README.md": "# idx\n", "/01-rules/rules.md": "# Rules\n\nSources: x\n\nbe nice\n"}

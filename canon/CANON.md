@@ -50,8 +50,8 @@ is listed in `canon/layout.json` under `ordered_folders`.
 
 **One note format for both stores.** Every Markdown file that is not `CANON.md`,
 `README.md`, `_template.md` or an `INDEX.md`, and does not sit under a `tools/` folder,
-is a *note*: a `# Title` line, then these header lines (in this order, anywhere before
-the body), then the body.
+is a *note*: a `# Title` line, then these header lines (conventionally in this order,
+before the body; a header line inside a fenced code block is not one), then the body.
 
 | Field | Required | Holds |
 |---|---|---|
@@ -76,21 +76,27 @@ match the folder is only a warning.
 
 **Shape of the body.** A runnable note is one verified fact (`Fact:`, `Do:`, then the
 header's `Check:` and `Verified:`); a document note is one topic under `## Contents`.
-Size: a runnable note is at most 3000 characters (split it, or warn), a document note
-at most 30000. File names are kebab-case; no numbers.
+Size: a runnable note over 3000 characters warns (split it), a document note over 30000
+warns. File names are lowercase with hyphens (digits and dots are fine; numbered folder prefixes stay
+forbidden). A `README.md` inside a folder is a note like any other, and its name
+is exempt from the lowercase rule. Under `roles/<role>/tools/` live the role's scripts and
+they are not notes.
 
 **Freshness.** A runnable note whose `Verified:` is older than 90 days warns; a date in
 the future fails. A `Sources:` that says the origin was not recorded warns: it marks
 content carried over without provenance that a curator should source or remove.
 
-**Indexes.** Every note is listed in the nearest index (`shared/INDEX.md`,
+**Indexes.** Every file is listed in the nearest index (`shared/INDEX.md`,
 `roles/<role>/INDEX.md`, or `repos/<repo>/INDEX.md` for a repository's files) as a row of
 the table `| Path | Purpose | Load |` with paths relative to the index. A row that points
 at a file that does not exist warns. The Load column states when to read the note and
 whether it is always read; it is the only place that order or bindingness is stated.
 
-**Hygiene.** A value that looks like a credential fails; a home path or an address outside
-the documentation ranges warns; a path that suggests backlog or planning material warns.
+**Hygiene.** A value that looks like a credential fails; a home path or a dotted-quad
+address outside the documentation and private ranges warns (a heuristic: a version number
+written as four numbers after a space looks like an address). In a memory store a path
+that suggests backlog or planning material warns; a reference store may hold plans on
+purpose.
 
 The reconciler's mechanical checks are the whole of this list; `dev-agent canon check`
 runs it, and so does `dev-agent memory lint`.
@@ -155,15 +161,17 @@ plan with approval. Rules the reconciler always follows:
 The reconciler recognises these states older than version 2 and migrates them in one
 plan: `legacy` (the layouts before the canon: `sandbox/` and `repos/` at the root of a
 memory store, folders at the root of a reference store), `draft` (a `/CANON.md` marker
-left by an earlier draft of this spec, with a number outside the released versions) and
+left by an earlier draft of this spec, numbered 0) and
 `1` (the structure-only version).
 
 The migration from version 1 to 2 only adds: it inserts the header lines a note lacks
 (`Kind` from its folder, `Applies to` from its repository or the project, `Sources` from
 its `Verified:` line, or a marker that the origin was not recorded) and never edits a
-body. It renames the `Load when` column to `Load`, replaces the root README and the
-template with the version 2 text (a README or template that differs from the version 1
-seed is kept in `/_conflicts/<date>/`), and writes the marker last. A note without a
+body, placing each in the canonical order after the fields already there. It renames the
+`Load when` header to `Load`, replaces the root README and the template with the version 2
+text (one that differs from the seed of the version it came from is first copied to
+`/_conflicts/<date>/`, in every chain), and writes the marker last. A marker newer than
+this dev-agent knows is reported and left alone, never downgraded. A note without a
 `Check:` or `Verified:` where its kind needs one is reported by `canon check`, not
 invented.
 
