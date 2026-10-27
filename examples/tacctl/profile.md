@@ -26,3 +26,4 @@ the repository) and adapt. The coordinator inlines it in each task.
 - Rebuild generated man blocks with `make man`.
 - Code under `internal/**` also gets a second-model review before applying.
 - Renumber the CHANGELOG item; ask before any push.
+- Apply the agent's commits as separate, change-specific commits; never squash.

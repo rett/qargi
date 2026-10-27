@@ -39,6 +39,9 @@ registered local one. A cloud instance only when the user's request named it.
   verbs in the Claude Code settings: the permission prompt is the user's real control.
   Every gated verb is also logged in `$XDG_STATE_HOME/dev-agent/audit.log`.
 - A cloud session without a spend budget is refused (`send`) or not registered (`init`).
+- Every submitted patch is reviewed (`/dev-review`) before it is applied, and it is applied as
+  separate, change-specific commits, never squashed. The agent advises how its work should be
+  committed; the coordinator decides.
 
 ## Commands
 
