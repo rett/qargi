@@ -302,25 +302,32 @@ def names(kind, words=()):
 
 
 def by_type(t, words):
+    """Candidates for a value of type t, as (candidate, description)."""
+    plain = lambda xs: [(x, "") for x in xs]
     if isinstance(t, tuple):
-        return list(t)
+        return plain(t)
     if t in ("project", "instance", "session", "pack", "team"):
-        return names(t, words)
+        return plain(names(t, words))
     if t == "role":
-        return list(C.ROLES)
+        return plain(C.ROLES)
     if t == "file":
-        return ["@file"]
+        return [("@file", "")]
     if t == "dir":
-        return ["@dir"]
+        return [("@dir", "")]
     if t == "help":
-        return sorted(C.COMMANDS) + list(C.TOPICS)
+        return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)] + [(k, v[0]) for k, v in C.TOPICS.items()]
     return []
 
 
 def complete(words):
+    """The candidates for the last word, as plain strings."""
+    return [c for c, _ in complete_described(words)]
+
+
+def complete_described(words):
     cur, prev = words[-1], words[:-1]
     if not prev:
-        return sorted(C.COMMANDS)
+        return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)]
     if prev[0] == "help":
         return by_type("help", prev) if len(prev) == 1 else []
     if prev[0] not in C.COMMANDS:
@@ -329,7 +336,7 @@ def complete(words):
     vs = verbs_of(prev[0])
     if vs:
         if len(prev) == 1:
-            return list(vs)
+            return [(v, vs[v]["summary"]) for v in vs]
         vspec = vs.get(prev[1])
         if not vspec:
             return []
@@ -349,10 +356,10 @@ def complete(words):
             pos += 1
             i += 1
     if cur.startswith("-"):
-        return list(flags)
+        return [(f, flags[f]["help"]) for f in flags]
     if pos < len(args):
         return by_type(args[pos][1], prev)
-    return list(flags)
+    return [(f, flags[f]["help"]) for f in flags]
 
 
 def infer_project():
@@ -440,7 +447,13 @@ def main(argv):
         sys.stdout.write(man())
         return 0
     if argv[0] == "complete":
-        print("\n".join(complete(argv[1:] or [""])))
+        words = argv[1:]
+        described = bool(words) and words[0] == "--described"   # candidate TAB description, for zsh and fish
+        words = (words[1:] if described else words) or [""]
+        if described:
+            print("\n".join(c + ("\t" + d if d else "") for c, d in complete_described(words)))
+        else:
+            print("\n".join(complete(words)))
         return 0
     print("usage: help.py show|man|complete ...", file=sys.stderr)
     return 2

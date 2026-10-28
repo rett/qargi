@@ -193,6 +193,42 @@ class Complete(Env):
         self.assertEqual(r.stdout.split(), ["alpha-dev", "alpha-docs"], r.stderr)
 
 
+class Shells(Env):
+    def run_shell(self, argv, script):
+        env = dict(os.environ, PATH=os.path.join(ROOT, "bin") + os.pathsep + os.environ["PATH"])
+        return subprocess.run(argv + [script], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+    def test_described_output(self):
+        out = H.complete_described(["lead", ""])
+        self.assertEqual([c for c, _ in out], ["grant", "status", "revoke"])
+        self.assertTrue(all(d for _, d in out))
+        r = subprocess.run([BIN, "__complete", "--described", "lead", ""], capture_output=True, text=True)
+        self.assertIn("grant\tGuided", r.stdout)
+
+    @unittest.skipUnless(shutil.which("zsh"), "zsh is not installed")
+    def test_zsh(self):
+        script = os.path.join(ROOT, "completions", "_qargi")
+        stub = ('_describe() { shift 3; print -l -- "${(@P)1}"; }; _files() { print "FILES $*"; }; f() { source %s }; ' % script)
+        r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi lead ""); CURRENT=3; f')
+        self.assertEqual([l.split(":")[0] for l in r.stdout.split("\n") if l], ["grant", "status", "revoke"], r.stderr)
+        r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi instances show ""); CURRENT=4; f')
+        self.assertEqual([l.split(":")[0] for l in r.stdout.split("\n") if l], ["alpha-dev", "alpha-docs"], r.stderr)
+        r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi review check ""); CURRENT=4; f')
+        self.assertEqual(r.stdout.strip(), "FILES -/")
+        r = self.run_shell(["zsh", "-n"], script)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    @unittest.skipUnless(shutil.which("fish"), "fish is not installed")
+    def test_fish(self):
+        script = os.path.join(ROOT, "completions", "qargi.fish")
+        r = self.run_shell(["fish", "-c"], 'source %s; complete -C "qargi lead "' % script)
+        self.assertEqual(sorted(l.split("\t")[0] for l in r.stdout.split("\n") if l), ["grant", "revoke", "status"], r.stderr)
+        r = self.run_shell(["fish", "-c"], 'source %s; complete -C "qargi team brief alpha "' % script)
+        self.assertEqual(r.stdout.strip(), "code-docs", r.stderr)
+        r = self.run_shell(["fish", "-n"], script)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 class Infer(Env):
     def test_project_is_implied_inside_its_repository(self):
         os.chdir(os.path.join(self.repo, "sub"))

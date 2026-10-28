@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Install or remove qargi: the qargi-* skills, the local subagent, the `qargi` command,
-# its manual page and its bash completion.
+# its manual page and its bash, zsh and fish completion.
 #
 #   install.sh --user [--copy] [--force]          skills in ~/.claude, command in ~/.local/bin,
-#                                                 man page and bash completion under ~/.local/share
+#                                                 man page and completions (bash, zsh under ~/.local/share,
+#                                                 fish under ~/.config/fish)
 #   install.sh --project DIR [--copy] [--force]   skills and subagent in DIR/.claude only
 #   install.sh --user|--project DIR --uninstall
 #
@@ -40,13 +41,15 @@ cmd=$HOME/.local/bin/qargi
 xdg=${XDG_DATA_HOME:-$HOME/.local/share}
 manpage=$xdg/man/man1/qargi.1
 completion=$xdg/bash-completion/completions/qargi
+zshcomp=$xdg/zsh/site-functions/_qargi
+fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
 paths=()
 for s in $skills; do paths+=("$target/skills/$s"); done
 paths+=("$target/agents/qargi-agent.md")
-[ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion")
+[ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp")
 
 exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
@@ -98,11 +101,17 @@ rm -rf "$target/agents/qargi-agent.md"
 if [ -n "$copy" ]; then cp "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; else ln -s "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; fi
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
 if [ "$mode" = user ]; then
-  mkdir -p "$(dirname "$cmd")" "$(dirname "$manpage")" "$(dirname "$completion")"; rm -f "$cmd" "$manpage" "$completion"
+  mkdir -p "$(dirname "$cmd")" "$(dirname "$manpage")" "$(dirname "$completion")" "$(dirname "$zshcomp")" "$(dirname "$fishcomp")"
+  rm -f "$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp"
   ln -s "$src/bin/qargi" "$cmd"
-  if [ -n "$copy" ]; then cp "$src/man/qargi.1" "$manpage"; cp "$src/completions/qargi.bash" "$completion"
-  else ln -s "$src/man/qargi.1" "$manpage"; ln -s "$src/completions/qargi.bash" "$completion"; fi
-  echo "installed skills and subagent in $target, command at $cmd, man page at $manpage, bash completion at $completion ($kind)"
+  if [ -n "$copy" ]; then
+    cp "$src/man/qargi.1" "$manpage"; cp "$src/completions/qargi.bash" "$completion"; cp "$src/completions/_qargi" "$zshcomp"; cp "$src/completions/qargi.fish" "$fishcomp"
+  else
+    ln -s "$src/man/qargi.1" "$manpage"; ln -s "$src/completions/qargi.bash" "$completion"; ln -s "$src/completions/_qargi" "$zshcomp"; ln -s "$src/completions/qargi.fish" "$fishcomp"
+  fi
+  echo "installed skills and subagent in $target, command at $cmd, man page at $manpage ($kind)"
+  echo "completion: bash $completion, zsh $zshcomp, fish $fishcomp"
+  ! command -v zsh >/dev/null 2>&1 || echo "note: for zsh add this to ~/.zshrc before compinit: fpath=($(dirname "$zshcomp") \$fpath)" >&2
   command -v man >/dev/null 2>&1 && ! man -w qargi >/dev/null 2>&1 && echo "note: man does not find it yet; add $xdg/man to MANPATH (or: man -l $manpage)" >&2 || true
   echo "note: bash loads the completion in new shells when bash-completion is installed; otherwise add to ~/.bashrc: source $completion" >&2
 else
