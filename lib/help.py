@@ -5,7 +5,7 @@
   help.py man                 the manual page (roff) on stdout
   help.py complete WORDS...   completion candidates for the last word (qargi __complete, used by the bash completion)
 """
-import glob, json, os, shutil, sys, textwrap
+import glob, json, os, shutil, subprocess, sys, textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -54,17 +54,22 @@ def verbs_of(cmd):
     return v if isinstance(v, dict) else None
 
 
+def kind(t):
+    """The family of a value type: 'session:active' is a session, 'project:teams' a project."""
+    return t.split(":")[0] if isinstance(t, str) else t
+
+
 def argstr(args):
     out = []
     for a in args:
         name, optional = a[0], (a[2] if len(a) > 2 else False)
-        implied = a[1] == "project" and not optional   # filled in from the current directory (see infer_project)
+        implied = kind(a[1]) == "project" and not optional   # filled in from the current directory (see infer_project)
         out.append("[%s]" % name if (optional or implied) else name)
     return " ".join(out)
 
 
 def has_project_arg(args):
-    return any(a[1] == "project" and not (a[2] if len(a) > 2 else False) for a in args)
+    return any(kind(a[1]) == "project" and not (a[2] if len(a) > 2 else False) for a in args)
 
 
 def optstr(o):
@@ -281,42 +286,208 @@ def man():
 
 
 # ------------------------------------------------------------------ completion
-def names(kind, words=()):
+def _read(path):
     try:
-        if kind == "project":
-            return sorted(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(conf(), "projects", "*.json")))
-        if kind == "instance":
-            return sorted(load_json(os.path.join(conf(), "instances.json")))
-        if kind == "session":
-            return sorted(load_json(os.path.join(state(), "sessions.json")))
-        if kind == "pack":
-            lib = os.path.join(conf(), "packs")
-            return sorted([os.path.basename(p) for p in glob.glob(os.path.join(lib, "skills", "*"))] +
-                          [os.path.basename(p)[:-5] for p in glob.glob(os.path.join(lib, "tools", "*.json"))])
-        if kind == "team":
-            prj = next((w for w in words if os.path.exists(os.path.join(conf(), "projects", w + ".json"))), None)
-            return sorted(load_json(os.path.join(conf(), "projects", prj + ".json")).get("teams", {})) if prj else []
+        return load_json(path)
     except (OSError, ValueError):
+        return {}
+
+
+def project_data(words):
+    """The stored answers of the project named among the words, else of the one the directory implies."""
+    for w in words:
+        f = os.path.join(conf(), "projects", w + ".json")
+        if w and not w.startswith("-") and os.path.isfile(f):
+            return _read(f)
+    p = infer_project()
+    return _read(os.path.join(conf(), "projects", p + ".json")) if p else {}
+
+
+def money(cents):
+    try:
+        return "$%.2f" % (int(cents) / 100)
+    except (TypeError, ValueError):
+        return ""
+
+
+def projects(teams_only=False):
+    out = []
+    for f in sorted(glob.glob(os.path.join(conf(), "projects", "*.json"))):
+        d = _read(f)
+        if teams_only and not d.get("teams"):
+            continue
+        out.append((os.path.basename(f)[:-5], (d.get("repo") or {}).get("url", "")))
+    return out
+
+
+def instances(cloud_only=False):
+    out = []
+    for n, v in sorted(_read(os.path.join(conf(), "instances.json")).items()):
+        loc = v.get("location", "")
+        if cloud_only and loc == "local":
+            continue
+        ag = v.get("agent") or {}
+        model = ag.get("model", "") + ("/" + ag["effort"] if ag.get("model") and ag.get("effort") else "")
+        out.append((n, " ".join(x for x in (loc, "agent v%s" % ag["version_pinned"] if ag.get("version_pinned") else "", model) if x)))
+    return out
+
+
+def sessions(want=""):
+    """Tracked sessions, narrowed to the ones the verb can act on: active (not archived), running (not idle),
+    idle, uncollected (outputs not downloaded yet)."""
+    out = []
+    for sid, v in sorted(_read(os.path.join(state(), "sessions.json")).items()):
+        st = v.get("status", "")
+        opened = not v.get("closed_at") and st != "archived"
+        ok = {"": True, "active": opened, "running": opened and st != "idle", "idle": opened and st == "idle",
+              "uncollected": opened and v.get("outputs_collected") in (False, None)}.get(want, True)
+        if ok:
+            out.append((sid, " ".join(x for x in (v.get("instance", ""), st, v.get("label", ""), money(v.get("list_cost"))) if x)))
+    return out
+
+
+def packs(words):
+    lib, out = os.path.join(conf(), "packs"), []
+    if not words or words[0] != "tool":
+        out += [(os.path.basename(p), "skill") for p in sorted(glob.glob(os.path.join(lib, "skills", "*")))]
+    if not words or words[0] != "skill":
+        out += [(os.path.basename(p)[:-5], "tool") for p in sorted(glob.glob(os.path.join(lib, "tools", "*.json")))]
+    return out
+
+
+def roles_of(words):
+    d = project_data(words)
+    have = list((d.get("roles") or {}))
+    if d.get("teams") or not have:
+        have.append("lead")
+    have = [r for r in C.ROLES if r in have] or list(C.ROLES)
+    return [(r, "%s/%s" % ((d.get("roles") or {}).get(r, {}).get("model", ""), (d.get("roles") or {}).get(r, {}).get("effort", "")) if (d.get("roles") or {}).get(r) else "") for r in have]
+
+
+def stores():
+    seen = {}
+    for n, v in sorted(_read(os.path.join(conf(), "instances.json")).items()):
+        for r in v.get("resources") or []:
+            sid = r.get("memory_store_id")
+            if sid and sid not in seen:
+                seen[sid] = "%s, %s" % (n.rsplit("-", 1)[0], "reference" if r.get("access") == "read_only" else "memory")
+    return list(seen.items())
+
+
+def deployments():
+    return [(v["deployment_id"], n) for n, v in sorted(_read(os.path.join(conf(), "instances.json")).items()) if v.get("deployment_id")]
+
+
+def models():
+    seen = {m: "" for m in C.MODELS}
+    for v in _read(os.path.join(conf(), "instances.json")).values():
+        m = (v.get("agent") or {}).get("model")
+        if m:
+            seen.setdefault(m, "")
+    return list(seen.items())
+
+
+def branches(words):
+    path = os.path.expanduser((project_data(words).get("repo") or {}).get("path") or os.getcwd())
+    try:
+        r = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
+                           capture_output=True, text=True, timeout=3, stdin=subprocess.DEVNULL, env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+    except (OSError, subprocess.SubprocessError):
         return []
+    names_ = []
+    for b in r.stdout.split():
+        b = b[len("origin/"):] if b.startswith("origin/") else b
+        if b not in ("HEAD", "origin") and b not in names_:
+            names_.append(b)
+    return [(b, "") for b in names_]
+
+
+FIELD_VALUES = {"effort": C.EFFORTS, "model": C.MODELS, "local": ("true", "false"), "cloud": ("none", "branches"),
+                "merge": ("ask", "never"), "release": ("ask", "never"), "mode": ("none",)}
+# answers a project may hold that are not there yet, so a key can be typed before it exists
+EXTRA_KEYS = ("lead.model", "lead.effort", "lead.push.local", "lead.push.cloud", "lead.push.branch_pattern", "lead.push.merge",
+              "lead.push.release", "budget_cents") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "skills", "push.mode"))
+
+
+def flatten(d, prefix=""):
+    """The dotted paths of a project's answers down to a scalar, a list or an empty object."""
+    out = {}
+    for k, v in d.items():
+        p = prefix + k
+        if isinstance(v, dict) and v:
+            out.update(flatten(v, p + "."))
+        else:
+            out[p] = v
+    return out
+
+
+def keys(words):
+    flat = flatten(project_data(words))
+    out = {}
+    for k in sorted(set(flat) | set(EXTRA_KEYS)):
+        v = flat.get(k)
+        out[k] = ("now %s" % json.dumps(v)) if isinstance(v, (bool, int)) else ("a list" if isinstance(v, list) else "")
+    return list(out.items())
+
+
+def values(words):
+    key = words[-1] if words else ""
+    cur = flatten(project_data(words[:-1])).get(key)
+    last = key.rsplit(".", 1)[-1]
+    if last in FIELD_VALUES:
+        return [(v, "") for v in FIELD_VALUES[last]]
+    if isinstance(cur, bool):
+        return [("true", ""), ("false", "")]
     return []
 
 
 def by_type(t, words):
-    """Candidates for a value of type t, as (candidate, description)."""
-    plain = lambda xs: [(x, "") for x in xs]
+    """Candidates for a value of type t, as (candidate, description). The words before the cursor give the context."""
     if isinstance(t, tuple):
-        return plain(t)
-    if t in ("project", "instance", "session", "pack", "team"):
-        return plain(names(t, words))
-    if t == "role":
-        return plain(C.ROLES)
-    if t == "file":
-        return [("@file", "")]
-    if t == "dir":
-        return [("@dir", "")]
-    if t == "help":
+        return [(x, "") for x in t]
+    base, _, sub = t.partition(":")
+    if base == "project":
+        return projects(sub == "teams")
+    if base == "instance":
+        return instances(sub == "cloud")
+    if base == "session":
+        return sessions(sub)
+    if base == "target":
+        return sessions() + instances(True)
+    if base == "pack":
+        return packs(words)
+    if base == "team":
+        return [(n, ", ".join(v.get("members", []))) for n, v in sorted((project_data(words).get("teams") or {}).items())]
+    if base == "role":
+        return roles_of(words)
+    if base == "store":
+        return stores()
+    if base == "deployment":
+        return deployments()
+    if base == "model":
+        return models()
+    if base == "branch":
+        return branches(words)
+    if base == "key":
+        return keys(words)
+    if base == "value":
+        return values(words)
+    if base == "seconds":
+        return [(s, d) for s, d in (("600", "10 minutes"), ("1800", "30 minutes"), ("3600", "1 hour"), ("7200", "2 hours, the default"))]
+    if base == "cents":
+        return [(c, money(c)) for c in ("500", "1000", "1500", "3000")]
+    if base == "help":
         return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)] + [(k, v[0]) for k, v in C.TOPICS.items()]
+    if base == "file":
+        return [("@file", "")]
+    if base == "dir":
+        return [("@dir", "")]
     return []
+
+
+def names(what, words=()):
+    """The plain names of one kind (used by resolve)."""
+    return [n for n, _ in by_type(what, list(words))]
 
 
 def complete(words):
@@ -324,19 +495,34 @@ def complete(words):
     return [c for c, _ in complete_described(words)]
 
 
+HELP_FLAG = ("--help", "show this help")
+
+
 def complete_described(words):
-    cur, prev = words[-1], words[:-1]
+    cur, prev = words[-1], list(words[:-1])
+    eq = ""
+    if cur.startswith("--") and "=" in cur:   # --option=value: complete the value, give the whole word back
+        flag, cur = cur.split("=", 1)
+        eq, prev = flag + "=", prev + [flag]
+    out = _candidates(cur, prev)
+    return [(eq + c, d) for c, d in out] if eq else out
+
+
+def _candidates(cur, prev):
     if not prev:
-        return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)]
+        return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)] if not cur.startswith("-") else [HELP_FLAG]
     if prev[0] == "help":
-        return by_type("help", prev) if len(prev) == 1 else []
+        if len(prev) == 1:
+            return by_type("help", prev)
+        vs = verbs_of(prev[1]) if prev[1] in C.COMMANDS else None
+        return [(v, vs[v]["summary"]) for v in vs] if vs and len(prev) == 2 else []
     if prev[0] not in C.COMMANDS:
         return []
     spec = C.COMMANDS[prev[0]]
     vs = verbs_of(prev[0])
     if vs:
         if len(prev) == 1:
-            return [(v, vs[v]["summary"]) for v in vs]
+            return [(v, vs[v]["summary"]) for v in vs] + ([HELP_FLAG] if cur.startswith("-") else [])
         vspec = vs.get(prev[1])
         if not vspec:
             return []
@@ -345,21 +531,24 @@ def complete_described(words):
         args = [tuple(a) for a in spec.get("usage", [])]
         opts, rest = spec.get("opts", []), prev[1:]
     flags = {o["flag"]: o for o in opts}
-    pos, i = 0, 0
+    pos, used, i = 0, set(), 0
     while i < len(rest):
         t = rest[i]
-        if t.startswith("-") and t in flags:
-            if flags[t]["arg"] and i + 1 >= len(rest):
-                return by_type(flags[t]["type"], prev)
-            i += 2 if flags[t]["arg"] else 1
+        name, inline = (t.split("=", 1)[0], True) if t.startswith("--") and "=" in t else (t, False)
+        if name.startswith("-") and name in flags:
+            used.add(name)
+            if flags[name]["arg"] and not inline and i + 1 >= len(rest):
+                return by_type(flags[name]["type"], prev)
+            i += 2 if flags[name]["arg"] and not inline else 1
         else:
             pos += 1
             i += 1
+    free = [(f, flags[f]["help"]) for f in flags if f not in used] + [HELP_FLAG]
     if cur.startswith("-"):
-        return [(f, flags[f]["help"]) for f in flags]
+        return free
     if pos < len(args):
         return by_type(args[pos][1], prev)
-    return [(f, flags[f]["help"]) for f in flags]
+    return free
 
 
 def infer_project():
@@ -408,10 +597,10 @@ def resolve(argv):
     out = list(body)
     insts = names("instance")
     for k, a in enumerate(args):
-        if a[1] == "instance" and k < len(pos) and out[pos[k]] not in insts and out[pos[k]] in C.ROLES:
+        if kind(a[1]) == "instance" and k < len(pos) and out[pos[k]] not in insts and out[pos[k]] in C.ROLES:
             out[pos[k]] = "%s-%s" % (P, out[pos[k]])
     required = [k for k, a in enumerate(args) if not (a[2] if len(a) > 2 else False)]
-    pk = next((k for k in required if args[k][1] == "project"), None)
+    pk = next((k for k in required if kind(args[k][1]) == "project"), None)
     if not P:
         if pk is not None and len(pos) < len(required) and not (pk < len(pos) and os.path.exists(os.path.join(conf(), "projects", body[pos[pk]] + ".json"))) \
                 and not any(t in ("-h", "--help") for t in body):

@@ -17,6 +17,7 @@ INTRO = (
 )
 
 ROLES = ("dev", "docs", "review", "test", "lead")
+MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
@@ -56,7 +57,7 @@ COMMANDS = {
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
-            "set": verb("Change one answer", [("NAME", "project"), ("PATH", "none"), ("VALUE", "none")],
+            "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.docs.effort, lead.push); VALUE is JSON or a plain string.",
                         examples=["qargi project set acme roles.docs.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
@@ -73,12 +74,12 @@ COMMANDS = {
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
                          [opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role (default dev)", "ROLE", ROLES),
-                          opt("--model", "model id, overriding the project's answers", "MODEL"), opt("--effort", "effort level", "LEVEL", EFFORTS),
+                          opt("--model", "model id, overriding the project's answers", "MODEL", "model"), opt("--effort", "effort level", "LEVEL", EFFORTS),
                           opt("--apt", "extra packages for the shared environment, space separated", "PACKAGES"),
                           opt("--networking", "the sandbox's network access", "MODE", ("unrestricted", "limited")),
-                          opt("--budget", "spend ceiling of the deployment, in cents", "CENTS"),
-                          opt("--memory-store", "attach this memory store instead of the project's", "ID"),
-                          opt("--reference-store", "attach this reference store", "ID")],
+                          opt("--budget", "spend ceiling of the deployment, in cents", "CENTS", "cents"),
+                          opt("--memory-store", "attach this memory store instead of the project's", "ID", "store"),
+                          opt("--reference-store", "attach this reference store", "ID", "store")],
                          examples=["qargi provision plan acme-docs"]),
             "apply": verb("Create the resources of an approved plan", [("NAME", "instance", True)],
                           [ASKED, PLAN, APPROVED, opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role", "ROLE", ROLES)],
@@ -93,10 +94,10 @@ COMMANDS = {
         "scripts": ["registry.sh"],
         "verbs": {
             "init": verb("Register an instance", [],
-                         [opt("--location", "where it runs", "WHERE", ("cloud", "local")), opt("--deployment", "an existing cloud deployment", "ID"),
+                         [opt("--location", "where it runs", "WHERE", ("cloud", "local")), opt("--deployment", "an existing cloud deployment", "ID", "deployment"),
                           opt("--agent", "a local subagent definition file", "FILE", "file"), opt("--name", "the instance name", "NAME"),
-                          opt("--provision", "create new resources through provision"), opt("--model", "model id", "MODEL"),
-                          opt("--effort", "effort level", "LEVEL", EFFORTS), opt("--budget", "spend ceiling in cents", "CENTS"),
+                          opt("--provision", "create new resources through provision"), opt("--model", "model id", "MODEL", "model"),
+                          opt("--effort", "effort level", "LEVEL", EFFORTS), opt("--budget", "spend ceiling in cents", "CENTS", "cents"),
                           opt("--apt", "packages for a provisioned environment", "PACKAGES"),
                           opt("--networking", "network access", "MODE", ("unrestricted", "limited")),
                           opt("--no-session", "do not start a standby session"), ASKED, PLAN, APPROVED],
@@ -105,7 +106,7 @@ COMMANDS = {
             "list": verb("List the instances and their active sessions", [], [opt("--reconcile", "flag live sessions the tracker does not know")]),
             "show": verb("Show an instance and what is stale or misnamed", [("NAME", "instance")], [opt("--reconcile", "also flag untracked live sessions")]),
             "remove": verb("Forget an instance (the registry entry only)", [("NAME", "instance")], desc="Refused while it has open sessions."),
-            "budget": verb("Change the spend ceiling of the instance's deployment", [("NAME", "instance"), ("CENTS", "none")], [ASKED, opt("--session", "also change this running session", "SID", "session")]),
+            "budget": verb("Change the spend ceiling of the instance's deployment", [("NAME", "instance:cloud"), ("CENTS", "cents")], [ASKED, opt("--session", "also change this running session", "SID", "session:active")]),
             "refresh-prompt": verb("Rebuild the agent's system prompt from the current contract", [("NAME", "instance")], [ASKED, PLAN, APPROVED],
                                    desc="Prints what changes, then creates a new agent version and re-points the deployment."),
             "normalize": verb("Rename the instance's cloud resources to the naming convention", [("NAME", "instance")], [ASKED, PLAN, APPROVED]),
@@ -139,7 +140,7 @@ COMMANDS = {
         "summary": "Start a standby cloud session for an instance",
         "desc": "Cloud only, and only when your request names it. The session's spend ceiling comes from the deployment.",
         "scripts": ["session.sh"],
-        "usage": [("NAME", "instance")],
+        "usage": [("NAME", "instance:cloud")],
         "opts": [opt("--label", "a task slug for the session title", "SLUG"), ASKED],
     },
     "send": {
@@ -147,46 +148,46 @@ COMMANDS = {
         "desc": ("The text is the whole brief: TASK, DONE (a command whose exit status decides it), BASE, SCOPE and so on. The session "
                  "is titled <instance>-<label>; use the same slug for the agent/<slug> branch."),
         "scripts": ["session.sh"],
-        "usage": [("NAME", "instance"), ("TASK", "none")],
-        "opts": [opt("--label", "the task slug (required)", "SLUG"), opt("--session", "send to this session", "SID", "session"),
+        "usage": [("NAME", "instance:cloud"), ("TASK", "none")],
+        "opts": [opt("--label", "the task slug (required)", "SLUG"), opt("--session", "send to this session", "SID", "session:idle"),
                  opt("--new", "start a new session first"), ASKED],
         "examples": ['qargi send acme-dev "$BRIEF" --label rename-verb --asked "use the cloud dev agent for this"'],
     },
     "status": {
         "summary": "Show tracked cloud sessions, or one session",
         "scripts": ["session.sh"],
-        "usage": [("SID|NAME", "session", True)],
+        "usage": [("SID|NAME", "target", True)],
     },
     "watch": {
         "summary": "Wait for a cloud session to stop; prints one line when it does",
         "desc": "Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|timeout|auth|error.",
         "scripts": ["watch.sh"],
-        "usage": [("SID", "session"), ("MAX_SECONDS", "none", True)],
+        "usage": [("SID", "session:active"), ("MAX_SECONDS", "seconds", True)],
     },
     "collect": {
         "summary": "Download a session's output files into a fresh directory",
         "desc": ("Everything downloaded is untrusted data. A team's files carry a role prefix and are split into one directory per "
                  "member, patches under patches/. Refuses a directory that is not empty."),
         "scripts": ["collect.sh"],
-        "usage": [("SID", "session"), ("DIR", "dir")],
+        "usage": [("SID", "session:uncollected"), ("DIR", "dir")],
     },
-    "stop": {"summary": "Interrupt a running cloud session", "scripts": ["session.sh"], "usage": [("SID", "session")]},
+    "stop": {"summary": "Interrupt a running cloud session", "scripts": ["session.sh"], "usage": [("SID", "session:running")]},
     "close": {
         "summary": "Archive a finished cloud session",
         "desc": "Refused until the outputs are collected, unless the task produced none.",
         "scripts": ["session.sh"],
-        "usage": [("SID", "session")],
+        "usage": [("SID", "session:active")],
         "opts": [opt("--no-outputs", "the task produced no files (for example memory curation)")],
     },
     "mark": {
         "summary": "Record what happened to a session's work",
         "scripts": ["session.sh"],
-        "usage": [("SID", "session"), ("STATE", ("applied", "rejected", "pending"))],
+        "usage": [("SID", "session:active"), ("STATE", ("applied", "rejected", "pending"))],
     },
     "track": {
         "summary": "Track a session that was started elsewhere (for example in the console)",
         "scripts": ["session.sh"],
-        "usage": [("NAME", "instance"), ("SID", "none")],
+        "usage": [("NAME", "instance:cloud"), ("SID", "none")],
         "opts": [ASKED],
     },
     "local": {
@@ -197,7 +198,7 @@ COMMANDS = {
         "verbs": {
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
-                             opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH"),
+                             opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir")]),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")]),
         },
@@ -219,9 +220,9 @@ COMMANDS = {
                  "the lead contract. Each member returns its own series against its own base."),
         "scripts": ["team.sh"],
         "verbs": {
-            "brief": verb("Print the brief a lead needs for one task", [("PROJECT", "project"), ("TEAM", "team")],
+            "brief": verb("Print the brief a lead needs for one task", [("PROJECT", "project:teams"), ("TEAM", "team")],
                           [opt("--task", "what to do", "TEXT"), opt("--done", "an executable check for the developer's part", "COMMAND"),
-                           opt("--base", "the developer's base branch (needed when the project says @dispatcher)", "BRANCH"),
+                           opt("--base", "the developer's base branch (needed when the project says @dispatcher)", "BRANCH", "branch"),
                            opt("--docs-done", "the docs writer's check", "COMMAND"), opt("--review-done", "the reviewer's check", "COMMAND")]),
             "check": verb("Check a collected team run: every member and the lead's report", [("RUN_DIR", "dir")]),
             "contract": verb("Print the lead's contract", desc="The procedure every lead follows, whoever it is."),
@@ -231,8 +232,8 @@ COMMANDS = {
         "summary": "Check a memory store and read a note",
         "scripts": ["memory.sh"],
         "verbs": {
-            "lint": verb("Check a store against the canon", [("STORE_ID", "none")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
-            "get": verb("Print one note", [("STORE_ID", "none"), ("PATH", "none")], examples=["qargi memory get memstore_01ABC /shared/INDEX.md"]),
+            "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
+            "get": verb("Print one note", [("STORE_ID", "store"), ("PATH", "none")], examples=["qargi memory get memstore_01ABC /shared/INDEX.md"]),
         },
     },
     "canon": {
@@ -246,7 +247,7 @@ COMMANDS = {
                          [KIND, opt("--default-role", "where an old reference store's files go", "ROLE", ROLES)]),
             "apply": verb("Run the plan", [("PROJECT", "project")], [KIND, PLAN, APPROVED, opt("--default-role", "as for plan", "ROLE", ROLES)]),
             "import": verb("Merge a foreign store (the old documentation store) under a role", [("PROJECT", "project")],
-                           [opt("--from", "the source store id", "STORE_ID"), opt("--role", "the role to import under", "ROLE", ROLES),
+                           [opt("--from", "the source store id", "STORE_ID", "store"), opt("--role", "the role to import under", "ROLE", ROLES),
                             opt("--map", "the layout of the source", "NAME", ("docs-v0",)), PLAN, APPROVED]),
             "seed-role": verb("Write a role's baseline notes without overwriting anything", [("PROJECT", "project")],
                               [opt("--role", "the role, or shared", "ROLE", ROLES + ("shared",)), APPROVED]),
@@ -276,12 +277,12 @@ COMMANDS = {
                  "terminal, and your answer is the recorded approval. From Claude Code run them with !."),
         "scripts": ["lead.sh"],
         "verbs": {
-            "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project")],
+            "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project:teams")],
                           [opt("--from-file", "read the token from a file instead of asking", "FILE", "file")],
                           desc="Explains how to create the fine-grained token, checks it, then: token and vault; the GitHub tool; the Push rules. Skips what is in place.",
                           examples=["qargi lead grant acme"]),
-            "status": verb("Show what is in place and what is missing", [("PROJECT", "project")]),
-            "revoke": verb("Take the grant away", [("PROJECT", "project")],
+            "status": verb("Show what is in place and what is missing", [("PROJECT", "project:teams")]),
+            "revoke": verb("Take the grant away", [("PROJECT", "project:teams")],
                            desc="Removes the tool and the Push rules, detaches and archives the credential, deletes the token file. Revoke the token on GitHub yourself."),
         },
     },

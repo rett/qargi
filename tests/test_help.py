@@ -30,6 +30,11 @@ def doc_flags(cmd):
     return out
 
 
+# every kind of value the command data may name, and what completes it
+TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "store": 1, "deployment": 1,
+         "model": 1, "branch": 1, "key": 1, "value": 1, "seconds": 1, "cents": 1, "file": 1, "dir": 1, "help": 1}
+
+
 class Sync(unittest.TestCase):
     def test_every_dispatched_command_is_described_and_back(self):
         src = slurp(BIN)
@@ -73,15 +78,15 @@ class Sync(unittest.TestCase):
             self.assertFalse(missing, "%s parses %s, which lib/commands.py does not describe" % (s, sorted(missing)))
 
     def test_argument_types_are_known(self):
-        known = {"none", "project", "instance", "team", "role", "session", "pack", "file", "dir", "help"}
+        known = set(TYPES)
         for cmd, spec in C.COMMANDS.items():
             arglists = [spec.get("usage", [])] + [v["args"] for v in verbs(cmd).values()]
             for al in arglists:
                 for a in al:
-                    self.assertTrue(isinstance(a[1], tuple) or a[1] in known, "%s: unknown argument type %r" % (cmd, a[1]))
+                    self.assertTrue(isinstance(a[1], tuple) or H.kind(a[1]) in known, "%s: unknown argument type %r" % (cmd, a[1]))
             opts = list(spec.get("opts", [])) + [o for v in verbs(cmd).values() for o in v["opts"]]
             for o in opts:
-                self.assertTrue(isinstance(o["type"], tuple) or o["type"] in known, "%s %s: unknown type" % (cmd, o["flag"]))
+                self.assertTrue(isinstance(o["type"], tuple) or H.kind(o["type"]) in known, "%s %s: unknown type" % (cmd, o["flag"]))
 
 
 class Render(unittest.TestCase):
@@ -151,6 +156,7 @@ class Env(unittest.TestCase):
             put(os.path.join(self.t, "c", "projects", n + ".json"), {"project": n, "repo": {"path": path}, "teams": {"code-docs": {}} if n == "alpha" else {}})
         put(os.path.join(self.t, "c", "instances.json"), {"alpha-dev": {}, "alpha-docs": {}})
         put(os.path.join(self.t, "s", "sessions.json"), {"sesn_1": {}})
+        self.put = put
         self.old = {k: os.environ.get(k) for k in ("QARGI_CONF", "QARGI_STATE", "QARGI_PROJECT")}
         os.environ["QARGI_CONF"], os.environ["QARGI_STATE"] = os.path.join(self.t, "c"), os.path.join(self.t, "s")
         os.environ.pop("QARGI_PROJECT", None)
@@ -170,7 +176,7 @@ class Complete(Env):
     def test_commands_verbs_and_values(self):
         self.assertIn("lead", H.complete([""]))
         self.assertEqual(H.complete(["lead", ""]), ["grant", "status", "revoke"])
-        self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha", "beta"])
+        self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha"])   # only projects that define teams
         self.assertEqual(H.complete(["team", "brief", "alpha", ""]), ["code-docs"])
         self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-dev", "alpha-docs"])
         self.assertEqual(H.complete(["close", ""]), ["sesn_1"])
@@ -227,6 +233,119 @@ class Shells(Env):
         self.assertEqual(r.stdout.strip(), "code-docs", r.stderr)
         r = self.run_shell(["fish", "-n"], script)
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class Rich(Env):
+    """Values from the user's own state, narrowed by what the verb can act on, with a description each."""
+    def setUp(self):
+        super().setUp()
+        res = [{"memory_store_id": "memstore_A", "access": "read_write"}, {"memory_store_id": "memstore_B", "access": "read_only"}]
+        agent = {"version_pinned": 3, "model": "claude-sonnet-5-5", "effort": "high"}
+        self.put(os.path.join(self.t, "c", "instances.json"), {
+            "alpha-dev": {"location": "cloud", "agent": agent, "deployment_id": "depl_1", "resources": res},
+            "alpha-docs": {"location": "cloud", "agent": dict(agent, model="claude-opus-5-5"), "deployment_id": "depl_2", "resources": res},
+            "alpha-local": {"location": "local"}})
+        self.put(os.path.join(self.t, "s", "sessions.json"), {
+            "sesn_run": {"instance": "alpha-dev", "status": "running", "label": "job", "list_cost": "9", "outputs_collected": False},
+            "sesn_idle": {"instance": "alpha-dev", "status": "idle", "outputs_collected": True},
+            "sesn_old": {"instance": "alpha-dev", "status": "archived", "closed_at": "2026-01-01T00:00:00Z", "outputs_collected": True}})
+        self.put(os.path.join(self.t, "c", "projects", "alpha.json"), {
+            "project": "alpha", "repo": {"path": self.repo, "url": "https://example.net/alpha"}, "budget_cents": 1500,
+            "teams": {"code-docs": {"members": ["dev", "docs"]}}, "lead": {"push": {"local": True, "cloud": "none"}},
+            "roles": {"dev": {"model": "claude-sonnet-5-5", "effort": "high"}, "docs": {"model": "claude-opus-5-5", "effort": "medium"}}})
+        os.makedirs(os.path.join(self.t, "c", "packs", "skills", "pdf"))
+        os.makedirs(os.path.join(self.t, "c", "packs", "tools"))
+        self.put(os.path.join(self.t, "c", "packs", "tools", "github.json"), {})
+
+    def test_sessions_are_narrowed_by_what_the_verb_does(self):
+        self.assertEqual(H.complete(["stop", ""]), ["sesn_run"])
+        self.assertEqual(H.complete(["collect", ""]), ["sesn_run"])
+        self.assertEqual(H.complete(["close", ""]), ["sesn_idle", "sesn_run"])
+        self.assertEqual(H.complete(["watch", ""]), ["sesn_idle", "sesn_run"])
+        self.assertEqual(H.complete(["send", "alpha-dev", "x", "--session", ""]), ["sesn_idle"])
+        self.assertEqual(H.complete(["status", ""]), ["sesn_idle", "sesn_old", "sesn_run", "alpha-dev", "alpha-docs"])   # sessions and cloud instances
+        self.assertEqual(dict(H.complete_described(["stop", ""]))["sesn_run"], "alpha-dev running job $0.09")
+
+    def test_cloud_verbs_do_not_offer_a_local_instance(self):
+        self.assertEqual(H.complete(["start", ""]), ["alpha-dev", "alpha-docs"])
+        self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-dev", "alpha-docs", "alpha-local"])
+        self.assertEqual(dict(H.complete_described(["start", ""]))["alpha-dev"], "cloud agent v3 claude-sonnet-5-5/high")
+
+    def test_stores_deployments_models_and_numbers(self):
+        self.assertEqual(dict(H.complete_described(["memory", "lint", ""])), {"memstore_A": "alpha, memory", "memstore_B": "alpha, reference"})
+        self.assertEqual(H.complete(["memory", "get", "memstore_A", ""]), [])   # a note path needs the store itself
+        self.assertEqual(H.complete(["instances", "init", "--deployment", ""]), ["depl_1", "depl_2"])
+        self.assertEqual(H.complete(["provision", "plan", "--memory-store", ""]), ["memstore_A", "memstore_B"])
+        self.assertIn("claude-opus-5-5", H.complete(["instances", "init", "--model", ""]))
+        self.assertEqual(H.complete(["instances", "budget", "alpha-dev", ""])[:2], ["500", "1000"])
+        self.assertIn("3600", H.complete(["watch", "sesn_run", ""]))
+
+    def test_branches_come_from_the_projects_repository(self):
+        def git(*a):
+            subprocess.run(["git", "-C", self.repo] + list(a), check=True, capture_output=True,
+                           env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.net", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.net"))
+        git("init", "-q", "-b", "develop"); git("commit", "-q", "--allow-empty", "-m", "x"); git("branch", "feature/one")
+        self.assertEqual(sorted(H.complete(["team", "brief", "alpha", "code-docs", "--base", ""])), ["develop", "feature/one"])
+        os.chdir(self.repo)
+        self.assertEqual(sorted(H.complete(["local", "prepare", "--base", ""])), ["develop", "feature/one"])
+
+    def test_project_answers_and_their_values(self):
+        keys = H.complete(["project", "set", "alpha", ""])
+        for k in ("budget_cents", "lead.push.local", "roles.dev.effort", "roles.docs.model", "teams.code-docs.members", "lead.push.merge"):
+            self.assertIn(k, keys)
+        self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
+        self.assertEqual(H.complete(["project", "set", "alpha", "roles.dev.effort", ""]), list(C.EFFORTS))
+        self.assertEqual(H.complete(["project", "set", "alpha", "lead.push.cloud", ""]), ["none", "branches"])
+        self.assertEqual(H.complete(["project", "set", "alpha", "lead.push.local", ""]), ["true", "false"])
+        self.assertEqual(H.complete(["project", "set", "alpha", "budget_cents", ""]), [])
+        os.chdir(os.path.join(self.repo, "sub"))   # the project implied by the directory also gives the keys
+        self.assertIn("budget_cents", H.complete(["project", "set", "alpha", ""]))
+
+    def test_packs_follow_the_command(self):
+        self.assertEqual(H.complete(["skill", "show", ""]), ["pdf"])
+        self.assertEqual(H.complete(["tool", "show", ""]), ["github"])
+
+    def test_roles_follow_the_project_and_teams_get_their_members(self):
+        self.assertEqual(H.complete(["packs", "render", "alpha", ""]), ["dev", "docs", "lead"])
+        self.assertEqual(dict(H.complete_described(["packs", "render", "alpha", ""]))["docs"], "claude-opus-5-5/medium")
+        self.assertEqual(dict(H.complete_described(["team", "brief", "alpha", ""]))["code-docs"], "dev, docs")
+
+    def test_option_equals_value_and_options_are_offered_once(self):
+        self.assertEqual(H.complete(["instances", "init", "--effort="]), ["--effort=" + e for e in C.EFFORTS])
+        self.assertEqual(H.complete(["canon", "apply", "alpha", "--kind=", ]), ["--kind=memory", "--kind=reference"])
+        # an inline value counts as given: no option twice, the positional is still the next one
+        out = H.complete(["canon", "apply", "--kind=memory", "alpha", "-"])
+        self.assertNotIn("--kind", out)
+        self.assertIn("--plan", out)
+        self.assertIn("--help", out)
+        self.assertEqual(H.complete(["start", "--label=x", ""]), ["alpha-dev", "alpha-docs"])
+
+    def test_help_completes_the_verbs_of_a_command(self):
+        self.assertIn("refresh-prompt", H.complete(["help", "instances", ""]))
+        self.assertEqual(H.complete(["help", "start", ""]), [])
+        self.assertEqual(H.complete(["help", "instances", "show", ""]), [])
+
+    def test_bash_puts_option_equals_value_back_together(self):
+        script = os.path.join(ROOT, "completions", "qargi.bash")
+        env = dict(os.environ, PATH=os.path.join(ROOT, "bin") + os.pathsep + os.environ["PATH"])
+        for words, cword, want in (("instances init --effort = hi", 5, "high"), ("instances init --effort =", 4, "low medium high xhigh max")):
+            r = subprocess.run(["bash", "-c", 'source "%s"; COMP_WORDS=(qargi %s); COMP_CWORD=%d; _qargi; echo "${COMPREPLY[*]}"' % (script, words, cword)],
+                               capture_output=True, text=True, env=env)
+            self.assertEqual(r.stdout.strip(), want, r.stderr)
+
+    def test_every_kind_of_value_has_a_completer(self):
+        """A new type in the command data must come with candidates, as tacctl's completion is held to its schema."""
+        seen = set()
+        for cmd, spec in C.COMMANDS.items():
+            vs = spec.get("verbs") or {}
+            lists = [(spec.get("usage", []), spec.get("opts", []))] + [(v["args"], v["opts"]) for v in vs.values()]
+            for args, opts in lists:
+                seen |= {H.kind(a[1]) for a in args if isinstance(a[1], str)} | {H.kind(o["type"]) for o in opts if isinstance(o["type"], str)}
+        self.assertEqual(seen, set(TYPES), "the types in the command data and the list in this test")
+        ctx = ["alpha", "dev", "project"]
+        for t in sorted(seen - {"none", "value", "branch"}):   # a branch needs a repository (its own test); a value needs a key
+            self.assertTrue(H.by_type(t, ctx), "no candidates for the type %r" % t)
+        self.assertTrue(H.by_type("value", ["alpha", "lead.push.cloud"]))
 
 
 class Infer(Env):
