@@ -19,13 +19,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$PRJ" ]; then   # the project whose repository contains the current directory
-  here=$(pwd -P)
-  for f in "$DA_CONF"/projects/*.json; do
-    [ -f "$f" ] || continue
-    rp=$(jq -r '.repo.path // ""' "$f"); [ -n "$rp" ] || continue
-    rp=$(cd "$rp" 2>/dev/null && pwd -P) || continue
-    case $here/ in "$rp"/*) PRJ=$(jq -r .project "$f"); break;; esac
-  done
+  PRJ=$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)
 fi
 [ -n "$PRJ" ] || exit 0
 PCFG=$DA_CONF/projects/$PRJ.json

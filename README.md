@@ -58,6 +58,15 @@ Eight skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` di
 | `/qargi-review` | verifying and applying returned patches |
 | `/qargi-team` | a team on one task: a lead coordinating the developer, docs and review agents; led by this session, a cloud lead, or a lead started in the console |
 
+## Help, manual page and completion
+
+- `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help approvals`, `naming`, `memory`, `push`, `concepts` and `files` explain the ideas.
+- `man qargi` is the complete reference (`qargi help --man | man -l -` if it is not installed).
+- Tab completion offers commands, verbs, options, and the values that exist on your machine: your projects, instances, a project's teams, sessions and packs.
+- Inside a project's repository you can leave out the project: `qargi lead status`, `qargi team brief code-docs ...`, `qargi canon check`. A role stands for the instance: `qargi instances show dev`. `QARGI_PROJECT` names the project from anywhere. A project you type always wins.
+
+All three, and the checks that keep them true, come from one description of the commands in `lib/commands.py`; `tests/test_help.py` compares it with the scripts. After changing a flag or a verb, describe it there and regenerate the page with `python3 lib/help.py man > man/qargi.1`.
+
 ## Install
 
 ```sh

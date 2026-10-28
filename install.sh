@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install or remove qargi: the five dev-* skills, the local subagent and the
-# `qargi` command.
+# Install or remove qargi: the qargi-* skills, the local subagent, the `qargi` command,
+# its manual page and its bash completion.
 #
-#   install.sh --user [--copy] [--force]          skills in ~/.claude, command in ~/.local/bin
+#   install.sh --user [--copy] [--force]          skills in ~/.claude, command in ~/.local/bin,
+#                                                 man page and bash completion under ~/.local/share
 #   install.sh --project DIR [--copy] [--force]   skills and subagent in DIR/.claude only
 #   install.sh --user|--project DIR --uninstall
 #
@@ -36,13 +37,16 @@ done
 
 data=${XDG_DATA_HOME:-$HOME/.local/share}/qargi
 cmd=$HOME/.local/bin/qargi
+xdg=${XDG_DATA_HOME:-$HOME/.local/share}
+manpage=$xdg/man/man1/qargi.1
+completion=$xdg/bash-completion/completions/qargi
 src=$here
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
 paths=()
 for s in $skills; do paths+=("$target/skills/$s"); done
 paths+=("$target/agents/qargi-agent.md")
-[ "$mode" != user ] || paths+=("$cmd")
+[ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion")
 
 exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
@@ -79,7 +83,7 @@ done
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mkdir -p "$data"
-  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/skills" "$here/agents" "$here/examples" "$here/VERSION" "$data/"
+  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
   echo "copied the tool to $data"
 fi
 
@@ -94,8 +98,13 @@ rm -rf "$target/agents/qargi-agent.md"
 if [ -n "$copy" ]; then cp "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; else ln -s "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; fi
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
 if [ "$mode" = user ]; then
-  mkdir -p "$(dirname "$cmd")"; rm -f "$cmd"; ln -s "$src/bin/qargi" "$cmd"
-  echo "installed skills and subagent in $target, command at $cmd ($kind)"
+  mkdir -p "$(dirname "$cmd")" "$(dirname "$manpage")" "$(dirname "$completion")"; rm -f "$cmd" "$manpage" "$completion"
+  ln -s "$src/bin/qargi" "$cmd"
+  if [ -n "$copy" ]; then cp "$src/man/qargi.1" "$manpage"; cp "$src/completions/qargi.bash" "$completion"
+  else ln -s "$src/man/qargi.1" "$manpage"; ln -s "$src/completions/qargi.bash" "$completion"; fi
+  echo "installed skills and subagent in $target, command at $cmd, man page at $manpage, bash completion at $completion ($kind)"
+  command -v man >/dev/null 2>&1 && ! man -w qargi >/dev/null 2>&1 && echo "note: man does not find it yet; add $xdg/man to MANPATH (or: man -l $manpage)" >&2 || true
+  echo "note: bash loads the completion in new shells when bash-completion is installed; otherwise add to ~/.bashrc: source $completion" >&2
 else
   command -v qargi >/dev/null 2>&1 || echo "note: the qargi command is not on PATH; run: install.sh --user" >&2
   echo "installed skills and subagent in $target ($kind)"

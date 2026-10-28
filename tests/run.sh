@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.." || exit 1
 rc=0
 run() { echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo "$out" | tail -20; echo "FAILED: $*"; rc=1; fi; }
 run python3 tests/test_canon.py
+run python3 tests/test_help.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
 run bash tests/test_cred.sh

@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
-# qargi: one entry point for the helper scripts behind the dev-* skills.
-#
-#   qargi project template|init|show|list|validate ...      (skill: qargi-project)
-#   qargi instances init|list|show|remove|normalize ...   (skill: qargi-instances)
-#   qargi provision plan|apply|add-reference ...           (skill: qargi-provision)
-#   qargi memory lint|get ...                              (skill: qargi-memory)
-#   qargi canon check|plan|apply|import|promote PROJECT ... (skill: qargi-memory)
-#   qargi review check RUN_DIR                              (skill: qargi-review)
-#   qargi skill|tool new|import|list|show|link|unlink|enable|disable|effective|check|remove ...   (skill: qargi-packs)
-#   qargi packs render|apply ...                          (skill: qargi-packs)
-#   qargi credential check PROJECT [--allow-write-token]   (skill: qargi-project)
-#   qargi local prepare|verify ...                         (skill: qargi-task)
-#   qargi start|send|status|stop|mark|close ...            (skill: qargi-task)
-#   qargi watch SID [MAX_SECONDS]
-#   qargi collect SID DIR
-#   qargi team brief|check|contract ...                    (skill: qargi-team)
-#   qargi lead grant|status|revoke PROJECT                 (skill: qargi-team; the lead's push grant)
-#   qargi hook session-start                               (Claude Code SessionStart hook)
-#   qargi version
+# qargi: the entry point. Each command is implemented by a script in lib/. The commands, verbs and options are
+# described once, in lib/commands.py; that description drives `qargi help`, the manual page (man/qargi.1) and the
+# bash completion (completions/qargi.bash). Add a flag to a script and describe it there; tests/test_help.py checks.
 set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { python3 -I "$lib/help.py" show >&2; exit 2; }
+help="$lib/help.py"
 
 area=${1:-}; [ -n "$area" ] || usage; shift
+case $area in
+  help|-h|--help) exec python3 -I "$help" show "$@";;
+  __complete) exec python3 -I "$help" complete "$@";;
+esac
+# qargi COMMAND --help and qargi COMMAND VERB --help
+case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
+case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
+# What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
+_rf=$(mktemp)
+if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
+  mapfile -d '' -t _resolved < "$_rf"
+  if [ "${#_resolved[@]}" -gt 0 ]; then area=${_resolved[0]}; set -- "${_resolved[@]:1}"; fi
+  rm -f "$_rf"
+else rm -f "$_rf"; exit 2; fi
 case $area in
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
@@ -43,5 +42,5 @@ case $area in
   lead) exec "$lib/lead.sh" "$@";;
   hook) exec "$lib/hook.sh" "$@";;
   version) cat "$root/VERSION";;
-  *) usage;;
+  *) echo "qargi: unknown command '$area'. Try: qargi help" >&2; exit 2;;
 esac

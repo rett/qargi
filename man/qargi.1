@@ -1,0 +1,1228 @@
+.TH QARGI 1 "" "qargi 0.0.0"
+.SH NAME
+qargi \- A gathering place for agent work: dispatch, review, remember
+.SH SYNOPSIS
+.B qargi
+.I command
+[\fIverb\fR] [\fIarguments\fR]
+.br
+.B qargi help
+[\fIcommand\fR|\fItopic\fR]
+.SH DESCRIPTION
+qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates a developer, a docs writer and a reviewer on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
+.PP
+Every command takes \fB\-\-help\fR. A command that changes shared resources prints a plan and applies it only with \fB\-\-plan\fR and \fB\-\-approved\fR; a cloud command needs \fB\-\-asked\fR. See APPROVALS.
+.SH CONCEPTS
+Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
+.PP
+Roles: dev changes code, docs writes the operational docs, review judges a change, test writes tests, lead coordinates a team. A role has its own model, effort, skills and packages, stored in the project's answers.
+.PP
+Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
+.PP
+You decide: the coordinator re\-verifies everything an agent returns (qargi review check), applies it as separate commits, and asks you before anything is pushed.
+.SH APPROVALS
+A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.
+.PP
+To apply, run the same command with \-\-plan TOKEN \-\-approved "your words". If the plan changed in between, the token no longer matches and nothing happens.
+.PP
+\-\-asked "your request" is required by every cloud verb: it records that you asked for the cloud. Both are written to an append\-only audit log in the state directory.
+.PP
+qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.
+.SH NAMING
+Project and role are single lower\-case tokens. An instance is <project>\-<role>, for example acme\-dev. A session is <instance>\-<task\-slug>, and the agent's branch is agent/<task\-slug>.
+.PP
+Cloud resources follow <project>\-<component>[\-<role>]: <project>\-agent\-<role>, <project>\-deployment\-<role>, the shared <project>\-environment, and the stores <project>\-memory and <project>\-reference. The lead is <project>\-lead (agent <project>\-agent\-lead).
+.PP
+qargi instances normalize renames existing resources to match.
+.SH MEMORY
+<project>\-memory is read\-write for agents: verified how\-to facts they learn. <project>\-reference is read\-only: rules, workflow and conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.
+.PP
+An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get.
+.SH PUSH
+Only the lead ever pushes, never a member, and only as the project's lead.push grant says. The default is nothing.
+.PP
+This Claude Code session as lead: lead.push.local lets it push agent/* branches and open pull requests without asking each time.
+.PP
+A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.
+.PP
+The GitHub tool cannot create releases; those stay with this session.
+.SH COMMANDS
+.SS Set up
+.TP
+.B qargi project
+Store the answers about a project, once, outside the repository.
+.PP
+The answers are the repository, its long\-lived branches, the roles that exist (dev, docs, review, test) with each role's base branch, model, effort, packages and skills, the memory stores, the budget, and optionally a lead with teams and a push grant. Provisioning and dispatch read them. Push policy per role is none: an agent never pushes; the lead's grant is separate (qargi help push).
+.RS
+.TP
+.BI "template " "NAME"
+Print an answers file with defaults.
+.br
+Edit it, then store it with init.
+.RE
+.RS
+.TP
+.BI "init " "NAME"
+Validate and store an answers file.
+.RS
+.TP
+.BI "\-\-answers " "FILE"
+the answers file to store.
+.RE
+.RS
+.TP
+.B \-\-force
+replace stored answers.
+.RE
+.RE
+.RS
+.TP
+.BI "set " "[NAME] PATH VALUE"
+Change one answer.
+.br
+PATH is dotted (budget_cents, roles.docs.effort, lead.push); VALUE is JSON or a plain string.
+.RE
+.RS
+.TP
+.BI "show " "[NAME]"
+Print the stored answers and what they mean.
+.RE
+.RS
+.TP
+.B list
+List the stored projects.
+.RE
+.RS
+.TP
+.BI "validate " "FILE"
+Check an answers file without storing it.
+.RE
+.TP
+.B qargi provision
+Create the cloud agent, deployment and environment of an instance.
+.PP
+Renders the agent, the shared environment, the memory stores it attaches and a manual\-run deployment, shows the plan, and creates them only with your go\-ahead. Names follow qargi help naming. Provision the role agents first; the lead (PROJECT\-lead) needs them to exist.
+.RS
+.TP
+.BI "plan " "[NAME]"
+Render the files and print the plan (changes nothing).
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of NAME.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role (default dev).
+.RE
+.RS
+.TP
+.BI "\-\-model " "MODEL"
+model id, overriding the project's answers.
+.RE
+.RS
+.TP
+.BI "\-\-effort " "LEVEL"
+effort level.
+.RE
+.RS
+.TP
+.BI "\-\-apt " "PACKAGES"
+extra packages for the shared environment, space separated.
+.RE
+.RS
+.TP
+.BI "\-\-networking " "MODE"
+the sandbox's network access.
+.RE
+.RS
+.TP
+.BI "\-\-budget " "CENTS"
+spend ceiling of the deployment, in cents.
+.RE
+.RS
+.TP
+.BI "\-\-memory\-store " "ID"
+attach this memory store instead of the project's.
+.RE
+.RS
+.TP
+.BI "\-\-reference\-store " "ID"
+attach this reference store.
+.RE
+.RE
+.RS
+.TP
+.BI "apply " "[NAME]"
+Create the resources of an approved plan.
+.br
+Brings new memory stores to the canon, seeds the roles, records the ids and registers the instance.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of NAME.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role.
+.RE
+.RE
+.RS
+.TP
+.BI "add\-reference " "NAME"
+Create and attach a reference store to an existing instance.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
+.B qargi instances
+Register, inspect and manage agent instances.
+.PP
+An instance is <project>\-<role>, for example acme\-dev, or the lead acme\-lead. The registry records where it runs and which resources it uses. Verbs that change cloud resources need \-\-asked, and show a plan first.
+.RS
+.TP
+.B init
+Register an instance.
+.br
+Usually you provision (qargi provision) and the instance is registered for you.
+.RS
+.TP
+.BI "\-\-location " "WHERE"
+where it runs.
+.RE
+.RS
+.TP
+.BI "\-\-deployment " "ID"
+an existing cloud deployment.
+.RE
+.RS
+.TP
+.BI "\-\-agent " "FILE"
+a local subagent definition file.
+.RE
+.RS
+.TP
+.BI "\-\-name " "NAME"
+the instance name.
+.RE
+.RS
+.TP
+.B \-\-provision
+create new resources through provision.
+.RE
+.RS
+.TP
+.BI "\-\-model " "MODEL"
+model id.
+.RE
+.RS
+.TP
+.BI "\-\-effort " "LEVEL"
+effort level.
+.RE
+.RS
+.TP
+.BI "\-\-budget " "CENTS"
+spend ceiling in cents.
+.RE
+.RS
+.TP
+.BI "\-\-apt " "PACKAGES"
+packages for a provisioned environment.
+.RE
+.RS
+.TP
+.BI "\-\-networking " "MODE"
+network access.
+.RE
+.RS
+.TP
+.B \-\-no\-session
+do not start a standby session.
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.B list
+List the instances and their active sessions.
+.RS
+.TP
+.B \-\-reconcile
+flag live sessions the tracker does not know.
+.RE
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Show an instance and what is stale or misnamed.
+.RS
+.TP
+.B \-\-reconcile
+also flag untracked live sessions.
+.RE
+.RE
+.RS
+.TP
+.BI "remove " "NAME"
+Forget an instance (the registry entry only).
+.br
+Refused while it has open sessions.
+.RE
+.RS
+.TP
+.BI "budget " "NAME CENTS"
+Change the spend ceiling of the instance's deployment.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-session " "SID"
+also change this running session.
+.RE
+.RE
+.RS
+.TP
+.BI "refresh\-prompt " "NAME"
+Rebuild the agent's system prompt from the current contract.
+.br
+Prints what changes, then creates a new agent version and re\-points the deployment.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "normalize " "NAME"
+Rename the instance's cloud resources to the naming convention.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
+.B qargi skill
+Create or import skills and attach them by scope.
+.PP
+Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project and role), user\-role, project, or project\-role. Imported content is shown, hashed and approved before it is stored, and any later change is drift until you seal it again.
+.RS
+.TP
+.BI "new " "NAME"
+Create a pack from a template.
+.RE
+.RS
+.TP
+.BI "import " "SOURCE"
+Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-name " "NAME"
+store it under this name.
+.RE
+.RS
+.TP
+.BI "\-\-ref " "REF"
+the git ref to pin.
+.RE
+.RS
+.TP
+.BI "\-\-path " "SUB"
+a subdirectory of the source.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "list " "[PROJECT] [ROLE]"
+List the library, or what a project and role get.
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Show a pack.
+.RE
+.RS
+.TP
+.BI "seal " "NAME"
+Approve the current content of a pack (after you edited it).
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "link " "NAME"
+Attach a pack at a scope.
+.RS
+.TP
+.BI "\-\-scope " "SCOPE"
+where it applies.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+for the project scopes.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+for the role scopes.
+.RE
+.RE
+.RS
+.TP
+.BI "unlink " "NAME"
+Detach a pack from a scope (same options as link).
+.RS
+.TP
+.BI "\-\-scope " "SCOPE"
+the scope it was linked at.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role.
+.RE
+.RE
+.RS
+.TP
+.BI "enable " "[PROJECT] ROLE NAME"
+Re\-enable a pack for a role that opted out.
+.RE
+.RS
+.TP
+.BI "disable " "[PROJECT] ROLE NAME"
+Opt a role out of a pack.
+.RE
+.RS
+.TP
+.BI "effective " "[PROJECT] ROLE"
+List what a role gets.
+.RE
+.RS
+.TP
+.BI "check " "[PROJECT] ROLE"
+Review, drift and missing packs of a role.
+.RE
+.RS
+.TP
+.BI "remove " "NAME"
+Delete a pack.
+.br
+Refused while it is linked.
+.RE
+.TP
+.B qargi tool
+Create or import tools (MCP servers with an allowlist) and attach them by scope.
+.PP
+A tool is an MCP server with an explicit list of allowed tools and a permission policy for each. A write\-like tool cannot run unattended unless the tool is marked write_ok. Everything else works as for skills (qargi help skill).
+.RS
+.TP
+.BI "new " "NAME"
+Create a pack from a template.
+.RE
+.RS
+.TP
+.BI "import " "SOURCE"
+Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-name " "NAME"
+store it under this name.
+.RE
+.RS
+.TP
+.BI "\-\-ref " "REF"
+the git ref to pin.
+.RE
+.RS
+.TP
+.BI "\-\-path " "SUB"
+a subdirectory of the source.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "list " "[PROJECT] [ROLE]"
+List the library, or what a project and role get.
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Show a pack.
+.RE
+.RS
+.TP
+.BI "seal " "NAME"
+Approve the current content of a pack (after you edited it).
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "link " "NAME"
+Attach a pack at a scope.
+.RS
+.TP
+.BI "\-\-scope " "SCOPE"
+where it applies.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+for the project scopes.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+for the role scopes.
+.RE
+.RE
+.RS
+.TP
+.BI "unlink " "NAME"
+Detach a pack from a scope (same options as link).
+.RS
+.TP
+.BI "\-\-scope " "SCOPE"
+the scope it was linked at.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role.
+.RE
+.RE
+.RS
+.TP
+.BI "enable " "[PROJECT] ROLE NAME"
+Re\-enable a pack for a role that opted out.
+.RE
+.RS
+.TP
+.BI "disable " "[PROJECT] ROLE NAME"
+Opt a role out of a pack.
+.RE
+.RS
+.TP
+.BI "effective " "[PROJECT] ROLE"
+List what a role gets.
+.RE
+.RS
+.TP
+.BI "check " "[PROJECT] ROLE"
+Review, drift and missing packs of a role.
+.RE
+.RS
+.TP
+.BI "remove " "NAME"
+Delete a pack.
+.br
+Refused while it is linked.
+.RE
+.TP
+.B qargi packs
+Render or apply the skills and tools a role gets.
+.RS
+.TP
+.BI "render " "[PROJECT] ROLE OUTDIR"
+Write what a role gets into a directory (used by provisioning).
+.RE
+.RS
+.TP
+.BI "apply " "INSTANCE"
+Update an existing cloud agent with its skills and tools.
+.br
+The lead's GitHub tool arrives this way when the project grants a cloud push.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.SS Run a task
+.TP
+.B qargi start
+Start a standby cloud session for an instance.
+.PP
+Cloud only, and only when your request names it. The session's spend ceiling comes from the deployment.
+.RS
+.nf
+qargi start NAME
+.fi
+.RE
+.RS
+.TP
+.BI "\-\-label " "SLUG"
+a task slug for the session title.
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.TP
+.B qargi send
+Send a task to an idle cloud session.
+.PP
+The text is the whole brief: TASK, DONE (a command whose exit status decides it), BASE, SCOPE and so on. The session is titled <instance>\-<label>; use the same slug for the agent/<slug> branch.
+.RS
+.nf
+qargi send NAME TASK
+.fi
+.RE
+.RS
+.TP
+.BI "\-\-label " "SLUG"
+the task slug (required).
+.RE
+.RS
+.TP
+.BI "\-\-session " "SID"
+send to this session.
+.RE
+.RS
+.TP
+.B \-\-new
+start a new session first.
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.TP
+.B qargi status
+Show tracked cloud sessions, or one session.
+.RS
+.nf
+qargi status [SID|NAME]
+.fi
+.RE
+.TP
+.B qargi watch
+Wait for a cloud session to stop; prints one line when it does.
+.PP
+Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|timeout|auth|error.
+.RS
+.nf
+qargi watch SID [MAX_SECONDS]
+.fi
+.RE
+.TP
+.B qargi collect
+Download a session's output files into a fresh directory.
+.PP
+Everything downloaded is untrusted data. A team's files carry a role prefix and are split into one directory per member, patches under patches/. Refuses a directory that is not empty.
+.RS
+.nf
+qargi collect SID DIR
+.fi
+.RE
+.TP
+.B qargi stop
+Interrupt a running cloud session.
+.RS
+.nf
+qargi stop SID
+.fi
+.RE
+.TP
+.B qargi close
+Archive a finished cloud session.
+.PP
+Refused until the outputs are collected, unless the task produced none.
+.RS
+.nf
+qargi close SID
+.fi
+.RE
+.RS
+.TP
+.B \-\-no\-outputs
+the task produced no files (for example memory curation).
+.RE
+.TP
+.B qargi mark
+Record what happened to a session's work.
+.RS
+.nf
+qargi mark SID STATE
+.fi
+.RE
+.TP
+.B qargi track
+Track a session that was started elsewhere (for example in the console).
+.RS
+.nf
+qargi track NAME SID
+.fi
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.TP
+.B qargi local
+Prepare and verify a local run that has no way to push.
+.PP
+The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
+.RS
+.TP
+.B prepare
+Make the clone and the wrapper for a local agent.
+.RS
+.TP
+.BI "\-\-repo " "DIR"
+the local repository.
+.RE
+.RS
+.TP
+.BI "\-\-repo\-url " "URL"
+clone a private repository from this URL.
+.RE
+.RS
+.TP
+.BI "\-\-credential\-file " "FILE"
+token file for \-\-repo\-url.
+.RE
+.RS
+.TP
+.BI "\-\-base " "BRANCH"
+the base branch.
+.RE
+.RS
+.TP
+.BI "\-\-slug " "SLUG"
+the task slug (branch agent/<slug>).
+.RE
+.RS
+.TP
+.BI "\-\-scratch " "DIR"
+where to put the run.
+.RE
+.RE
+.RS
+.TP
+.BI "verify " "RUN_DIR"
+Compare the repository's refs with the snapshot taken by prepare.
+.RE
+.SS Review and apply
+.TP
+.B qargi review
+Check what an agent returned.
+.RS
+.TP
+.BI "check " "RUN_DIR"
+Check a run: numbered patches, messages, manifest, groups.
+.br
+Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md that has a Findings section instead of patches.
+.RS
+.TP
+.B \-\-allow\-empty
+accept a manifest with no commits (a team member that was blocked or had nothing to change).
+.RE
+.RE
+.TP
+.B qargi team
+Run a task with a lead and role agents (opt\-in).
+.PP
+For a change that affects usage: the developer changes the code, the docs writer updates the operational docs, the reviewer judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow the lead contract. Each member returns its own series against its own base.
+.RS
+.TP
+.BI "brief " "[PROJECT] TEAM"
+Print the brief a lead needs for one task.
+.RS
+.TP
+.BI "\-\-task " "TEXT"
+what to do.
+.RE
+.RS
+.TP
+.BI "\-\-done " "COMMAND"
+an executable check for the developer's part.
+.RE
+.RS
+.TP
+.BI "\-\-base " "BRANCH"
+the developer's base branch (needed when the project says @dispatcher).
+.RE
+.RS
+.TP
+.BI "\-\-docs\-done " "COMMAND"
+the docs writer's check.
+.RE
+.RS
+.TP
+.BI "\-\-review\-done " "COMMAND"
+the reviewer's check.
+.RE
+.RE
+.RS
+.TP
+.BI "check " "RUN_DIR"
+Check a collected team run: every member and the lead's report.
+.RE
+.RS
+.TP
+.B contract
+Print the lead's contract.
+.br
+The procedure every lead follows, whoever it is.
+.RE
+.SS Memory
+.TP
+.B qargi memory
+Check a memory store and read a note.
+.RS
+.TP
+.BI "lint " "STORE_ID"
+Check a store against the canon.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+recipes or reference (for a store before the canon).
+.RE
+.RE
+.RS
+.TP
+.BI "get " "STORE_ID PATH"
+Print one note.
+.RE
+.TP
+.B qargi canon
+Bring a project's two memory stores to the standard layout and keep them there.
+.PP
+The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an index with a Load column). plan and apply move a store from any older version without losing a note.
+.RS
+.TP
+.BI "check " "[PROJECT]"
+Report conformance and the version of each store.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+which store: memory or reference (default: both).
+.RE
+.RE
+.RS
+.TP
+.BI "plan " "[PROJECT]"
+Print every step needed to reach the current canon (changes nothing).
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+which store: memory or reference (default: both).
+.RE
+.RS
+.TP
+.BI "\-\-default\-role " "ROLE"
+where an old reference store's files go.
+.RE
+.RE
+.RS
+.TP
+.BI "apply " "[PROJECT]"
+Run the plan.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+which store: memory or reference (default: both).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-default\-role " "ROLE"
+as for plan.
+.RE
+.RE
+.RS
+.TP
+.BI "import " "[PROJECT]"
+Merge a foreign store (the old documentation store) under a role.
+.RS
+.TP
+.BI "\-\-from " "STORE_ID"
+the source store id.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role to import under.
+.RE
+.RS
+.TP
+.BI "\-\-map " "NAME"
+the layout of the source.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "seed\-role " "[PROJECT]"
+Write a role's baseline notes without overwriting anything.
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role, or shared.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "promote " "[PROJECT]"
+Move a role's note to shared/.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+which store: memory or reference (default: both).
+.RE
+.RS
+.TP
+.BI "\-\-path " "PATH"
+the note, /roles/<role>/....
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "audit " "[PROJECT]"
+Report a session that wrote under another role's folder.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+which store: memory or reference (default: both).
+.RE
+.RE
+.SS Lead and credentials
+.TP
+.B qargi lead
+Give, inspect or take away the cloud lead's right to push.
+.PP
+Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !.
+.RS
+.TP
+.BI "grant " "[PROJECT]"
+Guided: create or rotate the grant in three confirmed steps.
+.br
+Explains how to create the fine\-grained token, checks it, then: token and vault; the GitHub tool; the Push rules. Skips what is in place.
+.RS
+.TP
+.BI "\-\-from\-file " "FILE"
+read the token from a file instead of asking.
+.RE
+.RE
+.RS
+.TP
+.BI "status " "[PROJECT]"
+Show what is in place and what is missing.
+.RE
+.RS
+.TP
+.BI "revoke " "[PROJECT]"
+Take the grant away.
+.br
+Removes the tool and the Push rules, detaches and archives the credential, deletes the token file. Revoke the token on GitHub yourself.
+.RE
+.TP
+.B qargi credential
+Check or set up the tokens qargi uses.
+.PP
+Tokens live in files only you can read, outside every repository, and never in a command line, the tracker or the audit log.
+.RS
+.TP
+.BI "check " "[PROJECT]"
+Probe the repository token: it must read and should not push.
+.RS
+.TP
+.B \-\-allow\-write\-token
+accept a token that can push, knowingly.
+.RE
+.RE
+.RS
+.TP
+.BI "setup " "KIND [PROJECT]"
+Set up the cloud lead's write token (prefer: qargi lead grant).
+.br
+Checks the token itself against GitHub (fine\-grained, this repository only, no Administration), stores it mode 600, creates a vault with a bearer credential, attaches it to the lead's deployment and records the grant.
+.RS
+.TP
+.BI "\-\-from\-file " "FILE"
+read the token from a file instead of stdin.
+.RE
+.RS
+.TP
+.B \-\-allow\-more\-repos
+accept a token that can also write to other repositories.
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
+.B qargi hook
+Claude Code hooks.
+.PP
+session\-start loads the lead role's READMEs and indexes from both stores (about 4 KB) for the project whose repository the session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project.
+.RS
+.TP
+.B session\-start
+Print the SessionStart hook output for the current project.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of finding it from the directory.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role to load (default lead).
+.RE
+.RE
+.SS Other
+.TP
+.B qargi help
+Show help.
+.PP
+qargi help shows the commands; qargi help COMMAND the verbs and options of one; qargi help TOPIC explains an idea. Every command also takes \-\-help.
+.RS
+.nf
+qargi help [COMMAND|TOPIC]
+.fi
+.RE
+.RS
+.TP
+.B \-\-man
+print the manual page source (roff); view it with: qargi help \-\-man | man \-l \-.
+.RE
+.TP
+.B qargi version
+Print the version.
+.SH EXAMPLES
+.PP
+Once per project:
+.nf
+    qargi project template acme > acme.json   # edit it
+    qargi project init acme \-\-answers acme.json
+    qargi provision plan acme\-dev    # then apply it with \-\-plan and \-\-approved
+.fi
+.PP
+One task, cloud:
+.nf
+    qargi send acme\-dev "$BRIEF" \-\-label rename\-verb \-\-asked "use the cloud dev agent"
+    qargi watch SID    # in the background
+    qargi collect SID ./run
+    qargi review check ./run
+.fi
+.PP
+A team:
+.nf
+    qargi team brief acme code\-docs \-\-task "rename the verb" \-\-done "make test" \-\-base develop
+    qargi lead status acme
+    qargi team check ./run
+.fi
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/qargi/projects/NAME.json
+the answers about a project.
+.TP
+.I $XDG_CONFIG_HOME/qargi/instances.json
+the registry of instances.
+.TP
+.I $XDG_CONFIG_HOME/qargi/profiles/NAME.md
+a repository's gates and review rules, given to agents with a task.
+.TP
+.I $XDG_CONFIG_HOME/qargi/packs/
+the library of skills and tools, and their links.
+.TP
+.I $XDG_CONFIG_HOME/qargi/credentials/
+token files, mode 600.
+.TP
+.I $XDG_STATE_HOME/qargi/sessions.json
+the tracker of cloud sessions.
+.TP
+.I $XDG_STATE_HOME/qargi/audit.log
+append\-only record of every approved or cloud verb, with your words.
+.TP
+.I $XDG_STATE_HOME/qargi/runs/
+collected outputs of runs.
+.SH ENVIRONMENT
+.TP
+.B QARGI_CONF
+the configuration directory (default $XDG_CONFIG_HOME/qargi).
+.TP
+.B QARGI_STATE
+the state directory (default $XDG_STATE_HOME/qargi).
+.TP
+.B QARGI_PROJECT
+the project to use when the current directory is not inside its repository.
+.TP
+.B QARGI_ROLES
+the list of work roles (default: dev review docs test).
+.TP
+.B QARGI_DRY_RUN
+print a session request, with secrets masked, instead of sending it.
+.TP
+.B NO_COLOR
+turn off bold in the terminal help.
+.SH EXIT STATUS
+0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.
+.SH SEE ALSO
+The skills qargi\-task, qargi\-team, qargi\-project, qargi\-instances, qargi\-provision, qargi\-memory, qargi\-packs and qargi\-review in Claude Code.
