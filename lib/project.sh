@@ -100,6 +100,32 @@ if isinstance(teams, dict) and teams:
         sc = t.get("scopes", {})
         need(isinstance(sc, dict) and all(k in mem and isinstance(v, list) and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x for x in v) for k, v in sc.items()),
              "%s.scopes: {member role: [paths it may change]}" % p)
+lp = (c.get("lead") or {}).get("push", {})
+if lp:
+    need(isinstance(lp, dict), "lead.push: an object")
+    if isinstance(lp, dict):
+        need(isinstance(lp.get("local", False), bool), "lead.push.local: true if the Claude Code session leading may push agent branches and open pull requests")
+        need(lp.get("cloud", "none") in ("none", "branches"), "lead.push.cloud: none or branches (a cloud lead pushes agent branches and opens pull requests)")
+        for k in ("merge", "release"):
+            need(lp.get(k, "ask") in ("ask", "never"), "lead.push.%s: ask (the person confirms each one) or never; there is no automatic merge or release" % k)
+        pat = lp.get("branch_pattern", "agent/*")
+        need(isinstance(pat, str) and re.fullmatch(r"agent/[A-Za-z0-9._*-]*", pat or ""), "lead.push.branch_pattern: agent/ followed by a name or *")
+        if lp.get("cloud") == "branches":
+            cf2 = lp.get("credential_file", "")
+            need(cf2, "lead.push.credential_file: a fine-grained token file (contents and pull requests write, this repository only) for the cloud lead")
+            if cf2:
+                import os, subprocess
+                pth = os.path.expanduser(cf2)
+                if not os.path.isfile(pth): bad.append("lead.push.credential_file: %s is not a file" % cf2)
+                else:
+                    st = os.stat(pth)
+                    if st.st_mode & 0o077: bad.append("lead.push.credential_file: %s must be readable by you only (chmod 600)" % cf2)
+                    if st.st_size == 0: bad.append("lead.push.credential_file: %s is empty" % cf2)
+                    ins = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
+                    if ins.returncode == 0 and ins.stdout.strip() == "true":
+                        bad.append("lead.push.credential_file: %s is inside a git working tree; keep it outside every repository" % cf2)
+                    if cf and os.path.realpath(os.path.expanduser(cf)) == os.path.realpath(pth):
+                        bad.append("lead.push.credential_file must not be the read-only repo.credential_file: the repository mount keeps a token that cannot write")
 if "lead" in (r if isinstance(r, dict) else {}):
     bad.append("roles.lead: the lead is defined by teams, not by a role")
 print("\n".join(bad) if bad else "ok")

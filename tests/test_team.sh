@@ -110,4 +110,25 @@ echo "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("alpha mem
   && ok "inside a project's repository the hook loads the lead's README, indexes and always-notes" || no "hook: $out"
 [ -z "$(cd /tmp && $DA hook session-start 2>&1)" ] && ok "outside a project the hook prints nothing" || no "hook outside"
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext | length < 6000' >/dev/null && ok "the hook output is small" || no "hook size"
+
+# --- the push grant
+printf 'tok' > "$T/tok"; chmod 600 "$T/tok"
+good() { jq "$1" "$T/c/projects/alpha.json" > "$T/c/projects/pushp.json"; sed -i 's/"project": "alpha"/"project": "pushp"/' "$T/c/projects/pushp.json"; }
+good '.lead.push={local:true,cloud:"none",branch_pattern:"agent/*",merge:"ask",release:"ask"}'; $DA project validate pushp >/dev/null 2>&1 && ok "a local-only push grant is accepted" || no "local grant refused"
+good ".lead.push={cloud:\"branches\",credential_file:\"$T/tok\"}"; $DA project validate pushp >/dev/null 2>&1 && ok "a cloud grant with a token file outside any repository is accepted" || no "cloud grant refused: $($DA project validate pushp 2>&1)"
+for case in '.lead.push={cloud:"branches"}|a cloud grant without a token file' '.lead.push={local:true,merge:"auto"}|an automatic merge' '.lead.push={local:true,release:"auto"}|an automatic release' '.lead.push={local:true,branch_pattern:"develop"}|a branch pattern outside agent/' '.lead.push={cloud:"everything"}|an unknown cloud mode'; do
+  good "${case%%|*}"; $DA project validate pushp >/dev/null 2>&1 && no "${case##*|} was accepted" || ok "${case##*|} is refused"; done
+chmod 644 "$T/tok"; good ".lead.push={cloud:\"branches\",credential_file:\"$T/tok\"}"; $DA project validate pushp >/dev/null 2>&1 && no "a world-readable token file was accepted" || ok "a world-readable token file is refused"; chmod 600 "$T/tok"
+rm -f "$T/c/projects/pushp.json"
+# the lead's prompt and the autoload carry the grant (or its absence)
+grep -q "You never push" "$A" && ok "without a grant the lead's prompt says it never pushes" || no "no-grant prompt"
+jq ".lead.push={cloud:\"branches\",credential_file:\"$T/tok\",branch_pattern:\"agent/*\"}" "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
+$DA provision plan --project alpha --role lead >/dev/null 2>&1
+grep -q "branches named agent/\*" "$A" && grep -q "asked of the person by the platform" "$A" && ok "with a cloud grant the prompt names the branches and says merges and releases are asked of the person" || no "grant prompt"
+jq '.lead.push.local=true' "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
+out=$(cd "$T/repo" && $DA hook session-start 2>&1)
+echo "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("Push grant") and contains("merge it")' >/dev/null && ok "the autoload tells this session its push grant" || no "hook grant"
+jq 'del(.lead.push)' "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
+out=$(cd "$T/repo" && $DA hook session-start 2>&1)
+echo "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("No push grant")' >/dev/null && ok "without a grant the autoload says to ask before every push" || no "hook no grant"
 exit $fail

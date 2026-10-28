@@ -143,6 +143,9 @@ lead_teams_block() { # project
         + "Each member: CLONE /workspace/<role>, OUT_PREFIX <role>--, SCOPE as below (none = the whole task).\n"
         + "Scopes: " + ((.value.scopes // {}) | if length == 0 then "none" else (to_entries | map("\(.key): \(.value | join(", "))") | join("; ")) end) + "\n"
         + "Standards for the reviewer: " + ((.value.standards // []) | if length == 0 then "none" else join(", ") end) + "\n") | join(""))
+    + "\n# Push\n" + (if (($c.lead.push.cloud // "none") == "branches") then
+        "You may create branches named \($c.lead.push.branch_pattern // "agent/*") and push to them, and open pull requests, with the GitHub tools you have. Carry each member\u0027s commits one at a time with their messages, so the series stays reviewable. Merging a pull request and creating a release are asked of the person by the platform: request them only after the reviewer\u0027s verdict is accept and the person has told you to, and never work around a refusal. Never push any other branch or a tag, never delete a branch, never force-push. Members never push and you never tell them to.\n"
+      else "You never push. Members never push. Deliver patches; the coordinator who dispatched you applies and publishes them.\n" end)
     + "\nIf the first message is a plain task rather than a TEAM brief, use the only team above (or ask which), build the entry of each member from these definitions, ask for the base branch if it is @dispatcher, and proceed.\n"' "$f"
 }
 
