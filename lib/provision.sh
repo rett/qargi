@@ -53,7 +53,20 @@ export PLAN_ARG
 split_instance "$NAME"
 # The project's stored answers (qargi project init) give the defaults; flags win.
 PCFG=$DA_CONF/projects/$PROJECT.json
-if [ -f "$PCFG" ]; then
+MEMBERS=''   # the role agents a lead may spawn, as a YAML list (only for ROLE=lead)
+if [ -f "$PCFG" ] && [ "$ROLE" = lead ]; then
+  jq -e '(.teams // {}) | length > 0' "$PCFG" >/dev/null || die "project $PROJECT defines no teams (qargi project show $PROJECT); a lead needs at least one"
+  cfg() { jq -r "$1" "$PCFG"; }
+  MODEL=${MODEL:-$(cfg '.lead.model')}; EFFORT=${EFFORT:-$(cfg '.lead.effort')}
+  APT=''; SKILLS=''
+  BUDGET=${BUDGET:-$(cfg '[.teams[].budget_cents // .budget_cents] | max')}
+  MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
+  for m in $(jq -r '[.teams[].members[]] | unique[]' "$PCFG"); do
+    mi=$(jq -c --arg n "$PROJECT-$m" '.[$n] // empty' "$REG" 2>/dev/null)
+    [ -n "$mi" ] && [ "$(jq -r .location <<<"$mi")" = cloud ] || die "the team needs a registered cloud instance $PROJECT-$m: provision it first (qargi provision plan $PROJECT-$m)"
+    MEMBERS+="    - {type: agent, id: $(jq -r .agent.id <<<"$mi"), version: $(jq -r '.agent.version_pinned // .agent.version' <<<"$mi")}"$'\n'
+  done
+elif [ -f "$PCFG" ]; then
   jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (qargi project show $PROJECT)"
   cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
   MODEL=${MODEL:-$(cfg '.roles[$r].model')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
@@ -76,6 +89,9 @@ find_store() {
 }
 if [ -n "$MEMORY_STORE" ]; then MEMID=$MEMORY_STORE; else MEMID=$(find_store "$PROJECT-memory") || die "cannot list memory stores; nothing was changed"; fi
 if [ -n "$REFERENCE_STORE" ]; then REFID=$REFERENCE_STORE; else REFID=$(find_store "$PROJECT-reference") || die "cannot list memory stores; nothing was changed"; fi
+# The environment is shared by the roles of a project: reuse it when it exists.
+ENVID=$(ant beta:environments list --max-items -1 2>/dev/null | jq -r --arg n "$(res_name environment)" 'select(.name==$n and (.archived_at // null)==null) | .id' | head -1)
+ENV_REF=./environment.yaml; [ -z "$ENVID" ] || ENV_REF=$ENVID
 store_note() { # kind name id
   if [ -n "$3" ]; then echo "$1 store: attach existing store $3 (convention name $2)"; else echo "$1 store: create $2"; fi
 }
@@ -90,10 +106,10 @@ render() {
   apt_list="[$(printf '%s' "$ENV_APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   rm -rf "$W/packs-out"; "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"
-  sys=$(agent_prompt "$ROLE")
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" <<'EOF'
+  sys=$(agent_prompt "$ROLE" "$PROJECT") || die "could not build the system prompt of $ROLE"
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" "$MEMBERS" "$ROLE" "$ENV_REF" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out, agent_name, env_name, dep_name = sys.argv[1:18]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out, agent_name, env_name, dep_name, members, role, env_ref = sys.argv[1:21]
 import json, os, shutil
 t = pathlib.Path(tpl); o = pathlib.Path(out)
 res = []
@@ -111,7 +127,7 @@ vaults = sorted({v for t in mcp for v in t.get("vault_ids", [])})
 vault_yaml = "vault_ids: [%s]" % ", ".join(vaults)
 shutil.rmtree(out + "/skills", ignore_errors=True)
 if os.path.isdir(packs_out + "/skills") and custom: shutil.copytree(packs_out + "/skills", out + "/skills")
-sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{AGENT_NAME}}": agent_name, "{{ENV_NAME}}": env_name, "{{DEPLOYMENT_NAME}}": dep_name, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
+sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{MULTIAGENT}}": ("multiagent:\n  type: coordinator\n  agents:\n" + members.rstrip("\n")) if members else "", "{{DESCRIPTION}}": ("Team lead for the qargi cloud backend of %s: delegates one task to its role agents (threads), collects their reports and never edits the repository or pushes." % project) if role == "lead" else "Task-scoped %s agent for the qargi cloud backend (one task, own clone, returns patches, never pushes)." % role, "{{ENVIRONMENT_REF}}": env_ref, "{{AGENT_NAME}}": agent_name, "{{ENV_NAME}}": env_name, "{{DEPLOYMENT_NAME}}": dep_name, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
        "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
 def r(src, dst, extra=None):
     s = (t / src).read_text()
@@ -119,7 +135,8 @@ def r(src, dst, extra=None):
         s = s.replace(k, v)
     (o / dst).write_text(s)
 r("agent.md.tmpl", "agent.md", {"{{SYSTEM}}": system})
-r("environment.yaml.tmpl", "environment.yaml")
+if env_ref == "./environment.yaml": r("environment.yaml.tmpl", "environment.yaml")
+else: (o / "environment.yaml").unlink(missing_ok=True)
 if not have_mem: r("memory_store-recipes.yaml.tmpl", "memory_store-recipes.yaml")
 if not have_ref: r("memory_store-reference.yaml.tmpl", "memory_store-reference.yaml")
 r("deployment-standby.yaml.tmpl", "deployment-standby.yaml")
@@ -130,7 +147,7 @@ FILES=(agents/"$NAME"/deployment-standby.yaml)
 
 # What apply would create: the rendered files, the stores it attaches, the budget.
 plan_hash() {
-  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME"; } | plan_token
+  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME" "$ENV_REF" "$ENV_APT"; } | plan_token
 }
 
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
@@ -164,6 +181,14 @@ case $verb in
     need_plan "$(plan_hash)"; audit_log provision-apply "$NAME"
     (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
+    if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
+      have=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config.packages.apt // []')
+      want=$(printf '%s' "$ENV_APT" | xargs -n1 2>/dev/null | jq -R . | jq -sc 'unique')
+      if [ "$(jq -nc --argjson h "$have" --argjson w "$want" '($w - $h) | length')" != 0 ]; then
+        ant beta:environments update --environment-id "$ENVID" --config "$(jq -nc --argjson h "$have" --argjson w "$want" '{type:"cloud", packages:{type:"packages", apt:($h + $w | unique)}}')" </dev/null >/dev/null 2>&1 \
+          || die "could not add the packages to the shared environment $ENVID"
+      fi
+    fi
     dep=$(key 'deployment-standby')
     [ -n "$dep" ] || die "deployment id not found in $LOCK"
     store=$MEMID; refstore=$REFID

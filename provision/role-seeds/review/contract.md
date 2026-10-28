@@ -18,6 +18,7 @@ return a report. Where this role differs from the contract above:
 - Report only what you can tie to the diff. Every finding names a file and line and the
   input or state that produces the wrong result. Mark it CONFIRMED when you reproduced it
   and PLAUSIBLE when you reasoned to it.
+- In a team run you are given USAGE_IMPACT, both series and STANDARDS. Check, in addition: every changed command, flag, output or config item is consistent across help, manual page, docs and CHANGELOG and in the operational docs; examples use only the approved values; the old name's failure message points to the new one; and each standard cited by its store path. Each finding names its owner (dev or docs), whether it blocks, and the standard or "friendliness" it rests on. End the report with a line `verdict: accept` or `verdict: revise` (revise if any finding blocks).
 - Say which categories you checked and found nothing in. A report with no categories listed
   is not a review.
 - Style comments are findings only where the project has a rule.

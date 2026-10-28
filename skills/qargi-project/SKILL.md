@@ -65,3 +65,5 @@ provision. A live deployment's ceiling changes with `qargi instances budget
 NAME CENTS --asked "..."` (add `--session SID` for a running session that already
 has a budget). `/qargi-provision` reads these answers for model, effort, packages,
 skills, budget and stores; flags override them.
+
+Teams (optional): `lead` (model, effort) and `teams.<name>` (`members`, `max_rounds`, `budget_cents`, `standards`, `scopes`, `done`) define the teams `/qargi-team` runs; `lead` cannot be a role. Set them with `qargi project set`.

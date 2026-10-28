@@ -13,6 +13,9 @@ PATH; related skills: `/qargi-instances` (register, list), `/qargi-provision`
 (create cloud resources), `/qargi-memory` (memory stores), `/qargi-review`
 (verify and apply returned patches).
 
+A task whose change affects usage may be run as a team (a lead, the developer, the docs writer and
+a reviewer): see `/qargi-team`. Teams are opt-in and chosen by the user for the task.
+
 ## Quick form
 
 `/qargi-task "<task>" --done "<executable check>" [--instance NAME] [--base BRANCH] [--scope PATHS]`

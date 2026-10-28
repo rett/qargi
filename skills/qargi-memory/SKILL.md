@@ -51,3 +51,5 @@ baseline bullet it covers.
 A store at an older version gets a plan that only adds what a note lacks (`Kind`, `Applies to`,
 `Sources` from its folder and `Verified:` line) and never edits a body.
 A new canon version means a new migration; see `canon/CANON.md` § Changing the canon.
+
+`qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the lead role's READMEs and indexes from both stores (about 4K characters) and nothing else; notes are read on demand.

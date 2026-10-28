@@ -38,6 +38,10 @@
         "pdf"
       ],
       "custom": []
+    },
+    "lead": {
+      "anthropic": [],
+      "custom": []
     }
   },
   "imports": {

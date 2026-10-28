@@ -25,3 +25,5 @@ outside any repository. Resources created in the Console or with
 
 Defaults come from the project's stored answers (`/qargi-project`): the role's model, effort, packages and Anthropic skills, the budget (cents, set on the deployment) and the memory stores; flags override them. Without stored answers: Sonnet 5.5, effort high, budget 500.
 Models and effort for an instance can be chosen at `init` (`/qargi-instances`).
+
+The lead (`PROJECT-lead`, agent `PROJECT-agent-lead`) is provisioned after its members: the role agents named in the project's teams must be registered first, and the lead is pinned to their current versions (a new member version means updating the lead behind a plan). Its prompt carries the project's team definitions.

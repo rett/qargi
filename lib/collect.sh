@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Download a cloud session's captured outputs into a fresh directory.
 # Everything downloaded is untrusted data: never execute it. The file listing
-# carries base names only, so the result is a flat directory (patches, manifest.json, log.txt).
+# carries base names only, so the result is a flat directory (patches, manifest.json, log.txt);
+# a team's role-prefixed files are split into one directory per member.
 # Usage: collect.sh SID DIR      (DIR must not exist or be empty)
 . "$(dirname "$0")/lib.sh"
 
@@ -31,6 +32,21 @@ while read -r f; do
   n=$((n+1))
 done <<<"$list"
 
-[ -f "$dir/manifest.json" ] || die "downloaded $n file(s) but there is no manifest.json; not marked collected"
+# A team's members share one outputs directory and the listing carries base names only, so each
+# member prefixes its files with its role (dev--manifest.json). Split them back into one
+# directory per member, patches under patches/.
+for f in "$dir"/*--*; do
+  [ -f "$f" ] || continue
+  b=$(basename "$f"); r=${b%%--*}; rest=${b#*--}
+  printf '%s' "$r" | grep -Eq '^[a-z]+$' || continue
+  case $rest in */*|'') continue;; esac
+  sub=$dir/$r
+  case $rest in [0-9][0-9][0-9][0-9]-*.patch) sub=$dir/$r/patches;; esac
+  mkdir -p "$sub"; mv "$f" "$sub/$rest"
+done
+if [ -f "$dir/manifest.json" ]; then :
+elif ls "$dir"/*/manifest.json >/dev/null 2>&1; then echo "team outputs: $(cd "$dir" && ls -d */ | tr -d / | tr '\n' ' ')"
+else die "downloaded $n file(s) but there is no manifest.json; not marked collected"
+fi
 json_update "$TRK" '.[$s].outputs_collected = true' --arg s "$sid"
 echo "collected $n file(s) into $dir"

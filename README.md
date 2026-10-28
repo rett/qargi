@@ -45,7 +45,7 @@ lists the deviations. The role list can be extended with `QARGI_ROLES`.
 
 ## Skills and command
 
-Seven skills, all prefixed `dev-`, drive one `qargi` command. `/qargi-task` dispatches work; the others configure and manage:
+Eight skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
@@ -54,8 +54,9 @@ Seven skills, all prefixed `dev-`, drive one `qargi` command. `/qargi-task` disp
 | `/qargi-instances` | `init`, `list`, `show`, `remove`, `normalize` |
 | `/qargi-provision` | `plan`, `apply`, `add-reference` |
 | `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), reviewed at import, checked for drift |
-| `/qargi-memory` | `seed`, `seed-reference`, `lint`, migrating a flat store |
+| `/qargi-memory` | `lint`, `get`, the canon (`check`, `plan`, `apply`, `import`, `promote`), the session-start autoload |
 | `/qargi-review` | verifying and applying returned patches |
+| `/qargi-team` | a team on one task: a lead coordinating the developer, docs and review agents; led by this session, a cloud lead, or a lead started in the console |
 
 ## Install
 

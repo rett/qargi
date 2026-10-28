@@ -4,7 +4,7 @@
 #   qargi project template|init|show|list|validate ...      (skill: qargi-project)
 #   qargi instances init|list|show|remove|normalize ...   (skill: qargi-instances)
 #   qargi provision plan|apply|add-reference ...           (skill: qargi-provision)
-#   qargi memory seed|seed-reference|lint ...              (skill: qargi-memory)
+#   qargi memory lint|get ...                              (skill: qargi-memory)
 #   qargi canon check|plan|apply|import|promote PROJECT ... (skill: qargi-memory)
 #   qargi review check RUN_DIR                              (skill: qargi-review)
 #   qargi skill|tool new|import|list|show|link|unlink|enable|disable|effective|check|remove ...   (skill: qargi-packs)
@@ -14,12 +14,14 @@
 #   qargi start|send|status|stop|mark|close ...            (skill: qargi-task)
 #   qargi watch SID [MAX_SECONDS]
 #   qargi collect SID DIR
+#   qargi team brief|check|contract ...                    (skill: qargi-team)
+#   qargi hook session-start                               (Claude Code SessionStart hook)
 #   qargi version
 set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
@@ -36,6 +38,8 @@ case $area in
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
+  team) exec "$lib/team.sh" "$@";;
+  hook) exec "$lib/hook.sh" "$@";;
   version) cat "$root/VERSION";;
   *) usage;;
 esac

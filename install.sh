@@ -19,7 +19,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-review"
+skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-review qargi-team"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -48,7 +48,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/qargi-agent.md | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-review)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/qargi-agent.md | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-review|qargi-team)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi

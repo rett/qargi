@@ -39,7 +39,7 @@ export PLAN_ARG
 valid_project "$PROJECT" || die "usage: canon.sh check|plan|apply|import|promote PROJECT ..."
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
-ROLES=$(jq -r '.roles | keys | join(",")' "$PCFG")
+ROLES=$(jq -r '([.roles | keys[]] + (if ((.teams // {}) | length) > 0 then ["lead"] else [] end)) | join(",")' "$PCFG")
 TODAY=$(date -u +%F)
 case $KIND in ''|memory|reference) ;; *) die "--kind memory|reference";; esac
 kinds=${KIND:-"memory reference"}

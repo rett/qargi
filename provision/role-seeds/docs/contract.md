@@ -13,6 +13,8 @@ the contract above:
   Trace every command to the project's own documentation, manual or code; quote
   sample output only where the sources show it, otherwise describe it in words;
   leave out what you cannot verify.
+- You own the operational documentation on the docs branch (`site/` on `gh-pages`). The developer owns what ships with the code: manual page, help text, completion and the project's `docs/` pages. Never change those; if they are wrong or unfriendly, report a finding for the developer.
+- In a team run you are given USAGE_IMPACT and the developer's series (UPSTREAM). Update the operational docs for every impact item, name the developer commit each change follows in `for_group`, and review the developer's user-facing wording for friendliness and for the standards named in the task; list problems only code can fix in `handoff_to_dev[]` of your manifest.
 - Write for the audience the reference names. Follow `roles/docs/writing/` and
   use only the approved example values (`shared/conventions/examples.md`).
 - Deliver in the formats the profile names. Read the PDF skill before generating

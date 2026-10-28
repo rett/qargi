@@ -81,6 +81,27 @@ m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
     v = m.get(k)
     need(v in (None, "") or re.fullmatch(r"memstore_[A-Za-z0-9]+", v), "memory.%s: a memstore id or empty (created on provisioning)" % k)
+teams = c.get("teams", {})
+need(isinstance(teams, dict), "teams: an object of named teams")
+if isinstance(teams, dict) and teams:
+    ld = c.get("lead", {})
+    need(re.fullmatch(r"claude-[a-z0-9.-]+", (ld or {}).get("model", "") or ""), "lead.model: a model id like claude-opus-5-5 (needed when teams are defined)")
+    need((ld or {}).get("effort") in efforts, "lead.effort: %s" % "|".join(sorted(efforts)))
+    for tn, t in teams.items():
+        p = "teams.%s" % tn
+        need(re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tn), "%s: a lower-case name" % p)
+        mem = t.get("members", [])
+        need(isinstance(mem, list) and len(mem) >= 2 and len(set(mem)) == len(mem) and all(m in (r if isinstance(r, dict) else {}) for m in mem),
+             "%s.members: two or more distinct roles enabled in this project" % p)
+        need(isinstance(t.get("max_rounds", 2), int) and 0 <= t.get("max_rounds", 2) <= 5, "%s.max_rounds: a whole number from 0 to 5" % p)
+        need(isinstance(t.get("budget_cents", 1), int) and t.get("budget_cents", 1) > 0, "%s.budget_cents: a positive whole number" % p)
+        st = t.get("standards", [])
+        need(isinstance(st, list) and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x for x in st), "%s.standards: store paths such as shared/rules/rules.md (no leading slash)" % p)
+        sc = t.get("scopes", {})
+        need(isinstance(sc, dict) and all(k in mem and isinstance(v, list) and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x for x in v) for k, v in sc.items()),
+             "%s.scopes: {member role: [paths it may change]}" % p)
+if "lead" in (r if isinstance(r, dict) else {}):
+    bad.append("roles.lead: the lead is defined by teams, not by a role")
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
 EOF

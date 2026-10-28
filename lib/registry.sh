@@ -240,7 +240,7 @@ refresh_prompt() {
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
   split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
   ag=$(ant beta:agents retrieve --agent-id "$aid" </dev/null 2>/dev/null) || die "cannot read the agent"
-  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE")
+  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE" "$PROJECT")
   [ "$cur" != "$new" ] || { echo "the prompt of $aid v$aver is current"; return 0; }
   echo "PLAN: rebuild the system prompt of $aid v$aver ($PROJECT/$ROLE) from the current contract; changes:"
   diff <(printf '%s\n' "$cur") <(printf '%s\n' "$new") | grep -E '^[<>]' | sed 's/^</  -/;s/^>/  +/' | cut -c1-150 | head -60

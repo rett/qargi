@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Manage the structure of a qargi recipes memory store.
 #   memory.sh lint STORE_ID [--kind recipes|reference]   read-only structure and content check
+#   memory.sh get STORE_ID /path.md                       read one note
 # Checks stores in the pre-canon layout; canon stores are handed to `qargi canon check`
 # (structure, note format, indexes and hygiene).
 . "$(dirname "$0")/lib.sh"
@@ -8,6 +9,14 @@
 here=$(dirname "$(readlink -f "$0")")
 
 verb=${1:-}; store=${2:-}; shift 2 || true
+if [ "$verb" = get ]; then   # memory.sh get STORE_ID /path.md: read one note
+  case $store in memstore_*) ;; *) die "usage: memory.sh get memstore_ID /path.md";; esac
+  [ -n "${1:-}" ] || die "usage: memory.sh get memstore_ID /path.md"
+  ant_ok
+  id=$(mem_index "$store" | jq -r --arg p "$1" 'select(.path==$p) | .id' | head -1)
+  [ -n "$id" ] || die "no such note: $1"
+  mem_read "$store" "$id"; exit 0
+fi
 KIND=recipes
 while [ $# -gt 0 ]; do
   case $1 in
@@ -15,7 +24,7 @@ while [ $# -gt 0 ]; do
     *) die "unknown option $1";;
   esac
 done
-case $store in memstore_*) ;; *) die "usage: memory.sh lint memstore_ID";; esac
+case $store in memstore_*) ;; *) die "usage: memory.sh lint|get memstore_ID [/path.md]";; esac
 [ -n "${QARGI_MEMORY_FIXTURE:-}" ] || ant_ok
 
 mem_list() {

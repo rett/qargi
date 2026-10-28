@@ -67,18 +67,18 @@ track() {
 
 # A session with the project's repository mounted (private repositories). The token is read
 # from the credential file and goes to ant on stdin; it is in no argument and no log.
-start_with_repo() { # name credential-file -> session id
+start_with_repo() { # name [credential-file] -> session id (the lead always starts this way: its members are threads of one session)
   local i dep url body
   i=$(inst_get "$1") || exit 1
   dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"
   url=$(jq -r .repo.url "$DA_CONF/projects/${1%%-*}.json")
-  body=$(jq -n --argjson d "$dep" --arg url "$url" --rawfile tok "$2" '{
+  body=$(jq -n --argjson d "$dep" --arg url "$url" --rawfile tok "${2:-/dev/null}" '{
       agent: {id: $d.agent.id, type: "agent", version: $d.agent.version},
       environment_id: $d.environment_id, vault_ids: ($d.vault_ids // []),
-      resources: (($d.resources // []) + [{type: "github_repository", url: $url, authorization_token: ($tok | rtrimstr("\n"))}]),
+      resources: (($d.resources // []) + (if ($tok | length) > 0 then [{type: "github_repository", url: $url, authorization_token: ($tok | rtrimstr("\n"))}] else [] end)),
       initial_events: $d.initial_events, metadata: {deployment_id: $d.id}}
       + (if $d.budget then {budget: $d.budget} else {} end)')
-  audit_log session-with-repo "$1 credential file $(basename "$2")"
+  audit_log session-with-repo "$1 credential file $(basename "${2:-none}")"
   if [ -n "${QARGI_DRY_RUN:-}" ]; then jq '.resources |= map(if .authorization_token then .authorization_token="***" else . end)' <<<"$body"; return 0; fi
   printf '%s' "$body" | ant beta:sessions create 2>/dev/null | jq -r '.id // empty'
 }
@@ -88,7 +88,7 @@ start() {
   local name=$1 i run sid cf
   i=$(cloud_inst "$name") || exit 1
   split_instance "$name"; cf=$(cred_file "$PROJECT")
-  if [ -n "$cf" ]; then
+  if [ -n "$cf" ] || [ "$ROLE" = lead ]; then
     sid=$(start_with_repo "$name" "$cf") || exit 1
     [ -n "${QARGI_DRY_RUN:-}" ] && exit 0
     [ -n "$sid" ] || die "could not create the session with the repository mounted (check: qargi credential check $PROJECT)"

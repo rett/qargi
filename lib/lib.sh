@@ -25,7 +25,8 @@ done
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
 DA_ROLES=${QARGI_ROLES:-"dev review docs test"}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
-valid_role() { local r; for r in $DA_ROLES; do [ "$r" = "$1" ] && return 0; done; return 1; }
+# "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
+valid_role() { local r; for r in $DA_ROLES lead; do [ "$r" = "$1" ] && return 0; done; return 1; }
 valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
 # split_instance NAME: sets PROJECT and ROLE, or dies with the rule.
 split_instance() {
@@ -33,6 +34,16 @@ split_instance() {
   if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
     die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
   fi
+}
+
+# mem_index STORE: JSON lines {path,id} of every memory of a store (metadata only).
+mem_index() {
+  ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view basic --max-items -1 </dev/null 2>/dev/null \
+    | jq -c 'select(.type=="memory") | {path, id}'
+}
+# mem_read STORE ID: the content of one memory.
+mem_read() {
+  ant beta:memory-stores:memories retrieve --memory-store-id "$1" --memory-id "$2" </dev/null 2>/dev/null | jq -r '.content // empty'
 }
 
 # res_name COMPONENT: the cloud resource name for the current $PROJECT and $ROLE.
@@ -119,10 +130,30 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
 # contract, and the role's contract addendum if it has one. Provisioning and refresh-prompt
 # build it the same way, so an agent can always be brought back in line with the tool.
-agent_prompt() { # role
+# The teams of a project as text for the lead's prompt: members, bases, scopes, standards,
+# rounds and budget, so a lead started from the console needs only a task.
+lead_teams_block() { # project
+  local f=$DA_CONF/projects/$1.json
+  [ -f "$f" ] || return 0
+  jq -r '. as $c
+    | "\n# Teams of project \($c.project)\nRepository: \($c.repo.url). Branches no member may touch: \($c.repo.long_lived | join(", ")).\n"
+    + ($c.teams | to_entries | map(
+        "\n## Team \(.key)\nMembers (start in this order): \(.value.members | join(", ")). At most \(.value.max_rounds // 2) revise rounds. Budget \(.value.budget_cents // $c.budget_cents) cents.\n"
+        + "Base branch per member: " + (.value.members | map("\(.) = \($c.roles[.].base)") | join("; ")) + "  (@dispatcher: the branch the person who started you names).\n"
+        + "Each member: CLONE /workspace/<role>, OUT_PREFIX <role>--, SCOPE as below (none = the whole task).\n"
+        + "Scopes: " + ((.value.scopes // {}) | if length == 0 then "none" else (to_entries | map("\(.key): \(.value | join(", "))") | join("; ")) end) + "\n"
+        + "Standards for the reviewer: " + ((.value.standards // []) | if length == 0 then "none" else join(", ") end) + "\n") | join(""))
+    + "\nIf the first message is a plain task rather than a TEAM brief, use the only team above (or ask which), build the entry of each member from these definitions, ask for the base branch if it is @dispatcher, and proceed.\n"' "$f"
+}
+
+agent_prompt() { # role [project]
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
   local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/qargi-task/agent-contract.md
   [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; contract=$lib/skills/qargi-task/agent-contract.md; }
-  sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"; cat "$contract"; [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
+  sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
+  # the lead delegates and reports; the worker contract (patches, clones) is the members' own
+  [ "$1" = lead ] || cat "$contract"
+  [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
+  [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
 }
 
