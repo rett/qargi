@@ -1343,6 +1343,36 @@ the password is the first line of this file.
 .B \-\-dry\-run
 print the plan and stop; changes nothing.
 .RE
+.TP
+.B qargi migrate
+Bring an installation made with older names to the current ones.
+.PP
+roles renames what was made with the role names dev and docs (now build and write) and the four fixed local agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved definitions; in every project's two memory stores the role folders and the role names in indexes, README and marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their prompts, rebuilt as refresh\-prompt does; and the old agent symlinks, replaced by members (qargi agent add). Without \-\-apply it prints the plan, with every cloud call, and a plan token. It is re\-runnable: what is renamed already is left out, and it stops at the first failure.
+.RS
+.TP
+.B roles
+Plan, then apply, the move to the ability names and to named members.
+.RS
+.TP
+.BI "\-\-member\-names " "LIST"
+ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester).
+.RE
+.RS
+.TP
+.B \-\-apply
+apply the plan the token names.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, for this migration; needed when the plan changes cloud resources.
+.RE
+.RE
 .SS Other
 .TP
 .B qargi help

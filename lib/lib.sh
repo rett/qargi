@@ -43,6 +43,40 @@ mem_index() {
   ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view basic --max-items -1 </dev/null 2>/dev/null \
     | jq -c 'select(.type=="memory") | {path, id}'
 }
+# mem_dump STORE: JSON lines of every memory of a store, with content (QARGI_CANON_FIXTURE_DIR replaces the cloud in tests).
+mem_dump() {
+  if [ -n "${QARGI_CANON_FIXTURE_DIR:-}" ]; then cat "$QARGI_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
+  ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>/dev/null \
+    | jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}'
+}
+
+# mem_exec_ops STORE PLAN_JSON: run a plan's steps ({ops: [move|create|update|marker]}) against a store, in order;
+# stops at the first failure. canon.sh and migrate.sh plan with Python and execute with this.
+mem_exec_ops() {
+  local store=$1 plan=$2 n=0 op f
+  while IFS= read -r op <&3; do
+    case $(jq -r .op <<<"$op") in
+      move)
+        ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$(jq -r .id <<<"$op")" \
+          --path "$(jq -r .to <<<"$op")" </dev/null >/dev/null 2>&1 || die "move failed: $(jq -r .from <<<"$op")";;
+      create|marker|update)
+        f=$(mktemp); jq -j .content <<<"$op" > "$f"
+        if [ -n "$(jq -r '.id // empty' <<<"$op")" ]; then
+          sha=$(jq -r '.sha // empty' <<<"$op"); pre=()
+          [ -z "$sha" ] || pre=(--precondition "{type: content_sha256, content_sha256: \"$sha\"}")
+          printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories update --memory-store-id "$store" \
+            --memory-id "$(jq -r .id <<<"$op")" "${pre[@]}" >/dev/null 2>&1 || { rm -f "$f"; die "update failed (changed meanwhile?): $(jq -r .path <<<"$op")"; }
+        else
+          printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories create --memory-store-id "$store" \
+            --path "$(jq -r .path <<<"$op")" >/dev/null 2>&1 || { rm -f "$f"; die "create failed: $(jq -r .path <<<"$op")"; }
+        fi
+        rm -f "$f";;
+    esac
+    n=$((n+1))
+  done 3< <(jq -c '.ops[]' "$plan")
+  echo "applied $n step(s)"
+}
+
 # mem_read STORE ID: the content of one memory.
 mem_read() {
   ant beta:memory-stores:memories retrieve --memory-store-id "$1" --memory-id "$2" </dev/null 2>/dev/null | jq -r '.content // empty'

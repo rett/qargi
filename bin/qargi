@@ -45,6 +45,7 @@ case $area in
   hook) exec "$lib/hook.sh" "$@";;
   discover) exec python3 -I "$lib/discover.py" "$@";;
   export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
+  migrate) exec python3 -I "$lib/migrate.py" "$@";;
   version) cat "$root/VERSION";;
   *) echo "qargi: unknown command '$area'. Try: qargi help" >&2; exit 2;;
 esac

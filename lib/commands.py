@@ -42,7 +42,7 @@ GROUPS = [
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
-    ("Export and import", ["export", "import"]),
+    ("Export and import", ["export", "import", "migrate"]),
     ("Other", ["help", "version"]),
 ]
 
@@ -360,6 +360,25 @@ COMMANDS = {
                  opt("--dry-run", "print the plan and stop; changes nothing")],
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
+    "migrate": {
+        "summary": "Bring an installation made with older names to the current ones",
+        "desc": ("roles renames what was made with the role names dev and docs (now build and write) and the four fixed local "
+                 "agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved "
+                 "definitions; in every project's two memory stores the role folders and the role names in indexes, README and "
+                 "marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their "
+                 "prompts, rebuilt as refresh-prompt does; and the old agent symlinks, replaced by members (qargi agent add). "
+                 "Without --apply it prints the plan, with every cloud call, and a plan token. It is re-runnable: what is renamed "
+                 "already is left out, and it stops at the first failure."),
+        "scripts": ["migrate.py"],
+        "verbs": {
+            "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
+                          [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
+                           opt("--apply", "apply the plan the token names"), PLAN,
+                           opt("--asked", "the request, in your words, for this migration; needed when the plan changes cloud resources", "REQUEST")],
+                          examples=["qargi migrate roles", "qargi migrate roles --member-names build=forge,write=scribe",
+                                    'qargi migrate roles --apply --plan TOKEN --asked "migrate the roles of myproject"']),
+        },
+    },
     "lead": {
         "summary": "Give, inspect or take away the cloud lead's right to push",
         "desc": ("Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is "
@@ -438,7 +457,8 @@ TOPICS = {
         "Role lead: no ability of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
         "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
         "qargi ships. The task block names the ability and its skill; the member loads it. qargi agent for ABILITY prints the member "
-        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's skill in its prompt."]),
+        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's skill in its prompt.",
+        "Earlier installations (roles dev and docs, the agents qargi-dev, qargi-docs, qargi-review, qargi-test) move with qargi migrate roles."]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "

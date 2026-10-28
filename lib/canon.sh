@@ -46,11 +46,7 @@ kinds=${KIND:-"memory reference"}
 
 store_of() { jq -r --arg k "$1" '.memory[$k + "_store"] // ""' "$PCFG"; }
 
-dump() { # store_id -> JSONL of full memories on stdout
-  if [ -n "${QARGI_CANON_FIXTURE_DIR:-}" ]; then cat "$QARGI_CANON_FIXTURE_DIR/$1.jsonl"; return; fi
-  ant beta:memory-stores:memories list --memory-store-id "$1" --path-prefix / --view full --max-items -1 </dev/null 2>/dev/null \
-    | jq -c 'select(.type=="memory") | {type, id, path, content, content_sha256}'
-}
+dump() { mem_dump "$@"; }
 
 show_plan() { # plan.json
   jq -r '"from \(.from_version) to canon version \(.to_version): \(.ops|length) step(s)"' "$1"
@@ -58,30 +54,7 @@ show_plan() { # plan.json
   jq -r '.notes[] | "  note: " + .' "$1"
 }
 
-exec_ops() { # store_id plan.json
-  local store=$1 plan=$2 n=0 op f
-  while IFS= read -r op <&3; do
-    case $(jq -r .op <<<"$op") in
-      move)
-        ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$(jq -r .id <<<"$op")" \
-          --path "$(jq -r .to <<<"$op")" </dev/null >/dev/null 2>&1 || die "move failed: $(jq -r .from <<<"$op")";;
-      create|marker|update)
-        f=$(mktemp); jq -j .content <<<"$op" > "$f"
-        if [ -n "$(jq -r '.id // empty' <<<"$op")" ]; then
-          sha=$(jq -r '.sha // empty' <<<"$op"); pre=()
-          [ -z "$sha" ] || pre=(--precondition "{type: content_sha256, content_sha256: \"$sha\"}")
-          printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories update --memory-store-id "$store" \
-            --memory-id "$(jq -r .id <<<"$op")" "${pre[@]}" >/dev/null 2>&1 || { rm -f "$f"; die "update failed (changed meanwhile?): $(jq -r .path <<<"$op")"; }
-        else
-          printf 'content: "@%s"\n' "$f" | ant beta:memory-stores:memories create --memory-store-id "$store" \
-            --path "$(jq -r .path <<<"$op")" >/dev/null 2>&1 || { rm -f "$f"; die "create failed: $(jq -r .path <<<"$op")"; }
-        fi
-        rm -f "$f";;
-    esac
-    n=$((n+1))
-  done 3< <(jq -c '.ops[]' "$plan")
-  echo "applied $n step(s)"
-}
+exec_ops() { mem_exec_ops "$@"; }
 
 make_plan() { # kind -> prints plan json path
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
@@ -176,6 +149,7 @@ case $verb in
         if [ -z "${role_of[$sid]+x}" ]; then
           t=$(ant beta:sessions retrieve --session-id "$sid" </dev/null 2>/dev/null | jq -r '.title // ""')
           r=${t#"$PROJECT"-}; r=${r%%-*}
+          case $r in dev) r="build";; docs) r="write";; esac   # sessions titled before the roles were named by ability
           role_of[$sid]=$r
         fi
         want=$(printf '%s' "$path" | sed -n 's#^/roles/\([^/]*\)/.*#\1#p')
