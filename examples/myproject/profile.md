@@ -1,4 +1,4 @@
-# Example profile: a Go CLI project
+# Example profile: myproject, a Go CLI project
 
 Copy to `$XDG_CONFIG_HOME/qargi/profiles/<repository-name>.md` (outside
 the repository) and adapt. The coordinator inlines it in each task.

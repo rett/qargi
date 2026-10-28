@@ -16,14 +16,16 @@
 ## Layout
 
 `bin/qargi` is the single command; `lib/` holds the scripts behind it;
-`skills/dev-*` are the skills (each a short guide that calls the command);
-`agents/` the local subagent; `provision/` the resource and memory templates;
-`examples/` sample repository profiles.
+`skills/qargi-*` are the skills (each a short guide that calls the command; four of
+them, `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test`, define the
+abilities); `agents/member.md` is the one member definition `qargi agent add`
+renders under the names users choose; `provision/` the resource and memory
+templates; `examples/` sample repository profiles.
 
 ## Tests
 
 `tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
-role seeds, shellcheck). It needs no API access and no private data.
+guard, members, the role migration, role seeds, shellcheck). It needs no API access and no private data.
 
 ## Changing the canon
 
