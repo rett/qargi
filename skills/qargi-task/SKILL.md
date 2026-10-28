@@ -55,10 +55,20 @@ registered local one. A cloud instance only when the user's request named it.
 | start | `qargi start NAME [--label L] --asked "..."` | New cloud session via the deployment. The spend budget lives on the deployment (a session can only get one at creation). |
 | send | `qargi send NAME "<task block>" --label SLUG [--session SID] [--new] --asked "..."` | `--label` is required for cloud: the session is named `<instance>-<slug>`; use the same slug for the `agent/<slug>` branch. Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
 | status | `qargi status [SID\|NAME]` | Refreshes the tracker from the API. |
-| watch | `qargi watch SID [MAX_SECONDS]` | Bounded poller (default 7200 s); prints one `QARGI WATCH <sid> idle\|terminated\|budget_reached\|timeout\|auth` line. |
+| watch | `qargi watch SID [MAX_SECONDS] [--warn PCT]` | Bounded poller (default 7200 s); prints one `QARGI WATCH <sid> idle\|terminated\|budget_reached\|budget_tight\|timeout\|auth` line. `budget_tight` (the cost reached `--warn` percent of the ceiling, default 85) ends it early: see the budget contingency. |
 | collect | `qargi collect SID DIR` | Downloads the session's outputs into a fresh directory; marked collected only if `manifest.json` is there. |
 | stop | `qargi stop SID` | `user.interrupt`; the session returns to idle. |
 | close | `qargi mark SID applied\|rejected` then `qargi close SID [--no-outputs]` | Archives (never deletes). Refuses while running, uncollected (unless `--no-outputs`, for tasks that produce no files), or with the verdict pending. |
+
+## Budget contingency
+
+A cloud session stops issuing model requests at its spend ceiling (`budget_reached`). When `watch` prints
+`budget_tight <cost>/<ceiling>` (cents), tell the user the cost, the ceiling and what the task still has to do,
+and **offer** to raise the ceiling with a figure. Never raise it on your own: it is a spend decision, so it needs
+the user's words. With them: `qargi instances budget NAME CENTS --session SID --asked "<the user's words>"`
+(the deployment's ceiling changes for later sessions, `--session` changes this running one). Then run `watch` again
+(the percentage is now lower). After `budget_reached` the same raise, then a message to the session, lets it go on.
+Without a raise, collect what exists and report it as partial.
 
 ## Task block (the `send` text)
 

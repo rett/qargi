@@ -8,6 +8,7 @@ run python3 tests/test_canon.py
 run python3 tests/test_help.py
 run python3 tests/test_transfer.py
 run python3 tests/test_discover.py
+run bash tests/test_watch.sh
 run bash tests/test_project.sh
 run bash tests/test_local.sh
 run bash tests/test_cred.sh

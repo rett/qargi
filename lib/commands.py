@@ -161,9 +161,10 @@ COMMANDS = {
     },
     "watch": {
         "summary": "Wait for a cloud session to stop; prints one line when it does",
-        "desc": "Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|timeout|auth|error.",
+        "desc": "Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|budget_tight|timeout|auth|error. budget_tight ends it early, with the cost and the ceiling in cents, so you can raise the ceiling (qargi instances budget NAME CENTS --session SID) and watch again.",
         "scripts": ["watch.sh"],
         "usage": [("SID", "session:active"), ("MAX_SECONDS", "seconds", True)],
+        "opts": [opt("--warn", "end the watch early with budget_tight when the cost reaches this percent of the ceiling (default 85; 0: never)", "PCT")],
     },
     "collect": {
         "summary": "Download a session's output files into a fresh directory",

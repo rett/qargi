@@ -794,11 +794,16 @@ qargi status [SID|NAME]
 .B qargi watch
 Wait for a cloud session to stop; prints one line when it does.
 .PP
-Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|timeout|auth|error.
+Run it in the background. The line is QARGI WATCH <sid> idle|terminated|budget_reached|budget_tight|timeout|auth|error. budget_tight ends it early, with the cost and the ceiling in cents, so you can raise the ceiling (qargi instances budget NAME CENTS \-\-session SID) and watch again.
 .RS
 .nf
 qargi watch SID [MAX_SECONDS]
 .fi
+.RE
+.RS
+.TP
+.BI "\-\-warn " "PCT"
+end the watch early with budget_tight when the cost reaches this percent of the ceiling (default 85; 0: never).
 .RE
 .TP
 .B qargi collect
