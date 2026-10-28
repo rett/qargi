@@ -128,7 +128,7 @@ chmod 644 "$T/tok"; good ".lead.push={cloud:\"branches\",credential_file:\"$T/to
 rm -f "$T/c/projects/pushp.json"
 # the lead's prompt and the autoload carry the grant (or its absence)
 grep -q "You never push" "$A" && ok "without a grant the lead's prompt says it never pushes" || no "no-grant prompt"
-jq ".lead.push={cloud:\"branches\",credential_file:\"$T/tok\",branch_pattern:\"agent/*\"}" "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
+jq ".lead.push={cloud:\"branches\",credential_file:\"$T/tok\",branch_pattern:\"agent/*\",vault_id:\"vlt_X\"}" "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
 $DA provision plan --project alpha --role lead >/dev/null 2>&1
 grep -q "branches named agent/\*" "$A" && grep -q "asked of the person by the platform" "$A" && ok "with a cloud grant the prompt names the branches and says merges and releases are asked of the person" || no "grant prompt"
 jq '.lead.push.local=true' "$T/c/projects/alpha.json" > "$T/x.json" && mv "$T/x.json" "$T/c/projects/alpha.json"
