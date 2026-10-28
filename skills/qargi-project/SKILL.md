@@ -23,9 +23,9 @@ recommended; do not assume answers:
    `qargi credential check NAME`: it proves the token can read and warns if it can
    also push. Public repositories need none. The token is never typed into a command, a
    log, the tracker or a repository.
-2. **Roles.** Which of `dev`, `review`, `docs`, `test` this project uses.
+2. **Roles.** Which of the abilities `build`, `write`, `review`, `test` this project uses.
 3. **Per role, base branch.** `@dispatcher` (the dispatching session's branch)
-   for dev; the docs branch (for example `gh-pages`) for docs.
+   for build; the documentation branch (for example `gh-pages`) for write.
 4. **Per role, push policy** (the question that matters most):
    - `none` (the default for every role, always recommended): the agent returns
      patches; nothing is pushed unless the user asks.
@@ -42,10 +42,16 @@ recommended; do not assume answers:
    choice the user makes and you record, with its token file and vault ids; it is
    never assumed.
 5. **Per role, model and effort**, extra apt packages, and Anthropic skills
-   (`pdf`, `docx`, `pptx`, `xlsx`; the docs role defaults to `pdf`).
+   (`pdf`, `docx`, `pptx`, `xlsx`; the write role defaults to `pdf`).
 6. **Budget** per cloud session in cents (default 500, set on the deployment).
 7. **Memory.** Create the project's stores or attach existing ones (ids).
-8. **Profile.** Which profile file holds the repository's gates and review steps
+8. **Members, once.** The local workers are agents the user names. Ask for their
+   names and abilities, suggesting four members (`builder` for build, `writer` for
+   write, `reviewer` for review, `tester` for test) or one member with all four. Create
+   each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
+   repository's `.claude/agents`, hidden from git); skip names that `qargi agent list`
+   already shows.
+9. **Profile.** Which profile file holds the repository's gates and review steps
    (kept under the config directory, per role if the gates differ).
 
 Then write the answers file and store it:
@@ -60,7 +66,7 @@ qargi project init NAME --answers answers.json
 branch, a push by the agent without a credential, an unknown role or skill).
 `qargi project show NAME` prints what was stored. Change one answer at any
 time with `qargi project set NAME PATH VALUE` (for example `budget_cents 2500`
-or `roles.docs.effort high`); it is validated first and applies to the next
+or `roles.write.effort high`); it is validated first and applies to the next
 provision. A live deployment's ceiling changes with `qargi instances budget
 NAME CENTS --asked "..."` (add `--session SID` for a running session that already
 has a budget). `/qargi-provision` reads these answers for model, effort, packages,

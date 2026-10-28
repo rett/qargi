@@ -1,14 +1,14 @@
 ---
 name: qargi-provision
-description: Create the cloud resources for a qargi instance with ant apply (environment, agent, recipes memory store, development-reference store, manual-run deployment) named <project>-<role>-<component>; plan first, create only with the user's go-ahead.
+description: Create the cloud resources for a qargi instance with ant apply (environment, agent, recipes memory store, development-reference store, manual-run deployment) named after the project and the role (<project>-<role>, <project>-deployment-<role>); plan first, create only with the user's go-ahead.
 argument-hint: plan|apply|add-reference NAME ...
 ---
 
 # /qargi-provision
 
 Names follow the convention in the README: `NAME` is `<project>-<role>` (`--project P
---role R`, role defaults to `dev`, from a fixed list); the agent, environment and
-deployment are `<project>-agent-<role>` and `<project>-deployment-<role>`; the environment is
+--role R`, role defaults to `build`, from a fixed list); the agent, environment and
+deployment are `<project>-<role>` and `<project>-deployment-<role>`; the environment is
 shared by the roles of the project, `<project>-environment`, and holds the packages of all
 enabled roles; the memory stores belong to the project: `<project>-memory` and `<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is
 seeded (the project's stored answers must exist). Existing
@@ -26,4 +26,4 @@ outside any repository. Resources created in the Console or with
 Defaults come from the project's stored answers (`/qargi-project`): the role's model, effort, packages and Anthropic skills, the budget (cents, set on the deployment) and the memory stores; flags override them. Without stored answers: Sonnet 5.5, effort high, budget 500.
 Models and effort for an instance can be chosen at `init` (`/qargi-instances`).
 
-The lead (`PROJECT-lead`, agent `PROJECT-agent-lead`) is provisioned after its members: the role agents named in the project's teams must be registered first, and the lead is pinned to their current versions (a new member version means updating the lead behind a plan). Its prompt carries the project's team definitions.
+The lead (`PROJECT-lead`, agent `PROJECT-lead`) is provisioned after its members: the role agents named in the project's teams must be registered first, and the lead is pinned to their current versions (a new member version means updating the lead behind a plan). Its prompt carries the project's team definitions.

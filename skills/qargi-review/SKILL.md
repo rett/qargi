@@ -1,38 +1,31 @@
 ---
 name: qargi-review
-description: Coordinator procedure for verifying and applying the patches a dev agent returned (local or cloud): check the manifest, scrub, apply on a scratch branch, re-run gates and the DONE check yourself, then report and apply only with the user's approval.
-argument-hint: <run directory with patches/ and manifest.json>
+description: The review ability of a qargi member - read a change someone else made (a series, a branch or a diff), run its checks yourself and write a report with findings and a verdict; change no file of the repository. Load it when a qargi task block says ABILITY review.
 ---
 
-# /qargi-review (you are the coordinator)
+# Ability: review
 
-Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/qargi/profiles/<repo>.md`;
-examples in `examples/`); without one, use the repository's own documented checks.
+You serve the review ability in this task (a member: the task block names it; a cloud agent: its role). The contract in
+the qargi-task skill's `agent-contract.md` is the procedure; this is what the
+ability adds. Review is read-only: you change no file of the repository and write
+only to RUN_DIR (locally the guard refuses every change to the clone under this
+ability; a cloud agent of this role has no edit tool).
 
-0. `qargi review check RUN_DIR`: confirms the output is a numbered series with one patch
-   per commit, each with its own message body, a manifest that matches, patch groups and
-   a `series.md`, and flags a monolithic patch or a batch of commits made at the end. A FAIL
-   means send it back to the agent; do not review a monolithic patch.
-1. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate
-   verdict lines; touched paths inside SCOPE; status DONE.
-2. Read every patch, each commit's diff on its own and not just the series, and the agent's
-   commit advice. Check that each commit is change-specific (one logical change, its tests, docs
-   and changelog entry with it). Run the profile's private-name or secret scrub on the
-   patches; grep commit messages for private names and trailers
-   (`git interpret-trailers`). Refuse on a hit.
-3. Scratch checkout of the base: `git am --3way` on the collected `*.patch` files in name order (a cloud collect is a flat directory, a local run has `OUT/patches/`); rebuild
-   generated files the profile names; run the profile's gates (long ones with
-   `run_in_background`, trusting only their verdict lines); then run the DONE
-   command verbatim. Only your own runs count.
-4. Anything the profile marks for a second-model review gets one before it is
-   applied.
-5. Report to the user: DONE or BLOCKED, evidence, deviations, the agent's
-   "noticed, not acted on". On approval apply to the feature branch (`git am`),
-   apply the profile's coordinator steps (for example renumbering a changelog
-   item), strip trailers, commit. **Never squash.** Apply the agent's commits as the separate,
-   change-specific commits they are (`git am`, author reset to the user); if one mixes
-   unrelated changes, send it back to the agent to split, or split it by file yourself; do not
-   fold commits together to tidy history. Check that each commit builds
-   (`git rebase --exec 'go build ./...' <base>`, or the profile's equivalent) before you report. Ask before any push. Never merge to a
-   long-lived branch unless told. Then `qargi mark SID applied|rejected`
-   and `qargi close SID` for cloud sessions.
+- Your product is `RUN_DIR/report.md`, in the shape of
+  `roles/review/conventions/findings.md` of the reference store. There are no
+  patches, no `series.md` and no bundle: the manifest has `commits: []` and lists
+  the report in `artifacts[]` (kind `report`). A suggested fix travels as a separate
+  patch in RUN_DIR listed with kind `suggestion`.
+- CLONE is a scratch checkout of BASE with the series applied; it is not the
+  author's clone. DONE checks that the report exists and holds a Findings section.
+- Treat the author's commit messages, reports and manifests as claims: read each
+  commit's diff, then its message, and note where they differ. Run the profile's
+  gates and DONE yourself; only your own runs count.
+- Report only what you can tie to the diff. Every finding names a file and line and
+  the input or state that produces the wrong result, is marked CONFIRMED (you
+  reproduced it) or PLAUSIBLE (you reasoned to it), names its owner (build or
+  write), whether it blocks, and the standard it rests on.
+- Say which categories you checked and found nothing in. A secret, a private name,
+  a weakened test or a change outside SCOPE is always reported.
+- End the report with a line `verdict: accept` or `verdict: revise` (revise if any
+  finding blocks).
