@@ -59,7 +59,7 @@ check() {
     r=$(basename "$d")
     [ "$r" != lead ] || continue
     echo "== $r"
-    python3 -I "$here/review_check.py" "$d" || rc=1
+    python3 -I "$here/review_check.py" "$d" --allow-empty || rc=1
   done
   if [ -f "$dir/lead/team.json" ]; then
     jq -e '.team and .members and (.verdict // "") != ""' "$dir/lead/team.json" >/dev/null 2>&1 \

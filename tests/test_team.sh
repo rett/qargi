@@ -101,6 +101,12 @@ $DA team check "$T/chk" >/dev/null 2>&1 && no "a team without team.json passed" 
 echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"
 
+# a member with no commits (blocked, or nothing to change) is not a failure in a team
+rm -rf "$T/chk2"; mkdir -p "$T/chk2/dev" "$T/chk2/lead"; echo '{"status":"DONE","commits":[]}' > "$T/chk2/dev/manifest.json"
+echo '{"team":"t","members":[],"verdict":"accept","rounds":0}' > "$T/chk2/lead/team.json"
+$DA team check "$T/chk2" >/dev/null 2>&1 && ok "a team member that returned no commits passes the team check" || no "empty member refused"
+$DA review check "$T/chk2/dev" >/dev/null 2>&1 && no "a single run with DONE and no commits passed" || ok "a single run that claims DONE with no commits still fails"
+
 # --- the session-start hook
 printf '# alpha memory\nREADME\n' > "$FAKE/mem/~README.md"; printf '# Shared\n' > "$FAKE/mem/~shared~INDEX.md"
 printf '# alpha reference\n' > "$FAKE/ref/~README.md"; printf '| Path | Purpose | Load |\n|---|---|---|\n| workflow/team.md | handoffs | always |\n' > "$FAKE/ref/~roles~lead~INDEX.md"
