@@ -9,15 +9,23 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake
 mkdir -p "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
 TOK=github_pat_11AAAAAA0abcdefghijklmnopqrstuvwxyz0123456789SECRETVALUE
-# fake curl: GitHub answers by path; FAKE_ADMIN / FAKE_PUSH / FAKE_REPOS vary them
+# fake curl: GitHub answers by path with the body, a newline and the status (FAKE_ADMIN=true makes branch
+# protection readable; FAKE_REPOS varies how many repositories the token reaches)
 cat > "$T/bin/curl" <<'EOS'
 #!/usr/bin/env bash
 for a in "$@"; do url=$a; done
 case $url in
-  *"/repos/example/x") jq -nc --argjson p "${FAKE_PUSH:-true}" --argjson a "${FAKE_ADMIN:-false}" '{full_name:"example/x",permissions:{push:$p,admin:$a}}';;
-  *"/user/repos"*) n=${FAKE_REPOS:-1}; jq -nc --argjson n "$n" '[range($n) | {name:"r\(.)"}]';;
-  *) echo '{"message":"Not Found"}';;
+  *"/branches/"*"/protection") if [ "${FAKE_ADMIN:-false}" = true ]; then printf '{"url":"x"}\n200'; else printf '{"message":"Resource not accessible by personal access token"}\n403'; fi;;
+  *"/repos/example/x") printf '{"full_name":"example/x","default_branch":"main","permissions":{"push":true,"admin":true}}\n200';;
+  *"/user/repos"*) n=${FAKE_REPOS:-1}; printf '%s\n200' "$(jq -nc --argjson n "$n" '[range($n) | {name:"r\(.)"}]')";;
+  *) printf '{"message":"Not Found"}\n404';;
 esac
+EOS
+# fake git: the push dry-run succeeds unless FAKE_PUSH=false; everything else is real git
+cat > "$T/bin/git" <<'EOS'
+#!/usr/bin/env bash
+for a in "$@"; do [ "$a" = push ] && { [ "${FAKE_PUSH:-true}" = false ] && exit 1; exit 0; }; done
+exec /usr/bin/git "$@"
 EOS
 cat > "$T/bin/ant" <<'EOS'
 #!/usr/bin/env bash
@@ -30,7 +38,7 @@ case $1 in
   *) echo "{}";;
 esac
 EOS
-chmod 755 "$T/bin/curl" "$T/bin/ant"; export PATH=$T/bin:$PATH
+chmod 755 "$T/bin/curl" "$T/bin/git" "$T/bin/ant"; export PATH=$T/bin:$PATH
 jq -n '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{dev:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
          docs:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
@@ -40,7 +48,8 @@ printf '%s' "$TOK" > "$T/tokfile"
 S="$DA credential setup lead-push alpha"
 
 printf 'ghp_classic' | $S >/dev/null 2>&1 && no "a classic token was accepted" || ok "a classic token is refused"
-FAKE_ADMIN=true $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token that can administer was accepted" || ok "a token that can administer the repository is refused"
+FAKE_ADMIN=true $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token with Administration was accepted" || ok "a token that has Administration is refused"
+out=$($S --from-file "$T/tokfile" 2>&1); echo "$out" | grep -q "cannot administer it" && ok "your own admin role on the repository does not count against the token" || no "owner role: $out"
 FAKE_PUSH=false $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a read-only token was accepted" || ok "a token that cannot push is refused"
 FAKE_REPOS=3 $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token for 3 repositories was accepted" || ok "a token that reaches several repositories is refused"
 FAKE_REPOS=3 $S --from-file "$T/tokfile" --allow-more-repos >/dev/null 2>&1 && ok "…unless that is accepted knowingly" || no "allow-more-repos refused"

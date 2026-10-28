@@ -71,13 +71,28 @@ case $verb in
     [ -n "$tok" ] || die "no token given (--from-file F, stdin, or type it when asked)"
     case $tok in github_pat_*) ;; *) die "that is not a fine-grained token (it should start with github_pat_). Classic tokens reach every repository you can; create a fine-grained one for $slug only";; esac
     umask 077; { printf 'Authorization: Bearer %s\n' "$tok"; } > "$tmp/h"
-    gh_api() { curl -sS --max-time 30 -H @"$tmp/h" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com$1"; }
-    repo=$(gh_api "/repos/$slug") || die "could not reach api.github.com"
-    [ "$(jq -r '.full_name // empty' <<<"$repo" | tr A-Z a-z)" = "$(printf '%s' "$slug" | tr A-Z a-z)" ] || die "the token cannot see $slug: $(jq -r '.message // "no answer"' <<<"$repo")"
-    [ "$(jq -r '.permissions.push // false' <<<"$repo")" = true ] || die "the token cannot push to $slug: grant Contents and Pull requests (read and write)"
-    [ "$(jq -r '.permissions.admin // false' <<<"$repo")" != true ] || die "the token can administer $slug (it should not): create one without Administration"
-    n=$(gh_api "/user/repos?per_page=100" | jq 'if type == "array" then length else 0 end')
-    echo "token: ok, fine-grained, can push to $slug, cannot administer it, reaches $n repositor$([ "$n" = 1 ] && echo y || echo ies)"
+    # GitHub answers with the body, a newline and the HTTP status.
+    gh_api() { curl -sS --max-time 30 -w '\n%{http_code}' -H @"$tmp/h" -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "https://api.github.com$1"; }
+    resp=$(gh_api "/repos/$slug") || die "could not reach api.github.com"
+    code=${resp##*$'\n'}; repo=${resp%$'\n'*}
+    [ "$code" = 200 ] && [ "$(jq -r '.full_name // empty' <<<"$repo" | tr A-Z a-z)" = "$(printf '%s' "$slug" | tr A-Z a-z)" ] || die "the token cannot see $slug (HTTP $code): $(jq -r '.message // "no answer"' <<<"$repo")"
+    # What the token itself may do, not what your account may do (the repository answer shows your role).
+    # Write: a push dry-run over https asks GitHub for write access with this token and sends nothing.
+    printf '%s' "$tok" > "$tmp/tok"; chmod 600 "$tmp/tok"
+    wrote=0
+    ( git_auth_env "$tmp/tok"
+      git -C "$tmp" init -q -b probe 2>/dev/null && git -C "$tmp" -c user.name=probe -c user.email=probe@example.invalid commit -q --allow-empty -m probe
+      timeout 60 git -C "$tmp" push --dry-run "https://x-access-token@github.com/$slug.git" HEAD:refs/heads/agent/qargi-write-probe >/dev/null 2>&1 </dev/null ) && wrote=1
+    [ "$wrote" = 1 ] || die "the token cannot push to $slug: grant Contents (read and write) for this repository"
+    # Administration: reading branch protection needs it, so a token without it is refused with 403.
+    branch=$(jq -r '.default_branch // "main"' <<<"$repo")
+    aresp=$(gh_api "/repos/$slug/branches/$branch/protection"); acode=${aresp##*$'\n'}; abody=${aresp%$'\n'*}
+    if [ "$acode" = 200 ] || { [ "$acode" = 404 ] && [ "$(jq -r '.message // ""' <<<"$abody")" = "Branch not protected" ]; }; then
+      die "the token has Administration on $slug (it should not): create one without it"
+    elif [ "$acode" = 403 ]; then admin_note="cannot administer it"
+    else admin_note="could not confirm it cannot administer it (HTTP $acode): check that Administration is not granted"; fi
+    n=$(gh_api "/user/repos?per_page=100" | sed '$d' | jq 'if type == "array" then length else 0 end')
+    echo "token: ok, fine-grained, can push to $slug, $admin_note, reaches $n repositor$([ "$n" = 1 ] && echo y || echo ies); Pull requests write cannot be checked without opening one"
     if [ "$n" -gt 1 ] && [ -z "$MORE" ]; then die "the token reaches $n repositories; limit it to $slug (or accept this knowingly with --allow-more-repos)"; fi
     dest=$DA_CONF/credentials/$PROJECT-lead-push
     echo "plan: store the token in $dest (mode 600); create the vault $PROJECT-vault-lead with a bearer credential for the GitHub tool; attach it to the lead's deployment; record it in the project answers (lead.push)"
