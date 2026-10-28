@@ -29,7 +29,9 @@ Every name follows from the project, so resources are identifiable at a glance.
 | project | one lower-case token (letters, digits) | `tacctl` |
 | role | from a fixed list: `dev`, `review`, `docs`, `test` | `dev` |
 | instance (registry) | `<project>-<role>` | `tacctl-dev` |
-| agent, environment, deployment | `<instance>-agent`, `-environment`, `-deployment` | `tacctl-dev-agent` |
+| agent | `<project>-agent-<role>` | `tacctl-agent-dev` |
+| environment (shared by the roles) | `<project>-environment` | `tacctl-environment` |
+| deployment | `<project>-deployment-<role>` | `tacctl-deployment-dev` |
 | memory stores (project-level) | `<project>-memory` (recipes), `<project>-reference` | `tacctl-memory` |
 | session | `<instance>-<task-slug>` | `tacctl-dev-dots-in-usernames` |
 | branch (in the agent's clone) | `agent/<task-slug>`, the same slug | `agent/dots-in-usernames` |

@@ -12,7 +12,7 @@
 #        registry.sh remove NAME
 #        registry.sh budget NAME CENTS --asked "..."   (change the spend ceiling of the instance's deployment)
 #        registry.sh refresh-prompt NAME --asked "..." [--plan TOKEN --approved "..."]   (rebuild the agent's prompt from the current contract)
-#        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <NAME>-agent|environment|memory|deployment)
+#        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <project>-agent-<role>, -environment, -memory, -reference, <project>-deployment-<role>)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
@@ -181,8 +181,8 @@ normalize() {
     if [ "$2" = "$3" ]; then echo "  $1: $2 (ok)"; else echo "  $1: $2 -> $3"; changes=1; plan_text+="$1:$2>$3;"; fi
   }
   echo "PLAN: resource names for $n"
-  show agent "$(jq -r .name <<<"$ag")" "$n-agent"
-  show environment "$(jq -r .name <<<"$env")" "$n-environment"
+  show agent "$(jq -r .name <<<"$ag")" "$(res_name agent)"
+  show environment "$(jq -r .name <<<"$env")" "$(res_name environment)"
   if [ -n "$mid" ]; then
     mem=$(ant beta:memory-stores retrieve --memory-store-id "$mid" 2>/dev/null) || die "cannot read memory store"
     show memory "$(jq -r .name <<<"$mem")" "$PROJECT-memory"
@@ -196,20 +196,20 @@ normalize() {
     ref=$(ant beta:memory-stores retrieve --memory-store-id "$rid" 2>/dev/null); rname=$(jq -r .name <<<"$ref")
     show reference "$rname" "$PROJECT-reference"
   fi
-  show deployment "$(jq -r .name <<<"$dep")" "$n-deployment"
+  show deployment "$(jq -r .name <<<"$dep")" "$(res_name deployment)"
   [ "${2:-}" != plan ] || return 0
   [ "$changes" = 1 ] || { echo "nothing to rename"; return 0; }
   local ntok; ntok=$(printf '%s|%s' "$n" "$plan_text" | plan_token)
   [ -n "$APPROVED" ] || { echo "plan token: $ntok   (re-run with --plan $ntok --approved \"<the user's go-ahead>\" to rename; nothing changed)"; return 0; }
   need_plan "$ntok"; audit_log normalize "$n"
-  if [ "$(jq -r .name <<<"$ag")" != "$n-agent" ]; then
-    ant beta:agents update --agent-id "$aid" --version "$aver" --name "$n-agent" >/dev/null 2>&1 || die "agent rename failed"
+  if [ "$(jq -r .name <<<"$ag")" != "$(res_name agent)" ]; then
+    ant beta:agents update --agent-id "$aid" --version "$aver" --name "$(res_name agent)" >/dev/null 2>&1 || die "agent rename failed"
     ant beta:deployments update --deployment-id "$did" --agent "$aid" >/dev/null 2>&1 || die "deployment re-point failed (agent was renamed)"
   fi
-  [ "$(jq -r .name <<<"$env")" = "$n-environment" ] || ant beta:environments update --environment-id "$eid" --name "$n-environment" >/dev/null 2>&1 || die "environment rename failed"
+  [ "$(jq -r .name <<<"$env")" = "$(res_name environment)" ] || ant beta:environments update --environment-id "$eid" --name "$(res_name environment)" >/dev/null 2>&1 || die "environment rename failed"
   [ -z "$mid" ] || [ "$(jq -r .name <<<"$mem")" = "$PROJECT-memory" ] || ant beta:memory-stores update --memory-store-id "$mid" --name "$PROJECT-memory" >/dev/null 2>&1 || die "memory store rename failed"
   [ -z "$rid" ] || [ "$rname" = "$PROJECT-reference" ] || ant beta:memory-stores update --memory-store-id "$rid" --name "$PROJECT-reference" >/dev/null 2>&1 || die "reference store rename failed"
-  [ "$(jq -r .name <<<"$dep")" = "$n-deployment" ] || ant beta:deployments update --deployment-id "$did" --name "$n-deployment" >/dev/null 2>&1 || die "deployment rename failed"
+  [ "$(jq -r .name <<<"$dep")" = "$(res_name deployment)" ] || ant beta:deployments update --deployment-id "$did" --name "$(res_name deployment)" >/dev/null 2>&1 || die "deployment rename failed"
   dep=$(ant beta:deployments retrieve --deployment-id "$did" 2>/dev/null)
   json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$(jq .agent.version <<<"$dep")"
   echo "renamed; the deployment now pins agent v$(jq -r .agent.version <<<"$dep")"

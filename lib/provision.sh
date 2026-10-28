@@ -6,9 +6,10 @@
 #   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
 # NAME is <project>-<role> (--project P --role R, role defaults to dev; roles come
-# from a fixed list). The agent, environment and deployment are named
-# <NAME>-agent, -environment and -deployment. The memory stores belong to the
-# project: <project>-memory (recipes) and <project>-reference. Existing ones are
+# from a fixed list). The agent and the deployment are named <project>-agent-<role>
+# and <project>-deployment-<role>; the environment, shared by every role of the
+# project, is <project>-environment and holds the packages of all enabled roles.
+# The memory stores belong to the project: <project>-memory (recipes) and <project>-reference. Existing ones are
 # attached, not duplicated; --memory-store ID and --reference-store ID name them.
 # Options also include --budget CENTS (default 500, set on the deployment).
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
@@ -60,6 +61,9 @@ if [ -f "$PCFG" ]; then
   BUDGET=${BUDGET:-$(cfg '.budget_cents')}; SKILLS=$(cfg '.roles[$r].skills | join(" ")')
   MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
 fi
+# The environment is shared by the roles, so it holds the packages of every enabled role.
+ENV_APT=$APT
+[ ! -f "$PCFG" ] || [ -n "$APT_SET" ] || ENV_APT=$(jq -r '[.roles[].apt[]?] | unique | join(" ")' "$PCFG")
 MODEL=${MODEL:-claude-sonnet-5-5}; EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
@@ -83,13 +87,13 @@ LOCK=$W/claude-lock.json
 render() {
   local apt_list sys
   # YAML flow list from the space-separated package names
-  apt_list="[$(printf '%s' "$APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
+  apt_list="[$(printf '%s' "$ENV_APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   rm -rf "$W/packs-out"; "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"
   sys=$(agent_prompt "$ROLE")
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" <<'EOF'
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out = sys.argv[1:15]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out, agent_name, env_name, dep_name = sys.argv[1:18]
 import json, os, shutil
 t = pathlib.Path(tpl); o = pathlib.Path(out)
 res = []
@@ -107,7 +111,7 @@ vaults = sorted({v for t in mcp for v in t.get("vault_ids", [])})
 vault_yaml = "vault_ids: [%s]" % ", ".join(vaults)
 shutil.rmtree(out + "/skills", ignore_errors=True)
 if os.path.isdir(packs_out + "/skills") and custom: shutil.copytree(packs_out + "/skills", out + "/skills")
-sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
+sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{AGENT_NAME}}": agent_name, "{{ENV_NAME}}": env_name, "{{DEPLOYMENT_NAME}}": dep_name, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
        "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
 def r(src, dst, extra=None):
     s = (t / src).read_text()
