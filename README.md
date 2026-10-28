@@ -67,6 +67,18 @@ Eight skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` di
 
 All three, and the checks that keep them true, come from one description of the commands in `lib/commands.py`; `tests/test_help.py` compares it with the scripts. After changing a flag or a verb, describe it there and regenerate the page with `python3 lib/help.py man > man/qargi.1`.
 
+## Export and import
+
+`qargi export` writes one archive of what you select, and `qargi import` restores it, on this machine or another:
+
+- **config**: project answers, the instance registry, profiles, the skill and tool library.
+- **definitions**: the cloud agents, deployments and environment as they are now, read from the cloud with secret values removed. Import restores them as files; rebuild with `qargi provision`.
+- **memories**: every note of the memory and reference stores. Import writes them to the stores named in the project's answers.
+- **state**: the session tracker and the audit log (the audit log is only ever appended to).
+- **credentials**: token files. Only an encrypted archive may hold them; the tokens in the cloud vault are not exported.
+
+Both ask what to include (or take `--only`/`--project`). Export asks for an optional password; with one the whole archive is encrypted with gpg (AES-256) and the password never appears in a command line (`--password-file` for scripts). Import asks for the password if the archive is encrypted, shows what is inside, asks which parts and projects, and for each part how to treat what exists: `merge` (add what is missing), `overwrite` (also replace what differs) or `replace` (make it match the archive, removing the rest; you must type `replace` to allow the removals). It prints the plan, writes nothing until you confirm, and saves whatever it replaces or removes under `$XDG_STATE_HOME/qargi/backups/`. The archive is treated as untrusted: names, kinds of entry and checksums are verified before anything is read. `qargi import FILE --dry-run` prints the plan without a terminal.
+
 ## Install
 
 ```sh

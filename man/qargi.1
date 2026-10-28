@@ -1136,6 +1136,72 @@ the project, instead of finding it from the directory.
 the role to load (default lead).
 .RE
 .RE
+.SS Export and import
+.TP
+.B qargi export
+Save a project's setup, definitions and memories to one file.
+.PP
+Writes one archive of the parts you select: config (project answers, instances, profiles, the skill and tool library), definitions (the cloud agents, deployments and environment as they are now, secrets removed), memories (every note of the memory and reference stores), state (session tracker, audit log) and credentials (token files; only in an encrypted archive). It asks what to include and for an optional password; with one, the whole archive is encrypted by gpg (AES\-256) and the password never goes into a command line. It only reads: nothing is changed or deleted.
+.RS
+.TP
+.BI "\-\-project " "NAMES"
+only these projects, comma separated (default: ask, or all).
+.RE
+.RS
+.TP
+.BI "\-\-only " "PARTS"
+the parts: config, definitions, memories, state, credentials (default: ask).
+.RE
+.RS
+.TP
+.BI "\-\-out " "FILE"
+the file to write (default: qargi\-export\-<time>.tar.gz[.gpg] here).
+.RE
+.RS
+.TP
+.BI "\-\-password\-file " "FILE"
+encrypt with the first line of this file.
+.RE
+.RS
+.TP
+.B \-\-no\-encrypt
+write the archive without a password (for scripts).
+.RE
+.TP
+.B qargi import
+Restore from an export, choosing what and how.
+.PP
+Reads an archive made by qargi export (asking for the password when it is encrypted), shows what is inside, asks which parts and projects to import and, for each part, how to treat what already exists: merge (add what is missing), overwrite (also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory notes go to the stores named in the project's answers. It asks at a terminal; \-\-dry\-run shows the plan without one.
+.RS
+.nf
+qargi import FILE
+.fi
+.RE
+.RS
+.TP
+.BI "\-\-only " "PARTS"
+the parts to import (default: ask).
+.RE
+.RS
+.TP
+.BI "\-\-project " "NAMES"
+only these projects of the archive, comma separated.
+.RE
+.RS
+.TP
+.BI "\-\-mode " "MODE"
+merge, overwrite or replace for every part (default: ask for each).
+.RE
+.RS
+.TP
+.BI "\-\-password\-file " "FILE"
+the password is the first line of this file.
+.RE
+.RS
+.TP
+.B \-\-dry\-run
+print the plan and stop; changes nothing.
+.RE
 .SS Other
 .TP
 .B qargi help

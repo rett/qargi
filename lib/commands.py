@@ -41,6 +41,7 @@ GROUPS = [
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
+    ("Export and import", ["export", "import"]),
     ("Other", ["help", "version"]),
 ]
 
@@ -269,6 +270,39 @@ COMMANDS = {
                           desc=("Checks the token itself against GitHub (fine-grained, this repository only, no Administration), stores it mode 600, "
                                 "creates a vault with a bearer credential, attaches it to the lead's deployment and records the grant.")),
         },
+    },
+    "export": {
+        "summary": "Save a project's setup, definitions and memories to one file",
+        "desc": ("Writes one archive of the parts you select: config (project answers, instances, profiles, the skill and tool library), "
+                 "definitions (the cloud agents, deployments and environment as they are now, secrets removed), memories (every note of the "
+                 "memory and reference stores), state (session tracker, audit log) and credentials (token files; only in an encrypted "
+                 "archive). It asks what to include and for an optional password; with one, the whole archive is encrypted by gpg (AES-256) and "
+                 "the password never goes into a command line. It only reads: nothing is changed or deleted."),
+        "scripts": ["transfer.py"],
+        "usage": [],
+        "opts": [opt("--project", "only these projects, comma separated (default: ask, or all)", "NAMES", "project"),
+                 opt("--only", "the parts: config, definitions, memories, state, credentials (default: ask)", "PARTS", ("config", "definitions", "memories", "state", "credentials")),
+                 opt("--out", "the file to write (default: qargi-export-<time>.tar.gz[.gpg] here)", "FILE", "file"),
+                 opt("--password-file", "encrypt with the first line of this file", "FILE", "file"),
+                 opt("--no-encrypt", "write the archive without a password (for scripts)")],
+        "examples": ["qargi export", "qargi export --project acme --only config,memories --no-encrypt --out acme.tar.gz"],
+    },
+    "import": {
+        "summary": "Restore from an export, choosing what and how",
+        "desc": ("Reads an archive made by qargi export (asking for the password when it is encrypted), shows what is inside, asks which "
+                 "parts and projects to import and, for each part, how to treat what already exists: merge (add what is missing), overwrite "
+                 "(also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes "
+                 "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
+                 "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
+                 "notes go to the stores named in the project's answers. It asks at a terminal; --dry-run shows the plan without one."),
+        "scripts": ["transfer.py"],
+        "usage": [("FILE", "file")],
+        "opts": [opt("--only", "the parts to import (default: ask)", "PARTS", ("config", "definitions", "memories", "state", "credentials")),
+                 opt("--project", "only these projects of the archive, comma separated", "NAMES", "project"),
+                 opt("--mode", "merge, overwrite or replace for every part (default: ask for each)", "MODE", ("merge", "overwrite", "replace")),
+                 opt("--password-file", "the password is the first line of this file", "FILE", "file"),
+                 opt("--dry-run", "print the plan and stop; changes nothing")],
+        "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
     "lead": {
         "summary": "Give, inspect or take away the cloud lead's right to push",
