@@ -7,7 +7,7 @@
 #   project.sh template NAME              print an answers file with defaults
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
-#                                         roles.docs.effort high (VALUE is JSON, or a plain string)
+#                                         roles.write.effort high (VALUE is JSON, or a plain string)
 #   project.sh show NAME | list | validate FILE
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
@@ -21,7 +21,7 @@
 #   agent        the agent itself may push branches matching push.branch_pattern,
 #                with the credential named in push.credential (a token read from
 #                push.credential_file when a session starts); never anything else.
-#                Choose it only on purpose, for example for a docs agent that
+#                Choose it only on purpose, for example for a writer agent that
 #                already pushes its own branch and should keep doing so.
 . "$(dirname "$0")/lib.sh"
 
@@ -145,8 +145,8 @@ case $verb in
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
-        dev:  {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
-        docs: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}
+        build: {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
+        write: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}
       },
       memory: {memory_store: "", reference_store: ""},
       budget_cents: 500}';;
@@ -166,7 +166,7 @@ case $verb in
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
     [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
-    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.docs.effort"
+    printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX"); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }

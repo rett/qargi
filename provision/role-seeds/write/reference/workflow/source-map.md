@@ -1,4 +1,4 @@
-# Docs source map
+# Write source map
 
 Where the facts live in the project: the documentation, the manual, the code, release
 notes and tags, and how to read them without writing.

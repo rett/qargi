@@ -1,7 +1,7 @@
-# docs reference index
+# write reference index
 
-What the docs role follows, on top of `shared/INDEX.md`. Paths are relative to
-`roles/docs/`. The store is read-only for agents: never write here. Propose changes
+What the write role follows, on top of `shared/INDEX.md`. Paths are relative to
+`roles/write/`. The store is read-only for agents: never write here. Propose changes
 in your final report under "Reference updates proposed"; the coordinator applies them.
 
 | Path | Purpose | Load |
@@ -15,4 +15,4 @@ in your final report under "Reference updates proposed"; the coordinator applies
 | user/preferences.md | what the maintainer wants and how | when choosing the format, tone or scope of a document |
 
 Memory for this role (history, open items) is in the memory store under
-`roles/docs/project/`: check `open-items.md` before starting.
+`roles/write/project/`: check `open-items.md` before starting.

@@ -34,6 +34,7 @@ case $area in
   packs) exec "$lib/packs.sh" packs "$@";;
   credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
+  agent) exec "$lib/agent.sh" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;

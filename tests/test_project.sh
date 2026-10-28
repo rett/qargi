@@ -13,19 +13,19 @@ chk() { # name expected(0|1) jq-filter
 chk "valid template"                0 '.'
 chk "placeholder repo url"          1 '.repo.url="https://github.com/OWNER/REPO"'
 chk "no long-lived branches"        1 '.repo.long_lived=[]'
-chk "unknown role"                  1 '.roles.fresh=.roles.dev'
+chk "unknown role"                  1 '.roles.fresh=.roles.build'
 chk "no roles"                      1 '.roles={}'
-chk "push by coordinator refused"   1 '.roles.dev.push={mode:"coordinator",branch_pattern:"agent/<slug>"}'
-chk "push by agent refused"         1 '.roles.docs.push={mode:"agent",branch_pattern:"docs/<slug>",credential:"vault:vlt_x"}'
-chk "bad push mode"                 1 '.roles.dev.push.mode="always"'
-chk "bad effort"                    1 '.roles.dev.effort="turbo"'
-chk "bad model"                     1 '.roles.dev.model="gpt"'
-chk "bad skill"                     1 '.roles.docs.skills=["bash"]'
+chk "push by coordinator refused"   1 '.roles.build.push={mode:"coordinator",branch_pattern:"agent/<slug>"}'
+chk "push by agent refused"         1 '.roles.write.push={mode:"agent",branch_pattern:"docs/<slug>",credential:"vault:vlt_x"}'
+chk "bad push mode"                 1 '.roles.build.push.mode="always"'
+chk "bad effort"                    1 '.roles.build.effort="turbo"'
+chk "bad model"                     1 '.roles.build.model="gpt"'
+chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
-$DA project set demo roles.dev.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
-[ "$(jq -r .roles.dev.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
+$DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
+[ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
 exit $fail

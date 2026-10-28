@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Teams: a lead and the role agents it coordinates on one task (opt-in; see the qargi-team skill).
-#   team.sh brief PROJECT TEAM --task TEXT --done CMD [--base BRANCH] [--docs-done CMD] [--review-done CMD]
+#   team.sh brief PROJECT TEAM --task TEXT --done CMD [--base BRANCH] [--write-done CMD] [--review-done CMD]
 #       prints the TEAM brief for the lead (a cloud lead session or this session acting as lead)
 #   team.sh check RUN_DIR
 #   team.sh contract
@@ -13,13 +13,13 @@ verb=${1:-}; shift || true
 
 brief() {
   local project=${1:-} team=${2:-}; shift 2 || true
-  local task='' done_cmd='' base='' docs_done='' review_done=''
+  local task='' done_cmd='' base='' write_done='' review_done=''
   while [ $# -gt 0 ]; do
     case $1 in
       --task) task=$2; shift 2;;
       --done) done_cmd=$2; shift 2;;
       --base) base=$2; shift 2;;
-      --docs-done) docs_done=$2; shift 2;;
+      --write-done) write_done=$2; shift 2;;
       --review-done) review_done=$2; shift 2;;
       *) die "unknown option $1";;
     esac
@@ -28,11 +28,11 @@ brief() {
   local f=$DA_CONF/projects/$project.json
   [ -f "$f" ] || die "no stored answers for $project"
   jq -e --arg t "$team" '.teams[$t]' "$f" >/dev/null 2>&1 || die "project $project has no team '$team' (qargi project show $project)"
-  [ -n "$task" ] && [ -n "$done_cmd" ] || die "brief needs --task TEXT and --done CMD (an executable check for the developer's part)"
-  local dev_base; dev_base=$(jq -r '.roles.dev.base // empty' "$f")
+  [ -n "$task" ] && [ -n "$done_cmd" ] || die "brief needs --task TEXT and --done CMD (an executable check for the builder's part)"
+  local build_base; build_base=$(jq -r '.roles.build.base // empty' "$f")
   if [ -z "$base" ]; then
-    [ -n "$dev_base" ] && [ "$dev_base" != "@dispatcher" ] || die "the developer's base is @dispatcher: give --base BRANCH"
-    base=$dev_base
+    [ -n "$build_base" ] && [ "$build_base" != "@dispatcher" ] || die "the builder's base is @dispatcher: give --base BRANCH"
+    base=$build_base
   fi
   local rdone="test -s /mnt/session/outputs/review--report.md && grep -qiE '^#+ *findings' /mnt/session/outputs/review--report.md"
   printf 'TEAM: %s\nTASK: %s\n' "$team" "$task"
@@ -41,14 +41,14 @@ brief() {
   local m mbase scope mdone
   for m in $(jq -r --arg t "$team" '.teams[$t].members[]' "$f"); do
     case $m in
-      dev) mbase=$base; mdone=$done_cmd;;
-      docs) mbase=$(jq -r '.roles.docs.base' "$f"); mdone=${docs_done:-$(jq -r --arg t "$team" '.teams[$t].done.docs // "make lint"' "$f")};;
+      build) mbase=$base; mdone=$done_cmd;;
+      write) mbase=$(jq -r '.roles.write.base' "$f"); mdone=${write_done:-$(jq -r --arg t "$team" '.teams[$t].done.write // "make lint"' "$f")};;
       review) mbase=$base; mdone=${review_done:-$rdone};;
       *) mbase=$(jq -r --arg r "$m" '.roles[$r].base' "$f"); [ "$mbase" != "@dispatcher" ] || mbase=$base; mdone=$(jq -r --arg t "$team" --arg r "$m" '.teams[$t].done[$r] // empty' "$f");;
     esac
     [ -n "$mdone" ] || die "member $m has no DONE check: give one in the project's teams.$team.done.$m"
     scope=$(jq -r --arg t "$team" --arg r "$m" '(.teams[$t].scopes[$r] // []) | if length == 0 then "none" else join(", ") end' "$f")
-    printf -- '- role: %s\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  RUN_DIR: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
+    printf -- '- role: %s\n  ABILITY: %s — load skill qargi-%s\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  RUN_DIR: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
   done
 }
 

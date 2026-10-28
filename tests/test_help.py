@@ -31,7 +31,7 @@ def doc_flags(cmd):
 
 
 # every kind of value the command data may name, and what completes it
-TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "store": 1, "deployment": 1,
+TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "member": 1, "store": 1, "deployment": 1,
          "model": 1, "branch": 1, "entry": 1, "key": 1, "value": 1, "seconds": 1, "cents": 1, "file": 1, "dir": 1, "help": 1}
 
 
@@ -154,7 +154,7 @@ class Env(unittest.TestCase):
                 json.dump(obj, f)
         for n, path in (("alpha", self.repo), ("beta", os.path.join(self.t, "elsewhere"))):
             put(os.path.join(self.t, "c", "projects", n + ".json"), {"project": n, "repo": {"path": path}, "teams": {"code-docs": {}} if n == "alpha" else {}})
-        put(os.path.join(self.t, "c", "instances.json"), {"alpha-dev": {}, "alpha-docs": {}})
+        put(os.path.join(self.t, "c", "instances.json"), {"alpha-build": {}, "alpha-write": {}})
         put(os.path.join(self.t, "s", "sessions.json"), {"sesn_1": {}})
         self.put = put
         self.old = {k: os.environ.get(k) for k in ("QARGI_CONF", "QARGI_STATE", "QARGI_PROJECT")}
@@ -178,7 +178,7 @@ class Complete(Env):
         self.assertEqual(H.complete(["lead", ""]), ["grant", "status", "revoke"])
         self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha"])   # only projects that define teams
         self.assertEqual(H.complete(["team", "brief", "alpha", ""]), ["code-docs"])
-        self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-dev", "alpha-docs"])
+        self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-build", "alpha-write"])
         self.assertEqual(H.complete(["close", ""]), ["sesn_1"])
         self.assertEqual(H.complete(["canon", "apply", "--kind", ""]), ["memory", "reference"])
         self.assertEqual(H.complete(["skill", "link", "x", "--scope", ""]), ["user", "user-role", "project", "project-role"])
@@ -196,7 +196,7 @@ class Complete(Env):
         self.assertEqual(r.stdout.strip(), "grant", r.stderr)
         r = subprocess.run(["bash", "-c", 'source "%s"; COMP_WORDS=(qargi instances show ""); COMP_CWORD=3; _qargi; echo "${COMPREPLY[*]}"' % script],
                            capture_output=True, text=True, env=env)
-        self.assertEqual(r.stdout.split(), ["alpha-dev", "alpha-docs"], r.stderr)
+        self.assertEqual(r.stdout.split(), ["alpha-build", "alpha-write"], r.stderr)
 
 
 class Shells(Env):
@@ -218,7 +218,7 @@ class Shells(Env):
         r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi lead ""); CURRENT=3; f')
         self.assertEqual([l.split(":")[0] for l in r.stdout.split("\n") if l], ["grant", "status", "revoke"], r.stderr)
         r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi instances show ""); CURRENT=4; f')
-        self.assertEqual([l.split(":")[0] for l in r.stdout.split("\n") if l], ["alpha-dev", "alpha-docs"], r.stderr)
+        self.assertEqual([l.split(":")[0] for l in r.stdout.split("\n") if l], ["alpha-build", "alpha-write"], r.stderr)
         r = self.run_shell(["zsh", "-f", "-c"], stub + 'words=(qargi review check ""); CURRENT=4; f')
         self.assertEqual(r.stdout.strip(), "FILES -/")
         r = self.run_shell(["zsh", "-n"], script)
@@ -242,34 +242,40 @@ class Rich(Env):
         res = [{"memory_store_id": "memstore_A", "access": "read_write"}, {"memory_store_id": "memstore_B", "access": "read_only"}]
         agent = {"version_pinned": 3, "model": "claude-sonnet-5-5", "effort": "high"}
         self.put(os.path.join(self.t, "c", "instances.json"), {
-            "alpha-dev": {"location": "cloud", "agent": agent, "deployment_id": "depl_1", "resources": res},
-            "alpha-docs": {"location": "cloud", "agent": dict(agent, model="claude-opus-5-5"), "deployment_id": "depl_2", "resources": res},
+            "alpha-build": {"location": "cloud", "agent": agent, "deployment_id": "depl_1", "resources": res},
+            "alpha-write": {"location": "cloud", "agent": dict(agent, model="claude-opus-5-5"), "deployment_id": "depl_2", "resources": res},
             "alpha-local": {"location": "local"}})
         self.put(os.path.join(self.t, "s", "sessions.json"), {
-            "sesn_run": {"instance": "alpha-dev", "status": "running", "label": "job", "list_cost": "9", "outputs_collected": False},
-            "sesn_idle": {"instance": "alpha-dev", "status": "idle", "outputs_collected": True},
-            "sesn_old": {"instance": "alpha-dev", "status": "archived", "closed_at": "2026-01-01T00:00:00Z", "outputs_collected": True}})
+            "sesn_run": {"instance": "alpha-build", "status": "running", "label": "job", "list_cost": "9", "outputs_collected": False},
+            "sesn_idle": {"instance": "alpha-build", "status": "idle", "outputs_collected": True},
+            "sesn_old": {"instance": "alpha-build", "status": "archived", "closed_at": "2026-01-01T00:00:00Z", "outputs_collected": True}})
         self.put(os.path.join(self.t, "c", "projects", "alpha.json"), {
             "project": "alpha", "repo": {"path": self.repo, "url": "https://example.net/alpha"}, "budget_cents": 1500,
-            "teams": {"code-docs": {"members": ["dev", "docs"]}}, "lead": {"push": {"local": True, "cloud": "none"}},
-            "roles": {"dev": {"model": "claude-sonnet-5-5", "effort": "high"}, "docs": {"model": "claude-opus-5-5", "effort": "medium"}}})
+            "teams": {"code-docs": {"members": ["build", "write"]}}, "lead": {"push": {"local": True, "cloud": "none"}},
+            "roles": {"build": {"model": "claude-sonnet-5-5", "effort": "high"}, "write": {"model": "claude-opus-5-5", "effort": "medium"}}})
         os.makedirs(os.path.join(self.t, "c", "packs", "skills", "pdf"))
         os.makedirs(os.path.join(self.t, "c", "packs", "tools"))
         self.put(os.path.join(self.t, "c", "packs", "tools", "github.json"), {})
+        self.put(os.path.join(self.t, "c", "agents.json"), {"forge": {"abilities": ["build", "test"], "seq": 1}, "scribe": {"abilities": ["write"], "seq": 2}})
+
+    def test_members_complete_with_their_abilities(self):
+        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "scribe"])
+        self.assertEqual(dict(H.complete_described(["agent", "rename", ""]))["forge"], "build,test")
+        self.assertEqual(H.complete(["agent", "for", ""]), list(C.ABILITIES))
 
     def test_sessions_are_narrowed_by_what_the_verb_does(self):
         self.assertEqual(H.complete(["stop", ""]), ["sesn_run"])
         self.assertEqual(H.complete(["collect", ""]), ["sesn_run"])
         self.assertEqual(H.complete(["close", ""]), ["sesn_idle", "sesn_run"])
         self.assertEqual(H.complete(["watch", ""]), ["sesn_idle", "sesn_run"])
-        self.assertEqual(H.complete(["send", "alpha-dev", "x", "--session", ""]), ["sesn_idle"])
-        self.assertEqual(H.complete(["status", ""]), ["sesn_idle", "sesn_old", "sesn_run", "alpha-dev", "alpha-docs"])   # sessions and cloud instances
-        self.assertEqual(dict(H.complete_described(["stop", ""]))["sesn_run"], "alpha-dev running job $0.09")
+        self.assertEqual(H.complete(["send", "alpha-build", "x", "--session", ""]), ["sesn_idle"])
+        self.assertEqual(H.complete(["status", ""]), ["sesn_idle", "sesn_old", "sesn_run", "alpha-build", "alpha-write"])   # sessions and cloud instances
+        self.assertEqual(dict(H.complete_described(["stop", ""]))["sesn_run"], "alpha-build running job $0.09")
 
     def test_cloud_verbs_do_not_offer_a_local_instance(self):
-        self.assertEqual(H.complete(["start", ""]), ["alpha-dev", "alpha-docs"])
-        self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-dev", "alpha-docs", "alpha-local"])
-        self.assertEqual(dict(H.complete_described(["start", ""]))["alpha-dev"], "cloud agent v3 claude-sonnet-5-5/high")
+        self.assertEqual(H.complete(["start", ""]), ["alpha-build", "alpha-write"])
+        self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-build", "alpha-local", "alpha-write"])
+        self.assertEqual(dict(H.complete_described(["start", ""]))["alpha-build"], "cloud agent v3 claude-sonnet-5-5/high")
 
     def test_stores_deployments_models_and_numbers(self):
         self.assertEqual(dict(H.complete_described(["memory", "lint", ""])), {"memstore_A": "alpha, memory", "memstore_B": "alpha, reference"})
@@ -277,7 +283,7 @@ class Rich(Env):
         self.assertEqual(H.complete(["instances", "init", "--deployment", ""]), ["depl_1", "depl_2"])
         self.assertEqual(H.complete(["provision", "plan", "--memory-store", ""]), ["memstore_A", "memstore_B"])
         self.assertIn("claude-opus-5-5", H.complete(["instances", "init", "--model", ""]))
-        self.assertEqual(H.complete(["instances", "budget", "alpha-dev", ""])[:2], ["500", "1000"])
+        self.assertEqual(H.complete(["instances", "budget", "alpha-build", ""])[:2], ["500", "1000"])
         self.assertIn("3600", H.complete(["watch", "sesn_run", ""]))
 
     def test_branches_come_from_the_projects_repository(self):
@@ -291,10 +297,10 @@ class Rich(Env):
 
     def test_project_answers_and_their_values(self):
         keys = H.complete(["project", "set", "alpha", ""])
-        for k in ("budget_cents", "lead.push.local", "roles.dev.effort", "roles.docs.model", "teams.code-docs.members", "lead.push.merge"):
+        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
-        self.assertEqual(H.complete(["project", "set", "alpha", "roles.dev.effort", ""]), list(C.EFFORTS))
+        self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))
         self.assertEqual(H.complete(["project", "set", "alpha", "lead.push.cloud", ""]), ["none", "branches"])
         self.assertEqual(H.complete(["project", "set", "alpha", "lead.push.local", ""]), ["true", "false"])
         self.assertEqual(H.complete(["project", "set", "alpha", "budget_cents", ""]), [])
@@ -306,9 +312,9 @@ class Rich(Env):
         self.assertEqual(H.complete(["tool", "show", ""]), ["github"])
 
     def test_roles_follow_the_project_and_teams_get_their_members(self):
-        self.assertEqual(H.complete(["packs", "render", "alpha", ""]), ["dev", "docs", "lead"])
-        self.assertEqual(dict(H.complete_described(["packs", "render", "alpha", ""]))["docs"], "claude-opus-5-5/medium")
-        self.assertEqual(dict(H.complete_described(["team", "brief", "alpha", ""]))["code-docs"], "dev, docs")
+        self.assertEqual(H.complete(["packs", "render", "alpha", ""]), ["build", "write", "lead"])
+        self.assertEqual(dict(H.complete_described(["packs", "render", "alpha", ""]))["write"], "claude-opus-5-5/medium")
+        self.assertEqual(dict(H.complete_described(["team", "brief", "alpha", ""]))["code-docs"], "build, write")
 
     def test_option_equals_value_and_options_are_offered_once(self):
         self.assertEqual(H.complete(["instances", "init", "--effort="]), ["--effort=" + e for e in C.EFFORTS])
@@ -318,7 +324,7 @@ class Rich(Env):
         self.assertNotIn("--kind", out)
         self.assertIn("--plan", out)
         self.assertIn("--help", out)
-        self.assertEqual(H.complete(["start", "--label=x", ""]), ["alpha-dev", "alpha-docs"])
+        self.assertEqual(H.complete(["start", "--label=x", ""]), ["alpha-build", "alpha-write"])
 
     def test_help_completes_the_verbs_of_a_command(self):
         self.assertIn("refresh-prompt", H.complete(["help", "instances", ""]))
@@ -334,7 +340,7 @@ class Rich(Env):
             self.assertEqual(r.stdout.strip(), want, r.stderr)
 
     def test_every_kind_of_value_has_a_completer(self):
-        """A new type in the command data must come with candidates, as tacctl's completion is held to its schema."""
+        """A new type in the command data must come with candidates, so completion keeps up with the command data."""
         seen = set()
         for cmd, spec in C.COMMANDS.items():
             vs = spec.get("verbs") or {}
@@ -342,7 +348,7 @@ class Rich(Env):
             for args, opts in lists:
                 seen |= {H.kind(a[1]) for a in args if isinstance(a[1], str)} | {H.kind(o["type"]) for o in opts if isinstance(o["type"], str)}
         self.assertEqual(seen, set(TYPES), "the types in the command data and the list in this test")
-        ctx = ["alpha", "dev", "project"]
+        ctx = ["alpha", "build", "project"]
         for t in sorted(seen - {"none", "value", "branch"}):   # a branch needs a repository (its own test); a value needs a key
             self.assertTrue(H.by_type(t, ctx), "no candidates for the type %r" % t)
         self.assertTrue(H.by_type("value", ["alpha", "lead.push.cloud"]))
@@ -359,26 +365,26 @@ class Infer(Env):
         self.assertEqual(H.resolve(["credential", "setup", "lead-push", "--from-file", "f"]), ["credential", "setup", "lead-push", "alpha", "--from-file", "f"])
         self.assertEqual(H.resolve(["canon", "apply", "--kind", "memory"]), ["canon", "apply", "alpha", "--kind", "memory"])
         self.assertEqual(H.resolve(["project", "set", "budget_cents", "600"]), ["project", "set", "alpha", "budget_cents", "600"])
-        self.assertEqual(H.resolve(["skill", "check", "docs"]), ["skill", "check", "alpha", "docs"])
+        self.assertEqual(H.resolve(["skill", "check", "write"]), ["skill", "check", "alpha", "write"])
 
     def test_a_role_stands_for_the_instance(self):
         os.chdir(self.repo)
-        self.assertEqual(H.resolve(["instances", "show", "dev"]), ["instances", "show", "alpha-dev"])
-        self.assertEqual(H.resolve(["instances", "show", "alpha-docs"]), ["instances", "show", "alpha-docs"])
-        self.assertEqual(H.resolve(["provision", "plan", "docs"]), ["provision", "plan", "alpha-docs"])
+        self.assertEqual(H.resolve(["instances", "show", "build"]), ["instances", "show", "alpha-build"])
+        self.assertEqual(H.resolve(["instances", "show", "alpha-write"]), ["instances", "show", "alpha-write"])
+        self.assertEqual(H.resolve(["provision", "plan", "write"]), ["provision", "plan", "alpha-write"])
         self.assertEqual(H.resolve(["provision", "plan"]), ["provision", "plan", "--project", "alpha"])
-        self.assertEqual(H.resolve(["send", "dev", "the task text", "--label", "x"]), ["send", "alpha-dev", "the task text", "--label", "x"])
+        self.assertEqual(H.resolve(["send", "build", "the task text", "--label", "x"]), ["send", "alpha-build", "the task text", "--label", "x"])
 
     def test_free_text_and_unrelated_commands_are_left_alone(self):
         os.chdir(self.repo)
-        for argv in (["send", "alpha-dev", "dev lead status", "--label", "x"], ["collect", "sesn_1", "dir"], ["review", "check", "dir"],
+        for argv in (["send", "alpha-build", "build lead status", "--label", "x"], ["collect", "sesn_1", "dir"], ["review", "check", "dir"],
                      ["help", "lead"], ["version"], ["skill", "list"], ["memory", "get", "memstore_1", "/a.md"]):
             self.assertEqual(H.resolve(argv), argv, argv)
 
     def test_outside_a_repository_nothing_is_guessed(self):
         os.chdir(self.t)
         self.assertIsNone(H.infer_project())
-        self.assertEqual(H.resolve(["instances", "show", "dev"]), ["instances", "show", "dev"])
+        self.assertEqual(H.resolve(["instances", "show", "build"]), ["instances", "show", "build"])
         self.assertIsNone(H.resolve(["lead", "status"]))
         self.assertEqual(H.resolve(["lead", "status", "alpha"]), ["lead", "status", "alpha"])
 

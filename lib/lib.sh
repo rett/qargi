@@ -9,11 +9,12 @@ DA_CONF=${QARGI_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/qargi}
 DA_STATE=${QARGI_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/qargi}
 REG=$DA_CONF/instances.json
 TRK=$DA_STATE/sessions.json
+MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {name: {abilities, file, model, effort, project}}
 export BETA=managed-agents-2026-04-01
 
 mkdir -p "$DA_CONF" "$DA_STATE"
 chmod 700 "$DA_CONF" "$DA_STATE"
-for f in "$REG" "$TRK"; do
+for f in "$REG" "$TRK" "$MEMBERS_FILE"; do
   [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
 done
 
@@ -21,9 +22,10 @@ done
 # are single lower-case tokens (no dashes) so a name parses unambiguously; the
 # role comes from a fixed list. The environment and the memory stores belong to the
 # project: <project>-environment, <project>-memory, <project>-reference; the agent
-# and the deployment belong to a role: <project>-agent-<role>, <project>-deployment-<role>.
+# and the deployment belong to a role: <project>-<role>, <project>-deployment-<role>.
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
-DA_ROLES=${QARGI_ROLES:-"dev review docs test"}
+# The roles are the four abilities (build, review, write, test), each defined by a skill qargi-<ability>.
+DA_ROLES=${QARGI_ROLES:-"build review write test"}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
 valid_role() { local r; for r in $DA_ROLES lead; do [ "$r" = "$1" ] && return 0; done; return 1; }
@@ -50,7 +52,8 @@ mem_read() {
 res_name() {
   case $1 in
     environment) echo "$PROJECT-environment";;
-    agent|deployment) echo "$PROJECT-$1-$ROLE";;
+    agent) echo "$PROJECT-$ROLE";;
+    deployment) echo "$PROJECT-deployment-$ROLE";;
     *) return 1;;
   esac
 }
@@ -128,7 +131,8 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
-# contract, and the role's contract addendum if it has one. Provisioning and refresh-prompt
+# contract, and the ability's skill (skills/qargi-<role>/SKILL.md, the same text a local member
+# loads), or for the lead its contract. Provisioning and refresh-prompt
 # build it the same way, so an agent can always be brought back in line with the tool.
 # The teams of a project as text for the lead's prompt: members, bases, scopes, standards,
 # rounds and budget, so a lead started from the console needs only a task.
@@ -157,11 +161,12 @@ tools_off() {
 
 agent_prompt() { # role [project]
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/qargi-task/agent-contract.md
-  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; contract=$lib/skills/qargi-task/agent-contract.md; }
+  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 sk=$lib/../skills
+  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; sk=$lib/skills; }
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
-  [ "$1" = lead ] || cat "$contract"
+  [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
+  if [ -f "$sk/qargi-$1/SKILL.md" ]; then echo; awk 'f>=2 {print} /^---$/ {f++}' "$sk/qargi-$1/SKILL.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
 }

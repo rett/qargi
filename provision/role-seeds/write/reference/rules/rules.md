@@ -1,4 +1,4 @@
-# Docs rules
+# Write rules
 
 Rules for documentation work. Replace each `<...>` with the project's own value and
 tag each entry with its source; an entry without a source is not trusted.
@@ -16,7 +16,7 @@ Sources: <list the project files and the maintainer's instructions this was writ
 - If a detail cannot be verified, leave it out.
 
 ### Writing to the project
-- The project's files are read-only for this role except through `<the docs branch
+- The project's files are read-only for this role except through `<the documentation branch
   and push policy from the profile>`. Publishing anywhere else is a write: get
   approval first. (source: <where>)
 - Deliver in the formats `<formats>`; final files go to `<output folder>`, nothing else

@@ -1,4 +1,4 @@
-# Docs workflow
+# Write workflow
 
 Kind: workflow
 Applies to: <project and ref range, or "any">
@@ -8,14 +8,14 @@ Sources: <list the project files and the maintainer's instructions this was writ
 
 ### Producing a document
 1. Load memory: the README, then the indexes, then the files the task needs; check
-   `roles/docs/project/open-items.md`.
+   `roles/write/project/open-items.md`.
 2. Read the project's sources for the topic (`workflow/source-map.md`); check every
    command you plan to use.
 3. Outline by the reader's task, not by command. Follow `writing/conventions.md`.
-4. Write or edit on the docs branch from the profile; one change per branch.
+4. Write or edit on the documentation branch from the profile; one change per branch.
 5. Run the profile's checks (command check, link check, build) until they report no
    problems; render the delivery formats and look at the result.
-6. Log the document in `roles/docs/project/history.md`; record new learnings in
+6. Log the document in `roles/write/project/history.md`; record new learnings in
    their subject file.
 7. Summarise: the files, the sections, the choices you made, anything you could not
    verify.

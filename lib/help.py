@@ -281,7 +281,8 @@ def man():
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
     w("The skills qargi\\-task, qargi\\-team, qargi\\-project, qargi\\-instances, qargi\\-provision, qargi\\-memory, qargi\\-packs "
-      "and qargi\\-review in Claude Code.")
+      "and qargi\\-verify in Claude Code, and the ability skills qargi\\-build, qargi\\-write, qargi\\-review and qargi\\-test "
+      "(qargi help roles).")
     return "\n".join(x for x in o if x != "") + "\n"
 
 
@@ -456,6 +457,8 @@ def by_type(t, words):
         return sessions() + instances(True)
     if base == "pack":
         return packs(words)
+    if base == "member":
+        return [(n, ",".join(v.get("abilities") or [])) for n, v in sorted(_read(os.path.join(conf(), "agents.json")).items())]
     if base == "team":
         return [(n, ", ".join(v.get("members", []))) for n, v in sorted((project_data(words).get("teams") or {}).items())]
     if base == "role":
@@ -580,7 +583,7 @@ def infer_project():
 
 def resolve(argv):
     """Fill in what the current directory implies: a missing PROJECT argument, and a role used as an instance
-    (dev -> PROJECT-dev). An argument you give always wins. Returns the argument list to run."""
+    (build -> PROJECT-build). An argument you give always wins. Returns the argument list to run."""
     if not argv or argv[0] not in C.COMMANDS or argv[0] in ("help", "version"):
         return argv
     P = infer_project()

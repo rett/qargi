@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Install or remove qargi: the qargi-* skills, the local subagent, the `qargi` command,
-# its manual page and its bash, zsh and fish completion.
+# Install or remove qargi: the qargi-* skills, the `qargi` command, its manual page and its
+# bash, zsh and fish completion. It installs no agent definition: you create the members
+# (the local workers) yourself, with the names you choose: qargi agent add NAME.
 #
 #   install.sh --user [--copy] [--force]          skills in ~/.claude, command in ~/.local/bin,
 #                                                 man page and completions (bash, zsh under ~/.local/share,
 #                                                 fish under ~/.config/fish)
-#   install.sh --project DIR [--copy] [--force]   skills and subagent in DIR/.claude only
+#   install.sh --project DIR [--copy] [--force]   skills in DIR/.claude only
 #   install.sh --user|--project DIR --uninstall
 #
 # By default everything is a symlink to this checkout (updates follow `git pull`).
@@ -21,7 +22,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
-skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-review qargi-team"
+skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-team qargi-build qargi-write qargi-review qargi-test"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -44,27 +45,33 @@ completion=$xdg/bash-completion/completions/qargi
 zshcomp=$xdg/zsh/site-functions/_qargi
 fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
-agents="qargi-dev qargi-docs qargi-review qargi-test"
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
+
+# Agent definitions an earlier version of this tool linked from its agents/ folder; they no longer exist there.
+old_agent_links() {
+  local l t
+  for l in "$target"/agents/*.md; do
+    [ -L "$l" ] || continue
+    t=$(readlink "$l")
+    case $t in "$here/agents/"*|"$data/agents/"*) [ -e "$l" ] || { rm -f "$l"; echo "removed the stale link $l"; };; esac
+  done
+}
 
 paths=()
 for s in $skills; do paths+=("$target/skills/$s"); done
-for a in $agents; do paths+=("$target/agents/$a.md"); done
 [ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp")
 
 exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-review|qargi-team)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-verify|qargi-team|qargi-build|qargi-write|qargi-review|qargi-test)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
 fi
 entries=
 for s in $skills; do entries="$entries/.claude/skills/$s
-"; done
-for a in $agents; do entries="$entries/.claude/agents/$a.md
 "; done
 
 if [ -n "$uninstall" ]; then
@@ -73,6 +80,7 @@ if [ -n "$uninstall" ]; then
     mv "$exclude_file.tmp" "$exclude_file"
   fi
   for old in qargi dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
+  old_agent_links
   for p in "${paths[@]}"; do
     if [ -L "$p" ] || { [ -e "$p" ] && [ -n "$force" ]; }; then rm -rf "$p"; echo "removed $p"
     elif [ -e "$p" ]; then echo "kept $p (not a symlink; use --force to remove)"; fi
@@ -92,16 +100,13 @@ if [ -n "$copy" ] && [ "$mode" = user ]; then
   echo "copied the tool to $data"
 fi
 
-mkdir -p "$target/skills" "$target/agents"
+mkdir -p "$target/skills"
+old_agent_links
 # the dispatch skill had other names before: drop leftover symlinks
 for old in qargi dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
 for s in $skills; do
   rm -rf "${target:?}/skills/$s"
   if [ -n "$copy" ]; then cp -r "$src/skills/$s" "$target/skills/$s"; else ln -s "$src/skills/$s" "$target/skills/$s"; fi
-done
-for a in $agents; do
-  rm -rf "$target/agents/$a.md"
-  if [ -n "$copy" ]; then cp "$src/agents/$a.md" "$target/agents/$a.md"; else ln -s "$src/agents/$a.md" "$target/agents/$a.md"; fi
 done
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
 if [ "$mode" = user ]; then
@@ -113,15 +118,18 @@ if [ "$mode" = user ]; then
   else
     ln -s "$src/man/qargi.1" "$manpage"; ln -s "$src/completions/qargi.bash" "$completion"; ln -s "$src/completions/_qargi" "$zshcomp"; ln -s "$src/completions/qargi.fish" "$fishcomp"
   fi
-  echo "installed skills and subagent in $target, command at $cmd, man page at $manpage ($kind)"
+  echo "installed skills in $target, command at $cmd, man page at $manpage ($kind)"
   echo "completion: bash $completion, zsh $zshcomp, fish $fishcomp"
   ! command -v zsh >/dev/null 2>&1 || echo "note: for zsh add this to ~/.zshrc before compinit: fpath=($(dirname "$zshcomp") \$fpath)" >&2
   command -v man >/dev/null 2>&1 && ! man -w qargi >/dev/null 2>&1 && echo "note: man does not find it yet; add $xdg/man to MANPATH (or: man -l $manpage)" >&2 || true
   echo "note: bash loads the completion in new shells when bash-completion is installed; otherwise add to ~/.bashrc: source $completion" >&2
 else
   command -v qargi >/dev/null 2>&1 || echo "note: the qargi command is not on PATH; run: install.sh --user" >&2
-  echo "installed skills and subagent in $target ($kind)"
+  echo "installed skills in $target ($kind)"
 fi
+
+echo "next: create the members that do the work, with names you choose, for example:"
+echo "  qargi agent add builder --abilities build    (or one member for everything: qargi agent add worker)"
 
 if [ -n "$exclude_file" ]; then
   mkdir -p "$(dirname "$exclude_file")"; touch "$exclude_file"

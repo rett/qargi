@@ -3,12 +3,14 @@
 # has no remote, runs git through a credential-less wrapper, and the coordinator
 # compares every ref of the real repository (and of its remote) before and after.
 #
-#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR
+#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--ability A]
 #   local.sh verify RUN_DIR
 #
 # This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
 # from a config). It is not a sandbox against an agent that deliberately goes around it
 # (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
+# The run directory records the task's ability (RUN/ability, default build); under review the guard
+# (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
 . "$(dirname "$0")/lib.sh"
 
 snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
@@ -31,9 +33,9 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR=''
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability) ABILITY=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
@@ -42,11 +44,13 @@ case $verb in
     else
       [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
     fi
+    case $ABILITY in build|write|review|test) ;; *) die "--ability build|write|review|test";; esac
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
     case $BASE in master|develop) ;; esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
+    printf '%s\n' "$ABILITY" > "$RUN/ability"
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
       printf '%s\n' "$URL" > "$RUN/repo.url"; [ -z "$CRED" ] || printf '%s\n' "$CRED" > "$RUN/cred.path"   # a path, never the token
@@ -76,6 +80,7 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
 WRAP
     chmod 755 "$RUN/git"
     echo "RUN=$RUN"
+    echo "ABILITY=$ABILITY"
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
     echo "GIT=$RUN/git"

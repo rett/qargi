@@ -4,7 +4,7 @@ without being described here fails the suite.
 
 A verb is  verb(summary, args=[(NAME, type[, optional])], opts=[opt(...)], desc=..., examples=[...])
 Argument and option value types drive completion: project, instance, team, role, session, pack-skill,
-pack-tool, file, dir, none, or a tuple of fixed words."""
+pack-tool, member, file, dir, none, or a tuple of fixed words."""
 
 TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 
@@ -12,11 +12,12 @@ INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as "
     "reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic "
     "Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and "
-    "never push. A team adds a lead that coordinates a developer, a docs writer and a reviewer on one task. "
+    "never push. A team adds a lead that coordinates members for build, write and review on one task. "
     "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
 )
 
-ROLES = ("dev", "docs", "review", "test", "lead")
+ROLES = ("build", "write", "review", "test", "lead")
+ABILITIES = ROLES[:-1]   # the work roles; each is defined by the skill qargi-<ability>
 MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
@@ -36,7 +37,7 @@ APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words
 KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND", ("memory", "reference"))
 
 GROUPS = [
-    ("Set up", ["project", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["start", "send", "status", "watch", "collect", "stop", "close", "mark", "track", "local"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -48,7 +49,7 @@ GROUPS = [
 COMMANDS = {
     "project": {
         "summary": "Store the answers about a project, once, outside the repository",
-        "desc": ("The answers are the repository, its long-lived branches, the roles that exist (dev, docs, review, test) "
+        "desc": ("The answers are the repository, its long-lived branches, the roles that exist (build, write, review, test) "
                  "with each role's base branch, model, effort, packages and skills, the memory stores, the budget, and "
                  "optionally a lead with teams and a push grant. Provisioning and dispatch read them. Push policy per role "
                  "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
@@ -59,11 +60,36 @@ COMMANDS = {
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc="PATH is dotted (budget_cents, roles.docs.effort, lead.push); VALUE is JSON or a plain string.",
-                        examples=["qargi project set acme roles.docs.effort high"]),
+                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
+                        examples=["qargi project set acme roles.write.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it", [("FILE", "file")]),
+        },
+    },
+    "agent": {
+        "summary": "Name the members: the local agents that do the work",
+        "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
+                 "abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi-build, "
+                 "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
+                 "rule: the guard refuses changes to the clone under that ability. Dispatch spawns the member qargi agent for "
+                 "ABILITY prints."),
+        "scripts": ["agent.sh"],
+        "verbs": {
+            "add": verb("Create a member under a name you choose", [("NAME", "none")],
+                        [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
+                         opt("--model", "model alias or id for the definition (default sonnet)", "MODEL", "model"),
+                         opt("--effort", "effort level, recorded with the member", "LEVEL", EFFORTS),
+                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents", "PROJECT", "project")],
+                        desc="Refuses a name that exists, a name that is not kebab-case, and the name of a built-in Claude Code agent type.",
+                        examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
+                                  "qargi agent add worker    # one member for all four abilities"]),
+            "list": verb("List the members, their abilities and definitions"),
+            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
+            "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
+            "for": verb("Print the member that serves an ability", [("ABILITY", ABILITIES)],
+                        [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],
+                        desc="The first member registered for the ability; a project's own members come first. Dispatch spawns this one."),
         },
     },
     "provision": {
@@ -74,14 +100,14 @@ COMMANDS = {
         "scripts": ["provision.sh"],
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
-                         [opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role (default dev)", "ROLE", ROLES),
+                         [opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role (default build)", "ROLE", ROLES),
                           opt("--model", "model id, overriding the project's answers", "MODEL", "model"), opt("--effort", "effort level", "LEVEL", EFFORTS),
                           opt("--apt", "extra packages for the shared environment, space separated", "PACKAGES"),
                           opt("--networking", "the sandbox's network access", "MODE", ("unrestricted", "limited")),
                           opt("--budget", "spend ceiling of the deployment, in cents", "CENTS", "cents"),
                           opt("--memory-store", "attach this memory store instead of the project's", "ID", "store"),
                           opt("--reference-store", "attach this reference store", "ID", "store")],
-                         examples=["qargi provision plan acme-docs"]),
+                         examples=["qargi provision plan acme-write"]),
             "apply": verb("Create the resources of an approved plan", [("NAME", "instance", True)],
                           [ASKED, PLAN, APPROVED, opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role", "ROLE", ROLES)],
                           desc="Brings new memory stores to the canon, seeds the roles, records the ids and registers the instance."),
@@ -90,7 +116,7 @@ COMMANDS = {
     },
     "instances": {
         "summary": "Register, inspect and manage agent instances",
-        "desc": ("An instance is <project>-<role>, for example acme-dev, or the lead acme-lead. The registry records where it "
+        "desc": ("An instance is <project>-<role>, for example acme-build, or the lead acme-lead. The registry records where it "
                  "runs and which resources it uses. Verbs that change cloud resources need --asked, and show a plan first."),
         "scripts": ["registry.sh"],
         "verbs": {
@@ -103,7 +129,7 @@ COMMANDS = {
                           opt("--networking", "network access", "MODE", ("unrestricted", "limited")),
                           opt("--no-session", "do not start a standby session"), ASKED, PLAN, APPROVED],
                          desc="Usually you provision (qargi provision) and the instance is registered for you.",
-                         examples=["qargi instances init --location local --agent ./agent.md --name acme-dev"]),
+                         examples=["qargi instances init --location local --agent ./agent.md --name acme-build"]),
             "list": verb("List the instances and their active sessions", [], [opt("--reconcile", "flag live sessions the tracker does not know")]),
             "show": verb("Show an instance and what is stale or misnamed", [("NAME", "instance")], [opt("--reconcile", "also flag untracked live sessions")]),
             "remove": verb("Forget an instance (the registry entry only)", [("NAME", "instance")], desc="Refused while it has open sessions."),
@@ -152,7 +178,7 @@ COMMANDS = {
         "usage": [("NAME", "instance:cloud"), ("TASK", "none")],
         "opts": [opt("--label", "the task slug (required)", "SLUG"), opt("--session", "send to this session", "SID", "session:idle"),
                  opt("--new", "start a new session first"), ASKED],
-        "examples": ['qargi send acme-dev "$BRIEF" --label rename-verb --asked "use the cloud dev agent for this"'],
+        "examples": ['qargi send acme-build "$BRIEF" --label rename-verb --asked "use the cloud builder for this"'],
     },
     "status": {
         "summary": "Show tracked cloud sessions, or one session",
@@ -201,7 +227,8 @@ COMMANDS = {
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
-                             opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir")]),
+                             opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
+                             opt("--ability", "the task's ability, written to RUN/ability; under review the guard keeps the clone unchanged (default build)", "ABILITY", ABILITIES)]),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")]),
         },
     },
@@ -217,15 +244,15 @@ COMMANDS = {
     },
     "team": {
         "summary": "Run a task with a lead and role agents (opt-in)",
-        "desc": ("For a change that affects usage: the developer changes the code, the docs writer updates the operational docs, the "
-                 "reviewer judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow "
+        "desc": ("For a change that affects usage: the build member changes the code, the write member updates the operational docs, the "
+                 "review member judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow "
                  "the lead contract. Each member returns its own series against its own base."),
         "scripts": ["team.sh"],
         "verbs": {
             "brief": verb("Print the brief a lead needs for one task", [("PROJECT", "project:teams"), ("TEAM", "team")],
-                          [opt("--task", "what to do", "TEXT"), opt("--done", "an executable check for the developer's part", "COMMAND"),
-                           opt("--base", "the developer's base branch (needed when the project says @dispatcher)", "BRANCH", "branch"),
-                           opt("--docs-done", "the docs writer's check", "COMMAND"), opt("--review-done", "the reviewer's check", "COMMAND")]),
+                          [opt("--task", "what to do", "TEXT"), opt("--done", "an executable check for the builder's part", "COMMAND"),
+                           opt("--base", "the builder's base branch (needed when the project says @dispatcher)", "BRANCH", "branch"),
+                           opt("--write-done", "the writer's check", "COMMAND"), opt("--review-done", "the reviewer's check", "COMMAND")]),
             "check": verb("Check a collected team run: every member and the lead's report", [("RUN_DIR", "dir")]),
             "contract": verb("Print the lead's contract", desc="The procedure every lead follows, whoever it is."),
         },
@@ -289,7 +316,7 @@ COMMANDS = {
                             opt("--online", "also search the MCP registry and Anthropic's skills")],
                            examples=["qargi discover search pdf", "qargi discover search github --online --kind mcp"]),
             "recommend": verb("Rank the catalog for the roles of a project", [("PROJECT", "project", True)],
-                              [opt("--role", "only this role", "ROLE", ROLES)], examples=["qargi discover recommend acme --role dev"]),
+                              [opt("--role", "only this role", "ROLE", ROLES)], examples=["qargi discover recommend acme --role build"]),
             "show": verb("Show one entry: what it is, its risk and how it installs", [("ID", "entry")]),
             "install": verb("Install an entry: review, approval, scope, link", [("ID", "entry")],
                             [opt("--scope", "user, user-role, project or project-role (default: ask)", "SCOPE", ("user", "user-role", "project", "project-role")),
@@ -297,7 +324,7 @@ COMMANDS = {
                              opt("--role", "the role, for the role scopes", "ROLE", ROLES),
                              opt("--dry-run", "print the plan and stop; changes nothing")],
                             desc="Interactive: it asks at the terminal, and your answers are the recorded approvals.",
-                            examples=["qargi discover install skill-pdf --project acme --role docs"]),
+                            examples=["qargi discover install skill-pdf --project acme --role write"]),
         },
     },
     "export": {
@@ -397,12 +424,21 @@ TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
-        "Roles: dev changes code, docs writes the operational docs, review judges a change, test writes tests, lead coordinates a team. "
+        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by a skill (qargi-build, qargi-write, qargi-verify, qargi-test). The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
+    "roles": ("Roles, abilities, skills and members", [
+        "Role build: the ability build, defined by the skill qargi-build; changes the code with its tests, manual page, help and changelog.",
+        "Role write: the ability write, skill qargi-write; writes the operational documentation on its own branch.",
+        "Role review: the ability review, skill qargi-review; reads a change, runs its checks and reports a verdict, and changes no file.",
+        "Role test: the ability test, skill qargi-test; writes and repairs tests and proves them failing first and stable.",
+        "Role lead: no ability of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
+        "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
+        "qargi ships. The task block names the ability and its skill; the member loads it. qargi agent for ABILITY prints the member "
+        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's skill in its prompt."]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
@@ -411,10 +447,11 @@ TOPICS = {
         "append-only audit log in the state directory.",
         "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval."]),
     "naming": ("How resources are named", [
-        "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-dev. A session is "
+        "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
-        "Cloud resources follow <project>-<component>[-<role>]: <project>-agent-<role>, <project>-deployment-<role>, the shared "
-        "<project>-environment, and the stores <project>-memory and <project>-reference. The lead is <project>-lead (agent <project>-agent-lead).",
+        "Cloud resources follow <project>-<component>[-<role>]: the agent <project>-<role> (acme-build), the deployment "
+        "<project>-deployment-<role>, the shared <project>-environment, and the stores <project>-memory and <project>-reference. "
+        "The lead is <project>-lead, and so is its agent.",
         "qargi instances normalize renames existing resources to match."]),
     "memory": ("The two memory stores", [
         "<project>-memory is read-write for agents: verified how-to facts they learn. <project>-reference is read-only: rules, workflow and "
@@ -439,7 +476,7 @@ ENVIRONMENT = [
     ("QARGI_CONF", "the configuration directory (default $XDG_CONFIG_HOME/qargi)"),
     ("QARGI_STATE", "the state directory (default $XDG_STATE_HOME/qargi)"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
-    ("QARGI_ROLES", "the list of work roles (default: dev review docs test)"),
+    ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
@@ -457,8 +494,8 @@ FILES = [
 
 WORKFLOW = [
     ("Once per project", ["qargi project template acme > acme.json   # edit it", "qargi project init acme --answers acme.json",
-                          "qargi provision plan acme-dev    # then apply it with --plan and --approved"]),
-    ("One task, cloud", ['qargi send acme-dev "$BRIEF" --label rename-verb --asked "use the cloud dev agent"',
+                          "qargi provision plan acme-build    # then apply it with --plan and --approved"]),
+    ("One task, cloud", ['qargi send acme-build "$BRIEF" --label rename-verb --asked "use the cloud builder"',
                          "qargi watch SID    # in the background", "qargi collect SID ./run", "qargi review check ./run"]),
     ("A team", ["qargi team brief acme code-docs --task \"rename the verb\" --done \"make test\" --base develop",
                 "qargi lead status acme", "qargi team check ./run"]),

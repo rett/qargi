@@ -2,7 +2,7 @@
 """Canon planner: pure functions from a store's memories to a list of steps.
 
 Subcommands (all read JSON lines of {"id","path","content"} from --store and print JSON):
-  plan    --kind memory|reference --project P --roles dev,docs --default-role R --store F --seed D
+  plan    --kind memory|reference --project P --roles build,write --default-role R --store F --seed D
   check   --kind K --project P --roles ... --store F   (structure, note format, indexes, hygiene)
   import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.

@@ -49,10 +49,10 @@ esac
 EOS
 chmod 755 "$T/bin/"*; export PATH=$T/bin:$PATH
 jq -n '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
-  roles:{dev:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
-         docs:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
+  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
+         write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
   lead:{model:"claude-opus-5-5",effort:"high",push:{local:true}},
-  teams:{t:{members:["dev","docs"]}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
+  teams:{t:{members:["build","write"]}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
 jq -n '{"alpha-lead":{location:"cloud",deployment_id:"depl_L",environment_id:"env_1",agent:{id:"agent_L",version:1,version_pinned:1}}}' > "$T/c/instances.json"
 printf '%s' "$TOK" > "$T/tokfile"; echo y > "$T/yes"; : > "$T/out"
 export QARGI_TTY_IN=$T/yes QARGI_TTY_OUT=$T/out

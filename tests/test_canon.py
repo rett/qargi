@@ -26,17 +26,17 @@ def write(files):
     return f.name
 
 
-def run(cmd, kind, files, roles="dev,docs"):
+def run(cmd, kind, files, roles="build,write"):
     st = write(files)
     args = [sys.executable, os.path.join(LIB, "canon.py"), cmd, "--kind", kind, "--project", "demo", "--roles", roles, "--store", st]
     if cmd == "plan":
-        args += ["--default-role", "dev", "--seed", SEED, "--today", TODAY]
+        args += ["--default-role", "build", "--seed", SEED, "--today", TODAY]
     r = subprocess.run(args, capture_output=True, text=True)
     os.unlink(st)
     return r
 
 
-def plan(kind, files, roles="dev,docs"):
+def plan(kind, files, roles="build,write"):
     return json.loads(run("plan", kind, files, roles).stdout)
 
 
@@ -46,7 +46,7 @@ def apply_plan(files, p):
     return {k: v["content"] for k, v in out.items()}
 
 
-def converge(kind, files, roles="dev,docs"):
+def converge(kind, files, roles="build,write"):
     p = plan(kind, files, roles)
     after = apply_plan(files, p)
     again = plan(kind, after, roles)
@@ -55,7 +55,7 @@ def converge(kind, files, roles="dev,docs"):
 
 
 class Canon(unittest.TestCase):
-    def assertConverges(self, kind, files, roles="dev,docs"):
+    def assertConverges(self, kind, files, roles="build,write"):
         p, after, again, chk = converge(kind, files, roles)
         self.assertEqual(again["from_version"], C.LATEST, again)
         self.assertEqual(again["ops"], [], "second plan must be a no-op: %s" % again["ops"])
@@ -78,15 +78,15 @@ class Canon(unittest.TestCase):
     def test_legacy_reference_numbers_become_names(self):
         files = {"/README.md": "# idx\n01-rules/rules.md\n", "/01-rules/rules.md": "# R\n\nsee 02-workflow/w.md\n", "/02-workflow/w.md": "# W\n\nw\n"}
         p, after = self.assertConverges("reference", files)
-        self.assertIn("/roles/dev/rules/rules.md", after)
-        self.assertTrue(after["/roles/dev/rules/rules.md"].endswith("\nsee workflow/w.md\n"))
+        self.assertIn("/roles/build/rules/rules.md", after)
+        self.assertTrue(after["/roles/build/rules/rules.md"].endswith("\nsee workflow/w.md\n"))
 
     def test_draft_marker_is_migrated(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: reference\nproject: demo\nroles: dev docs\n",
-                 "/README.md": "r", "/shared/INDEX.md": "s", "/roles/dev/INDEX.md": "d", "/roles/docs/INDEX.md": "d",
-                 "/roles/dev/01-rules/rules.md": "# R\n\nx 01-rules y\n"}
+        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: reference\nproject: demo\nroles: build write\n",
+                 "/README.md": "r", "/shared/INDEX.md": "s", "/roles/build/INDEX.md": "d", "/roles/write/INDEX.md": "d",
+                 "/roles/build/01-rules/rules.md": "# R\n\nx 01-rules y\n"}
         p, after = self.assertConverges("reference", files)
-        self.assertTrue(after["/roles/dev/rules/rules.md"].endswith("\nx rules y\n"))
+        self.assertTrue(after["/roles/build/rules/rules.md"].endswith("\nx rules y\n"))
         self.assertIn("canon: 2", after["/CANON.md"])
 
     def test_interrupted_migration_resumes(self):
@@ -99,21 +99,21 @@ class Canon(unittest.TestCase):
         self.assertEqual(plan("memory", {"/stuff/x.md": "x"})["from_version"], "unknown")
 
     def test_role_added_after_the_fact(self):
-        _, after = self.assertConverges("memory", {}, roles="dev")
-        p = plan("memory", after, roles="dev,docs")
+        _, after = self.assertConverges("memory", {}, roles="build")
+        p = plan("memory", after, roles="build,write")
         self.assertEqual(p["from_version"], C.LATEST)
         paths = [o["path"] for o in p["ops"]]
-        self.assertIn("/roles/docs/INDEX.md", paths)
+        self.assertIn("/roles/write/INDEX.md", paths)
         self.assertIn("/CANON.md", paths)
         after2 = apply_plan(after, p)
-        self.assertEqual(run("check", "memory", after2, "dev,docs").returncode, 0)
-        self.assertIn("roles/docs/INDEX.md", after2["/README.md"])      # the README's role list follows
+        self.assertEqual(run("check", "memory", after2, "build,write").returncode, 0)
+        self.assertIn("roles/write/INDEX.md", after2["/README.md"])      # the README's role list follows
 
     def test_dropped_role_is_reported_not_removed(self):
-        _, after = self.assertConverges("memory", {}, roles="dev,docs")
-        after["/roles/docs/x.md"] = "x"
-        p = plan("memory", after, roles="dev")
-        self.assertTrue(any("docs" in n for n in p["notes"]))
+        _, after = self.assertConverges("memory", {}, roles="build,write")
+        after["/roles/write/x.md"] = "x"
+        p = plan("memory", after, roles="build")
+        self.assertTrue(any("write" in n for n in p["notes"]))
         self.assertFalse(any(o["op"] == "move" for o in p["ops"]))
 
     def test_conflict_goes_to_conflicts_not_overwritten(self):
@@ -176,25 +176,25 @@ class Canon(unittest.TestCase):
 
     def test_tools_and_indexes_are_not_notes(self):
         _, after = self.assertConverges("reference", {})
-        after["/roles/dev/tools/run.py"] = "print(1)\n"
-        after["/roles/dev/tools/README.md"] = "no header\n"
+        after["/roles/build/tools/run.py"] = "print(1)\n"
+        after["/roles/build/tools/README.md"] = "no header\n"
         r = run("check", "reference", after)
         self.assertNotIn("no Kind", r.stdout)
 
     def test_v1_store_gains_headers_and_keeps_bodies(self):
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n",
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n",
               "/README.md": "custom readme\n", "/_template.md": slurp(os.path.join(SEED, "v1", "_template.md")),
               "/shared/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| repos/demo/INDEX.md | d | x |\n",
-              "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x",
+              "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x",
               "/shared/repos/demo/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| pitfalls/a.md | a | x |\n",
               "/shared/repos/demo/pitfalls/a.md": "# a\n\nKind: pitfall\nApplies to: demo\n\nFact: f\n\nCheck: true\nVerified: %s by run7 on linux\n" % datetime.date.today().isoformat(),
-              "/roles/docs/project/history.md": "# History\n\nlines\n"}
+              "/roles/write/project/history.md": "# History\n\nlines\n"}
         p, after = self.assertConverges("memory", v1)
         self.assertEqual(p["from_version"], 1)
         a = after["/shared/repos/demo/pitfalls/a.md"]
         self.assertIn("Sources: run7, %s" % datetime.date.today().isoformat(), a)
         self.assertIn("Fact: f\n", a)
-        h = after["/roles/docs/project/history.md"]
+        h = after["/roles/write/project/history.md"]
         self.assertTrue(h.startswith("# History\n\nKind: history\nApplies to: demo\nSources: carried over"), h)
         self.assertTrue(h.endswith("\nlines\n"))
         self.assertIn("| Load |", after["/shared/INDEX.md"])
@@ -204,9 +204,9 @@ class Canon(unittest.TestCase):
 
     def test_unedited_v1_readme_is_replaced_without_conflict(self):
         text = slurp(os.path.join(SEED, "v1", "README.memory.md")).replace("{{PROJECT}}", "demo")
-        text = text.replace("{{ROLES}}", C.role_lines(["dev", "docs"]))
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n", "/README.md": text,
-              "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        text = text.replace("{{ROLES}}", C.role_lines(["build", "write"]))
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n", "/README.md": text,
+              "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
         p, after = self.assertConverges("memory", v1)
         self.assertFalse([k for k in after if k.startswith("/_conflicts/")])
         self.assertIn("Sources", after["/README.md"])
@@ -234,21 +234,21 @@ class Canon(unittest.TestCase):
         self.assertTrue(c.endswith(body.split("\n\n", 1)[1]))
 
     def test_customised_readme_survives_the_draft_chain(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: memory\nproject: demo\nroles: dev docs\n", "/README.md": "my custom readme\n",
-                 "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: memory\nproject: demo\nroles: build write\n", "/README.md": "my custom readme\n",
+                 "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
         p, after = self.assertConverges("memory", files)
         self.assertEqual(after["/_conflicts/%s/README.md" % TODAY], "my custom readme\n")
 
     def test_customised_template_is_kept_in_conflicts(self):
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: dev docs\n", "/_template.md": "mine\n", "/README.md": "r",
-              "/shared/INDEX.md": "x", "/roles/dev/INDEX.md": "x", "/roles/docs/INDEX.md": "x"}
+        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n", "/_template.md": "mine\n", "/README.md": "r",
+              "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
         p, after = self.assertConverges("memory", v1)
         self.assertEqual(after["/_conflicts/%s/_template.md" % TODAY], "mine\n")
         self.assertIn("Sources:", after["/_template.md"])
 
     def test_a_newer_marker_is_not_downgraded(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 5\nkind: memory\nproject: demo\nroles: dev\n", "/README.md": "r"}
-        p = plan("memory", files, roles="dev")
+        files = {"/CANON.md": "# Canon\n\ncanon: 5\nkind: memory\nproject: demo\nroles: build\n", "/README.md": "r"}
+        p = plan("memory", files, roles="build")
         self.assertEqual(p["from_version"], "unknown")
         self.assertEqual(p["ops"], [])
 
@@ -257,8 +257,8 @@ class Canon(unittest.TestCase):
         self.assertEqual(C.fix_index(t), "| Path | Purpose | Load |\n|---|---|---|\n| a.md | Path map of demo | Load when touching demo |\n")
 
     def test_role_readme_is_a_note_and_repo_rules_are_rules(self):
-        self.assertTrue(C.is_note("/roles/docs/maintainer/README.md"))
-        self.assertFalse(C.is_note("/roles/docs/tools/README.md"))
+        self.assertTrue(C.is_note("/roles/write/maintainer/README.md"))
+        self.assertFalse(C.is_note("/roles/write/tools/README.md"))
         self.assertTrue(C.is_note("/shared/tools/x.md"))
         self.assertEqual(C.kind_for("reference", "/shared/repos/demo/rules/x.md"), "rule")
 
@@ -273,7 +273,7 @@ class Canon(unittest.TestCase):
 
     def test_import_reports_an_underivable_kind(self):
         src = {"/README.md": "# i\n", "/07-project/notes.md": "# N\n\nx\n"}
-        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo", "--role", "docs",
+        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo", "--role", "write",
                               "--src", write(src), "--memory", write({}), "--reference", write({}), "--today", TODAY], capture_output=True, text=True)
         self.assertTrue(any("set Kind: by hand" in n for n in json.loads(out.stdout)["notes"]))
 
@@ -290,14 +290,14 @@ class Canon(unittest.TestCase):
         self.assertNotIn("always-loaded set", out)          # 6 KB is inside the budget
         after["/shared/rules/a.md"] = after["/shared/rules/a.md"] + "y" * 4000
         out = run("check", "reference", after).stdout
-        self.assertIn("always-loaded set of the dev role", out)
+        self.assertIn("always-loaded set of the build role", out)
         self.assertIn("chars; split it", out)               # and the note itself is over 10000
 
     def test_import_adds_the_header(self):
         src = {"/README.md": "# idx\n", "/01-rules/rules.md": "# Rules\n\nSources: x\n\nbe nice\n"}
         s, m, r = write(src), write({}), write({})
         out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo",
-                              "--role", "docs", "--src", s, "--memory", m, "--reference", r, "--today", TODAY], capture_output=True, text=True)
+                              "--role", "write", "--src", s, "--memory", m, "--reference", r, "--today", TODAY], capture_output=True, text=True)
         imp = json.loads(out.stdout)
         c = [o for o in imp["reference"] if o["path"].endswith("rules/rules.md")][0]["content"]
         self.assertIn("Kind: rule\nApplies to: demo\n", c)

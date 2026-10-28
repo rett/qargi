@@ -12,7 +12,7 @@
 #        registry.sh remove NAME
 #        registry.sh budget NAME CENTS --asked "..."   (change the spend ceiling of the instance's deployment)
 #        registry.sh refresh-prompt NAME --asked "..." [--plan TOKEN --approved "..."]   (rebuild the agent's prompt from the current contract)
-#        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <project>-agent-<role>, -environment, -memory, -reference, <project>-deployment-<role>)
+#        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <project>-<role>, -environment, -memory, -reference, <project>-deployment-<role>)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true

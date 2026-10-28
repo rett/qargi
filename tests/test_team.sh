@@ -31,11 +31,11 @@ EOF
 chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
 
 proj() { jq -n --arg p "$1" --arg path "$T/repo" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$path,long_lived:["main"]},
-  roles:{dev:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:["groff"],skills:[]},
-         docs:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:["pdf"]},
+  roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:["groff"],skills:[]},
+         write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:["pdf"]},
          review:{base:"@dispatcher",push:{mode:"none"},model:"claude-opus-5-5",effort:"high",apt:["shellcheck"],skills:[]}},
   lead:{model:"claude-opus-5-5",effort:"high"},
-  teams:{"code-docs":{members:["dev","docs","review"],max_rounds:2,budget_cents:3000,standards:["shared/rules/rules.md"],scopes:{docs:["site/"]},done:{docs:"make check-site"}}},
+  teams:{"code-docs":{members:["build","write","review"],max_rounds:2,budget_cents:3000,standards:["shared/rules/rules.md"],scopes:{write:["site/"]},done:{write:"make check-site"}}},
   memory:{memory_store:"memstore_MEM",reference_store:"memstore_REF"},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha
 
@@ -44,51 +44,51 @@ $DA project validate alpha >/dev/null 2>&1 && ok "a project with a valid team pa
 bad() { # description jq-filter
   jq "$2" "$T/c/projects/alpha.json" > "$T/c/projects/badt.json"; sed -i 's/"project": "alpha"/"project": "badt"/' "$T/c/projects/badt.json"
   $DA project validate badt >/dev/null 2>&1 && no "$1 was accepted" || ok "$1 is refused"; rm -f "$T/c/projects/badt.json"; }
-bad "a team of one member" '.teams["code-docs"].members=["dev"]'
-bad "a team with a role the project does not enable" '.teams["code-docs"].members=["dev","test"]'
+bad "a team of one member" '.teams["code-docs"].members=["build"]'
+bad "a team with a role the project does not enable" '.teams["code-docs"].members=["build","test"]'
 bad "teams without a lead model" 'del(.lead)'
-bad "a role named lead" '.roles.lead=.roles.dev'
+bad "a role named lead" '.roles.lead=.roles.build'
 bad "standards that escape the store" '.teams["code-docs"].standards=["../x"]'
 bad "more than five revise rounds" '.teams["code-docs"].max_rounds=9'
 
 # --- the brief
 out=$($DA team brief alpha code-docs --task "Rename the verb" --done "make test" --base feature/x 2>&1)
-echo "$out" | grep -q "^TEAM: code-docs" && echo "$out" | grep -q "OUT_PREFIX: docs--" && echo "$out" | grep -q "BASE: gh-pages" && echo "$out" | grep -q "SCOPE: site/" && echo "$out" | grep -q "DONE: make check-site" \
+echo "$out" | grep -q "^TEAM: code-docs" && echo "$out" | grep -q "OUT_PREFIX: write--" && echo "$out" | grep -q "BASE: gh-pages" && echo "$out" | grep -q "SCOPE: site/" && echo "$out" | grep -q "DONE: make check-site" \
   && ok "the brief gives each member its base, scope, prefix and check" || no "brief: $out"
-echo "$out" | grep -A6 "role: review" | grep -q "BASE: feature/x" && ok "the reviewer reviews the developer's base" || no "review base"
-$DA team brief alpha code-docs --task t --done d >/dev/null 2>&1 && no "a brief without a base was made while the developer's base is @dispatcher" || ok "a brief needs --base while the developer's base is @dispatcher"
+echo "$out" | grep -A6 "role: review" | grep -q "BASE: feature/x" && ok "the review member reviews the build base" || no "review base"
+$DA team brief alpha code-docs --task t --done d >/dev/null 2>&1 && no "a brief without a base was made while the build base is @dispatcher" || ok "a brief needs --base while the build base is @dispatcher"
 $DA team brief alpha nosuch --task t --done d --base b >/dev/null 2>&1 && no "unknown team accepted" || ok "an unknown team is refused"
 
 # --- the lead's provisioning: members are the registered role agents, the prompt carries the team definition
 $DA provision plan --project alpha --role lead >/dev/null 2>&1 && no "a lead was planned without registered members" || ok "a lead needs its members provisioned first"
-jq -n '{"alpha-dev":{location:"cloud",agent:{id:"agent_DEV",version:3,version_pinned:3}},"alpha-docs":{location:"cloud",agent:{id:"agent_DOCS",version:2,version_pinned:2}},"alpha-review":{location:"cloud",agent:{id:"agent_REV",version:1}}}' > "$T/c/instances.json"
+jq -n '{"alpha-build":{location:"cloud",agent:{id:"agent_DEV",version:3,version_pinned:3}},"alpha-write":{location:"cloud",agent:{id:"agent_DOCS",version:2,version_pinned:2}},"alpha-review":{location:"cloud",agent:{id:"agent_REV",version:1}}}' > "$T/c/instances.json"
 $DA provision plan --project alpha --role lead >/dev/null 2>&1
 A=$T/s/provision/alpha-lead/agents/alpha-lead/agent.md
 grep -q "type: coordinator" "$A" && grep -q "id: agent_DOCS, version: 2" "$A" && grep -q "id: agent_REV, version: 1" "$A" && ok "the lead's members are the role agents, pinned to their versions" || no "multiagent block: $(sed -n 1,16p "$A")"
-grep -q "^name: alpha-agent-lead" "$A" && ok "the lead agent is named by the convention" || no "lead name"
+grep -q "^name: alpha-lead" "$A" && ok "the lead agent is named by the convention" || no "lead name"
 # front matter is YAML: a colon followed by a space in a plain scalar breaks it
 for f in "$A" "$T/s/provision/alpha-lead/agents/alpha-lead/deployment-standby.yaml"; do
   sed -n '/^---$/,/^---$/p;' "$f" | sed '1d;$d' | grep -E '^(name|description): .*: ' >/dev/null && no "a colon in a plain scalar in $(basename "$f")"
 done; ok "the rendered front matter has no colon in a plain scalar"
-grep -q "Team code-docs" "$A" && grep -q "Scopes: docs: site/" "$A" && grep -q "Standards for the reviewer: shared/rules/rules.md" "$A" && ok "the lead's prompt carries the team definition" || no "teams block"
+grep -q "Team code-docs" "$A" && grep -q "Scopes: write: site/" "$A" && grep -q "Standards for the reviewer: shared/rules/rules.md" "$A" && ok "the lead's prompt carries the team definition" || no "teams block"
 grep -q "never push" "$A" && ok "the lead's prompt says it never pushes" || no "lead push rule"
 grep -q "You are a qargi agent" "$A" && no "the lead got the worker contract" || ok "the lead does not get the worker contract"
-$DA provision plan --project alpha --role dev >/dev/null 2>&1; grep -q "multiagent" "$T/s/provision/alpha-dev/agents/alpha-dev/agent.md" && no "a worker got a multiagent block" || ok "a worker has no multiagent block"
+$DA provision plan --project alpha --role build >/dev/null 2>&1; grep -q "multiagent" "$T/s/provision/alpha-build/agents/alpha-build/agent.md" && no "a worker got a multiagent block" || ok "a worker has no multiagent block"
 
 # --- a team's outputs are split per member
 mkdir -p "$T/out"
 : > "$FAKE/files.jsonl"
 add() { printf '%s' "$2" > "$FAKE/blobs/$1"; jq -nc --arg i "$1" --arg n "$3" '{id:$i,filename:$n}' >> "$FAKE/files.jsonl"; }
-add f1 '{"status":"DONE"}' "/mnt/session/outputs/dev--manifest.json"
-add f2 'patch one' "/mnt/session/outputs/dev--0001-names-accept-periods.patch"
-add f3 '{"status":"DONE"}' "/mnt/session/outputs/docs--manifest.json"
-add f4 'patch docs' "/mnt/session/outputs/docs--0001-docs-describe.patch"
+add f1 '{"status":"DONE"}' "/mnt/session/outputs/build--manifest.json"
+add f2 'patch one' "/mnt/session/outputs/build--0001-names-accept-periods.patch"
+add f3 '{"status":"DONE"}' "/mnt/session/outputs/write--manifest.json"
+add f4 'patch write' "/mnt/session/outputs/write--0001-docs-describe.patch"
 add f5 '# Review\n\n## Findings\n\nnone\n' "/mnt/session/outputs/review--report.md"
 add f6 '{"status":"DONE"}' "/mnt/session/outputs/review--manifest.json"
 add f7 '{"team":"code-docs","members":[],"verdict":"accept","rounds":1}' "/mnt/session/outputs/lead--team.json"
 add f8 'summary' "/mnt/session/outputs/lead--summary.md"
 $DA collect sesn_x "$T/out" >/dev/null 2>&1
-[ -f "$T/out/dev/manifest.json" ] && [ -f "$T/out/dev/patches/0001-names-accept-periods.patch" ] && [ -f "$T/out/docs/patches/0001-docs-describe.patch" ] && [ -f "$T/out/review/report.md" ] && [ -f "$T/out/lead/team.json" ] \
+[ -f "$T/out/build/manifest.json" ] && [ -f "$T/out/build/patches/0001-names-accept-periods.patch" ] && [ -f "$T/out/write/patches/0001-docs-describe.patch" ] && [ -f "$T/out/review/report.md" ] && [ -f "$T/out/lead/team.json" ] \
   && ok "collect splits a team's files into one directory per member, patches under patches/" || no "split: $(cd "$T/out" && find . -type f | sort | tr '\n' ' ')"
 # a lead-only run (no member manifests) is collected too
 mkdir -p "$T/leadonly"; : > "$FAKE/files.jsonl"; add h1 '{"team":"check","members":[],"verdict":"accept"}' "/mnt/session/outputs/lead--team.json"; add h2 'ok' "/mnt/session/outputs/lead--summary.md"
@@ -105,15 +105,15 @@ echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"
 
 # the lead's own spelling (final_verdict) and a BLOCKED status are understood
-echo '{"team":"code-docs","members":[],"final_verdict":"accept","status":"BLOCKED","status_reason":"the dev series is too large to carry"}' > "$T/chk/lead/team.json"
+echo '{"team":"code-docs","members":[],"final_verdict":"accept","status":"BLOCKED","status_reason":"the build series is too large to carry"}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1)
-echo "$out" | grep -q "verdict accept, status BLOCKED" && echo "$out" | grep -q "the lead reports BLOCKED: the dev series is too large" && ! echo "$out" | grep -q "did not reach accept" && ok "final_verdict is read, and a BLOCKED status is reported with its reason" || no "final_verdict: $out"
+echo "$out" | grep -q "verdict accept, status BLOCKED" && echo "$out" | grep -q "the lead reports BLOCKED: the build series is too large" && ! echo "$out" | grep -q "did not reach accept" && ok "final_verdict is read, and a BLOCKED status is reported with its reason" || no "final_verdict: $out"
 
 # a member with no commits (blocked, or nothing to change) is not a failure in a team
-rm -rf "$T/chk2"; mkdir -p "$T/chk2/dev" "$T/chk2/lead"; echo '{"status":"DONE","commits":[]}' > "$T/chk2/dev/manifest.json"
+rm -rf "$T/chk2"; mkdir -p "$T/chk2/build" "$T/chk2/lead"; echo '{"status":"DONE","commits":[]}' > "$T/chk2/build/manifest.json"
 echo '{"team":"t","members":[],"verdict":"accept","rounds":0}' > "$T/chk2/lead/team.json"
 $DA team check "$T/chk2" >/dev/null 2>&1 && ok "a team member that returned no commits passes the team check" || no "empty member refused"
-$DA review check "$T/chk2/dev" >/dev/null 2>&1 && no "a single run with DONE and no commits passed" || ok "a single run that claims DONE with no commits still fails"
+$DA review check "$T/chk2/build" >/dev/null 2>&1 && no "a single run with DONE and no commits passed" || ok "a single run that claims DONE with no commits still fails"
 
 # --- the session-start hook
 printf '# alpha memory\nREADME\n' > "$FAKE/mem/~README.md"; printf '# Shared\n' > "$FAKE/mem/~shared~INDEX.md"

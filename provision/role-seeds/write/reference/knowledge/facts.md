@@ -1,4 +1,4 @@
-# Docs facts
+# Write facts
 
 Checked project behaviour that is easy to get wrong when documenting it. Each fact
 says how it was verified.

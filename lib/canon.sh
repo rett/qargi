@@ -21,7 +21,7 @@ SEED=$here/../provision/canon-seed
 
 verb=${1:-}; shift || true
 PROJECT=${1:-}; shift || true
-KIND='' DEFAULT_ROLE=dev PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
+KIND='' DEFAULT_ROLE=build PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
     --kind) KIND=$2; shift 2;;

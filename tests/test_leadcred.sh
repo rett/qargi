@@ -45,10 +45,10 @@ esac
 EOS
 chmod 755 "$T/bin/curl" "$T/bin/git" "$T/bin/ant"; export PATH=$T/bin:$PATH
 jq -n '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
-  roles:{dev:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
-         docs:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
+  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
+         write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
   lead:{model:"claude-opus-5-5",effort:"high"},
-  teams:{t:{members:["dev","docs"]}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
+  teams:{t:{members:["build","write"]}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
 printf '%s' "$TOK" > "$T/tokfile"
 S="$DA credential setup lead-push alpha"
 
@@ -77,11 +77,11 @@ $DA project validate alpha >/dev/null 2>&1 && ok "the project still validates" |
 $DA packs render alpha lead "$T/o" >/dev/null 2>&1
 jq -e '.[] | select(.name=="github") | .vault_ids == ["vlt_NEW"] and .tools.merge_pull_request == "always_ask" and .tools.create_pull_request == "always_allow" and (.tools | has("delete_file") | not) and (.tools | has("create_release") | not)' "$T/o/mcp.json" >/dev/null \
   && ok "the lead gets a fixed GitHub allowlist: merges asked, nothing destructive, no release tool" || no "mcp: $(cat "$T/o/mcp.json" 2>&1 | head -c 400)"
-$DA packs render alpha dev "$T/o2" >/dev/null 2>&1; jq -e 'length == 0' "$T/o2/mcp.json" >/dev/null && ok "a worker gets no GitHub tool" || no "worker mcp"
+$DA packs render alpha build "$T/o2" >/dev/null 2>&1; jq -e 'length == 0' "$T/o2/mcp.json" >/dev/null && ok "a worker gets no GitHub tool" || no "worker mcp"
 jq '.lead.push.merge="never"' "$T/c/projects/alpha.json" > "$T/x" && mv "$T/x" "$T/c/projects/alpha.json"
 $DA packs render alpha lead "$T/o3" >/dev/null 2>&1; jq -e '.[] | select(.name=="github") | .tools | has("merge_pull_request") | not' "$T/o3/mcp.json" >/dev/null && ok "with merge: never the merge tool is not offered at all" || no "merge never"
 jq '.lead.push.merge="ask"' "$T/c/projects/alpha.json" > "$T/x" && mv "$T/x" "$T/c/projects/alpha.json"
-jq -n '{"alpha-dev":{location:"cloud",agent:{id:"agent_D",version:1}},"alpha-docs":{location:"cloud",agent:{id:"agent_O",version:1}}}' > "$T/c/instances.json"
+jq -n '{"alpha-build":{location:"cloud",agent:{id:"agent_D",version:1}},"alpha-write":{location:"cloud",agent:{id:"agent_O",version:1}}}' > "$T/c/instances.json"
 $DA provision plan --project alpha --role lead >/dev/null 2>&1
 A=$T/s/provision/alpha-lead/agents/alpha-lead
 grep -q "mcp_toolset" "$A/agent.md" && grep -q "merge_pull_request" "$A/agent.md" && grep -q "always_ask" "$A/agent.md" && grep -q "vault_ids: \[vlt_NEW\]" "$A/deployment-standby.yaml" && ok "a newly provisioned lead carries the tool, the merge policy and the vault" || no "lead render: $(grep -c . "$A/agent.md")"

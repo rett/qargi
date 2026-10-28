@@ -21,7 +21,7 @@
   ],
   "role_index": "INDEX.md",
   "skills": {
-    "dev": {
+    "build": {
       "anthropic": [],
       "custom": []
     },
@@ -33,7 +33,7 @@
       "anthropic": [],
       "custom": []
     },
-    "docs": {
+    "write": {
       "anthropic": [
         "pdf"
       ],

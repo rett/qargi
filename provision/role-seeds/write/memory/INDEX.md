@@ -1,6 +1,6 @@
-# docs memory index
+# write memory index
 
-Memory for the docs role only. Paths are relative to `roles/docs/`.
+Memory for the write role only. Paths are relative to `roles/write/`.
 
 | Path | Purpose | Load |
 |---|---|---|

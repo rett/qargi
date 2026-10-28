@@ -13,7 +13,7 @@
     "render"
    ],
    "roles": {
-    "docs": "recommended"
+    "write": "recommended"
    },
    "stack": [],
    "risk": "medium",
@@ -36,7 +36,7 @@
     "documents"
    ],
    "roles": {
-    "docs": "optional"
+    "write": "optional"
    },
    "stack": [],
    "risk": "medium",
@@ -58,7 +58,7 @@
     "csv"
    ],
    "roles": {
-    "docs": "optional",
+    "write": "optional",
     "review": "optional"
    },
    "stack": [],
@@ -83,7 +83,7 @@
     "testing"
    ],
    "roles": {
-    "docs": "recommended",
+    "write": "recommended",
     "test": "optional",
     "review": "optional"
    },
@@ -131,8 +131,8 @@
    ],
    "roles": {
     "review": "recommended",
-    "docs": "optional",
-    "dev": "optional"
+    "write": "optional",
+    "build": "optional"
    },
    "stack": [
     "actions"
@@ -169,7 +169,7 @@
     "bash"
    ],
    "roles": {
-    "dev": "recommended",
+    "build": "recommended",
     "test": "recommended",
     "review": "optional"
    },
@@ -196,7 +196,7 @@
     "manual"
    ],
    "roles": {
-    "dev": "recommended",
+    "build": "recommended",
     "test": "optional"
    },
    "stack": [
@@ -220,8 +220,8 @@
     "json"
    ],
    "roles": {
-    "dev": "recommended",
-    "docs": "optional",
+    "build": "recommended",
+    "write": "optional",
     "review": "optional",
     "test": "optional",
     "lead": "optional"
@@ -247,7 +247,7 @@
     "interactive"
    ],
    "roles": {
-    "dev": "recommended",
+    "build": "recommended",
     "test": "recommended"
    },
    "stack": [
@@ -272,8 +272,8 @@
     "lint"
    ],
    "roles": {
-    "docs": "optional",
-    "dev": "optional",
+    "write": "optional",
+    "build": "optional",
     "review": "optional"
    },
    "stack": [
@@ -324,9 +324,9 @@
     "poll"
    ],
    "roles": {
-    "dev": "necessary",
+    "build": "necessary",
     "test": "necessary",
-    "docs": "recommended",
+    "write": "recommended",
     "review": "optional"
    },
    "stack": [],
@@ -350,7 +350,7 @@
     "documentation"
    ],
    "roles": {
-    "docs": "optional",
+    "write": "optional",
     "review": "optional"
    },
    "stack": [],
@@ -372,7 +372,7 @@
     "search"
    ],
    "roles": {
-    "docs": "optional",
+    "write": "optional",
     "lead": "optional"
    },
    "stack": [],

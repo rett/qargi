@@ -19,17 +19,17 @@ else:
 '''
 
 CATALOG = {"format": 1, "tools": [
-    {"id": "skill-demo", "kind": "skill", "name": "demo", "summary": "A demo skill for documents", "tags": ["documents", "pdf"], "roles": {"docs": "recommended"},
+    {"id": "skill-demo", "kind": "skill", "name": "demo", "summary": "A demo skill for documents", "tags": ["documents", "pdf"], "roles": {"write": "recommended"},
      "stack": [], "risk": "low", "install": {"dir": "@SKILLDIR@", "name": "demo"}, "scope_hint": "project-role"},
     {"id": "mcp-demo", "kind": "mcp", "name": "demo-mcp", "summary": "Read a demo service", "tags": ["service"], "roles": {"review": "optional"}, "stack": [], "risk": "medium",
      "install": {"name": "demo-mcp", "url": "https://mcp.example.net/demo", "tools": {"read_item": "always_allow"}, "vault_ids": []}, "scope_hint": "user-role"},
-    {"id": "pkg-lint", "kind": "package", "name": "shellcheck", "summary": "Lint shell scripts", "tags": ["lint", "shell"], "roles": {"dev": "recommended", "test": "optional"},
+    {"id": "pkg-lint", "kind": "package", "name": "shellcheck", "summary": "Lint shell scripts", "tags": ["lint", "shell"], "roles": {"build": "recommended", "test": "optional"},
      "stack": ["go"], "risk": "low", "install": {"manager": "apt", "packages": ["shellcheck", "jq"]}, "scope_hint": "project-role"},
-    {"id": "pkg-have", "kind": "package", "name": "groff", "summary": "Man pages", "tags": ["man"], "roles": {"dev": "recommended"}, "stack": [], "risk": "low",
+    {"id": "pkg-have", "kind": "package", "name": "groff", "summary": "Man pages", "tags": ["man"], "roles": {"build": "recommended"}, "stack": [], "risk": "low",
      "install": {"manager": "apt", "packages": ["groff"]}},
-    {"id": "pkg-rust", "kind": "package", "name": "cargo-audit", "summary": "Audit Rust deps", "tags": ["rust"], "roles": {"dev": "recommended"}, "stack": ["rust"], "risk": "low",
+    {"id": "pkg-rust", "kind": "package", "name": "cargo-audit", "summary": "Audit Rust deps", "tags": ["rust"], "roles": {"build": "recommended"}, "stack": ["rust"], "risk": "low",
      "install": {"manager": "apt", "packages": ["cargo"]}},
-    {"id": "agent-wait", "kind": "agent-tool", "name": "Monitor", "summary": "Wait for a detached command", "tags": ["wait"], "roles": {"dev": "necessary"}, "stack": [],
+    {"id": "agent-wait", "kind": "agent-tool", "name": "Monitor", "summary": "Wait for a detached command", "tags": ["wait"], "roles": {"build": "necessary"}, "stack": [],
      "risk": "low", "install": {"target": "local", "tool": "Monitor"}, "scope_hint": "user"},
 ]}
 
@@ -46,8 +46,8 @@ class Env(unittest.TestCase):
         ans = json.loads(tpl)
         ans["repo"]["path"] = self.repo
         ans["repo"]["url"] = "https://github.com/example/alpha"
-        ans["roles"]["dev"]["apt"] = ["groff"]
-        ans["roles"]["review"] = dict(ans["roles"]["dev"], apt=[], model="claude-opus-5-5")
+        ans["roles"]["build"]["apt"] = ["groff"]
+        ans["roles"]["review"] = dict(ans["roles"]["build"], apt=[], model="claude-opus-5-5")
         self.w(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(ans))
         self.w(os.path.join(self.conf, "instances.json"), "{}")
         self.catalog = os.path.join(self.t, "catalog.json")
@@ -90,8 +90,8 @@ class Search(Env):
         self.assertNotIn("pkg-lint", r.stdout)
         self.assertIn("pkg-lint", self.q(["search", "lint", "--kind", "package"]).stdout)
         self.assertNotIn("skill-demo", self.q(["search", "documents", "--kind", "package"]).stdout)
-        self.assertIn("agent-wait", self.q(["search", "wait", "--role", "dev"]).stdout)
-        self.assertNotIn("agent-wait", self.q(["search", "wait", "--role", "docs"]).stdout)
+        self.assertIn("agent-wait", self.q(["search", "wait", "--role", "build"]).stdout)
+        self.assertNotIn("agent-wait", self.q(["search", "wait", "--role", "write"]).stdout)
         self.assertIn("Nothing found", self.q(["search", "zzzz"]).stdout)
 
     def test_online_adds_the_registries_and_marks_them_unreviewed(self):
@@ -117,17 +117,17 @@ class Search(Env):
 
 class Recommend(Env):
     def test_ranks_by_role_and_stack_and_leaves_out_what_the_role_has(self):
-        r = self.q(["recommend", "alpha", "--role", "dev"])
+        r = self.q(["recommend", "alpha", "--role", "build"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("go", r.stdout.splitlines()[0])
         out = r.stdout
         self.assertLess(out.index("agent-wait"), out.index("pkg-lint"))          # necessary first
         self.assertIn("(have)", [l for l in out.splitlines() if "pkg-have" in l][0])
         self.assertNotIn("pkg-rust", out)                                          # needs a stack the repository lacks
-        self.assertNotIn("skill-demo", out)                                        # a docs tool
+        self.assertNotIn("skill-demo", out)                                        # a write tool
 
     def test_the_project_is_implied_inside_its_repository(self):
-        r = self.q(["recommend", "--role", "docs"], cwd=self.repo)
+        r = self.q(["recommend", "--role", "write"], cwd=self.repo)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("skill-demo", r.stdout)
 
@@ -156,18 +156,18 @@ class Install(Env):
 
     def test_a_skill_goes_through_the_review_the_approval_and_the_scope(self):
         # continue, approve the review, scope by name, then project and role come from the options
-        r = self.q(["install", "skill-demo", "--project", "alpha", "--role", "docs"], answers=["y", "y", "project-role"])
+        r = self.q(["install", "skill-demo", "--project", "alpha", "--role", "write"], answers=["y", "y", "project-role"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("== review of skill demo", r.stdout)
         self.assertTrue(os.path.exists(os.path.join(self.conf, "packs", "skills", "demo", "SKILL.md")))
         links = json.loads(self.rd(os.path.join(self.conf, "packs", "links.json")))["links"]
-        self.assertEqual(links, [{"pack": "skill:demo", "scope": "project-role", "project": "alpha", "role": "docs"}])
+        self.assertEqual(links, [{"pack": "skill:demo", "scope": "project-role", "project": "alpha", "role": "write"}])
         audit = self.rd(os.path.join(self.state, "audit.log"))
         self.assertIn("interactive: confirmed at the terminal", audit)
         self.assertIn("skill-import", audit)
 
     def test_declining_the_review_stores_nothing(self):
-        r = self.q(["install", "skill-demo", "--project", "alpha", "--role", "docs"], answers=["y", "n"])
+        r = self.q(["install", "skill-demo", "--project", "alpha", "--role", "write"], answers=["y", "n"])
         self.assertIn("Not stored", r.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.conf, "packs", "skills", "demo")))
 
@@ -189,11 +189,11 @@ class Install(Env):
         self.assertIn("credential", r.stdout)
 
     def test_a_package_is_added_to_the_roles_apt_list(self):
-        r = self.q(["install", "pkg-lint", "--project", "alpha", "--role", "dev"], answers=["y", "y"])
+        r = self.q(["install", "pkg-lint", "--project", "alpha", "--role", "build"], answers=["y", "y"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        apt = json.loads(self.rd(os.path.join(self.conf, "projects", "alpha.json")))["roles"]["dev"]["apt"]
+        apt = json.loads(self.rd(os.path.join(self.conf, "projects", "alpha.json")))["roles"]["build"]["apt"]
         self.assertEqual(apt, ["groff", "shellcheck", "jq"])
-        r = self.q(["install", "pkg-have", "--project", "alpha", "--role", "dev"], answers=["y"])
+        r = self.q(["install", "pkg-have", "--project", "alpha", "--role", "build"], answers=["y"])
         self.assertIn("Already there", r.stdout)
 
     def test_an_agent_tool_edits_the_local_definition_once(self):
@@ -204,19 +204,22 @@ class Install(Env):
         self.assertIn("already", r.stdout)
         self.assertEqual(self.rd(self.agent).count("Monitor"), 1)
 
-    def test_per_role_agent_files_are_edited_by_role(self):
+    def test_member_files_are_edited_by_ability(self):
         d = os.path.join(self.t, "agents")
-        for n in ("qargi-dev", "qargi-review", "qargi-docs", "qargi-test"):
+        members = {"forge": ["build", "test"], "scribe": ["write"], "judge": ["review"]}
+        for n in members:
             self.w(os.path.join(d, n + ".md"), "---\nname: %s\ntools: Bash, Read\n---\nbody\n" % n)
-        env = dict(self.env, QARGI_AGENTS_DIR=d)
+        self.w(os.path.join(self.conf, "agents.json"), json.dumps({n: {"abilities": a, "file": os.path.join(d, n + ".md"), "seq": k}
+                                                                   for k, (n, a) in enumerate(members.items())}))
+        env = dict(self.env)
         env.pop("QARGI_AGENT_FILE")
         self.env = env
         r = self.q(["install", "agent-wait", "--role", "review"], answers=["y", "y"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("Monitor", self.rd(os.path.join(d, "qargi-review.md")))
-        self.assertNotIn("Monitor", self.rd(os.path.join(d, "qargi-dev.md")))
+        self.assertIn("Monitor", self.rd(os.path.join(d, "judge.md")))
+        self.assertNotIn("Monitor", self.rd(os.path.join(d, "forge.md")))
         r = self.q(["install", "agent-wait"], answers=["y", "y"])
-        for n in ("qargi-dev", "qargi-docs", "qargi-test", "qargi-review"):
+        for n in members:
             self.assertEqual(self.rd(os.path.join(d, n + ".md")).count("Monitor"), 1, n)
 
     def test_answering_no_changes_nothing(self):

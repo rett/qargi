@@ -33,7 +33,7 @@ while read -r f; do
 done <<<"$list"
 
 # A team's members share one outputs directory and the listing carries base names only, so each
-# member prefixes its files with its role (dev--manifest.json). Split them back into one
+# member prefixes its files with its role (build--manifest.json). Split them back into one
 # directory per member, patches under patches/.
 for f in "$dir"/*--*; do
   [ -f "$f" ] || continue

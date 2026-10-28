@@ -6,7 +6,7 @@ kind, fixture = sys.argv[1], sys.argv[2]
 here = os.path.dirname(os.path.abspath(__file__))
 canon = os.path.join(here, "..", "lib", "canon.py")
 seed = os.path.join(here, "..", "provision", "canon-seed")
-roles = "dev,docs,review,test"
+roles = "build,write,review,test"
 
 def run(*args):
     r = subprocess.run([sys.executable, canon, *args], capture_output=True, text=True)
@@ -26,7 +26,7 @@ for l in open(fixture):
 tmp = tempfile.mkdtemp()
 st = os.path.join(tmp, "s.jsonl")
 write(mems, st)
-rc, out = run("plan", "--kind", kind, "--project", "tacctl", "--roles", roles, "--default-role", "dev", "--store", st, "--seed", seed, "--today", "2026-10-27")
+rc, out = run("plan", "--kind", kind, "--project", "myproject", "--roles", roles, "--default-role", "build", "--store", st, "--seed", seed, "--today", "2026-10-27")
 plan = json.loads(out)
 print("from %s to %s: %d steps, %d notes" % (plan["from_version"], plan["to_version"], len(plan["ops"]), len(plan["notes"])))
 byid = {v: k for k, v in mems_ids.items()}
@@ -38,10 +38,10 @@ for op in plan["ops"]:
     elif op["op"] in ("update", "marker"):
         mems[op["path"]] = op["content"]
 write(mems, st)
-rc, out = run("plan", "--kind", kind, "--project", "tacctl", "--roles", roles, "--default-role", "dev", "--store", st, "--seed", seed, "--today", "2026-10-27")
+rc, out = run("plan", "--kind", kind, "--project", "myproject", "--roles", roles, "--default-role", "build", "--store", st, "--seed", seed, "--today", "2026-10-27")
 again = json.loads(out)
 assert again["from_version"] == 1 and not again["ops"], "second plan is not a no-op: %s" % json.dumps(again)[:300]
-rc, out = run("check", "--kind", kind, "--project", "tacctl", "--roles", roles, "--store", st)
+rc, out = run("check", "--kind", kind, "--project", "myproject", "--roles", roles, "--store", st)
 print(out.strip().splitlines()[-1])
 assert rc == 0, out
 print("OK: idempotent and conformant")

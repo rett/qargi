@@ -21,14 +21,19 @@ ROOT = os.path.dirname(HERE)
 CATALOG = os.environ.get("QARGI_CATALOG") or os.path.join(ROOT, "catalog", "tools.json")
 CONF = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
 STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
-AGENTS_DIR = os.environ.get("QARGI_AGENTS_DIR") or os.path.join(ROOT, "agents")
-ROLE_AGENTS = {"dev": ["qargi-dev"], "docs": ["qargi-docs"], "review": ["qargi-review"], "test": ["qargi-test"]}
+MEMBERS = os.path.join(CONF, "agents.json")   # the members you named (qargi agent add)
 
 
 def agent_files(role=None):
-    """The local agent definitions a tool reaches: one role's, or all of them."""
-    names = ROLE_AGENTS.get(role) or [n for ns in ROLE_AGENTS.values() for n in ns]
-    return [f for f in (os.path.join(AGENTS_DIR, n + ".md") for n in names) if os.path.exists(f)]
+    """The definitions of the members a tool reaches: the members that serve one ability, or all of them."""
+    try:
+        with open(MEMBERS) as f:
+            members = json.load(f)
+    except (OSError, ValueError):
+        members = {}
+    files = [v.get("file", "") for _, v in sorted(members.items(), key=lambda kv: kv[1].get("seq", 0))
+             if not role or role in (v.get("abilities") or [])]
+    return [f for f in files if f and os.path.exists(f)]
 
 
 def tools_line(path):
@@ -401,8 +406,8 @@ def pick_scope(e, opts, project, role):
         project = choose("Which project? (%s)" % ", ".join(project_names()), project_names(), infer_project() or (project_names() or [""])[0])
     if scope in ("user-role", "project-role") and not role:
         answers = project_answers(project) if project else {}
-        roles = list((answers.get("roles") or {})) or ["dev", "docs", "review", "test"]
-        role = choose("Which role? (%s)" % ", ".join(roles), roles, "dev")
+        roles = list((answers.get("roles") or {})) or ["build", "write", "review", "test"]
+        role = choose("Which role? (%s)" % ", ".join(roles), roles, "build")
     return scope, project, role
 
 
@@ -505,7 +510,7 @@ def cmd_install(args):
         project = opts.get("project") or choose("Which project? (%s)" % ", ".join(project_names()), project_names(), infer_project() or (project_names() or [""])[0])
         answers = project_answers(project)
         roles = list((answers.get("roles") or {}))
-        role = opts.get("role") or choose("Which role's sandbox? (%s)" % ", ".join(roles), roles, "dev")
+        role = opts.get("role") or choose("Which role's sandbox? (%s)" % ", ".join(roles), roles, "build")
         cur = list(((answers.get("roles") or {}).get(role) or {}).get("apt") or [])
         new = cur + [p for p in inst.get("packages", []) if p not in cur]
         print("\nroles.%s.apt: %s -> %s" % (role, json.dumps(cur), json.dumps(new)))
@@ -524,7 +529,7 @@ def cmd_install(args):
         tool = inst["tool"]
         files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"))
         if not files:
-            die("no local agent definition found in %s" % AGENTS_DIR)
+            die("no member serves that ability yet: qargi agent add NAME first")
         todo = [f for f in files if tool not in (tools_line(f) or [tool])]
         if not todo:
             print("Every local agent in scope has %s already. Nothing changed." % tool)
@@ -533,7 +538,7 @@ def cmd_install(args):
         for f in todo:
             cur = tools_line(f)
             print("%s\n  tools: %s\n       -> %s" % (f, ", ".join(cur), ", ".join(cur + [tool])))
-        print("This changes what those local qargi agents may call (the git wrapper, the guard hook and `qargi local verify` still apply).")
+        print("This changes what those members may call (the git wrapper, the guard hook and `qargi local verify` still apply).")
         if not confirm("Edit %d file(s)?" % len(todo)):
             print("Nothing changed.")
             return 1
@@ -544,7 +549,7 @@ def cmd_install(args):
             cur = [t.strip() for t in m.group(2).split(",") if t.strip()]
             with open(f, "w") as fh:
                 fh.write(text[:m.start(2)] + ", ".join(cur + [tool]) + text[m.end(2):])
-        print("Done. Commit it in the qargi repository; new local agents get the tool.")
+        print("Done. A member you add later starts from the shipped definition, which already has the tools qargi relies on.")
         return 0
     die("cannot install a '%s' entry" % kind)
 

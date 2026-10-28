@@ -108,10 +108,11 @@ runs it, and so does `qargi memory lint`.
 
 ## Role rules
 
-- The role is named in the agent's prompt. An agent loads `/README.md`,
+- The role is the ability of the task: named in a cloud agent's prompt, and in a
+  member's task block (`ABILITY: build`). An agent loads `/README.md`,
   `/shared/INDEX.md` and `/roles/<its role>/INDEX.md`, then only what the task
   needs, and never reads or writes under another role's folder.
-- Roles come from the fixed list (`dev`, `review`, `docs`, `test`) and from the
+- Roles come from the fixed list (`build`, `review`, `write`, `test`, plus `lead`) and from the
   project's stored answers. A role folder for a role the project does not use is a
   deviation.
 - This isolation is hygiene, not a trust boundary: a store mounts whole, so an agent can
@@ -127,8 +128,10 @@ runs it, and so does `qargi memory lint`.
 ## Skillset
 
 Per role, `canon/layout.json` lists the Anthropic skills the agent carries (`pdf`
-for docs) and the custom skills the tool ships for that role (none yet; the docs
-role's generic methodology skills are the next addition). The project's stored
+for write) and the custom skills the tool ships for that role. The ability itself
+is defined by the skill `qargi-<role>` (qargi-build, qargi-write, qargi-review,
+qargi-test): a member loads it when the task block names the ability, and a cloud
+agent carries its text in the prompt. The project's stored
 answers choose among them and `qargi provision` attaches them to the agent.
 Checking an existing agent's skills against its role is not done by the
 reconciler yet; the layout manifest is where that will read from.

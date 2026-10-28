@@ -1,4 +1,4 @@
-# Dev rules
+# Build rules
 
 Kind: rule
 Applies to: any

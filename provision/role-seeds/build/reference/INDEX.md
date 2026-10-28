@@ -1,6 +1,6 @@
-# dev reference index
+# build reference index
 
-What the dev role follows, on top of `shared/INDEX.md`. Paths are relative to `roles/dev/`.
+What the build role follows, on top of `shared/INDEX.md`. Paths are relative to `roles/build/`.
 
 | Path | Purpose | Load |
 |---|---|---|

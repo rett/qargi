@@ -68,7 +68,7 @@ class Env(unittest.TestCase):
                         PATH=os.path.join(self.t, "bin") + os.pathsep + os.environ["PATH"])
         self.env.pop("QARGI_PROJECT", None)
         self.seed(self.conf, self.state)
-        self.put_store(self.fake, "memstore_A", {"/README.md": "memory readme", "/roles/dev/x.md": "dev note"})
+        self.put_store(self.fake, "memstore_A", {"/README.md": "memory readme", "/roles/build/x.md": "build note"})
         self.put_store(self.fake, "memstore_B", {"/README.md": "reference readme"})
 
     def tearDown(self):
@@ -79,13 +79,13 @@ class Env(unittest.TestCase):
         w(os.path.join(conf, "projects", "alpha.json"), json.dumps({"project": "alpha", "repo": {"path": "/x/alpha"}, "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}))
         w(os.path.join(conf, "projects", "beta.json"), json.dumps({"project": "beta", "memory": {}}))
         w(os.path.join(conf, "instances.json"), json.dumps({
-            "alpha-dev": {"location": "cloud", "agent": {"id": "agent_1", "version_pinned": 3}, "deployment_id": "depl_1", "environment_id": "env_1"},
-            "alpha-docs": {"location": "cloud", "agent": {"id": "agent_2"}, "deployment_id": "depl_2", "environment_id": "env_1"},
-            "beta-dev": {"location": "local"}}))
+            "alpha-build": {"location": "cloud", "agent": {"id": "agent_1", "version_pinned": 3}, "deployment_id": "depl_1", "environment_id": "env_1"},
+            "alpha-write": {"location": "cloud", "agent": {"id": "agent_2"}, "deployment_id": "depl_2", "environment_id": "env_1"},
+            "beta-build": {"location": "local"}}))
         w(os.path.join(conf, "profiles", "alpha.md"), "profile text")
         w(os.path.join(conf, "packs", "links.json"), '{"links":[]}')
         w(os.path.join(conf, "credentials", "alpha-lead-push"), "TOKEN-VALUE-1234")
-        w(os.path.join(state, "sessions.json"), json.dumps({"sesn_1": {"instance": "alpha-dev", "status": "idle"}}))
+        w(os.path.join(state, "sessions.json"), json.dumps({"sesn_1": {"instance": "alpha-build", "status": "idle"}}))
         w(os.path.join(state, "audit.log"), '{"verb":"one"}\n{"verb":"two"}\n')
 
     def write(self, path, text):
@@ -147,9 +147,9 @@ class Export(Env):
         self.assertEqual(set(m), set(manifest["files"]))
         for p, data in m.items():
             self.assertEqual(hashlib.sha256(data).hexdigest(), manifest["files"][p]["sha256"])
-        for want in ("config/projects/alpha.json", "config/instances/alpha-dev.json", "config/profiles/alpha.md", "config/packs/links.json",
-                     "definitions/alpha-dev/agent.json", "definitions/alpha-docs/deployment.json", "definitions/alpha-dev/environment.json",
-                     "memories/alpha/memory/roles/dev/x.md", "memories/alpha/reference/README.md", "state/sessions/sesn_1.json", "state/audit.log"):
+        for want in ("config/projects/alpha.json", "config/instances/alpha-build.json", "config/profiles/alpha.md", "config/packs/links.json",
+                     "definitions/alpha-build/agent.json", "definitions/alpha-write/deployment.json", "definitions/alpha-build/environment.json",
+                     "memories/alpha/memory/roles/build/x.md", "memories/alpha/reference/README.md", "state/sessions/sesn_1.json", "state/audit.log"):
             self.assertIn(want, m)
         self.assertFalse(any(k.startswith("credentials/") for k in m), "credentials are not in the default selection")
         self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
@@ -266,9 +266,9 @@ class Import(Env):
         r = self.run_import(a, ["config,memories", "alpha", "", "", "y"], env=t)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         inst = jd(os.path.join(conf, "instances.json"))
-        self.assertEqual(sorted(inst), ["alpha-dev", "alpha-docs"])
+        self.assertEqual(sorted(inst), ["alpha-build", "alpha-write"])
         self.assertTrue(os.path.exists(os.path.join(conf, "profiles", "alpha.md")))
-        self.assertEqual(self.store_notes_at(fake, "memstore_A")["/roles/dev/x.md"], "dev note")
+        self.assertEqual(self.store_notes_at(fake, "memstore_A")["/roles/build/x.md"], "build note")
         self.assertIn('"verb": "import"', rd(os.path.join(state, "audit.log")))
         self.assertIn("interactive: confirmed at the terminal", rd(os.path.join(state, "audit.log")))
 
@@ -288,7 +288,7 @@ class Import(Env):
     def test_replace_removes_what_the_archive_lacks_only_after_typing_replace(self):
         a = self.export()
         t, conf, state, fake = self.target()
-        self.write(os.path.join(conf, "instances.json"), json.dumps({"alpha-old": {"location": "local"}, "alpha-dev": {"location": "local"}}))
+        self.write(os.path.join(conf, "instances.json"), json.dumps({"alpha-old": {"location": "local"}, "alpha-build": {"location": "local"}}))
         self.put_store(fake, "memstore_A", {"/stale.md": "stale", "/README.md": "other"})
         r = self.run_import(a, ["config,memories", "alpha", "3", "3", "no", "y"], env=t)
         self.assertNotEqual(r.returncode, 0)
@@ -297,7 +297,7 @@ class Import(Env):
         r = self.run_import(a, ["config,memories", "alpha", "3", "3", "replace", "y"], env=t)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         inst = jd(os.path.join(conf, "instances.json"))
-        self.assertEqual(sorted(inst), ["alpha-dev", "alpha-docs"])
+        self.assertEqual(sorted(inst), ["alpha-build", "alpha-write"])
         notes = self.store_notes_at(fake, "memstore_A")
         self.assertNotIn("/stale.md", notes)
         self.assertEqual(notes["/README.md"], "memory readme")
@@ -347,7 +347,7 @@ class Import(Env):
         r = self.qargi(["import", a, "--only", "config", "--project", "beta", "--mode", "overwrite", "--dry-run"], env=t)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("beta", r.stdout)
-        self.assertNotIn("alpha-dev", r.stdout)
+        self.assertNotIn("alpha-build", r.stdout)
 
 
 class Hostile(Env):

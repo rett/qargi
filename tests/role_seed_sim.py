@@ -8,14 +8,14 @@ here = os.path.dirname(os.path.abspath(__file__))
 canon = os.path.join(here, "..", "lib", "canon.py")
 seed = os.path.join(here, "..", "provision", "canon-seed")
 rs = os.path.join(here, "..", "provision", "role-seeds", role)
-roles = "dev,docs,review,test"
-roles = "dev,docs,review,test"
+roles = "build,write,review,test"
+roles = "build,write,review,test"
 sys.path.insert(0, os.path.join(here, "..", "lib"))
 import canon as C
 for kind, part in (("reference", "reference"), ("memory", "memory")):
     tmp = tempfile.mkdtemp(); st = os.path.join(tmp, "s.jsonl"); open(st, "w").close()
     r = subprocess.run([sys.executable, canon, "plan", "--kind", kind, "--project", "demo", "--roles", roles,
-                        "--default-role", "dev", "--store", st, "--seed", seed], capture_output=True, text=True)
+                        "--default-role", "build", "--store", st, "--seed", seed], capture_output=True, text=True)
     plan = json.loads(r.stdout)
     mems = C.simulate({}, plan["ops"])
     base = os.path.join(rs, part)

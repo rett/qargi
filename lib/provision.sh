@@ -5,8 +5,8 @@
 #   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
 #   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
-# NAME is <project>-<role> (--project P --role R, role defaults to dev; roles come
-# from a fixed list). The agent and the deployment are named <project>-agent-<role>
+# NAME is <project>-<role> (--project P --role R, role defaults to build; roles come
+# from a fixed list). The agent and the deployment are named <project>-<role>
 # and <project>-deployment-<role>; the environment, shared by every role of the
 # project, is <project>-environment and holds the packages of all enabled roles.
 # The memory stores belong to the project: <project>-memory (recipes) and <project>-reference. Existing ones are
@@ -26,7 +26,7 @@ TPL=$here/../provision/templates
 [ -d "$TPL" ] || die "templates not found next to the skill"
 
 verb=${1:-}; shift || true
-NAME='' PROJECT='' ROLE=dev
+NAME='' PROJECT='' ROLE=build
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
 PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
 while [ $# -gt 0 ]; do
