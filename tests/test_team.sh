@@ -66,6 +66,10 @@ $DA provision plan --project alpha --role lead >/dev/null 2>&1
 A=$T/s/provision/alpha-lead/agents/alpha-lead/agent.md
 grep -q "type: coordinator" "$A" && grep -q "id: agent_DOCS, version: 2" "$A" && grep -q "id: agent_REV, version: 1" "$A" && ok "the lead's members are the role agents, pinned to their versions" || no "multiagent block: $(sed -n 1,16p "$A")"
 grep -q "^name: alpha-agent-lead" "$A" && ok "the lead agent is named by the convention" || no "lead name"
+# front matter is YAML: a colon followed by a space in a plain scalar breaks it
+for f in "$A" "$T/s/provision/alpha-lead/agents/alpha-lead/deployment-standby.yaml"; do
+  sed -n '/^---$/,/^---$/p;' "$f" | sed '1d;$d' | grep -E '^(name|description): .*: ' >/dev/null && no "a colon in a plain scalar in $(basename "$f")"
+done; ok "the rendered front matter has no colon in a plain scalar"
 grep -q "Team code-docs" "$A" && grep -q "Scopes: docs: site/" "$A" && grep -q "Standards for the reviewer: shared/rules/rules.md" "$A" && ok "the lead's prompt carries the team definition" || no "teams block"
 grep -q "never push" "$A" && ok "the lead's prompt says it never pushes" || no "lead push rule"
 grep -q "You are a qargi agent" "$A" && no "the lead got the worker contract" || ok "the lead does not get the worker contract"
