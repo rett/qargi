@@ -30,7 +30,7 @@ recommended; do not assume answers:
    - `none` (the default for every role, always recommended): the agent returns
      patches; nothing is pushed unless the user asks.
    - `coordinator`: the agent returns patches; after review the coordinator
-     pushes one branch matching a pattern such as `docs/<slug>`, with the
+     pushes one branch matching a pattern such as `agent/<slug>`, with the
      user's go-ahead each time. Ask for the pattern.
    - `agent`: the agent itself may push branches matching the pattern with a
      credential. Only if the user insists; ask which credential (a vault id) and
@@ -38,7 +38,7 @@ recommended; do not assume answers:
      Warn that the tool cannot enforce this server-side.
    Never offer merging, tagging or pushing long-lived branches. `coordinator` and
    `agent` are offered only when the user wants them. If a role already behaves
-   that way (a docs agent that pushes `docs/<slug>`), keeping it is an explicit
+   that way (an agent that pushes its own branch), keeping it is an explicit
    choice the user makes and you record, with its token file and vault ids; it is
    never assumed.
 5. **Per role, model and effort**, extra apt packages, and Anthropic skills

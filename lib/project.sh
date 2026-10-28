@@ -16,13 +16,13 @@
 #
 #   none         the agent returns patches; nothing is pushed unless the user asks
 #   coordinator  the agent returns patches; after review the coordinator pushes a
-#                branch matching push.branch_pattern (e.g. docs/<slug>), with the
+#                branch matching push.branch_pattern (e.g. agent/<slug>), with the
 #                user's go-ahead each time
 #   agent        the agent itself may push branches matching push.branch_pattern,
 #                with the credential named in push.credential (a token read from
 #                push.credential_file when a session starts); never anything else.
 #                Choose it only on purpose, for example for a docs agent that
-#                already pushes docs/<slug> and should keep doing so.
+#                already pushes its own branch and should keep doing so.
 . "$(dirname "$0")/lib.sh"
 
 PROJ_DIR=$DA_CONF/projects
