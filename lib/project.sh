@@ -110,6 +110,7 @@ if lp:
             need(lp.get(k, "ask") in ("ask", "never"), "lead.push.%s: ask (the person confirms each one) or never; there is no automatic merge or release" % k)
         pat = lp.get("branch_pattern", "agent/*")
         need(isinstance(pat, str) and re.fullmatch(r"agent/[A-Za-z0-9._*-]*", pat or ""), "lead.push.branch_pattern: agent/ followed by a name or *")
+        need(lp.get("vault_id", "") in ("",) or re.fullmatch(r"vlt_[A-Za-z0-9]+", lp.get("vault_id", "")), "lead.push.vault_id: a vault id (set by qargi credential setup lead-push)")
         if lp.get("cloud") == "branches":
             cf2 = lp.get("credential_file", "")
             need(cf2, "lead.push.credential_file: a fine-grained token file (contents and pull requests write, this repository only) for the cloud lead")

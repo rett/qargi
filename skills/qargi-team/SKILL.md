@@ -39,5 +39,20 @@ Cloud verbs need `--asked "<the user's request>"`, and the cloud is used only wh
 
 `qargi team check DIR` runs the patch or report check on every member and reads the lead's
 `team.json`. A team that did not reach `accept` is not applied: read `lead/summary.md`, report the open
-findings to the user and let them decide. Apply each series on its own base with `/qargi-review`. Nothing
-is pushed: members never push, and a lead delivers patches.
+findings to the user and let them decide. Apply each series on its own base with `/qargi-review`.
+
+## Who pushes
+
+Only the lead, never a member, and only as the project's `lead.push` grant says (default: nothing).
+- **This session as lead:** with `lead.push.local`, it pushes `agent/*` branches and opens pull requests
+  without asking each time (the session-start autoload says so). Without the grant it asks before every push.
+- **A cloud or console lead:** with `lead.push.cloud: branches`, it has a GitHub tool with a fixed allowlist:
+  read tools, branch, file and pull-request writes unattended, `merge_pull_request` asked of the person by the
+  platform (a tool confirmation, answered in the console), nothing destructive. Set it up with
+  `qargi credential setup lead-push PROJECT` (a fine-grained token for the one repository, Contents and
+  Pull requests read and write, nothing else), then `qargi packs apply PROJECT-lead` and
+  `qargi instances refresh-prompt PROJECT-lead`; each shows its plan first.
+- **Merges and releases** always need the person's explicit approval for that pull request or release. The
+  GitHub tool cannot create releases; a release is made by this session after "release it".
+- Branch rulesets on the repository remain the backstop: protected branches and release tags refuse any token.
+

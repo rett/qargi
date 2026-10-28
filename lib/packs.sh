@@ -136,7 +136,18 @@ if [ "$KIND" = packs ]; then
         { [ -z "$want" ] || [ "$want" = "$(content_hash "$P")" ]; } || die "attached pack $e changed since it was approved (drift); review it and re-import"
         if [ "$k" = skill ]; then cp -r "$P" "$OUT/skills/$n"; rm -f "$OUT/skills/$n/.pack.json"; echo "$n" >> "$OUT/custom_skills.txt"
         else jq -c --slurpfile t "$P" '. + $t' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"; fi
-      done < <(effective "$PRJ" "$ROL");;
+      done < <(effective "$PRJ" "$ROL")
+      # The lead's GitHub tool, when the project grants a cloud push: a fixed allowlist, read tools and
+      # branch/commit/pull-request writes unattended, merges asked of the person, nothing destructive.
+      if [ "$ROL" = lead ] && [ "$(jq -r '.lead.push.cloud // "none"' "$DA_CONF/projects/$PRJ.json" 2>/dev/null)" = branches ]; then
+        vid=$(jq -r '.lead.push.vault_id // ""' "$DA_CONF/projects/$PRJ.json")
+        [ -n "$vid" ] || die "the lead has a cloud push grant but no vault: run qargi credential setup lead-push $PRJ"
+        gt=$(dirname "$(readlink -f "$0")")/../provision/templates/github-lead.json; [ -f "$gt" ] || gt=$(dirname "$(readlink -f "$0")")/provision/templates/github-lead.json
+        jq -c --arg v "$vid" --slurpfile g "$gt" '. + [($g[0] + {vault_ids: [$v]})]' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"
+        if [ "$(jq -r '.lead.push.merge // "ask"' "$DA_CONF/projects/$PRJ.json")" = never ]; then
+          jq -c 'map(if .name == "github" then del(.tools.merge_pull_request) else . end)' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"
+        fi
+      fi;;
     apply)
       INST=${ARGS[0]:-}; need_asked; ant_ok
       i=$(inst_get "$INST") || exit 1; [ "$(jq -r .location <<<"$i")" = cloud ] || die "apply is for cloud instances"

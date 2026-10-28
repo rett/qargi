@@ -67,3 +67,5 @@ has a budget). `/qargi-provision` reads these answers for model, effort, package
 skills, budget and stores; flags override them.
 
 Teams (optional): `lead` (model, effort) and `teams.<name>` (`members`, `max_rounds`, `budget_cents`, `standards`, `scopes`, `done`) define the teams `/qargi-team` runs; `lead` cannot be a role. Set them with `qargi project set`.
+
+Push grant for the lead (`lead.push`, default none): `local` (this session may push `agent/*` and open pull requests), `cloud: branches` (a cloud or console lead may, with a token file and a vault, set up by `qargi credential setup lead-push PROJECT`), `branch_pattern` (`agent/...`), `merge` and `release` (`ask` or `never`; never automatic). Only the lead ever pushes.
