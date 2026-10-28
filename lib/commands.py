@@ -36,7 +36,7 @@ APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words
 KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND", ("memory", "reference"))
 
 GROUPS = [
-    ("Set up", ["project", "provision", "instances", "skill", "tool", "packs"]),
+    ("Set up", ["project", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["start", "send", "status", "watch", "collect", "stop", "close", "mark", "track", "local"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -269,6 +269,34 @@ COMMANDS = {
                            opt("--allow-more-repos", "accept a token that can also write to other repositories"), ASKED, PLAN, APPROVED],
                           desc=("Checks the token itself against GitHub (fine-grained, this repository only, no Administration), stores it mode 600, "
                                 "creates a vault with a bearer credential, attaches it to the lead's deployment and records the grant.")),
+        },
+    },
+    "discover": {
+        "summary": "Find, recommend and install tools for the roles of a project",
+        "desc": ("A tool is a skill, an MCP server, a package for the sandbox or a built-in tool of the agent. search looks in the reviewed "
+                 "catalog and your library and, with --online, in the official MCP registry and Anthropic's skills. recommend ranks the catalog for "
+                 "each role of a project by the stack it sees in the repository, leaving out what the role has. install asks which scope the tool "
+                 "should reach (user, user-role, project, project-role), then goes through the existing gates: a skill or an MCP server is "
+                 "imported with its review and your approval of exactly that content, linked at the scope, and offered to the cloud agents it "
+                 "reaches with the plan shown first. Nothing found online is installed on trust."),
+        "scripts": ["discover.py"],
+        "verbs": {
+            "sources": verb("List what is searched", []),
+            "search": verb("Search the catalog, your library and, with --online, the registries", [("QUERY", "none")],
+                           [opt("--kind", "only this kind: skill, mcp, package or agent-tool", "KIND", ("skill", "mcp", "package", "agent-tool")),
+                            opt("--role", "only tools recommended for this role", "ROLE", ROLES),
+                            opt("--online", "also search the MCP registry and Anthropic's skills")],
+                           examples=["qargi discover search pdf", "qargi discover search github --online --kind mcp"]),
+            "recommend": verb("Rank the catalog for the roles of a project", [("PROJECT", "project", True)],
+                              [opt("--role", "only this role", "ROLE", ROLES)], examples=["qargi discover recommend acme --role dev"]),
+            "show": verb("Show one entry: what it is, its risk and how it installs", [("ID", "entry")]),
+            "install": verb("Install an entry: review, approval, scope, link", [("ID", "entry")],
+                            [opt("--scope", "user, user-role, project or project-role (default: ask)", "SCOPE", ("user", "user-role", "project", "project-role")),
+                             opt("--project", "the project, for the project scopes", "PROJECT", "project"),
+                             opt("--role", "the role, for the role scopes", "ROLE", ROLES),
+                             opt("--dry-run", "print the plan and stop; changes nothing")],
+                            desc="Interactive: it asks at the terminal, and your answers are the recorded approvals.",
+                            examples=["qargi discover install skill-pdf --project acme --role docs"]),
         },
     },
     "export": {

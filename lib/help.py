@@ -476,6 +476,13 @@ def by_type(t, words):
         return [(s, d) for s, d in (("600", "10 minutes"), ("1800", "30 minutes"), ("3600", "1 hour"), ("7200", "2 hours, the default"))]
     if base == "cents":
         return [(c, money(c)) for c in ("500", "1000", "1500", "3000")]
+    if base == "entry":
+        try:
+            with open(os.environ.get("QARGI_CATALOG") or os.path.join(ROOT, "catalog", "tools.json")) as f:
+                data = json.load(f)
+            return [(e["id"], e.get("summary", "")[:60]) for e in (data["tools"] if isinstance(data, dict) else data)]
+        except (OSError, ValueError, KeyError):
+            return []
     if base == "help":
         return [(c, C.COMMANDS[c]["summary"]) for c in sorted(C.COMMANDS)] + [(k, v[0]) for k, v in C.TOPICS.items()]
     if base == "file":

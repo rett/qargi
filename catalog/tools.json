@@ -1,0 +1,388 @@
+{
+ "format": 1,
+ "note": "Reviewed with the repository. Entries marked in `verify` say what was checked; the Fable research of 2026-10-28 extends this list.",
+ "tools": [
+  {
+   "id": "skill-pdf",
+   "kind": "skill",
+   "name": "pdf",
+   "summary": "Read, fill, merge, split and create PDF files (Anthropic skill)",
+   "tags": [
+    "pdf",
+    "documents",
+    "render"
+   ],
+   "roles": {
+    "docs": "recommended"
+   },
+   "stack": [],
+   "risk": "medium",
+   "risk_note": "runs scripts in the sandbox; review shows them",
+   "install": {
+    "url": "https://github.com/anthropics/skills",
+    "path": "skills/pdf",
+    "name": "pdf"
+   },
+   "scope_hint": "project-role",
+   "verify": "directory listing of anthropics/skills checked 2026-10-28"
+  },
+  {
+   "id": "skill-docx",
+   "kind": "skill",
+   "name": "docx",
+   "summary": "Create and edit Word documents (Anthropic skill)",
+   "tags": [
+    "word",
+    "documents"
+   ],
+   "roles": {
+    "docs": "optional"
+   },
+   "stack": [],
+   "risk": "medium",
+   "install": {
+    "url": "https://github.com/anthropics/skills",
+    "path": "skills/docx",
+    "name": "docx"
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "skill-xlsx",
+   "kind": "skill",
+   "name": "xlsx",
+   "summary": "Create and edit spreadsheets (Anthropic skill)",
+   "tags": [
+    "spreadsheet",
+    "excel",
+    "csv"
+   ],
+   "roles": {
+    "docs": "optional",
+    "review": "optional"
+   },
+   "stack": [],
+   "risk": "medium",
+   "install": {
+    "url": "https://github.com/anthropics/skills",
+    "path": "skills/xlsx",
+    "name": "xlsx"
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "skill-webapp-testing",
+   "kind": "skill",
+   "name": "webapp-testing",
+   "summary": "Drive a local web app or static site with a headless browser to check it (Anthropic skill)",
+   "tags": [
+    "browser",
+    "playwright",
+    "screenshot",
+    "site",
+    "testing"
+   ],
+   "roles": {
+    "docs": "recommended",
+    "test": "optional",
+    "review": "optional"
+   },
+   "stack": [],
+   "risk": "medium",
+   "risk_note": "starts a browser and local servers in the sandbox",
+   "install": {
+    "url": "https://github.com/anthropics/skills",
+    "path": "skills/webapp-testing",
+    "name": "webapp-testing"
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "skill-skill-creator",
+   "kind": "skill",
+   "name": "skill-creator",
+   "summary": "Create and improve skills (Anthropic skill)",
+   "tags": [
+    "skills",
+    "authoring"
+   ],
+   "roles": {
+    "lead": "optional"
+   },
+   "stack": [],
+   "risk": "low",
+   "install": {
+    "url": "https://github.com/anthropics/skills",
+    "path": "skills/skill-creator",
+    "name": "skill-creator"
+   },
+   "scope_hint": "user-role"
+  },
+  {
+   "id": "mcp-github-read",
+   "kind": "mcp",
+   "name": "github-read",
+   "summary": "GitHub through its MCP server, read-only: files, commits, branches, tags, releases, pull requests and issues",
+   "tags": [
+    "github",
+    "repository",
+    "pull request",
+    "read-only"
+   ],
+   "roles": {
+    "review": "recommended",
+    "docs": "optional",
+    "dev": "optional"
+   },
+   "stack": [
+    "actions"
+   ],
+   "risk": "medium",
+   "risk_note": "needs a read-only token in a vault; members never get write tools",
+   "install": {
+    "name": "github-read",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "tools": {
+     "get_file_contents": "always_allow",
+     "get_commit": "always_allow",
+     "list_commits": "always_allow",
+     "list_branches": "always_allow",
+     "list_tags": "always_allow",
+     "get_tag": "always_allow",
+     "get_latest_release": "always_allow",
+     "get_release_by_tag": "always_allow",
+     "list_pull_requests": "always_allow"
+    },
+    "vault_ids": []
+   },
+   "scope_hint": "user-role",
+   "verify": "allowlist = the read tools of provision/templates/github-lead.json that the server really exposes (four allowlisted there were not among its 14 tools); the vault credential is yours to attach"
+  },
+  {
+   "id": "pkg-shellcheck",
+   "kind": "package",
+   "name": "shellcheck",
+   "summary": "Lint shell scripts",
+   "tags": [
+    "shell",
+    "lint",
+    "bash"
+   ],
+   "roles": {
+    "dev": "recommended",
+    "test": "recommended",
+    "review": "optional"
+   },
+   "stack": [
+    "shell"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "shellcheck"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-groff",
+   "kind": "package",
+   "name": "groff",
+   "summary": "Check and render manual pages (groff -k -ww)",
+   "tags": [
+    "man",
+    "roff",
+    "manual"
+   ],
+   "roles": {
+    "dev": "recommended",
+    "test": "optional"
+   },
+   "stack": [
+    "man"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "groff"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-jq",
+   "kind": "package",
+   "name": "jq",
+   "summary": "Read and edit JSON on the command line",
+   "tags": [
+    "json"
+   ],
+   "roles": {
+    "dev": "recommended",
+    "docs": "optional",
+    "review": "optional",
+    "test": "optional",
+    "lead": "optional"
+   },
+   "stack": [],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "jq"
+    ]
+   },
+   "scope_hint": "project"
+  },
+  {
+   "id": "pkg-tmux",
+   "kind": "package",
+   "name": "tmux",
+   "summary": "Drive an interactive program in a terminal (completion and console checks)",
+   "tags": [
+    "terminal",
+    "pty",
+    "interactive"
+   ],
+   "roles": {
+    "dev": "recommended",
+    "test": "recommended"
+   },
+   "stack": [
+    "go"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "tmux"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-yamllint",
+   "kind": "package",
+   "name": "yamllint",
+   "summary": "Lint YAML (workflows, front matter)",
+   "tags": [
+    "yaml",
+    "lint"
+   ],
+   "roles": {
+    "docs": "optional",
+    "dev": "optional",
+    "review": "optional"
+   },
+   "stack": [
+    "actions",
+    "jekyll"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "yamllint"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-gnupg",
+   "kind": "package",
+   "name": "gnupg",
+   "summary": "Encrypt and verify files (signed releases, qargi export archives)",
+   "tags": [
+    "gpg",
+    "encryption",
+    "signing"
+   ],
+   "roles": {
+    "lead": "optional"
+   },
+   "stack": [],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "gnupg"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "agent-monitor",
+   "kind": "agent-tool",
+   "name": "Monitor",
+   "summary": "Wait for a detached command (a test run) without polling in many short calls",
+   "tags": [
+    "wait",
+    "background",
+    "gate",
+    "poll"
+   ],
+   "roles": {
+    "dev": "necessary",
+    "test": "necessary",
+    "docs": "recommended",
+    "review": "optional"
+   },
+   "stack": [],
+   "risk": "low",
+   "risk_note": "runs a shell command like Bash does; the git wrapper and qargi local verify still apply",
+   "install": {
+    "target": "local",
+    "tool": "Monitor"
+   },
+   "scope_hint": "user",
+   "verify": "a local agent without it failed: No such tool available: Monitor. Whether a restricted tools list also needs ToolSearch is not yet verified."
+  },
+  {
+   "id": "agent-webfetch",
+   "kind": "agent-tool",
+   "name": "WebFetch",
+   "summary": "Fetch a web page (documentation, a release page) into the agent's context",
+   "tags": [
+    "web",
+    "fetch",
+    "documentation"
+   ],
+   "roles": {
+    "docs": "optional",
+    "review": "optional"
+   },
+   "stack": [],
+   "risk": "medium",
+   "risk_note": "reaches the network; content is untrusted data",
+   "install": {
+    "target": "local",
+    "tool": "WebFetch"
+   },
+   "scope_hint": "user"
+  },
+  {
+   "id": "agent-websearch",
+   "kind": "agent-tool",
+   "name": "WebSearch",
+   "summary": "Search the web for current facts",
+   "tags": [
+    "web",
+    "search"
+   ],
+   "roles": {
+    "docs": "optional",
+    "lead": "optional"
+   },
+   "stack": [],
+   "risk": "medium",
+   "risk_note": "reaches the network; results are untrusted data",
+   "install": {
+    "target": "local",
+    "tool": "WebSearch"
+   },
+   "scope_hint": "user"
+  }
+ ]
+}

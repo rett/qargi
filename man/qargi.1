@@ -659,6 +659,78 @@ the plan token printed by the same command without \-\-approved.
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
+.TP
+.B qargi discover
+Find, recommend and install tools for the roles of a project.
+.PP
+A tool is a skill, an MCP server, a package for the sandbox or a built\-in tool of the agent. search looks in the reviewed catalog and your library and, with \-\-online, in the official MCP registry and Anthropic's skills. recommend ranks the catalog for each role of a project by the stack it sees in the repository, leaving out what the role has. install asks which scope the tool should reach (user, user\-role, project, project\-role), then goes through the existing gates: a skill or an MCP server is imported with its review and your approval of exactly that content, linked at the scope, and offered to the cloud agents it reaches with the plan shown first. Nothing found online is installed on trust.
+.RS
+.TP
+.B sources
+List what is searched.
+.RE
+.RS
+.TP
+.BI "search " "QUERY"
+Search the catalog, your library and, with \-\-online, the registries.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+only this kind: skill, mcp, package or agent\-tool.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+only tools recommended for this role.
+.RE
+.RS
+.TP
+.B \-\-online
+also search the MCP registry and Anthropic's skills.
+.RE
+.RE
+.RS
+.TP
+.BI "recommend " "[PROJECT]"
+Rank the catalog for the roles of a project.
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+only this role.
+.RE
+.RE
+.RS
+.TP
+.BI "show " "ID"
+Show one entry: what it is, its risk and how it installs.
+.RE
+.RS
+.TP
+.BI "install " "ID"
+Install an entry: review, approval, scope, link.
+.br
+Interactive: it asks at the terminal, and your answers are the recorded approvals.
+.RS
+.TP
+.BI "\-\-scope " "SCOPE"
+user, user\-role, project or project\-role (default: ask).
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, for the project scopes.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role, for the role scopes.
+.RE
+.RS
+.TP
+.B \-\-dry\-run
+print the plan and stop; changes nothing.
+.RE
+.RE
 .SS Run a task
 .TP
 .B qargi start
