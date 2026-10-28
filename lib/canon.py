@@ -433,7 +433,7 @@ def cmd_plan(a):
     mems = load(a.store)
     roles = a.roles.split(",")
     state, why = detect(a.kind, mems)
-    today = a.today or datetime.date.today().isoformat()
+    today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
     if state == "unknown":
         out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
@@ -479,7 +479,7 @@ def notes_check(kind, mems, roles, F, W):
     assign = re.compile(r"(?i)\b(password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{16,})(?![\w(.])")
     docip = re.compile(r"^(192\.0\.2|198\.51\.100|203\.0\.113|127\.|0\.|10\.|172\.|192\.168\.)")
     banned = re.compile(r"(?i)\b(backlog|roadmap|todo|planned|plans?|later|ideas?)\b")
-    today = datetime.date.today()
+    today = datetime.datetime.now(datetime.timezone.utc).date()
     vocab = RUNNABLE[kind] + DOCUMENT[kind]
     for p, m in sorted(mems.items()):
         c = m["content"]
@@ -615,7 +615,7 @@ def rename_top(p, folders):
 def import_docs_v0(a):
     src = load(a.src)
     mem, ref = load(a.memory), load(a.reference)
-    today = a.today or datetime.date.today().isoformat()
+    today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     role = a.role
     taken = {"memory": set(mem), "reference": set(ref)}
     ops = {"memory": [], "reference": []}

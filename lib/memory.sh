@@ -90,7 +90,7 @@ for line in sys.stdin:
 fails, warns = [], []
 F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
 W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
-today = datetime.date.today()
+today = datetime.datetime.now(datetime.timezone.utc).date()
 
 readme = mems.get("/README.md")
 if readme is None:

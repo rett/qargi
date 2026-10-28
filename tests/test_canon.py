@@ -153,6 +153,19 @@ class Canon(unittest.TestCase):
         self.assertIn("new.md: Verified date is in the future", r.stdout)
         self.assertIn("src.md: Sources: origin not recorded", r.stdout)
 
+    def test_verified_date_is_judged_in_utc(self):
+        """The cloud agents date their notes in UTC; a machine west of it must not call today's note a future one."""
+        _, after = self.assertConverges("memory", {})
+        utc = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+        after["/shared/sandbox/today.md"] = "# t\n" + GOOD.replace(datetime.date.today().isoformat(), utc)
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Etc/GMT+12"
+        try:
+            r = run("check", "memory", after)
+        finally:
+            os.environ.pop("TZ") if old is None else os.environ.__setitem__("TZ", old)
+        self.assertNotIn("today.md: Verified date is in the future", r.stdout)
+
     def test_reference_document_notes(self):
         _, after = self.assertConverges("reference", {})
         after["/shared/INDEX.md"] += "| rules/r.md | r | always |\n"
