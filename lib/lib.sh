@@ -149,6 +149,12 @@ lead_teams_block() { # project
     + "\nIf the first message is a plain task rather than a TEAM brief, use the only team above (or ask which), build the entry of each member from these definitions, ask for the base branch if it is @dispatcher, and proceed.\n"' "$f"
 }
 
+# tools_off ROLE PROJECT_JSON: the built-in tools a cloud role does not get (roles.<role>.tools_off overrides the default).
+tools_off() {
+  local d='web_search web_fetch'; case $1 in review|lead) d='web_search web_fetch edit';; esac
+  if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
+}
+
 agent_prompt() { # role [project]
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
   local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 contract=$lib/../skills/qargi-task/agent-contract.md

@@ -9,7 +9,8 @@ model:
 {{MCP_SERVERS}}
 tools:
   - type: agent_toolset_20260401
-    default_config: {permission_policy: {type: auto}}{{MCP_TOOLS}}
+    default_config: {permission_policy: {type: auto}}
+    configs:{{TOOL_CONFIGS}}{{MCP_TOOLS}}
 ---
 
 {{SYSTEM}}

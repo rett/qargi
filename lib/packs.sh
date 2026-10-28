@@ -161,9 +161,10 @@ if [ "$KIND" = packs ]; then
       echo "  anthropic skills: $(jq -r 'map(.skill_id)|join(", ")|if .=="" then "none" else . end' <<<"$anth")"
       echo "  custom skills:    $(paste -sd, "$W/out/custom_skills.txt" | sed 's/,/, /g;s/^$/none/')"
       echo "  mcp servers:      $(jq -r 'map(.name)|join(", ")|if .=="" then "none" else . end' "$W/out/mcp.json")"
+      off=$(tools_off "$ROLE" "$DA_CONF/projects/$PROJECT.json"); echo "  built-in tools off: ${off// /, }"
       vids=$(jq -r '[.[].vault_ids // [] | .[]] | unique | join(" ")' "$W/out/mcp.json")
       [ -z "$vids" ] || echo "  note: these tools use vault(s) $vids; attach them to the deployment, they are not attached by this command"
-      tok=$({ find "$W/out" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s' "$aid" "$aver" "$anth"; } | plan_token)
+      tok=$({ find "$W/out" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s' "$aid" "$aver" "$anth" "$off"; } | plan_token)
       if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
       need_plan "$tok"; audit_log packs-apply "$INST agent $aid v$aver"
       cust='[]'
@@ -179,8 +180,8 @@ if [ "$KIND" = packs ]; then
       fi
       skills=$(jq -c -n --argjson a "$anth" --argjson c "$cust" '$a + $c')
       servers=$(jq -c 'map({type:"url", name:.name, url:.url})' "$W/out/mcp.json")
-      tools=$(jq -c --slurpfile m "$W/out/mcp.json" '
-        map(select(.type != "mcp_toolset")) + ($m[0] | map({type:"mcp_toolset", mcp_server_name:.name, default_config:{enabled:false},
+      tools=$(jq -c --slurpfile m "$W/out/mcp.json" --arg off "$off" '
+        map(select(.type != "mcp_toolset") | if .type == "agent_toolset_20260401" then .configs = ($off | split(" ") | map(select(length > 0) | {name: ., enabled: false})) else . end) + ($m[0] | map({type:"mcp_toolset", mcp_server_name:.name, default_config:{enabled:false},
           configs:(.tools | to_entries | map({name:.key, enabled:true, permission_policy:{type:.value}}))}))' <<<"$(jq -c .tools <<<"$ag")")
       ant beta:agents update --agent-id "$aid" --version "$aver" --skill "$skills" --mcp-server "$servers" --tool "$tools" </dev/null >/dev/null 2>&1 \
         || die "agent update failed (custom skills were uploaded)"

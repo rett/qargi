@@ -77,6 +77,11 @@ fi
 # The environment is shared by the roles, so it holds the packages of every enabled role.
 ENV_APT=$APT
 [ ! -f "$PCFG" ] || [ -n "$APT_SET" ] || ENV_APT=$(jq -r '[.roles[].apt[]?] | unique | join(" ")' "$PCFG")
+ENV_PIP='' ENV_GO=''
+TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
+if [ -f "$PCFG" ]; then
+  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
+fi
 MODEL=${MODEL:-claude-sonnet-5-5}; EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
@@ -101,15 +106,17 @@ D=$W/agents/$NAME
 LOCK=$W/claude-lock.json
 
 render() {
-  local apt_list sys
+  local apt_list pip_list go_list sys
   # YAML flow list from the space-separated package names
   apt_list="[$(printf '%s' "$ENV_APT" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
+  pip_list="[$(printf '%s' "$ENV_PIP" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
+  go_list="[$(printf '%s' "$ENV_GO" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
   rm -rf "$W/packs-out"; "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"
   sys=$(agent_prompt "$ROLE" "$PROJECT") || die "could not build the system prompt of $ROLE"
-  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" "$MEMBERS" "$ROLE" "$ENV_REF" <<'EOF'
+  python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" "$MEMBERS" "$ROLE" "$ENV_REF" "$pip_list" "$go_list" "$TOOLS_OFF" <<'EOF'
 import sys, pathlib
-tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out, agent_name, env_name, dep_name, members, role, env_ref = sys.argv[1:21]
+tpl, out, name, model, effort, apt, net, budget, system, project, have_mem, have_ref, skills, packs_out, agent_name, env_name, dep_name, members, role, env_ref, pip, go, tools_off = sys.argv[1:24]
 import json, os, shutil
 t = pathlib.Path(tpl); o = pathlib.Path(out)
 res = []
@@ -128,7 +135,9 @@ vault_yaml = "vault_ids: [%s]" % ", ".join(vaults)
 shutil.rmtree(out + "/skills", ignore_errors=True)
 if os.path.isdir(packs_out + "/skills") and custom: shutil.copytree(packs_out + "/skills", out + "/skills")
 sub = {"{{MCP_SERVERS}}": mcp_servers, "{{MCP_TOOLS}}": mcp_tools, "{{VAULT_IDS}}": vault_yaml, "{{SKILLS}}": skills_yaml, "{{PROJECT}}": project, "{{MULTIAGENT}}": ("multiagent:\n  type: coordinator\n  agents:\n" + members.rstrip("\n")) if members else "", "{{DESCRIPTION}}": ("Team lead for the qargi cloud backend of %s. Delegates one task to its role agents as threads, collects their reports, and never edits the repository." % project) if role == "lead" else "Task-scoped %s agent for the qargi cloud backend (one task, own clone, returns patches, never pushes)." % role, "{{ENVIRONMENT_REF}}": env_ref, "{{AGENT_NAME}}": agent_name, "{{ENV_NAME}}": env_name, "{{DEPLOYMENT_NAME}}": dep_name, "{{RESOURCES}}": resources, "{{NAME}}": name, "{{MODEL}}": model, "{{EFFORT}}": effort,
-       "{{APT}}": apt, "{{NETWORKING}}": net, "{{BUDGET}}": budget}
+       "{{APT}}": apt, "{{PIP}}": pip, "{{GO}}": go, "{{NETWORKING}}": net, "{{BUDGET}}": budget,
+       "{{NETWORKING_YAML}}": "{type: limited, allow_package_managers: true, allow_mcp_servers: true}" if net == "limited" else "{type: unrestricted}",
+       "{{TOOL_CONFIGS}}": "".join("\n      - {name: %s, enabled: false}" % x for x in tools_off.split()) if tools_off.split() else " []"}
 def r(src, dst, extra=None):
     s = (t / src).read_text()
     for k, v in {**sub, **(extra or {})}.items():
@@ -182,10 +191,12 @@ case $verb in
     (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
-      have=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config.packages.apt // []')
-      want=$(printf '%s' "$ENV_APT" | xargs -n1 2>/dev/null | jq -R . | jq -sc 'unique')
-      if [ "$(jq -nc --argjson h "$have" --argjson w "$want" '($w - $h) | length')" != 0 ]; then
-        ant beta:environments update --environment-id "$ENVID" --config "$(jq -nc --argjson h "$have" --argjson w "$want" '{type:"cloud", packages:{type:"packages", apt:($h + $w | unique)}}')" </dev/null >/dev/null 2>&1 \
+      cur=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config') || die "cannot read the shared environment $ENVID"
+      lst() { printf '%s' "$1" | xargs -n1 2>/dev/null | jq -R . | jq -sc 'unique'; }
+      new=$(jq -c --argjson a "$(lst "$ENV_APT")" --argjson p "$(lst "$ENV_PIP")" --argjson g "$(lst "$ENV_GO")" \
+        '.packages.apt = ((.packages.apt // []) + $a | unique) | .packages.pip = ((.packages.pip // []) + $p | unique) | .packages.go = ((.packages.go // []) + $g | unique)' <<<"$cur")
+      if [ "$new" != "$(jq -c . <<<"$cur")" ]; then
+        ant beta:environments update --environment-id "$ENVID" --config "$new" </dev/null >/dev/null 2>&1 \
           || die "could not add the packages to the shared environment $ENVID"
       fi
     fi
