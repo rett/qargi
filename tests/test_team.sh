@@ -104,6 +104,11 @@ $DA team check "$T/chk" >/dev/null 2>&1 && no "a team without team.json passed" 
 echo '{"team":"code-docs","members":[],"verdict":"revise","rounds":2}' > "$T/chk/lead/team.json"
 out=$($DA team check "$T/chk" 2>&1); echo "$out" | grep -q "did not reach accept" && ok "a team that did not reach accept is flagged" || no "check: $out"
 
+# the lead's own spelling (final_verdict) and a BLOCKED status are understood
+echo '{"team":"code-docs","members":[],"final_verdict":"accept","status":"BLOCKED","status_reason":"the dev series is too large to carry"}' > "$T/chk/lead/team.json"
+out=$($DA team check "$T/chk" 2>&1)
+echo "$out" | grep -q "verdict accept, status BLOCKED" && echo "$out" | grep -q "the lead reports BLOCKED: the dev series is too large" && ! echo "$out" | grep -q "did not reach accept" && ok "final_verdict is read, and a BLOCKED status is reported with its reason" || no "final_verdict: $out"
+
 # a member with no commits (blocked, or nothing to change) is not a failure in a team
 rm -rf "$T/chk2"; mkdir -p "$T/chk2/dev" "$T/chk2/lead"; echo '{"status":"DONE","commits":[]}' > "$T/chk2/dev/manifest.json"
 echo '{"team":"t","members":[],"verdict":"accept","rounds":0}' > "$T/chk2/lead/team.json"

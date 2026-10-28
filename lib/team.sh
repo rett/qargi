@@ -62,10 +62,13 @@ check() {
     python3 -I "$here/review_check.py" "$d" --allow-empty || rc=1
   done
   if [ -f "$dir/lead/team.json" ]; then
-    jq -e '.team and .members and (.verdict // "") != ""' "$dir/lead/team.json" >/dev/null 2>&1 \
-      && echo "== lead: team $(jq -r .team "$dir/lead/team.json"), verdict $(jq -r .verdict "$dir/lead/team.json"), rounds $(jq -r '.rounds // "?"' "$dir/lead/team.json")" \
+    tj=$dir/lead/team.json
+    v=$(jq -r '.verdict // .final_verdict // ""' "$tj" 2>/dev/null)   # the lead's own spelling is accepted: verdict or final_verdict
+    jq -e '.team and .members' "$tj" >/dev/null 2>&1 && [ -n "$v" ] \
+      && echo "== lead: team $(jq -r .team "$tj"), verdict $v, status $(jq -r '.status // "?"' "$tj"), rounds $(jq -r '.rounds // "?"' "$tj")" \
       || { echo "FAIL lead/team.json lacks team, members or verdict"; rc=1; }
-    [ "$(jq -r .verdict "$dir/lead/team.json" 2>/dev/null)" = accept ] || { echo "NOTE the team did not reach accept: read lead/summary.md before anything is applied"; }
+    [ "$v" = accept ] || { echo "NOTE the team did not reach accept: read lead/summary.md before anything is applied"; }
+    case $(jq -r '.status // ""' "$tj" 2>/dev/null) in BLOCKED*) echo "NOTE the lead reports BLOCKED: $(jq -r '.status_reason // "no reason given"' "$tj" | cut -c1-200)";; esac
   else
     echo "FAIL no lead/team.json: the lead's report is missing"; rc=1
   fi
