@@ -235,23 +235,42 @@ budget_set() {
 
 refresh_prompt() {
   need_asked; ant_ok
-  local n=$1 i aid ag cur new aver ptok nv
+  local n=$1 i aid ag cur new aver ptok nv members='' newm='' mdiff='' id cv
+  local -a mflag=()
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
   split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
   ag=$(ant beta:agents retrieve --agent-id "$aid" </dev/null 2>/dev/null) || die "cannot read the agent"
   aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE" "$PROJECT")
-  [ "$cur" != "$new" ] || { echo "the prompt of $aid v$aver is current"; return 0; }
-  echo "PLAN: rebuild the system prompt of $aid v$aver ($PROJECT/$ROLE) from the current contract; changes:"
-  diff <(printf '%s\n' "$cur") <(printf '%s\n' "$new") | grep -E '^[<>]' | sed 's/^</  -/;s/^>/  +/' | cut -c1-150 | head -60
-  ptok=$(printf '%s|%s' "$aver" "$new" | plan_token)
+  if [ "$ROLE" = lead ]; then   # a lead pins its members by version: point it at their current versions
+    members=$(jq -c '[.multiagent.agents[]? | {id, version}]' <<<"$ag")
+    for id in $(jq -r '.[].id' <<<"$members"); do
+      cv=$(ant beta:agents retrieve --agent-id "$id" </dev/null 2>/dev/null | jq -r '.version // empty')
+      [ -n "$cv" ] || die "cannot read the member agent $id"
+      newm+=$(jq -nc --arg id "$id" --argjson v "$cv" '{id:$id,version:$v}')$'\n'
+    done
+    newm=$(jq -sc '.' <<<"$newm")
+    [ "$members" = "$newm" ] || mdiff=1
+  fi
+  [ "$cur" != "$new" ] || [ -n "$mdiff" ] || { echo "the prompt of $aid v$aver is current"; return 0; }
+  echo "PLAN: update $aid v$aver ($PROJECT/$ROLE) to the current contract and members; changes:"
+  if [ "$cur" != "$new" ]; then
+    echo "  system prompt:"
+    diff <(printf '%s\n' "$cur") <(printf '%s\n' "$new") | grep -E '^[<>]' | sed 's/^</  -/;s/^>/  +/' | cut -c1-150 | head -60
+  fi
+  if [ -n "$mdiff" ]; then
+    echo "  members:"
+    jq -r --argjson old "$members" '.[] | . as $m | ($old[] | select(.id == $m.id) | .version) as $o | select($o != $m.version) | "  \(.id): v\($o) -> v\(.version)"' <<<"$newm"
+    mflag=(--multiagent "$(jq -nc --arg t "$(jq -r '.multiagent.type // "coordinator"' <<<"$ag")" --argjson m "$newm" '{type:$t,agents:($m|map({type:"agent",id:.id,version:.version}))}')")
+  fi
+  ptok=$(printf '%s|%s|%s' "$aver" "$new" "$newm" | plan_token)
   [ -n "$APPROVED" ] || { echo "plan token: $ptok   (re-run with --plan $ptok --approved \"<the user's go-ahead>\" to apply; nothing changed)"; return 0; }
   need_plan "$ptok"; audit_log refresh-prompt "$n $aid v$aver"
-  ant beta:agents update --agent-id "$aid" --version "$aver" --system "$new" </dev/null >/dev/null 2>&1 || die "agent update failed"
+  ant beta:agents update --agent-id "$aid" --version "$aver" --system "$new" ${mflag[@]+"${mflag[@]}"} </dev/null >/dev/null 2>&1 || die "agent update failed"
   ant beta:deployments update --deployment-id "$(jq -r .deployment_id <<<"$i")" --agent "$aid" </dev/null >/dev/null 2>&1 || die "agent updated but re-pointing the deployment failed"
   nv=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null | jq .agent.version)
   json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$nv"
-  echo "prompt refreshed; the deployment now pins agent v$nv"
+  echo "prompt refreshed$([ -z "$mdiff" ] || echo ", members re-pointed"); the deployment now pins agent v$nv"
 }
 
 case $verb in

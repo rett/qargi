@@ -87,7 +87,7 @@ status() {
   for line in $(jq -r '.[] | "\(.id):\(.version)"' <<<"$MEMBERS"); do
     id=${line%%:*}; v=${line##*:}
     cur=$(ant beta:agents retrieve --agent-id "$id" </dev/null 2>/dev/null | jq -r .version)
-    [ "$cur" = "$v" ] || { stale=1; ok "member" "$id pinned at v$v, current v$cur: the lead should be re-pointed"; }
+    [ "$cur" = "$v" ] || { stale=1; ok "member" "$id pinned at v$v, current v$cur: re-point the lead: qargi instances refresh-prompt $LEAD"; }
   done
   [ "$stale" = 0 ] && ok "members" "all pinned at their current versions"
   return 0

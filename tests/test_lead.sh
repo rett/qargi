@@ -32,9 +32,10 @@ case $1 in
   auth) exit 0;;
   beta:agents)
     case $2 in
-      retrieve) jq -nc --argjson t "$([ -f "$FAKE/agent_tool" ] && echo true || echo false)" --argjson p "$([ -f "$FAKE/agent_push" ] && echo true || echo false)" \
+      retrieve) if [ "$(arg --agent-id "$@")" = agent_D ]; then jq -nc --argjson v "$(cat "$FAKE/dver" 2>/dev/null || echo 1)" '{id:"agent_D",version:$v}'; exit 0; fi
+        jq -nc --argjson t "$([ -f "$FAKE/agent_tool" ] && echo true || echo false)" --argjson p "$([ -f "$FAKE/agent_push" ] && echo true || echo false)" \
         '{id:"agent_L",version:1,system:("Lead contract"+(if $p then "\n# Push\nYou may create branches named agent/*" else "" end)),mcp_servers:(if $t then [{name:"github",url:"u"}] else [] end),tools:[{type:"agent_toolset_20260401"}],multiagent:{type:"coordinator",agents:[{id:"agent_D",version:1}]}}';;
-      update) if has --mcp-server "$@"; then touch "$FAKE/agent_tool"; else touch "$FAKE/agent_push"; fi; echo '{}';;
+      update) if has --mcp-server "$@"; then touch "$FAKE/agent_tool"; else touch "$FAKE/agent_push"; fi; has --multiagent "$@" && arg --multiagent "$@" > "$FAKE/multiagent"; echo '{}';;
     esac;;
   beta:deployments)
     case $2 in
@@ -80,6 +81,16 @@ n1=$(grep -c "beta:agents update" "$FAKE/ant.log"); out=$($DA lead grant alpha -
 
 # status flags a missing token file
 mv "$T/c/credentials/alpha-lead-push" "$T/gone"; $DA lead status alpha 2>&1 | grep -q "token file.*MISSING" && ok "status reports a missing token file" || no "status missing file"; mv "$T/gone" "$T/c/credentials/alpha-lead-push"
+
+# a newer member version: status says so, refresh-prompt plans it and points the lead at it
+echo 2 > "$FAKE/dver"
+$DA lead status alpha 2>&1 | grep -q "pinned at v1, current v2: re-point the lead" && ok "status reports a member that has a newer version" || no "status member: $($DA lead status alpha 2>&1 | tail -3)"
+out=$($DA instances refresh-prompt alpha-lead --asked "t" 2>&1)
+echo "$out" | grep -q "agent_D: v1 -> v2" && echo "$out" | grep -q "plan token" && ok "refresh-prompt plans the member change and changes nothing" || no "plan: $out"
+[ ! -f "$FAKE/multiagent" ] && ok "the plan alone does not touch the agent" || no "plan wrote multiagent"
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA instances refresh-prompt alpha-lead --asked "t" --plan "$tok" --approved "go ahead" >/dev/null 2>&1
+jq -e '.type == "coordinator" and .agents == [{"type":"agent","id":"agent_D","version":2}]' "$FAKE/multiagent" >/dev/null 2>&1 && ok "the approved plan points the lead at the member's current version" || no "multiagent: $(cat "$FAKE/multiagent" 2>&1)"
 
 # revoke
 echo n > "$T/no"; QARGI_TTY_IN=$T/no $DA lead revoke alpha >/dev/null 2>&1; jq -e '.lead.push.cloud == "branches"' "$T/c/projects/alpha.json" >/dev/null && ok "answering no to revoke changes nothing" || no "revoke no"
