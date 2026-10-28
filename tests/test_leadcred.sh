@@ -10,7 +10,7 @@ export QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake
 mkdir -p "$T/c/projects" "$T/s" "$T/bin" "$FAKE"
 TOK=github_pat_11AAAAAA0abcdefghijklmnopqrstuvwxyz0123456789SECRETVALUE
 # fake curl: GitHub answers by path with the body, a newline and the status (FAKE_ADMIN=true makes branch
-# protection readable; FAKE_REPOS varies how many repositories the token reaches)
+# protection readable; FAKE_REPOS varies how many repositories it can see; FAKE_WRITE_OTHERS lets it write to them)
 cat > "$T/bin/curl" <<'EOS'
 #!/usr/bin/env bash
 for a in "$@"; do url=$a; done
@@ -24,7 +24,12 @@ EOS
 # fake git: the push dry-run succeeds unless FAKE_PUSH=false; everything else is real git
 cat > "$T/bin/git" <<'EOS'
 #!/usr/bin/env bash
-for a in "$@"; do [ "$a" = push ] && { [ "${FAKE_PUSH:-true}" = false ] && exit 1; exit 0; }; done
+if printf '%s\n' "$@" | grep -qx push; then
+  case "$*" in
+    *github.com/example/x.git*) [ "${FAKE_PUSH:-true}" = false ] && exit 1; exit 0;;
+    *) [ "${FAKE_WRITE_OTHERS:-false}" = true ] && exit 0; exit 1;;
+  esac
+fi
 exec /usr/bin/git "$@"
 EOS
 cat > "$T/bin/ant" <<'EOS'
@@ -51,8 +56,9 @@ printf 'ghp_classic' | $S >/dev/null 2>&1 && no "a classic token was accepted" |
 FAKE_ADMIN=true $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token with Administration was accepted" || ok "a token that has Administration is refused"
 out=$($S --from-file "$T/tokfile" 2>&1); echo "$out" | grep -q "cannot administer it" && ok "your own admin role on the repository does not count against the token" || no "owner role: $out"
 FAKE_PUSH=false $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a read-only token was accepted" || ok "a token that cannot push is refused"
-FAKE_REPOS=3 $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token for 3 repositories was accepted" || ok "a token that reaches several repositories is refused"
-FAKE_REPOS=3 $S --from-file "$T/tokfile" --allow-more-repos >/dev/null 2>&1 && ok "…unless that is accepted knowingly" || no "allow-more-repos refused"
+FAKE_REPOS=10 $S --from-file "$T/tokfile" >/dev/null 2>&1 && ok "a token that can only READ other repositories (every fine-grained token reads public ones) is accepted" || no "read reach refused: $(FAKE_REPOS=10 $S --from-file "$T/tokfile" 2>&1)"
+FAKE_REPOS=3 FAKE_WRITE_OTHERS=true $S --from-file "$T/tokfile" >/dev/null 2>&1 && no "a token that can write to other repositories was accepted" || ok "a token that can WRITE to other repositories is refused"
+FAKE_REPOS=3 FAKE_WRITE_OTHERS=true $S --from-file "$T/tokfile" --allow-more-repos >/dev/null 2>&1 && ok "…unless that is accepted knowingly" || no "allow-more-repos refused"
 
 out=$($S --from-file "$T/tokfile" 2>&1); tok=$(echo "$out" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 [ -n "$tok" ] && [ ! -e "$T/c/credentials/alpha-lead-push" ] && ! grep -q vault "$FAKE/ant.log" 2>/dev/null && ok "without --approved it checks and prints a plan, and changes nothing" || no "plan: $out"

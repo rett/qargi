@@ -79,10 +79,13 @@ case $verb in
     # What the token itself may do, not what your account may do (the repository answer shows your role).
     # Write: a push dry-run over https asks GitHub for write access with this token and sends nothing.
     printf '%s' "$tok" > "$tmp/tok"; chmod 600 "$tmp/tok"
-    wrote=0
-    ( git_auth_env "$tmp/tok"
-      git -C "$tmp" init -q -b probe 2>/dev/null && git -C "$tmp" -c user.name=probe -c user.email=probe@example.invalid commit -q --allow-empty -m probe
-      timeout 60 git -C "$tmp" push --dry-run "https://x-access-token@github.com/$slug.git" HEAD:refs/heads/agent/qargi-write-probe >/dev/null 2>&1 </dev/null ) && wrote=1
+    probe_write() { # OWNER/REPO: succeeds if this token can push there (a dry run sends nothing)
+      ( git_auth_env "$tmp/tok"
+        d=$(mktemp -d "$tmp/p.XXXXXX")
+        git -C "$d" init -q -b probe 2>/dev/null && git -C "$d" -c user.name=probe -c user.email=probe@example.invalid commit -q --allow-empty -m probe
+        timeout 30 git -C "$d" push --dry-run "https://x-access-token@github.com/$1.git" HEAD:refs/heads/agent/qargi-write-probe >/dev/null 2>&1 </dev/null )
+    }
+    wrote=0; probe_write "$slug" && wrote=1
     [ "$wrote" = 1 ] || die "the token cannot push to $slug: grant Contents (read and write) for this repository"
     # Administration: reading branch protection needs it, so a token without it is refused with 403.
     branch=$(jq -r '.default_branch // "main"' <<<"$repo")
@@ -91,9 +94,13 @@ case $verb in
       die "the token has Administration on $slug (it should not): create one without it"
     elif [ "$acode" = 403 ]; then admin_note="cannot administer it"
     else admin_note="could not confirm it cannot administer it (HTTP $acode): check that Administration is not granted"; fi
-    n=$(gh_api "/user/repos?per_page=100" | sed '$d' | jq 'if type == "array" then length else 0 end')
-    echo "token: ok, fine-grained, can push to $slug, $admin_note, reaches $n repositor$([ "$n" = 1 ] && echo y || echo ies); Pull requests write cannot be checked without opening one"
-    if [ "$n" -gt 1 ] && [ -z "$MORE" ]; then die "the token reaches $n repositories; limit it to $slug (or accept this knowingly with --allow-more-repos)"; fi
+    # A fine-grained token can read every public repository, so what matters is where it can write.
+    others=$(gh_api "/user/repos?per_page=100" | sed '$d' | jq -r 'if type == "array" then .[].full_name else empty end' | grep -vix "$slug" | head -60 || true)
+    writable=''
+    for r in $others; do probe_write "$r" && writable="$writable $r"; done
+    nw=$(printf '%s\n' $writable | grep -c . || true)
+    echo "token: ok, fine-grained, can push to $slug, $admin_note; checked $(printf '%s\n' $others | grep -c .) other repositories: $([ "$nw" = 0 ] && echo "it can write to none" || echo "it can write to$writable"); Pull requests write cannot be checked without opening one"
+    if [ "$nw" -gt 0 ] && [ -z "$MORE" ]; then die "the token can also write to:$writable. Limit it to $slug (or accept this knowingly with --allow-more-repos)"; fi
     dest=$DA_CONF/credentials/$PROJECT-lead-push
     echo "plan: store the token in $dest (mode 600); create the vault $PROJECT-vault-lead with a bearer credential for the GitHub tool; attach it to the lead's deployment; record it in the project answers (lead.push)"
     tok_plan=$(printf '%s|%s|%s' "$PROJECT" "$slug" "$dest" | plan_token)
