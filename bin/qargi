@@ -15,13 +15,14 @@
 #   qargi watch SID [MAX_SECONDS]
 #   qargi collect SID DIR
 #   qargi team brief|check|contract ...                    (skill: qargi-team)
+#   qargi lead grant|status|revoke PROJECT                 (skill: qargi-team; the lead's push grant)
 #   qargi hook session-start                               (Claude Code SessionStart hook)
 #   qargi version
 set -eu
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 lib=$root/lib
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
@@ -39,6 +40,7 @@ case $area in
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
   team) exec "$lib/team.sh" "$@";;
+  lead) exec "$lib/lead.sh" "$@";;
   hook) exec "$lib/hook.sh" "$@";;
   version) cat "$root/VERSION";;
   *) usage;;

@@ -49,9 +49,13 @@ Only the lead, never a member, and only as the project's `lead.push` grant says 
 - **A cloud or console lead:** with `lead.push.cloud: branches`, it has a GitHub tool with a fixed allowlist:
   read tools, branch, file and pull-request writes unattended, `merge_pull_request` asked of the person by the
   platform (a tool confirmation, answered in the console), nothing destructive. Set it up with
-  `qargi credential setup lead-push PROJECT` (a fine-grained token for the one repository, Contents and
-  Pull requests read and write, nothing else), then `qargi packs apply PROJECT-lead` and
-  `qargi instances refresh-prompt PROJECT-lead`; each shows its plan first.
+  `qargi lead grant PROJECT` in a terminal: it says how to create the fine-grained token (the one
+  repository, Contents and Pull requests read and write, nothing else), checks it, and then shows and asks
+  about each of its three steps (token and vault; the GitHub tool; the Push rules), skipping what is already
+  in place. `qargi lead status PROJECT` shows what is in place and what is missing; `qargi lead revoke
+  PROJECT` takes the grant away. From Claude Code run them with `!`. The steps are also available one by
+  one (`credential setup lead-push`, `packs apply`, `instances refresh-prompt`) for an agent to run with your
+  words in `--approved`.
 - **Merges and releases** always need the person's explicit approval for that pull request or release. The
   GitHub tool cannot create releases; a release is made by this session after "release it".
 - Branch rulesets on the repository remain the backstop: protected branches and release tags refuse any token.

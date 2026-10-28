@@ -45,7 +45,7 @@ for f in "$dir"/*--*; do
   mkdir -p "$sub"; mv "$f" "$sub/$rest"
 done
 if [ -f "$dir/manifest.json" ]; then :
-elif ls "$dir"/*/manifest.json >/dev/null 2>&1; then echo "team outputs: $(cd "$dir" && ls -d */ | tr -d / | tr '\n' ' ')"
+elif ls "$dir"/*/manifest.json >/dev/null 2>&1 || [ -f "$dir/lead/team.json" ]; then echo "team outputs: $(cd "$dir" && ls -d */ | tr -d / | tr '\n' ' ')"
 else die "downloaded $n file(s) but there is no manifest.json; not marked collected"
 fi
 json_update "$TRK" '.[$s].outputs_collected = true' --arg s "$sid"

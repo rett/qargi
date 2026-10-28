@@ -90,6 +90,9 @@ add f8 'summary' "/mnt/session/outputs/lead--summary.md"
 $DA collect sesn_x "$T/out" >/dev/null 2>&1
 [ -f "$T/out/dev/manifest.json" ] && [ -f "$T/out/dev/patches/0001-names-accept-periods.patch" ] && [ -f "$T/out/docs/patches/0001-docs-describe.patch" ] && [ -f "$T/out/review/report.md" ] && [ -f "$T/out/lead/team.json" ] \
   && ok "collect splits a team's files into one directory per member, patches under patches/" || no "split: $(cd "$T/out" && find . -type f | sort | tr '\n' ' ')"
+# a lead-only run (no member manifests) is collected too
+mkdir -p "$T/leadonly"; : > "$FAKE/files.jsonl"; add h1 '{"team":"check","members":[],"verdict":"accept"}' "/mnt/session/outputs/lead--team.json"; add h2 'ok' "/mnt/session/outputs/lead--summary.md"
+$DA collect sesn_z "$T/leadonly" >/dev/null 2>&1 && [ -f "$T/leadonly/lead/team.json" ] && ok "a lead-only run is collected" || no "lead-only collect"
 # a solo run is untouched
 mkdir -p "$T/solo"; : > "$FAKE/files.jsonl"; add g1 '{"status":"DONE"}' "/mnt/session/outputs/manifest.json"; add g2 'p' "/mnt/session/outputs/0001-x.patch"
 $DA collect sesn_y "$T/solo" >/dev/null 2>&1; [ -f "$T/solo/manifest.json" ] && [ -f "$T/solo/0001-x.patch" ] && ok "a single agent's outputs stay flat" || no "solo collect"

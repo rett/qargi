@@ -12,6 +12,7 @@ run bash tests/test_packs.sh
 run bash tests/test_review.sh
 run bash tests/test_team.sh
 run bash tests/test_leadcred.sh
+run bash tests/test_lead.sh
 run python3 tests/role_seed_sim.py shared
 run python3 tests/role_seed_sim.py dev
 run python3 tests/role_seed_sim.py docs
