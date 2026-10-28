@@ -11,6 +11,9 @@ memory, hashes must match, and nothing is written before the plan has been shown
 """
 import datetime, getpass, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, termios, time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import roles as ROLES  # noqa: E402  the role names before the abilities
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FORMAT = 1
@@ -524,6 +527,40 @@ def read_tar(raw):
     return {p: (files[p], listed[p].get("project")) for p in files}, manifest
 
 
+def upgrade_roles(archive):
+    """An archive made before the roles were named by ability (dev, docs) gets the current names: instance names,
+    the role keys of project answers and pack links, session rows, and the notes under roles/dev|docs/ with the role
+    names in their texts. Returns (archive, number of items changed)."""
+    out, n = {}, 0
+    for path, (data, proj) in archive.items():
+        parts, new_path, new_data = path.split("/"), path, data
+        try:
+            if parts[0] == "config" and parts[1] == "instances" and len(parts) == 3:
+                new_path = "config/instances/%s.json" % ROLES.instance(parts[2][:-5])
+            elif parts[0] == "config" and parts[1] == "projects":
+                new_data = jdump(ROLES.answers(json.loads(data))) if json.loads(data) != ROLES.answers(json.loads(data)) else data
+            elif path == "config/packs/links.json":
+                new_data = jdump(ROLES.links(json.loads(data))) if json.loads(data) != ROLES.links(json.loads(data)) else data
+            elif parts[0] == "definitions" and len(parts) == 3:
+                new_path = "definitions/%s/%s" % (ROLES.instance(parts[1]), parts[2])
+            elif parts[0] == "state" and parts[1] == "sessions":
+                v = json.loads(data)
+                new_data = jdump(ROLES.session(v)) if isinstance(v, dict) and ROLES.session(v) != v else data
+            elif parts[0] == "memories" and len(parts) >= 4:
+                note = ROLES.note_path("/" + "/".join(parts[3:]))
+                new_path = "/".join(parts[:3]) + note
+                text = data.decode("utf-8", "replace")
+                fixed = ROLES.note_text(note, text)
+                new_data = fixed.encode() if fixed != text else data
+        except ValueError:
+            pass
+        if new_path in out:
+            die("the archive holds %s under the old and the new role name: refusing it" % new_path)
+        n += new_path != path or new_data != data
+        out[new_path] = (new_data, proj)
+    return out, n
+
+
 def comp_of(path):
     folder = path.split("/")[0]
     return next(c for c, v in COMPONENTS.items() if v[0] == folder)
@@ -696,6 +733,10 @@ def cmd_import(args):
         die("import changes your configuration and the cloud memories, so it asks you at a terminal: run it in one, or use --dry-run to see the plan")
     archive, manifest = load_archive(file, pwfile)
     bad = [k for k in archive if not valid_item(k)]
+    if not bad:
+        archive, upgraded = upgrade_roles(archive)
+        if upgraded:
+            print("This archive uses the role names before dev became build and docs became write: %d item(s) are imported under the new names." % upgraded)
     if bad:
         die("the archive holds a name that is not valid for its folder (%r): refusing it" % bad[0][:80])
     out = tty()[1] or sys.stdout

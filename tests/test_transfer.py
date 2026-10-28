@@ -272,6 +272,30 @@ class Import(Env):
         self.assertIn('"verb": "import"', rd(os.path.join(state, "audit.log")))
         self.assertIn("interactive: confirmed at the terminal", rd(os.path.join(state, "audit.log")))
 
+    def test_an_archive_made_with_the_old_role_names_is_imported_under_the_new_ones(self):
+        self.write(os.path.join(self.conf, "instances.json"), json.dumps({"alpha-dev": {"location": "cloud", "agent": {"id": "agent_1"}, "deployment_id": "depl_1", "environment_id": "env_1"},
+                                                                          "alpha-review": {"location": "local"}}))
+        self.write(os.path.join(self.conf, "projects", "alpha.json"), json.dumps({"project": "alpha", "repo": {"path": "/x/alpha"}, "roles": {"dev": {}, "docs": {}},
+            "teams": {"t": {"members": ["dev", "docs"], "done": {"docs": "make lint"}}}, "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}))
+        self.write(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": [{"pack": "skill:pdf", "scope": "user-role", "role": "docs"}]}))
+        self.write(os.path.join(self.state, "sessions.json"), json.dumps({"sesn_1": {"instance": "alpha-dev", "status": "idle"}}))
+        shutil.rmtree(os.path.join(self.fake, "stores", "memstore_A"))
+        self.put_store(self.fake, "memstore_A", {"/CANON.md": "canon: 2\nroles: dev docs\n", "/roles/dev/INDEX.md": "# dev memory index\n\nFacts for the dev role only.\n"})
+        a = self.export()
+        t, conf, state, fake = self.target()
+        r = self.run_import(a, ["config,memories,state", "alpha", "2", "", "", "y"], env=t)   # config: overwrite (the target has answers)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("role names before dev became build", r.stdout)
+        self.assertEqual(sorted(jd(os.path.join(conf, "instances.json"))), ["alpha-build", "alpha-review"])
+        ans = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertEqual((sorted(ans["roles"]), ans["teams"]["t"]), (["build", "write"], {"members": ["build", "write"], "done": {"write": "make lint"}}))
+        self.assertEqual(jd(os.path.join(conf, "packs", "links.json"))["links"][0]["role"], "write")
+        self.assertEqual(jd(os.path.join(state, "sessions.json"))["sesn_1"]["instance"], "alpha-build")
+        notes = self.store_notes_at(fake, "memstore_A")
+        self.assertEqual(notes["/roles/build/INDEX.md"], "# build memory index\n\nFacts for the build role only.\n")
+        self.assertIn("roles: build write", notes["/CANON.md"])
+        self.assertNotIn("/roles/dev/INDEX.md", notes)
+
     def test_merge_keeps_what_differs_overwrite_replaces_it_with_a_backup(self):
         a = self.export()
         t, conf, state, fake = self.target()
