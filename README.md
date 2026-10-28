@@ -69,7 +69,7 @@ All three, and the checks that keep them true, come from one description of the 
 
 ## Local agents
 
-`install.sh --user` installs one subagent per role: `qargi-dev`, `qargi-docs`, `qargi-review` (no Edit tool: it reads and writes only its report) and `qargi-test`; `qargi-agent` is the alias of `qargi-dev`. Each may call `Bash`, `Read`, `Grep`, `Glob`, `Write`, `Monitor`, `TaskStop` and `ToolSearch` (and `Edit`, except review), and each Bash call passes `qargi __guard`, which refuses `git push`, `gh`, `ssh`, `scp`, `sftp` and changes to a git remote. The guard is a second barrier beside the credential-free git wrapper; `qargi local verify` remains the proof. New subagent types are available in Claude Code sessions started after the install.
+`install.sh --user` installs one subagent per role: `qargi-dev`, `qargi-docs`, `qargi-review` (no Edit tool: it reads and writes only its report) and `qargi-test`. Each may call `Bash`, `Read`, `Grep`, `Glob`, `Write`, `Monitor`, `TaskStop` and `ToolSearch` (and `Edit`, except review), and each Bash call passes `qargi __guard`, which refuses `git push`, `gh`, `ssh`, `scp`, `sftp` and changes to a git remote. The guard is a second barrier beside the credential-free git wrapper; `qargi local verify` remains the proof. New subagent types are available in Claude Code sessions started after the install.
 
 ## Finding tools
 

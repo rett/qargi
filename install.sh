@@ -44,7 +44,7 @@ completion=$xdg/bash-completion/completions/qargi
 zshcomp=$xdg/zsh/site-functions/_qargi
 fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
-agents="qargi-agent qargi-dev qargi-docs qargi-review qargi-test"   # qargi-agent: the alias of qargi-dev
+agents="qargi-dev qargi-docs qargi-review qargi-test"
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
 paths=()

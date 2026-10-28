@@ -22,7 +22,7 @@ CATALOG = os.environ.get("QARGI_CATALOG") or os.path.join(ROOT, "catalog", "tool
 CONF = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
 STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
 AGENTS_DIR = os.environ.get("QARGI_AGENTS_DIR") or os.path.join(ROOT, "agents")
-ROLE_AGENTS = {"dev": ["qargi-dev", "qargi-agent"], "docs": ["qargi-docs"], "review": ["qargi-review"], "test": ["qargi-test"]}
+ROLE_AGENTS = {"dev": ["qargi-dev"], "docs": ["qargi-docs"], "review": ["qargi-review"], "test": ["qargi-test"]}
 
 
 def agent_files(role=None):

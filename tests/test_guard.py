@@ -29,7 +29,7 @@ class Guard(unittest.TestCase):
 
     def test_every_agent_definition_has_the_hook_and_review_cannot_edit(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
-        for n in ("qargi-agent", "qargi-dev", "qargi-docs", "qargi-review", "qargi-test"):
+        for n in ("qargi-dev", "qargi-docs", "qargi-review", "qargi-test"):
             with open(os.path.join(d, n + ".md")) as f:
                 text = f.read()
             self.assertIn('command: "qargi __guard"', text, n)
