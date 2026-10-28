@@ -45,9 +45,13 @@ of done.
 The PROFILE in the task block is the single source of which gates run; memory and
 the reference explain how to run them and what their verdicts mean. If they disagree,
 the profile decides and you report the difference. Run the gates the profile names for
-the paths you touched, and its "always" gates before the report. Run long commands detached and poll their
-log (for example `(nohup bash -c '<cmd> </dev/null; echo EXIT=$?' > out 2>&1 &)`);
-never block on them and never wait with `pgrep -f`. Gates the profile marks
+the paths you touched, and its "always" gates before the report. Long commands: in a local run start them with the Bash tool's `run_in_background` (never a
+trailing `&`) and let the result come back; use `Monitor` only to tail a log, and stop or wait for
+every background command before the report. In a cloud run start them detached and poll their log
+(`(nohup bash -c '<cmd> </dev/null; echo EXIT=$?' > out 2>&1 &)`). Never wait with `pgrep -f`.
+Secrets: if `gitleaks` is installed, run it over your commits (`gitleaks git --log-opts BASE_SHA..HEAD`,
+or `gitleaks detect --log-opts BASE_SHA..HEAD` on an older build) before the report and quote its verdict
+line; its pass is a hint, the coordinator scans again. Gates the profile marks
 as coordinator-only are reported "not run".
 
 # Output files (in RUN_DIR)

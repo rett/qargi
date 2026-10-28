@@ -44,18 +44,19 @@ completion=$xdg/bash-completion/completions/qargi
 zshcomp=$xdg/zsh/site-functions/_qargi
 fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
+agents="qargi-agent qargi-dev qargi-docs qargi-review qargi-test"   # qargi-agent: the alias of qargi-dev
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
 paths=()
 for s in $skills; do paths+=("$target/skills/$s"); done
-paths+=("$target/agents/qargi-agent.md")
+for a in $agents; do paths+=("$target/agents/$a.md"); done
 [ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp")
 
 exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents/qargi-agent.md | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-review|qargi-team)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-review|qargi-team)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
@@ -63,7 +64,8 @@ fi
 entries=
 for s in $skills; do entries="$entries/.claude/skills/$s
 "; done
-entries="$entries/.claude/agents/qargi-agent.md"
+for a in $agents; do entries="$entries/.claude/agents/$a.md
+"; done
 
 if [ -n "$uninstall" ]; then
   if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
@@ -97,8 +99,10 @@ for s in $skills; do
   rm -rf "${target:?}/skills/$s"
   if [ -n "$copy" ]; then cp -r "$src/skills/$s" "$target/skills/$s"; else ln -s "$src/skills/$s" "$target/skills/$s"; fi
 done
-rm -rf "$target/agents/qargi-agent.md"
-if [ -n "$copy" ]; then cp "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; else ln -s "$src/agents/qargi-agent.md" "$target/agents/qargi-agent.md"; fi
+for a in $agents; do
+  rm -rf "$target/agents/$a.md"
+  if [ -n "$copy" ]; then cp "$src/agents/$a.md" "$target/agents/$a.md"; else ln -s "$src/agents/$a.md" "$target/agents/$a.md"; fi
+done
 kind="symlinks to $here"; [ -z "$copy" ] || kind=copy
 if [ "$mode" = user ]; then
   mkdir -p "$(dirname "$cmd")" "$(dirname "$manpage")" "$(dirname "$completion")" "$(dirname "$zshcomp")" "$(dirname "$fishcomp")"

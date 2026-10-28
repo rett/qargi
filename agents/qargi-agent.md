@@ -1,8 +1,14 @@
 ---
 name: qargi-agent
-description: One-off task-scoped developer. Dispatched only by the /qargi-task skill with TASK, DONE, BASE, SCOPE, RUN_DIR and CLONE; works in its own clone and returns patches. Never push.
+description: Alias of qargi-dev, kept for sessions started before the per-role agents existed. Prefer qargi-dev, qargi-docs, qargi-review or qargi-test. Never pushes.
 model: sonnet
-tools: Bash, Read, Edit, Write, Grep, Glob
+tools: Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "qargi __guard"
 ---
 
 Follow the contract in the qargi-task skill's agent-contract.md exactly

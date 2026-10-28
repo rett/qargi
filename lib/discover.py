@@ -21,7 +21,24 @@ ROOT = os.path.dirname(HERE)
 CATALOG = os.environ.get("QARGI_CATALOG") or os.path.join(ROOT, "catalog", "tools.json")
 CONF = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
 STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
-AGENT_FILE = os.environ.get("QARGI_AGENT_FILE") or os.path.join(ROOT, "agents", "qargi-agent.md")
+AGENTS_DIR = os.environ.get("QARGI_AGENTS_DIR") or os.path.join(ROOT, "agents")
+ROLE_AGENTS = {"dev": ["qargi-dev", "qargi-agent"], "docs": ["qargi-docs"], "review": ["qargi-review"], "test": ["qargi-test"]}
+
+
+def agent_files(role=None):
+    """The local agent definitions a tool reaches: one role's, or all of them."""
+    names = ROLE_AGENTS.get(role) or [n for ns in ROLE_AGENTS.values() for n in ns]
+    return [f for f in (os.path.join(AGENTS_DIR, n + ".md") for n in names) if os.path.exists(f)]
+
+
+def tools_line(path):
+    try:
+        with open(path) as fh:
+            head = fh.read().split("---")[1]
+    except (OSError, IndexError):
+        return None
+    m = re.search(r"(?m)^tools:\s*(.*)$", head)
+    return [t.strip() for t in m.group(1).split(",") if t.strip()] if m else None
 QARGI = os.path.join(ROOT, "bin", "qargi")
 TTY_IN = os.environ.get("QARGI_TTY_IN", "/dev/tty")
 TTY_OUT = os.environ.get("QARGI_TTY_OUT", "/dev/tty")
@@ -250,12 +267,8 @@ def already_has(e, project, role):
         have = set((answers.get("roles", {}).get(role) or {}).get("apt") or [])
         return all(p in have for p in (e.get("install") or {}).get("packages", []))
     if e["kind"] == "agent-tool":
-        try:
-            head = open(AGENT_FILE).read().split("---")[1]
-        except (OSError, IndexError):
-            return False
-        m = re.search(r"(?m)^tools:\s*(.*)$", head)
-        return bool(m) and (e.get("install") or {}).get("tool") in [t.strip() for t in m.group(1).split(",")]
+        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(role)
+        return bool(files) and all((e.get("install") or {}).get("tool") in (tools_line(f) or []) for f in files)
     return False
 
 
@@ -509,25 +522,28 @@ def cmd_install(args):
         return rc
     if kind == "agent-tool":
         tool = inst["tool"]
-        try:
-            text = open(AGENT_FILE).read()
-        except OSError:
-            die("cannot read %s" % AGENT_FILE)
-        m = re.search(r"(?m)^(tools:\s*)(.*)$", text)
-        if not m:
-            die("the agent definition has no tools line: %s" % AGENT_FILE)
-        cur = [t.strip() for t in m.group(2).split(",") if t.strip()]
-        if tool in cur:
-            print("The local agent has %s already. Nothing changed." % tool)
+        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"))
+        if not files:
+            die("no local agent definition found in %s" % AGENTS_DIR)
+        todo = [f for f in files if tool not in (tools_line(f) or [tool])]
+        if not todo:
+            print("Every local agent in scope has %s already. Nothing changed." % tool)
             return 0
-        new = cur + [tool]
-        print("\n%s\n  tools: %s\n       -> %s" % (AGENT_FILE, ", ".join(cur), ", ".join(new)))
-        print("This changes what every local qargi agent may call (the git wrapper and `qargi local verify` still apply).")
-        if not confirm("Edit the file?"):
+        print("")
+        for f in todo:
+            cur = tools_line(f)
+            print("%s\n  tools: %s\n       -> %s" % (f, ", ".join(cur), ", ".join(cur + [tool])))
+        print("This changes what those local qargi agents may call (the git wrapper, the guard hook and `qargi local verify` still apply).")
+        if not confirm("Edit %d file(s)?" % len(todo)):
             print("Nothing changed.")
             return 1
-        with open(AGENT_FILE, "w") as f:
-            f.write(text[:m.start(2)] + ", ".join(new) + text[m.end(2):])
+        for f in todo:
+            with open(f) as fh:
+                text = fh.read()
+            m = re.search(r"(?m)^(tools:\s*)(.*)$", text)
+            cur = [t.strip() for t in m.group(2).split(",") if t.strip()]
+            with open(f, "w") as fh:
+                fh.write(text[:m.start(2)] + ", ".join(cur + [tool]) + text[m.end(2):])
         print("Done. Commit it in the qargi repository; new local agents get the tool.")
         return 0
     die("cannot install a '%s' entry" % kind)

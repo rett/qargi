@@ -67,6 +67,10 @@ Eight skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` di
 
 All three, and the checks that keep them true, come from one description of the commands in `lib/commands.py`; `tests/test_help.py` compares it with the scripts. After changing a flag or a verb, describe it there and regenerate the page with `python3 lib/help.py man > man/qargi.1`.
 
+## Local agents
+
+`install.sh --user` installs one subagent per role: `qargi-dev`, `qargi-docs`, `qargi-review` (no Edit tool: it reads and writes only its report) and `qargi-test`; `qargi-agent` is the alias of `qargi-dev`. Each may call `Bash`, `Read`, `Grep`, `Glob`, `Write`, `Monitor`, `TaskStop` and `ToolSearch` (and `Edit`, except review), and each Bash call passes `qargi __guard`, which refuses `git push`, `gh`, `ssh`, `scp`, `sftp` and changes to a git remote. The guard is a second barrier beside the credential-free git wrapper; `qargi local verify` remains the proof. New subagent types are available in Claude Code sessions started after the install.
+
 ## Finding tools
 
 `qargi discover` finds, recommends and installs tools for the roles of a project: skills, MCP servers, packages for the sandbox and built-in tools of the agent.

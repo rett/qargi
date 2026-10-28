@@ -42,7 +42,7 @@ class Sync(unittest.TestCase):
         labels = set()
         for m in re.finditer(r"(?m)^  ([a-z_|-]+)\) ", body):
             labels |= set(m.group(1).split("|"))
-        labels -= {"-h", "--help", "__complete"}
+        labels -= {"-h", "--help", "__complete", "__guard"}
         self.assertEqual(labels, set(C.COMMANDS), "bin/qargi and lib/commands.py disagree")
 
     def test_groups_cover_every_command_once(self):

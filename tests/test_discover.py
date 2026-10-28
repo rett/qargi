@@ -204,6 +204,21 @@ class Install(Env):
         self.assertIn("already", r.stdout)
         self.assertEqual(self.rd(self.agent).count("Monitor"), 1)
 
+    def test_per_role_agent_files_are_edited_by_role(self):
+        d = os.path.join(self.t, "agents")
+        for n in ("qargi-dev", "qargi-review", "qargi-docs", "qargi-test"):
+            self.w(os.path.join(d, n + ".md"), "---\nname: %s\ntools: Bash, Read\n---\nbody\n" % n)
+        env = dict(self.env, QARGI_AGENTS_DIR=d)
+        env.pop("QARGI_AGENT_FILE")
+        self.env = env
+        r = self.q(["install", "agent-wait", "--role", "review"], answers=["y", "y"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Monitor", self.rd(os.path.join(d, "qargi-review.md")))
+        self.assertNotIn("Monitor", self.rd(os.path.join(d, "qargi-dev.md")))
+        r = self.q(["install", "agent-wait"], answers=["y", "y"])
+        for n in ("qargi-dev", "qargi-docs", "qargi-test", "qargi-review"):
+            self.assertEqual(self.rd(os.path.join(d, n + ".md")).count("Monitor"), 1, n)
+
     def test_answering_no_changes_nothing(self):
         before = self.rd(self.agent)
         r = self.q(["install", "agent-wait"], answers=["y", "n"])

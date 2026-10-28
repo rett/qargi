@@ -119,7 +119,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
    `RUN`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, and records every ref of the real
    repository and of its remote.
-2. Spawn the `qargi-agent` subagent (Agent tool, subagent_type `qargi-agent`) with the task
+2. Spawn the role's subagent (Agent tool, subagent_type `qargi-dev`, `qargi-docs`, `qargi-review` or `qargi-test`; `qargi-agent` is the alias of `qargi-dev` for sessions started before the split) with the task
    block plus `CLONE`, `OUT`, `GIT` and `BASE_SHA`; pass the instance's recorded model
    (and effort, if set) as the Agent tool's `model` and `effort`. The agent must run
    every git command through `GIT`. No opinions on the solution.

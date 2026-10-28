@@ -13,6 +13,7 @@ area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
   help|-h|--help) exec python3 -I "$help" show "$@";;
   __complete) exec python3 -I "$help" complete "$@";;
+  __guard) exec python3 -I "$lib/guard.py";;
 esac
 # qargi COMMAND --help and qargi COMMAND VERB --help
 case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
