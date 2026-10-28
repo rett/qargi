@@ -107,6 +107,7 @@ class Canon(unittest.TestCase):
         self.assertIn("/CANON.md", paths)
         after2 = apply_plan(after, p)
         self.assertEqual(run("check", "memory", after2, "dev,docs").returncode, 0)
+        self.assertIn("roles/docs/INDEX.md", after2["/README.md"])      # the README's role list follows
 
     def test_dropped_role_is_reported_not_removed(self):
         _, after = self.assertConverges("memory", {}, roles="dev,docs")

@@ -415,10 +415,17 @@ def maintain(kind, mems, project, roles, seed, today):
         parts = p.strip("/").split("/")
         if parts[0] == "roles" and len(parts) > 2 and parts[1] not in known:
             notes.append("role folder left in place, the project does not use that role: /roles/%s/" % parts[1])
-    readme = mems.get("/README.md", {}).get("content", "")
+    rd = mems.get("/README.md")
+    readme = rd["content"] if rd else ""
+    block = re.compile(r"(Roles in this project:\n\n)((?:- `roles/[^\n]*\n?)+)")
+    if rd and block.search(readme):   # the README's own role list follows the project's roles
+        fixed = block.sub(lambda m: m.group(1) + role_lines(roles) + ("\n" if m.group(2).endswith("\n") else ""), readme, count=1)
+        if fixed != readme:
+            ops.append({"op": "update", "id": rd["id"], "path": "/README.md", "content": fixed, "sha": rd.get("content_sha256", "")})
+            readme = fixed
     for r in roles:
         if "roles/%s/INDEX.md" % r not in readme:
-            notes.append("the README does not list roles/%s/INDEX.md (edit it, the reconciler does not rewrite a README at the current version)" % r)
+            notes.append("the README does not list roles/%s/INDEX.md (edit it)" % r)
     return ops, sorted(set(notes))
 
 
