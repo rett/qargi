@@ -2,3 +2,5 @@ claude-lock.json
 *.tmp
 *.lock
 .env
+__pycache__/
+*.pyc

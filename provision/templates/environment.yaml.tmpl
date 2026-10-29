@@ -1,0 +1,10 @@
+name: {{ENV_NAME}}
+description: Sandbox shared by the roles of {{PROJECT}}.
+config:
+  type: cloud
+  packages:
+    type: packages
+    apt: {{APT}}
+    pip: {{PIP}}
+    go: {{GO}}
+  networking: {{NETWORKING_YAML}}

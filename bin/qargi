@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# qargi: the entry point. Each command is implemented by a script in lib/. The commands, verbs and options are
+# described once, in lib/commands.py; that description drives `qargi help`, the manual page (man/qargi.1) and the
+# bash completion (completions/qargi.bash). Add a flag to a script and describe it there; tests/test_help.py checks.
+set -eu
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+lib=$root/lib
+
+usage() { python3 -I "$lib/help.py" show >&2; exit 2; }
+help="$lib/help.py"
+
+area=${1:-}; [ -n "$area" ] || usage; shift
+case $area in
+  help|-h|--help) exec python3 -I "$help" show "$@";;
+  __complete) exec python3 -I "$help" complete "$@";;
+  __guard) exec python3 -I "$lib/guard.py";;
+esac
+# qargi COMMAND --help and qargi COMMAND VERB --help
+case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
+case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
+# What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
+_rf=$(mktemp)
+if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
+  mapfile -d '' -t _resolved < "$_rf"
+  if [ "${#_resolved[@]}" -gt 0 ]; then area=${_resolved[0]}; set -- "${_resolved[@]:1}"; fi
+  rm -f "$_rf"
+else rm -f "$_rf"; exit 2; fi
+case $area in
+  project) exec "$lib/project.sh" "$@";;
+  instances) exec "$lib/registry.sh" "$@";;
+  provision) exec "$lib/provision.sh" "$@";;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; *) usage;; esac;;
+  skill|tool) exec "$lib/packs.sh" "$area" "$@";;
+  packs) exec "$lib/packs.sh" packs "$@";;
+  credential) exec "$lib/cred.sh" "$@";;
+  local) exec "$lib/local.sh" "$@";;
+  agent) exec "$lib/agent.sh" "$@";;
+  canon) exec "$lib/canon.sh" "$@";;
+  memory) exec "$lib/memory.sh" "$@";;
+  start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
+  watch) exec "$lib/watch.sh" "$@";;
+  collect) exec "$lib/collect.sh" "$@";;
+  team) exec "$lib/team.sh" "$@";;
+  lead) exec "$lib/lead.sh" "$@";;
+  hook) exec "$lib/hook.sh" "$@";;
+  discover) exec python3 -I "$lib/discover.py" "$@";;
+  export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
+  migrate) exec python3 -I "$lib/migrate.py" "$@";;
+  version) cat "$root/VERSION";;
+  *) echo "qargi: unknown command '$area'. Try: qargi help" >&2; exit 2;;
+esac

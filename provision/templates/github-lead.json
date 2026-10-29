@@ -1,0 +1,21 @@
+{
+  "name": "github",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "tools": {
+    "get_file_contents": "always_allow",
+    "get_commit": "always_allow",
+    "list_commits": "always_allow",
+    "list_branches": "always_allow",
+    "list_tags": "always_allow",
+    "get_tag": "always_allow",
+    "get_latest_release": "always_allow",
+    "get_release_by_tag": "always_allow",
+    "list_pull_requests": "always_allow",
+    "create_branch": "always_allow",
+    "create_or_update_file": "always_allow",
+    "push_files": "always_allow",
+    "create_pull_request": "always_allow",
+    "merge_pull_request": "always_ask"
+  },
+  "write_ok": true
+}

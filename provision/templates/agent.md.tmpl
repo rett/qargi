@@ -1,0 +1,16 @@
+---
+name: {{AGENT_NAME}}
+description: {{DESCRIPTION}}
+model:
+  id: {{MODEL}}
+  effort: {{EFFORT}}
+{{MULTIAGENT}}
+{{SKILLS}}
+{{MCP_SERVERS}}
+tools:
+  - type: agent_toolset_20260401
+    default_config: {permission_policy: {type: auto}}
+    configs:{{TOOL_CONFIGS}}{{MCP_TOOLS}}
+---
+
+{{SYSTEM}}

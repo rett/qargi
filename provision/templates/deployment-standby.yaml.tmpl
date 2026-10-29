@@ -1,0 +1,13 @@
+name: {{DEPLOYMENT_NAME}}
+description: Manual-run deployment for {{NAME}}. No schedule; each run starts a standby session.
+agent: ./agent.md
+environment_id: {{ENVIRONMENT_REF}}
+{{VAULT_IDS}}
+budget: {type: limit, max_list_cost: {amount: "{{BUDGET}}", currency: USD}}
+{{RESOURCES}}
+initial_events:
+  - type: user.message
+    content:
+      - type: text
+        text: |
+          You are on standby for the /qargi-task cloud backend. Do no repository work until the coordinator sends a task with a --done check. Reply only: ready.
