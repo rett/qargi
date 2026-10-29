@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-28
+
 ### Added
 - Six skills behind one `qargi` command: `/qargi-task` (dispatch and session
   lifecycle), `/qargi-project` (the one-time questionnaire), `/qargi-instances`,
