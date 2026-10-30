@@ -31,6 +31,8 @@ while :; do
   # Just after a send the session can still read idle; give it 90 s to start.
   if [ "$st" != running ] && { [ -n "$seen_running" ] || [ "$elapsed" -ge 90 ]; }; then
     trk_refresh "$sid" >/dev/null 2>&1
+    # the session object carries no stop reason; trk_refresh read it from the last session.status_idle event
+    [ "$why" != "-" ] || why=$(jq -r --arg s "$sid" '.[$s].stop_reason // "-"' "$TRK" 2>/dev/null || echo -)
     [ "$why" = budget_reached ] && st=budget_reached
     echo "QARGI WATCH $sid $st $why"; exit 0
   fi

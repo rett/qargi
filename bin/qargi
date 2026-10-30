@@ -38,6 +38,7 @@ case $area in
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
+  report) exec python3 -I "$lib/report.py" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
   team) exec "$lib/team.sh" "$@";;

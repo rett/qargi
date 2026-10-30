@@ -10,6 +10,9 @@ run python3 tests/test_membackend.py
 run python3 tests/test_transfer.py
 run python3 tests/test_discover.py
 run bash tests/test_watch.sh
+run bash tests/test_session.sh
+run python3 tests/test_report.py
+run bash tests/test_prompt.sh
 run python3 tests/test_guard.py
 run bash tests/test_agent.sh
 run python3 tests/test_migrate.py

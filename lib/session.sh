@@ -122,7 +122,7 @@ send() {
   ant beta:sessions:events send --session-id "$sid" \
     --event "$(jq -n --arg t "$task" '{type: "user.message", content: [{type: "text", text: $t}]}')" >/dev/null \
     || die "could not send the task"
-  json_update "$TRK" '.[$s] += {status: "running", outputs_collected: false, review_state: "pending", sent_at: $t}' \
+  json_update "$TRK" '.[$s] += {status: "running", outputs_collected: false, review_state: "pending", sent_at: $t, interrupt_sent_at: null}' \
     --arg s "$sid" --arg t "$(now)"
   echo "sent to $sid; next: watch.sh $sid (Bash run_in_background)"
 }
@@ -143,6 +143,8 @@ status() {
 stop() {
   local sid=${POS[0]:-}; [ -n "$sid" ] || die "stop needs SID"
   ant beta:sessions:events send --session-id "$sid" --event '{type: user.interrupt}' >/dev/null || die "interrupt failed"
+  # an interrupted turn ends with stop_reason end_turn, like a finished one: keep what tells them apart
+  json_update "$TRK" 'if has($s) then .[$s].interrupt_sent_at = $t else . end' --arg s "$sid" --arg t "$(now)"
   echo "interrupt sent to $sid; the session returns to idle, then collect.sh"
 }
 

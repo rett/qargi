@@ -11,6 +11,8 @@
 # (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
 # The run directory records the task's ability (RUN/ability, default build); under review the guard
 # (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
+# prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
+# start time; never a repository path or a token), so `qargi report` can list the local runs.
 . "$(dirname "$0")/lib.sh"
 
 snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
@@ -79,6 +81,9 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" \
+      '{run:$r, slug:$s, ability:$a, base:$b, started:$t}' >> "$DA_STATE/local-runs.jsonl"
+    chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     echo "RUN=$RUN"
     echo "ABILITY=$ABILITY"
     echo "CLONE=$RUN/clone"

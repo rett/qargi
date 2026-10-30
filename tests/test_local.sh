@@ -3,6 +3,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0
+export QARGI_CONF=$T/c QARGI_STATE=$T/s
 git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote.git" && git -C "$T/r" push -q origin main
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed 's/^/export /')"
@@ -19,4 +20,6 @@ R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$
 ./bin/qargi local prepare --repo "$T/r" --base main --slug bad --scratch "$T" --ability deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
 git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with plain git
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
+[ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
+grep -q "$T/r" "$T/s/local-runs.jsonl" && no "the registry names the repository path" || ok "the registry holds no repository path"
 exit $fail

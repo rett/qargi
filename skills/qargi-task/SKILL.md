@@ -56,7 +56,8 @@ user's request named it.
 |---|---|---|
 | start | `qargi start NAME [--label L] --asked "..."` | New cloud session via the deployment. The spend budget lives on the deployment (a session can only get one at creation). |
 | send | `qargi send NAME "<task block>" --label SLUG [--session SID] [--new] --asked "..."` | `--label` is required for cloud: the session is named `<instance>-<slug>`; use the same slug for the `agent/<slug>` branch. Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
-| status | `qargi status [SID\|NAME]` | Refreshes the tracker from the API. |
+| status | `qargi status [SID\|NAME]` | Refreshes the tracker from the API. For an idle session it also records why it stopped (`stop_reason`: `end_turn`, `requires_action`, `retries_exhausted`, `budget_reached`), read from the last `session.status_idle` event. |
+| report | `qargi report [--since DATE] [--instance NAME] [--json]` | Read-only: spend and spend per applied session, what waits for review (oldest first), what looks stale or stuck, idle sessions split by why they stopped, and local runs (finished, still changing, possibly stalled). It states what it cannot know. |
 | watch | `qargi watch SID [MAX_SECONDS] [--warn PCT]` | Bounded poller (default 7200 s); prints one `QARGI WATCH <sid> idle\|terminated\|budget_reached\|budget_tight\|timeout\|auth` line. `budget_tight` (the cost reached `--warn` percent of the ceiling, default 85) ends it early: see the budget contingency. |
 | collect | `qargi collect SID DIR` | Downloads the session's outputs into a fresh directory; marked collected only if `manifest.json` is there. |
 | stop | `qargi stop SID` | `user.interrupt`; the session returns to idle. |
