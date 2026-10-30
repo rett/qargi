@@ -25,9 +25,9 @@ periodic loop audit below.
 | L1 | Memory backend work is committed on `feature/memory-backends`, not merged | owner | merge with git flow, or reject; resolve the small overlap in `commands.py`, the man page and the changelog with the ops builder | open |
 | L2 | The five design drafts and the skill spec await review | owner | review, then approve; fixtures follow approval | open |
 | L3 | 18 open questions across the drafts | owner | answer in one pass, grouped as needed-now, needed-when-built, parked (see below) | open |
-| L4 | Cloud sessions waiting on the owner: three idle and pending review, two stuck at running since Oct 28 (another project) | owner | collect and verify, then apply or reject, then close; `qargi report` will list them with their age | open |
+| L4 | Five cloud sessions waiting on the owner (another project) | owner | checked on 2026-10-30: all 31 patches are in the repository (25 identical diffs, 6 with a same-subject commit and 76-99% of lines present; the gaps are release-time edits); marked applied and archived; cloud shows archived_at for each | closed |
 | L5 | `noticed_not_acted_on` in agent manifests is written and never read | builder (in the verify and report path) | collect these notes in `qargi-verify` and `qargi report`, with a disposition per item: file a follow-up, dismiss, or accept; age unanswered ones | open |
-| L6 | The idle stop reason is read from a field that does not exist, so it is empty everywhere | ops builder | read it from the idle event; test with the observed event shape | in progress |
+| L6 | The idle stop reason is read from a field that does not exist, so it is empty everywhere | ops builder | fixed to read the idle event; verified (suite exit 0, 25 suites) on branch `feature/ops-report`; closes for real when that branch is committed and merged | built, not merged |
 | L7 | Trial cost and turns were not in the spec | assistant | recorded in the trial result (above) | closed |
 | L8 | The guard hook may fail open on error or timeout (claim from the docs, not yet re-read) | assistant | read the current hooks documentation; if confirmed, set the hook to block on failure for members; test | open |
 | L9 | Skill-modification gate: the member guard has no rule against the skill verbs; `QARGI_NESTED` skips the plan check in `packs.sh` | assistant | add the guard rule; remove the bypass for those verbs; test | queued |
@@ -36,6 +36,9 @@ periodic loop audit below.
 | L12 | The supervisor is designed, not built; it needs the run registry and the idle-reason fix first | assistant | build after the ops builder lands | queued |
 | L13 | The self-improvement loop design is in progress | assistant and Fable | analysis, then the owner's answers, then Fable's review of the decisions | in progress |
 | L14 | A cost estimate I gave for trial sessions was too low | assistant | recorded in the working notes: state estimates with a margin and report actual spend | closed |
+| L15 | The tracker only refreshes a session's row when someone runs `status`, so cost and status go stale (two rows showed cost 1 and `running` for two days; true total spend was 12,144, not 9,460) | assistant | refresh on `report` and on the supervisor tick; show the row's age so staleness is visible | open |
+| L16 | The ops work (`qargi report`, local-run registry, idle-reason fix, stale-prompt detection) is verified and uncommitted in its worktree | owner | commit on `feature/ops-report` and merge, or reject | open |
+| L17 | The improvement-loop design is drafted (`improvement/DESIGN.md`); the owner allowed the four automatic knobs, which need their bounds written into policy before anything is built | assistant | write bounds as data when the loop is built; review the draft | open |
 
 ## The open questions, grouped
 
