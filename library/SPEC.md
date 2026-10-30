@@ -129,7 +129,10 @@ pins the exact string for a given `skill.json`.
 A **trial** runs the positives of every skill in the attached set, and each skill's near misses and
 negatives, against one named selector (`{platform, model, version}`), `trial_runs_per_case` times each.
 Its result is `evals/results/<digest>-<platform>-<model>.json`:
-`{digest, selector, date, runs, cases[{id, selected, hits}]}`. A case passes at `case_pass_rate`.
+`{digest, selector, date, runs, cases[{id, selected, hits, cost_usd, turns, output_tokens}]}`. A case passes
+at `case_pass_rate`. Cost and turns are recorded, not gated: a skill use costs extra turns (a pilot on
+2026-10-30 measured roughly 70% more per run with a trivial skill body), so the approver sees the added cost
+per run beside the value delta, and a skill whose delta does not repay it is flagged for the approver.
 Precision, recall and cross-fire are **recomputed by the validator** from `cases[]`; stored aggregates
 are ignored. Acceptance needs a result with precision and recall at least `min_trigger_precision` and
 `min_trigger_recall` on **at least two selectors**: the cheapest and the strongest model in use
