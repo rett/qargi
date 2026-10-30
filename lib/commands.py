@@ -34,6 +34,10 @@ def verb(summary, args=(), opts=(), desc="", examples=()):
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
+ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
+NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
+POLICY = opt("--policy", "what to do when a note differs: conflicts (put the incoming one in /_conflicts/<date>/, default) or keep (leave it and report)", "POLICY", ("conflicts", "keep"))
 KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND", ("memory", "reference"))
 
 GROUPS = [
@@ -258,11 +262,27 @@ COMMANDS = {
         },
     },
     "memory": {
-        "summary": "Check a memory store and read a note",
+        "summary": "Check a memory store, read a note, split, merge or copy stores",
+        "desc": ("split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read-only: a source, never a "
+                 "target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is "
+                 "deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the "
+                 "origin of every note written is added to its Sources: line, so each change can be undone. Without --approved they "
+                 "print the plan and its token and change nothing; a store whose notes changed since the plan is refused."),
         "scripts": ["memory.sh"],
         "verbs": {
             "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
             "get": verb("Print one note", [("STORE_ID", "store"), ("PATH", "none")], examples=["qargi memory get memstore_01ABC /shared/INDEX.md"]),
+            "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
+                          [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
+                          desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",
+                          examples=["qargi memory split ./memory ./build --role build --archive", "qargi memory split ./memory ./build --role build --archive --plan TOKEN --approved \"go\""]),
+            "merge": verb("Add every note of FROM that TO lacks", [("FROM", "file"), ("TO", "file")],
+                          [POLICY, PLAN, APPROVED],
+                          desc="FROM is only read. A note whose original sits in TO's archive is moved back from it, so merging what a split wrote undoes the split.",
+                          examples=["qargi memory merge ./build ./memory"]),
+            "copy": verb("Copy notes into another store, leaving the source as it is", [("FROM", "file"), ("TO", "file")],
+                         [PREFIX, ROLE_SEL, NOTE_KIND, POLICY, PLAN, APPROVED],
+                         desc="Without a selector every note is copied except /CANON.md. Each copy records its origin in Sources:."),
         },
     },
     "canon": {
@@ -477,7 +497,10 @@ TOPICS = {
         "<project>-memory is read-write for agents: verified how-to facts they learn. <project>-reference is read-only: rules, workflow and "
         "conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.",
         "An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. "
-        "The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get."]),
+        "The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get.",
+        "qargi memory split, merge and copy move notes between two stores (directories, .jsonl dumps or store ids). Nothing is deleted: "
+        "what leaves a store is archived under /_archive/<date>/, a collision goes to /_conflicts/<date>/, and the origin of every "
+        "note written is added to its Sources: line."]),
     "push": ("Who may push", [
         "Only the lead ever pushes, never a member, and only as the project's lead.push grant says. The default is nothing.",
         "This Claude Code session as lead: lead.push.local lets it push agent/* branches and open pull requests without asking each time.",

@@ -38,6 +38,8 @@ qargi instances normalize renames existing resources to match.
 <project>\-memory is read\-write for agents: verified how\-to facts they learn. <project>\-reference is read\-only: rules, workflow and conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.
 .PP
 An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get.
+.PP
+qargi memory split, merge and copy move notes between two stores (directories, .jsonl dumps or store ids). Nothing is deleted: what leaves a store is archived under /_archive/<date>/, a collision goes to /_conflicts/<date>/, and the origin of every note written is added to its Sources: line.
 .SH PUSH
 Only the lead ever pushes, never a member, and only as the project's lead.push grant says. The default is nothing.
 .PP
@@ -1034,7 +1036,9 @@ The procedure every lead follows, whoever it is.
 .SS Memory
 .TP
 .B qargi memory
-Check a memory store and read a note.
+Check a memory store, read a note, split, merge or copy stores.
+.PP
+split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read\-only: a source, never a target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the origin of every note written is added to its Sources: line, so each change can be undone. Without \-\-approved they print the plan and its token and change nothing; a store whose notes changed since the plan is refused.
 .RS
 .TP
 .BI "lint " "STORE_ID"
@@ -1049,6 +1053,102 @@ recipes or reference (for a store before the canon).
 .TP
 .BI "get " "STORE_ID PATH"
 Print one note.
+.RE
+.RS
+.TP
+.BI "split " "FROM TO"
+Copy the notes a selector picks into another store, optionally archiving the originals.
+.br
+At least one of \-\-prefix, \-\-role and \-\-note\-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.
+.RS
+.TP
+.BI "\-\-prefix " "PATH"
+pick the notes under this path (repeat for several).
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+pick the notes under /roles/ROLE/.
+.RE
+.RS
+.TP
+.BI "\-\-note\-kind " "KIND"
+pick the notes whose Kind: header is KIND (setup, gate, rule, ...).
+.RE
+.RS
+.TP
+.B \-\-archive
+move the originals to /_archive/<date>/ in FROM (with their origin in Sources:).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "merge " "FROM TO"
+Add every note of FROM that TO lacks.
+.br
+FROM is only read. A note whose original sits in TO's archive is moved back from it, so merging what a split wrote undoes the split.
+.RS
+.TP
+.BI "\-\-policy " "POLICY"
+what to do when a note differs: conflicts (put the incoming one in /_conflicts/<date>/, default) or keep (leave it and report).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "copy " "FROM TO"
+Copy notes into another store, leaving the source as it is.
+.br
+Without a selector every note is copied except /CANON.md. Each copy records its origin in Sources:.
+.RS
+.TP
+.BI "\-\-prefix " "PATH"
+pick the notes under this path (repeat for several).
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+pick the notes under /roles/ROLE/.
+.RE
+.RS
+.TP
+.BI "\-\-note\-kind " "KIND"
+pick the notes whose Kind: header is KIND (setup, gate, rule, ...).
+.RE
+.RS
+.TP
+.BI "\-\-policy " "POLICY"
+what to do when a note differs: conflicts (put the incoming one in /_conflicts/<date>/, default) or keep (leave it and report).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
 .RE
 .TP
 .B qargi canon

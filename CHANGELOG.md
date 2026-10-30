@@ -6,6 +6,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi memory split|merge|copy FROM TO`: move memory between two stores, each a directory of
+  notes, a `.jsonl` dump or a `memstore_` id. Nothing is deleted: what a split archives goes to
+  `/_archive/<date>/` and a collision to `/_conflicts/<date>/`, with the origin of every note
+  written added to its `Sources:` line, so each change can be undone (merging a split's target
+  restores the archived originals byte for byte). Without `--approved` they print the plan and its
+  token and change nothing; a store whose notes changed since the plan is refused and left as it
+  was. On a directory store qargi's own writers are serialised by an exclusive lock, and each write
+  re-reads the note immediately before replacing it or releasing its name, so a change made by an
+  editor in that instant is refused and kept, not overwritten; an editor that writes in the last
+  instant after that read is still not prevented (the lock is advisory), which is why the digest
+  check exists. `lib/membackend.py` is the backend interface (directory, fixture dump and Managed Agents
+  store through `ant`) with one ops executor, `lib/memplan.py` the pure planning;
+  `lib/canon.py` gains `make_plan`, the migration plan `canon plan` prints, for reuse.
+  A `.jsonl` dump is read-only (a source, never a target of split, merge or copy). A note named
+  with a leading dot or trailing white space is not a note, and a note the target cannot hold
+  (too many path segments or too large for a Managed Agents store) makes the plan refuse and name
+  it. The plan token is always required: `QARGI_NESTED` does not stand in for it, and the audit log
+  records the token, the selector and every step, with a second line once the apply succeeded.
+  `merge` and `copy` without a selector leave the source's `/_archive/` behind. A
+  provenance segment counts only when its digest matches the note it was added to. `/_archive/`
+  is a tolerated folder of canon 2 (`canon check` warns about a note there without our segment).
+  Known limit: `canon apply` is not run through the new executor; `memplan.migrate` exists for it.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added

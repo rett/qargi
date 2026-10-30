@@ -25,7 +25,7 @@ templates; `examples/` sample repository profiles.
 ## Tests
 
 `tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
-guard, members, the role migration, role seeds, shellcheck). It needs no API access and no private data.
+guard, members, the memory backends and their split/merge invariants, the role migration, role seeds, shellcheck). It needs no API access and no private data.
 
 ## Changing the canon
 

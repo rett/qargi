@@ -429,28 +429,31 @@ def maintain(kind, mems, project, roles, seed, today):
     return ops, sorted(set(notes))
 
 
-def cmd_plan(a):
-    mems = load(a.store)
-    roles = a.roles.split(",")
-    state, why = detect(a.kind, mems)
-    today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+def make_plan(kind, mems, project, roles, default_role, seed, today):
+    """The steps from a store's memories to the current canon: {from_version, to_version, why, ops, notes}."""
+    state, why = detect(kind, mems)
     out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
     if state == "unknown":
         out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
-        print(json.dumps(out)); return 0
+        return out
     if state == LATEST:
-        out["ops"], out["notes"] = maintain(a.kind, mems, a.project, roles, a.seed, today)
+        out["ops"], out["notes"] = maintain(kind, mems, project, roles, seed, today)
     if state != LATEST:
         cur = mems
         for step in CHAINS[state]:
-            ops, notes = step(a.kind, cur, a.project, roles, a.default_role, a.seed, today)
+            ops, notes = step(kind, cur, project, roles, default_role, seed, today)
             out["ops"] += ops
             out["notes"] += notes
             cur = simulate(cur, ops)
         out["ops"].append({"op": "marker", "path": "/CANON.md", "content":
-                           canon_marker(a.kind, a.project, roles, LATEST, state, today),
+                           canon_marker(kind, project, roles, LATEST, state, today),
                            "id": mems.get("/CANON.md", {}).get("id", "")})
-    print(json.dumps(out))
+    return out
+
+
+def cmd_plan(a):
+    today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.default_role, a.seed, today)))
     return 0
 
 
@@ -567,6 +570,10 @@ def cmd_check(a):
                     F(p, "a role folder for a role the project does not use (%s)" % (parts[1] if len(parts) > 1 else "?"))
             elif parts[0] == "shared":
                 pass
+            elif parts[0] == "_archive":   # optional: notes qargi memory split moved aside; each says where from in Sources:
+                import memplan             # here, not at the top: memplan imports this module
+                if memplan.origin(mems[p]["content"])[0] != "archived":
+                    W(p, "an archived note without the `archived from` segment qargi puts on its Sources: line; where did it come from?")
             elif parts[0] == "_conflicts":
                 W(p, "unresolved conflict: merge it or delete it")
             else:
