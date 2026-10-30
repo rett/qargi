@@ -1,0 +1,9 @@
+{
+ "schema": 1,
+ "note": "The controlled vocabulary for a skill's domain. Add a line here to open a new domain; no code change is needed.",
+ "domains": [
+  "communications", "customer-support", "data", "design", "education", "engineering", "finance",
+  "legal", "marketing", "operations", "people", "personal", "planning", "product", "research",
+  "sales", "security", "writing"
+ ]
+}

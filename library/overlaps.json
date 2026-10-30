@@ -1,0 +1,5 @@
+{
+ "schema": 1,
+ "note": "One entry per pair of skills that overlap or declare each other neighbours. Written by `qargi skillsmith overlap record`.",
+ "pairs": []
+}

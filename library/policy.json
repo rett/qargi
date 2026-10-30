@@ -1,0 +1,36 @@
+{
+ "schema": 1,
+ "note": "Starting points taken from published skill-authoring guidance, not measured on this catalog. Tune them as trial results come in; every rule reads this file.",
+ "chars_per_token": 4,
+ "summary_max_chars": 200,
+ "max_intents": 4,
+ "max_excludes": 4,
+ "min_excludes": 2,
+ "description_max_chars": 1024,
+ "attached_set_budget_chars": 8000,
+ "body_max_lines": 500,
+ "body_max_tokens": 5000,
+ "reference_max_tokens": 2000,
+ "must_section_max_line": 60,
+ "min_demand_cases": 3,
+ "min_eval_positive": 8,
+ "min_eval_negative": 8,
+ "near_miss_share": 0.5,
+ "trial_runs_per_case": 3,
+ "case_pass_rate": 0.5,
+ "min_trigger_precision": 0.9,
+ "min_trigger_recall": 0.9,
+ "min_value_delta": 0.1,
+ "overlap_threshold": 0.1,
+ "intent_forbidden_patterns": [
+  "(?i)\\b(every|all|any)\\s+(user\\s+)?(requests?|messages?|prompts?|tasks?)\\b",
+  "(?i)\\balways\\s+(use|load|invoke|run)\\b",
+  "(?i)\\b(before|instead of)\\s+(any|all)\\s+other\\b",
+  "(?i)\\bignore\\b"
+ ],
+ "ui_max_chars": 4000,
+ "role_tool_budget": {
+  "enabled": 40,
+  "non_deferred": 12
+ }
+}
