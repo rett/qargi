@@ -18,6 +18,11 @@ esac
 # qargi COMMAND --help and qargi COMMAND VERB --help
 case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
 case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
+# The run-event hooks (qargi hook tool-use ...) never go through resolve and never fail: a hook must not block an agent.
+case $area:${1:-} in
+  hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
+    "$lib/hook.sh" "$@" || true; exit 0;;
+esac
 # What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
 _rf=$(mktemp)
 if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
@@ -44,6 +49,7 @@ case $area in
   team) exec "$lib/team.sh" "$@";;
   lead) exec "$lib/lead.sh" "$@";;
   hook) exec "$lib/hook.sh" "$@";;
+  supervise) exec "$lib/supervise.sh" "$@";;
   discover) exec python3 -I "$lib/discover.py" "$@";;
   export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
   migrate) exec python3 -I "$lib/migrate.py" "$@";;

@@ -252,6 +252,34 @@ class Local(unittest.TestCase):
         self.assertIn("live-job", out)
         self.assertIn("no manifest, still changing", out)
 
+    def test_supervisor_section_counts_stalls_and_prepared_nudges(self):
+        runs = {"last_tick_at": "2026-10-30T12:00:00Z", "runs": {
+            "a": {"class": "looping"}, "b": {"class": "looping"}, "c": {"class": "suspected_dead"}, "d": {"class": "waiting"},
+            "e": {"class": "finished"}, "f": {"class": "working"}}}
+        nudges = [{"type": "prepared", "id": "a#1", "key": "a", "class": "looping", "number": 1},
+                  {"type": "prepared", "id": "b#1", "key": "b", "class": "looping", "number": 1},
+                  {"type": "delivered", "id": "b#1", "key": "b"},
+                  {"type": "prepared", "id": "c#1", "key": "c", "class": "suspected_dead", "number": 1},
+                  {"type": "cancelled", "id": "c#1", "key": "c"}]
+        sec = R.supervisor_section(runs, nudges)
+        self.assertEqual(sec["stalls"], {"looping": 2, "suspected_dead": 1})
+        self.assertEqual(sec["asks"], {"waiting": 1})
+        self.assertEqual(sec["prepared_nudges"], [["a", "looping", 1]])
+        self.assertIsNone(R.supervisor_section({}, []))
+        self.assertIsNone(R.supervisor_section({"runs": {"a": {"class": "looping"}}}, []), "a supervisor that never ticked reports nothing")
+
+    def test_supervisor_section_through_the_command(self):
+        self.assertNotIn("Supervisor", self.report().stdout)
+        with open(os.path.join(self.state, "runs.json"), "w") as f:
+            json.dump({"last_tick_at": "2026-10-30T12:00:00Z", "runs": {"agent-9": {"class": "looping"}}}, f)
+        with open(os.path.join(self.state, "nudges.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "prepared", "id": "agent-9#1", "key": "agent-9", "class": "looping", "number": 1, "text": SECRET}) + "\n")
+        r = self.report()
+        self.assertIn("suspected stalls: looping 1", r.stdout)
+        self.assertIn("agent-9", r.stdout)
+        self.assertNotIn(SECRET, r.stdout)
+        self.assertEqual(json.loads(self.report("--json").stdout)["supervisor"]["prepared_nudges"], [["agent-9", "looping", 1]])
+
 
 if __name__ == "__main__":
     unittest.main()
