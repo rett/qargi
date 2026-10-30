@@ -18,9 +18,14 @@ Nothing in it was pushed, and nothing was merged into `develop` after the memory
 
 ## Branches awaiting review
 
+**One combined branch: `auto/queue`** (cut from `develop`, with the three branches below merged in; no
+conflicts; the man page regenerates identically; the full suite exits 0 across 27 suites). To review it:
+`git diff develop...auto/queue --stat`, and to take all of it: `git switch develop && git merge --no-ff auto/queue`
+(your installed `qargi` follows the checkout, so that merge deploys it). Any one branch can also be merged alone.
+
 | Branch | What | Closes (proposed) | Status |
 |---|---|---|---|
-| `feature/guard-hardening` | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | fix in progress: the guard exempts nothing inside a member's own clone yet (`.claude/skills` there is denied; the agreed rule allows it); everything else verified (suite exit 0, 26 suites, 45 mutations); owner review required: it touches `agents/` and the guard |
+| `feature/guard-hardening` (`f4ba06f`) | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | `f4ba06f` verified: suite exit 0, 26 suites; a member may edit its own clone including `.claude/skills`, and a symlink out of the clone, the pack library, `~/.claude/{skills,agents,plugins}` and a project's installed `.claude/skills` are refused (I tested each); 45 plus 10 mutations killed; owner review required: it touches `agents/` and the guard |
 | `feature/supervisor` (`447b4e2`) | hook recorders, run registry, `qargi supervise tick`, prepared nudges, printed hook snippet, a supervisor section in `report` | L12 (proposed closed) | verified: suite exit 0, 27 suites; hook handlers exit 0 on garbage and store no text (hostile payload tested); 35 mutations, all caught or equivalent; nothing installed in your settings |
 | `feature/memory-restore-edge` (`ecb86d0`) | a note whose own `Sources:` line is the placeholder text round-trips exactly through archive and restore, no format change | L10 (2) (proposed closed) | verified: suite exit 0, 26 suites; 7 of 8 mutations caught, the survivor is equivalent |
 
@@ -85,3 +90,11 @@ Nothing in it was pushed, and nothing was merged into `develop` after the memory
 **Process**
 - The builders shared one scratch directory and overwrote each other's files; later builders get their own
   subdirectory.
+
+## What I stopped on, and why
+
+Three verified branches await review and the guard touches the paths marked for owner review, so I did not
+stack more work on top (the safeguards above). Waiting behind that: the improvement loop's first version
+(loop L21), a refresh verb for existing members (L20), and the items that are yours to schedule (typed memory
+links, the skill-spec fixtures, the core wording change, `canon apply` through the new executor, removing the
+builder worktrees).
