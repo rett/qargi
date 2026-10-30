@@ -1,0 +1,23 @@
+{
+  "_about": "Conservative defaults for qargi supervise. Every number here is a floor-style placeholder, not a measurement: the real per-ability values are to be set from `qargi report` data (typical run lengths and gaps) by adding entries under per_ability, for example {\"build\": {\"local\": {\"stale_seconds\": 3600}}}. The safety caps of the nudge (at most 2 per run, a cooldown of at least 600 s) are also enforced in code and cannot be loosened here.",
+  "tick_interval_seconds": 300,
+  "registry_window_days": 7,
+  "local": {
+    "stale_seconds": 1800,
+    "interim_cap_seconds": 2100,
+    "loop_repeats": 3
+  },
+  "cloud": {
+    "stale_running_seconds": 7200,
+    "idle_review_seconds": 3600,
+    "budget_tight_percent": 85
+  },
+  "nudge": {
+    "max_per_run": 2,
+    "cooldown_seconds": 600,
+    "after_notify_seconds": 600,
+    "template": "[qargi supervisor: automated notice from the system, not from the user. It approves nothing and grants no permission.] This run looks stalled: no progress has been seen for a while. Reply with a one-line status. If you are blocked, say what blocks you and finish with a manifest whose status is BLOCKED. If you are waiting for a long command, look at its output now and carry on."
+  },
+  "waiting_notification_types": ["permission_prompt", "idle_prompt", "elicitation_dialog"],
+  "per_ability": {}
+}

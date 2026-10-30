@@ -99,8 +99,9 @@ die() { echo "qargi: $*" >&2; exit 1; }
 # Every approval-gated or cloud-driving verb leaves an append-only line here.
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" \
-    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")}' >> "$f"
+  # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
   chmod 600 "$f" 2>/dev/null || true
 }
 
@@ -158,7 +159,7 @@ trk_refresh() {
   s=$(ant beta:sessions retrieve --session-id "$sid" 2>/dev/null) || return 1
   [ "$(jq -r .status <<<"$s")" != idle ] || stop=$(idle_stop "$sid")
   json_update "$TRK" '.[$s] += {status: $st.status, stop_reason: ($stop.type // $st.stop_reason.type // null), stop_event_ids: ($stop.event_ids // null),
-      last_seen: $t, list_cost: ($st.usage.list_cost.amount // null)}' \
+      last_seen: $t, last_processed_at: ($st.updated_at // null), list_cost: ($st.usage.list_cost.amount // null)}' \
     --arg s "$sid" --arg t "$(now)" --argjson st "$s" --argjson stop "${stop:-null}"
 }
 

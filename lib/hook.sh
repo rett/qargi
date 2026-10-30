@@ -5,6 +5,14 @@
 # are loaded; a note is read on demand with `qargi memory get STORE_ID /path.md`. Prints the JSON a
 # SessionStart hook returns; prints nothing outside a registered project.
 #   hook.sh session-start [--project P] [--role lead]
+# The run-event handlers (subagent-start|subagent-stop|tool-use|tool-failure|notification|stop-failure|pre-compact) read the
+# hook's JSON on stdin and append one small line to $QARGI_STATE/run-events/<agent_id>.jsonl (see supervise.py). They only
+# record, read no content, and always exit 0 at once: they run before anything else so no failure here can block an agent.
+case ${1:-} in
+  subagent-start|subagent-stop|tool-use|tool-failure|notification|stop-failure|pre-compact)
+    python3 -I "$(dirname "$(readlink -f "$0")")/supervise.py" hook-event "$1" 2>/dev/null || true
+    exit 0;;
+esac
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true

@@ -1010,6 +1010,84 @@ the task's ability, written to RUN/ability; under review the guard keeps the clo
 .BI "verify " "RUN_DIR"
 Compare the repository's refs with the snapshot taken by prepare.
 .RE
+.TP
+.B qargi supervise
+Find stalled agent runs: notify, prepare a nudge, never act alone.
+.PP
+Hooks only record (the run\-event verbs of qargi hook append ids, times, a tool name and a hash to a per\-run file under the state directory; no command, message or error text). One idempotent tick is the only actor: it folds those files, the local\-run registry and the session tracker into runs.json and classifies each unfinished run in a fixed order: waiting on an approval (not a stall), stopped by an API error, interim (turn ended, background work running, a cap of about 35 minutes), looping (three identical tool digests in a row), suspected dead (no activity for too long); for cloud sessions requires_action, budget_reached, stale while running, idle awaiting review. It acts only by printing `QARGI SUPERVISE <class> <run> <next\-action>` lines, appending to supervisor.log and the audit log (origin supervisor), and PREPARING a nudge in nudges.jsonl. A nudge is a fixed template, at most 2 per run with at least 10 minutes between them, never while the run waits on an approval or has little budget left, and never an approval. A script cannot message a local subagent: the coordinating session delivers the prepared nudge and records it with delivered, and only then does it count. A cloud nudge is sent only by nudge, which needs \-\-asked. Nothing sends automatically; the thresholds are data in lib/supervise\-defaults.json, conservative floors until `qargi report` shows real run lengths. Run the tick on a timer or a loop; status warns when it has not run for twice its interval.
+.RS
+.TP
+.B tick
+Fold the events, classify the runs, print what needs attention, prepare nudges.
+.br
+Run twice with nothing new it prints nothing the second time.
+.RS
+.TP
+.BI "\-\-now " "ISO"
+act as of this time (2026\-10\-30T12:00:00Z); for tests and replays.
+.RE
+.RS
+.TP
+.B \-\-json
+print the result as JSON.
+.RE
+.RE
+.RS
+.TP
+.B status
+Show the runs by class and the nudges waiting; warns when the tick is overdue.
+.RS
+.TP
+.BI "\-\-now " "ISO"
+compare the last tick with this time.
+.RE
+.RS
+.TP
+.B \-\-json
+print the registry as JSON.
+.RE
+.RE
+.RS
+.TP
+.BI "nudge " "SID"
+Send the fixed nudge to a cloud session, only when the caps allow.
+.br
+Refused when the session waits on an approval or has little budget left, when 2 nudges were already counted, or within 10 minutes of the last one. The message is the fixed template, never text from the agent.
+.RS
+.TP
+.BI "\-\-asked " "REQUEST"
+the request, in your words, that names the cloud instance; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-now " "ISO"
+act as of this time; for tests and replays.
+.RE
+.RE
+.RS
+.TP
+.BI "delivered " "KEY"
+Record that you delivered a local run's prepared nudge.
+.br
+KEY is the agent id the tick printed. Only then does the nudge count against the cap.
+.RS
+.TP
+.BI "\-\-now " "ISO"
+record this delivery time; for tests and replays.
+.RE
+.RE
+.RS
+.TP
+.B hooks
+Print the settings.json hook snippet for the run\-event handlers.
+.br
+It never writes the file: merge the entries into your Claude Code settings.json yourself.
+.RS
+.TP
+.BI "\-\-qargi " "COMMAND"
+the command to put in the snippet (default qargi).
+.RE
+.RE
 .SS Review and apply
 .TP
 .B qargi review
@@ -1416,6 +1494,55 @@ the project, instead of finding it from the directory.
 .BI "\-\-role " "ROLE"
 the role to load (default lead).
 .RE
+.RE
+.RS
+.TP
+.B subagent\-start
+Record that a subagent started (SubagentStart hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B subagent\-stop
+Record that a subagent stopped and how many background tasks it still had (SubagentStop hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B tool\-use
+Record a successful tool call: its name and a hash of its input (PostToolUse hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B tool\-failure
+Record a failed tool call: its name, a hash of its input, whether it was an interrupt (PostToolUseFailure hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B notification
+Record the type of a notification, for example permission_prompt (Notification hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B stop\-failure
+Record the error type a turn ended with, for example rate_limit (StopFailure hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
+.RE
+.RS
+.TP
+.B pre\-compact
+Record that the context is being compacted (PreCompact hook).
+.br
+Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.
 .RE
 .SS Export and import
 .TP

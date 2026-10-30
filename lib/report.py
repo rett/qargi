@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """qargi report: what the session tracker says about cost, review and stuck sessions. Read-only; it reads
-sessions.json and nothing else (no cloud call, no registry). The free-text note and asked fields are never
+sessions.json and, for the supervisor section, runs.json and nudges.jsonl (which `qargi supervise tick` writes); no cloud call, no registry. The free-text note and asked fields are never
 printed. summarize() is a pure function over the tracker's dict, so the tests feed it fixtures.
 
 Local runs are read from the run directories `qargi local prepare` makes (RUN/out holds the agent's manifest.json
@@ -179,6 +179,46 @@ def local_section(facts, now, stale_after=1800, since=None):
     return {"stale_after_seconds": stale_after, "runs": runs, "counts": counts}
 
 
+# what qargi supervise (the tick) found; the classes are the supervisor's, the data is runs.json and nudges.jsonl
+STALLS = ("stop_failure", "ended_no_manifest", "interim_overdue", "looping", "suspected_dead", "stale_running", "terminated")
+ASKS = ("waiting", "requires_action", "budget_reached", "idle_awaiting_review")
+
+
+def read_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def supervisor_section(runs, nudge_lines):
+    """Pure: runs is runs.json's dict (or {}), nudge_lines the parsed nudges.jsonl. None when the supervisor never ran."""
+    if not runs or not runs.get("last_tick_at"):
+        return None
+    rows = runs.get("runs") or {}
+    stalls, asks = {}, {}
+    for r in rows.values():
+        c = r.get("class")
+        for bucket, names in ((stalls, STALLS), (asks, ASKS)):
+            if c in names:
+                bucket[c] = bucket.get(c, 0) + 1
+    closed = {e.get("id") for e in nudge_lines if e.get("type") in ("delivered", "cancelled")}
+    waiting = sorted((e["key"], e.get("class"), e.get("number")) for e in nudge_lines if e.get("type") == "prepared" and e.get("id") not in closed)
+    return {"last_tick_at": runs["last_tick_at"], "stalls": stalls, "asks": asks, "prepared_nudges": [list(w) for w in waiting]}
+
+
+def render_supervisor(sup, out):
+    out.append("")
+    out.append("Supervisor (qargi supervise)")
+    out.append("  last tick: %s" % sup["last_tick_at"])
+    out.append("  suspected stalls: %s" % counts(sup["stalls"]))
+    out.append("  waiting on you: %s" % counts(sup["asks"]))
+    out.append("  prepared nudges awaiting action:" + (" none" if not sup["prepared_nudges"] else ""))
+    for key, cls, n in sup["prepared_nudges"]:
+        out.append("    %-24s %s, nudge %s" % (key, cls, n))
+
+
 def scope(rows, now, stale_after):
     """The figures for one set of sessions: [(sid, row)]."""
     out = {"sessions": len(rows), "review": {k: 0 for k in REVIEW}, "status": {}}
@@ -332,6 +372,8 @@ def render(rep):
     elif rep.get("local_skipped"):
         out.append("")
         out.append("Local runs: not shown (%s)" % rep["local_skipped"])
+    if rep.get("supervisor") is not None:
+        render_supervisor(rep["supervisor"], out)
     out.append("")
     out.append("What this cannot tell you:")
     out += ["  - " + x for x in rep["limits"] + (LOCAL_LIMITS if rep.get("local") is not None else [])]
@@ -386,6 +428,18 @@ def main(argv):
         rep["local_skipped"] = "local runs belong to no instance, so --instance leaves them out"
     else:
         rep["local"] = local_section([inspect_run(e) for e in find_local_runs(STATE, root)], now, lstale, since)
+        runs = read_json(os.path.join(STATE, "runs.json"))
+        nudges = []
+        try:
+            with open(os.path.join(STATE, "nudges.jsonl")) as f:
+                for line in f:
+                    try:
+                        nudges.append(json.loads(line))
+                    except ValueError:
+                        pass
+        except OSError:
+            pass
+        rep["supervisor"] = supervisor_section(runs if isinstance(runs, dict) else {}, [e for e in nudges if isinstance(e, dict)])
     print(json.dumps(rep, indent=2, sort_keys=True) if as_json else render(rep))
     return 0
 
