@@ -76,7 +76,9 @@ COMMANDS = {
         "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
                  "abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi-build, "
                  "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
-                 "rule: the guard refuses changes to the clone under that ability. Dispatch spawns the member qargi agent for "
+                 "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
+                 "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
+                 "and writes in the pack library, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
                  "ABILITY prints."),
         "scripts": ["agent.sh"],
         "verbs": {
@@ -149,7 +151,9 @@ COMMANDS = {
         "summary": "Create or import skills and attach them by scope",
         "desc": ("Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project "
                  "and role), user-role, project, or project-role. Imported content is shown, hashed and approved before it is stored, and "
-                 "any later change is drift until you seal it again."),
+                 "any later change is drift until you seal it again. Only you, with the person present, change a skill: a local member's "
+                 "guard refuses the verbs new, import, seal, remove, link, unlink, enable and disable, and writes in the pack library, "
+                 "and QARGI_NESTED does not stand in for the plan token of import and seal."),
         "scripts": ["packs.sh"],
         "verbs": "PACK",
     },
@@ -166,7 +170,7 @@ COMMANDS = {
         "verbs": {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "apply": verb("Update an existing cloud agent with its skills and tools", [("INSTANCE", "instance")], [ASKED, PLAN, APPROVED],
-                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push."),
+                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push. Always needs --plan (QARGI_NESTED does not skip it); a local member's guard refuses it."),
         },
     },
     "start": {
@@ -346,7 +350,8 @@ COMMANDS = {
                  "each role of a project by the stack it sees in the repository, leaving out what the role has. install asks which scope the tool "
                  "should reach (user, user-role, project, project-role), then goes through the existing gates: a skill or an MCP server is "
                  "imported with its review and your approval of exactly that content, linked at the scope, and offered to the cloud agents it "
-                 "reaches with the plan shown first. Nothing found online is installed on trust."),
+                 "reaches with the plan shown first. Nothing found online is installed on trust. install changes skills, so a local "
+                 "member's guard refuses it."),
         "scripts": ["discover.py"],
         "verbs": {
             "sources": verb("List what is searched", []),
