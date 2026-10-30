@@ -20,8 +20,9 @@ Nothing in it was pushed, and nothing was merged into `develop` after the memory
 
 | Branch | What | Closes (proposed) | Status |
 |---|---|---|---|
-| `feature/guard-hardening` | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | in progress |
-| `feature/supervisor` | hook recorders, run registry, `qargi supervise tick`, prepared nudges, printed hook snippet | L12 | in progress |
+| `feature/guard-hardening` | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | in progress (restarted after the session ended); owner review required: it touches `agents/` and the guard |
+| `feature/supervisor` | hook recorders, run registry, `qargi supervise tick`, prepared nudges, printed hook snippet | L12 | in progress (restarted after the session ended) |
+| `feature/memory-restore-edge` | a note whose own `Sources:` line is the placeholder text round-trips exactly through archive and restore | L10 (2) | in progress |
 
 ## Provisional decisions (Opus), with when to revisit
 
