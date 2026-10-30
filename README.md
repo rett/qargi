@@ -109,7 +109,16 @@ Write and NotebookEdit call passes `qargi __guard`. The guard refuses `git push`
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: `qargi local prepare --ability review` records the
 ability in the run directory, and under it the guard refuses an edit outside the run's
-output directory and a Bash command that writes into the clone. So one definition
+output directory and a Bash command that writes into the clone. Whatever the ability,
+the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
+`import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
+install`, `qargi packs apply`) and any write in the pack library, `~/.claude/skills` or
+a `.claude/skills` directory outside its clone (also `~/.claude/agents` and
+`~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
+the member's clone stay writable, since they are the work product. The guard fails closed on an
+internal error, and the member definition sets `onFailure: "block"` on the hook (Claude
+Code 2.1.295 or later) so that a hook that cannot run blocks the call; frontmatter
+hooks of a project-level agent run only once you trust the workspace. So one definition
 serves every ability; what an ability does comes from its skill and the contract, not
 from the definition. The guard is a second barrier beside the credential-free git
 wrapper; `qargi local verify` remains the proof. A new member is available in Claude

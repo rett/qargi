@@ -12,6 +12,7 @@ A=$HOME/.claude/agents
 out=$($DA agent add forge --abilities build,test 2>&1) && [ -f "$A/forge.md" ] && ok "add renders the member definition" || no "add: $out"
 grep -q '^name: forge$' "$A/forge.md" && grep -q 'build, test' "$A/forge.md" && grep -q '^model: sonnet$' "$A/forge.md" && ok "it carries the name, abilities and model" || no "rendered: $(head -5 "$A/forge.md")"
 grep -q 'matcher: "Bash|Edit|Write|NotebookEdit"' "$A/forge.md" && grep -q 'command: "qargi __guard"' "$A/forge.md" && ok "the guard covers Bash and the edit tools" || no "hook"
+grep -q 'onFailure: "block"' "$A/forge.md" && grep -q '^ *timeout: [0-9]' "$A/forge.md" && ok "the guard hook blocks when it fails or times out" || no "hook failure setting"
 ! grep -q '{{' "$A/forge.md" && ok "no placeholder is left" || no "placeholder left"
 $DA agent add scribe --abilities write --model opus --effort medium >/dev/null 2>&1 && grep -q '^model: opus$' "$A/scribe.md" && ok "model is the one given" || no "model"
 $DA agent add worker >/dev/null 2>&1 && jq -e '.worker.abilities == ["build","write","review","test"]' "$T/c/agents.json" >/dev/null && ok "a member serves all four abilities by default" || no "default abilities"
