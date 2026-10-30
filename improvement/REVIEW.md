@@ -20,9 +20,9 @@ Nothing in it was pushed, and nothing was merged into `develop` after the memory
 
 | Branch | What | Closes (proposed) | Status |
 |---|---|---|---|
-| `feature/guard-hardening` | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | in progress (restarted after the session ended); owner review required: it touches `agents/` and the guard |
-| `feature/supervisor` | hook recorders, run registry, `qargi supervise tick`, prepared nudges, printed hook snippet | L12 | in progress (restarted after the session ended) |
-| `feature/memory-restore-edge` | a note whose own `Sources:` line is the placeholder text round-trips exactly through archive and restore | L10 (2) | in progress |
+| `feature/guard-hardening` | guard fails closed on its own errors, denies skill-modifying verbs and writes under installed or library skill directories, removes the plan-token bypass for skill verbs | L8, L9 | fix in progress: the guard exempts nothing inside a member's own clone yet (`.claude/skills` there is denied; the agreed rule allows it); everything else verified (suite exit 0, 26 suites, 45 mutations); owner review required: it touches `agents/` and the guard |
+| `feature/supervisor` (`447b4e2`) | hook recorders, run registry, `qargi supervise tick`, prepared nudges, printed hook snippet, a supervisor section in `report` | L12 (proposed closed) | verified: suite exit 0, 27 suites; hook handlers exit 0 on garbage and store no text (hostile payload tested); 35 mutations, all caught or equivalent; nothing installed in your settings |
+| `feature/memory-restore-edge` (`ecb86d0`) | a note whose own `Sources:` line is the placeholder text round-trips exactly through archive and restore, no format change | L10 (2) (proposed closed) | verified: suite exit 0, 26 suites; 7 of 8 mutations caught, the survivor is equivalent |
 
 ## Provisional decisions (Opus), with when to revisit
 
@@ -52,3 +52,36 @@ Nothing in it was pushed, and nothing was merged into `develop` after the memory
 9. Core wording change (loop L11): now, or with the next release? (now or next release)
 10. Should the installed tool keep following the checkout, or switch to a copy installed from tagged
     releases? (follow or copy)
+
+## Questions the builders saved for you
+
+**Supervisor**
+- The printed cloud nudge is `qargi supervise nudge SID --asked "<your words>"`, not a bare send, so the caps and
+  count live in one place. Keep that, or print the literal send line?
+- A registered local run that no hook has reported on gets a placeholder row. Keep those, or supervise only runs
+  that hooks reported on?
+- Old registry runs older than 7 days are ignored. Is 7 days right?
+- Which channel comes after the terminal line (desktop notification, email or chat webhook, mobile push)?
+- After two failed nudges the tick only prints `salvage`; it never runs `collect`. (Provisional: keep.)
+- Local detection is quiet unless you apply the printed hooks snippet to your Claude Code settings. Apply it or
+  stay mtime-only? (Also asked above.)
+
+**Guard hardening**
+- `skill|tool new|remove|link|unlink|enable|disable` have no plan-token gate at all, and `--approved` is free
+  text everywhere. Only the existing tokens were protected from the `QARGI_NESTED` skip. Adding tokens to the
+  other verbs changes `discover install` and its tests: yours to decide.
+- Input that is not JSON still passes the guard (a hook payload is always JSON). Refuse it instead?
+- `QARGI_NESTED` still lets `canon apply`, `seed-role`, `normalize` and `refresh-prompt` skip the token check;
+  the guard stops a member from setting it. Removing it entirely needs a narrower mechanism.
+- Not built: a `qargi local verify` check that hashes the pack library before and after a run.
+- To confirm on a real Claude Code run: `onFailure: "block"` in an agent's frontmatter hook. The documentation
+  (https://code.claude.com/docs/en/hooks) says frontmatter hooks use the same format as settings hooks and that
+  `onFailure` needs Claude Code 2.1.295 or later (you have 2.1.314), but it does not say so for frontmatter
+  explicitly. Frontmatter hooks of a project agent also run only after the folder is trusted.
+
+**Memory restore edge**
+- Add a visible "inserted by qargi" marker for human readers? It would change the format; left out.
+
+**Process**
+- The builders shared one scratch directory and overwrote each other's files; later builders get their own
+  subdirectory.
