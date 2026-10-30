@@ -42,7 +42,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 
 GROUPS = [
     ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["start", "send", "status", "watch", "collect", "stop", "close", "mark", "track", "local"]),
+    ("Run a task", ["start", "send", "status", "report", "watch", "collect", "stop", "close", "mark", "track", "local"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -134,12 +134,14 @@ COMMANDS = {
                           opt("--no-session", "do not start a standby session"), ASKED, PLAN, APPROVED],
                          desc="Usually you provision (qargi provision) and the instance is registered for you.",
                          examples=["qargi instances init --location local --agent ./agent.md --name acme-build"]),
-            "list": verb("List the instances and their active sessions", [], [opt("--reconcile", "flag live sessions the tracker does not know")]),
+            "list": verb("List the instances (cloud ones whose prompt is out of date are marked STALE) and their active sessions", [], [opt("--reconcile", "flag live sessions the tracker does not know")]),
             "show": verb("Show an instance and what is stale or misnamed", [("NAME", "instance")], [opt("--reconcile", "also flag untracked live sessions")]),
             "remove": verb("Forget an instance (the registry entry only)", [("NAME", "instance")], desc="Refused while it has open sessions."),
             "budget": verb("Change the spend ceiling of the instance's deployment", [("NAME", "instance:cloud"), ("CENTS", "cents")], [ASKED, opt("--session", "also change this running session", "SID", "session:active")]),
-            "refresh-prompt": verb("Rebuild the agent's system prompt from the current contract", [("NAME", "instance")], [ASKED, PLAN, APPROVED],
-                                   desc="Prints what changes, then creates a new agent version and re-points the deployment."),
+            "refresh-prompt": verb("Rebuild the agent's system prompt from the current contract", [("NAME", "instance")], [opt("--if-stale", "do nothing, and say so, when the prompt rendered now has the hash recorded at the last refresh (no cloud call)"), ASKED, PLAN, APPROVED],
+                                   desc=("Prints what changes, then creates a new agent version and re-points the deployment. The hash of the prompt (and of the "
+                                         "skill in it) is recorded when an agent is provisioned or refreshed; instances list marks a changed one with STALE and "
+                                         "instances show says which part changed. An instance with no recorded hash is unknown, not stale.")),
             "normalize": verb("Rename the instance's cloud resources to the naming convention", [("NAME", "instance")], [ASKED, PLAN, APPROVED]),
         },
     },
@@ -188,6 +190,24 @@ COMMANDS = {
         "summary": "Show tracked cloud sessions, or one session",
         "scripts": ["session.sh"],
         "usage": [("SID|NAME", "target", True)],
+    },
+    "report": {
+        "summary": "Cost per applied change, what waits for review, what looks stuck",
+        "desc": ("Read-only. From the session tracker: per instance and in total, the sessions by review state and status, the spend "
+                 "(list_cost, in the units of the budget flags: cents, per the docs) and the spend per applied session, how long each "
+                 "session pending review has waited (oldest first), the sessions that look stale (running, or idle and pending review, "
+                 "with no refresh for --stale-after), the idle sessions split by why they stopped when that is recorded, and the time "
+                 "from creation to close. A second section lists local runs from the run directories qargi local prepare made: finished "
+                 "(manifest DONE or BLOCKED), no manifest and still changing, or no manifest and quiet for --local-stale-after "
+                 "(possibly stalled). The output says what it cannot tell you; it never prints a session's note or request."),
+        "scripts": ["report.py"],
+        "opts": [opt("--since", "only sessions and runs started on or after this date (2026-10-01)", "DATE"),
+                 opt("--instance", "only this instance's sessions (leaves the local runs out)", "NAME", "instance"),
+                 opt("--stale-after", "a running or idle-pending cloud session unseen for this long looks stale (default 2h)", "DURATION"),
+                 opt("--local-stale-after", "a local run without a manifest and without file changes for this long is possibly stalled (default 30m)", "DURATION"),
+                 opt("--runs-root", "also scan DIR/qargi.* for local runs the registry does not list (or set QARGI_RUNS_ROOT)", "DIR", "dir"),
+                 opt("--json", "print the figures as JSON")],
+        "examples": ["qargi report", "qargi report --since 2026-10-01 --instance acme-build --json"],
     },
     "watch": {
         "summary": "Wait for a cloud session to stop; prints one line when it does",
@@ -509,7 +529,7 @@ TOPICS = {
         "The GitHub tool cannot create releases; those stay with this session."]),
     "files": ("Where things are", [
         "Configuration: $XDG_CONFIG_HOME/qargi (default ~/.config/qargi): projects/, instances.json, profiles/, packs/, credentials/.",
-        "State: $XDG_STATE_HOME/qargi (default ~/.local/state/qargi): sessions.json, audit.log, runs/, backups/, provision/.",
+        "State: $XDG_STATE_HOME/qargi (default ~/.local/state/qargi): sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
         "Overrides: QARGI_CONF and QARGI_STATE replace those two directories. QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
         "Nothing is stored in a repository."]),
@@ -518,6 +538,7 @@ TOPICS = {
 ENVIRONMENT = [
     ("QARGI_CONF", "the configuration directory (default $XDG_CONFIG_HOME/qargi)"),
     ("QARGI_STATE", "the state directory (default $XDG_STATE_HOME/qargi)"),
+    ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
     ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it"),

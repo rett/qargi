@@ -142,13 +142,24 @@ inst_idle_session() {
     | sort_by(.value.created) | last | .key // empty' "$TRK"
 }
 
-# Refresh one tracker row from the API.
+# Why a session went idle. The session object has no stop_reason; the reason is on the session.status_idle events
+# (the thread_status_idle ones are per thread and ignored). Prints {type, event_ids} of the last one, or nothing.
+idle_stop() { # sid
+  ant beta:sessions:events list --session-id "$1" --max-items -1 </dev/null 2>/dev/null \
+    | jq -sc '[.[] | if type == "array" then .[] else . end | select(.type == "session.status_idle" and .stop_reason.type != null)]
+        | sort_by(.processed_at) | last // empty | {type: .stop_reason.type, event_ids: (.stop_reason.event_ids // null)}'
+}
+
+# Refresh one tracker row from the API. stop_reason is the type of the last session.status_idle event while the
+# session is idle (end_turn, requires_action, retries_exhausted, budget_reached) and empty otherwise; stop_event_ids
+# are the events a requires_action waits on. An interrupt (qargi stop) also ends with end_turn: see interrupt_sent_at.
 trk_refresh() {
-  local sid=$1 s
+  local sid=$1 s stop=''
   s=$(ant beta:sessions retrieve --session-id "$sid" 2>/dev/null) || return 1
-  json_update "$TRK" '.[$s] += {status: $st.status, stop_reason: ($st.stop_reason.type // null),
+  [ "$(jq -r .status <<<"$s")" != idle ] || stop=$(idle_stop "$sid")
+  json_update "$TRK" '.[$s] += {status: $st.status, stop_reason: ($stop.type // $st.stop_reason.type // null), stop_event_ids: ($stop.event_ids // null),
       last_seen: $t, list_cost: ($st.usage.list_cost.amount // null)}' \
-    --arg s "$sid" --arg t "$(now)" --argjson st "$s"
+    --arg s "$sid" --arg t "$(now)" --argjson st "$s" --argjson stop "${stop:-null}"
 }
 
 cred_file() { # project -> expanded credential file path, or empty
@@ -193,15 +204,53 @@ tools_off() {
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
-agent_prompt() { # role [project]
+# The directory that holds provision/ and skills/: the checkout, or lib/ itself in an installed copy.
+prompt_root() {
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 sk=$lib/../skills
-  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; sk=$lib/skills; }
+  if [ -d "$lib/../provision/templates" ]; then echo "$lib/.."; else echo "$lib"; fi
+}
+
+agent_prompt() { # role [project]
+  local root; root=$(prompt_root)
+  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 sk=$root/skills
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
   [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
   if [ -f "$sk/qargi-$1/SKILL.md" ]; then echo; awk 'f>=2 {print} /^---$/ {f++}' "$sk/qargi-$1/SKILL.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
+}
+
+# The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
+# rendered prompt (what refresh-prompt would push); skill is the hash of the two files that change most, the agent
+# contract and the role's skill. Prints {sha, skill}.
+prompt_stamp() { # role project
+  local sk sha; sk=$(prompt_root)/skills
+  sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
+  [ "${PIPESTATUS[0]}" = 0 ] || return 1
+  jq -nc --arg s "$sha" --arg k "$(cat "$sk/qargi-task/agent-contract.md" "$sk/qargi-$1/SKILL.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+}
+
+# prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the
+# hash recorded when the agent was provisioned or last refreshed. A registry entry with no hash (made before it was
+# recorded, or by init) is unknown, never stale; a local instance has no cloud prompt (none).
+prompt_state() {
+  local n=$1 rec old oldk cur
+  rec=$(jq -c --arg n "$n" '.[$n] // empty' "$REG" 2>/dev/null)
+  [ -n "$rec" ] && [ "$(jq -r .location <<<"$rec")" = cloud ] || { echo none; return 0; }
+  valid_project "${n%%-*}" && valid_role "${n#*-}" || { echo none; return 0; }
+  old=$(jq -r '.prompt.sha // empty' <<<"$rec"); oldk=$(jq -r '.prompt.skill // empty' <<<"$rec")
+  [ -n "$old" ] || { echo unknown; return 0; }
+  cur=$(prompt_stamp "${n#*-}" "${n%%-*}") || { echo unknown; return 0; }
+  if [ "$(jq -r .sha <<<"$cur")" = "$old" ]; then echo current
+  elif [ -n "$oldk" ] && [ "$(jq -r .skill <<<"$cur")" != "$oldk" ]; then echo "stale skill"
+  else echo "stale prompt"; fi
+}
+
+# prompt_record INSTANCE: remember the hashes of the prompt the cloud agent now has (provisioned or refreshed).
+prompt_record() {
+  local n=$1 st
+  st=$(prompt_stamp "${n#*-}" "${n%%-*}") || return 0
+  json_update "$REG" 'if has($n) then .[$n].prompt = ($p + {at: $t}) else . end' --arg n "$n" --argjson p "$st" --arg t "$(now)"
 }
 

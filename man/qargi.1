@@ -345,7 +345,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RS
 .TP
 .B list
-List the instances and their active sessions.
+List the instances (cloud ones whose prompt is out of date are marked STALE) and their active sessions.
 .RS
 .TP
 .B \-\-reconcile
@@ -389,7 +389,12 @@ also change this running session.
 .BI "refresh\-prompt " "NAME"
 Rebuild the agent's system prompt from the current contract.
 .br
-Prints what changes, then creates a new agent version and re\-points the deployment.
+Prints what changes, then creates a new agent version and re\-points the deployment. The hash of the prompt (and of the skill in it) is recorded when an agent is provisioned or refreshed; instances list marks a changed one with STALE and instances show says which part changed. An instance with no recorded hash is unknown, not stale.
+.RS
+.TP
+.B \-\-if\-stale
+do nothing, and say so, when the prompt rendered now has the hash recorded at the last refresh (no cloud call).
+.RE
 .RS
 .TP
 .BI "\-\-asked " "REQUEST"
@@ -850,6 +855,41 @@ Show tracked cloud sessions, or one session.
 .nf
 qargi status [SID|NAME]
 .fi
+.RE
+.TP
+.B qargi report
+Cost per applied change, what waits for review, what looks stuck.
+.PP
+Read\-only. From the session tracker: per instance and in total, the sessions by review state and status, the spend (list_cost, in the units of the budget flags: cents, per the docs) and the spend per applied session, how long each session pending review has waited (oldest first), the sessions that look stale (running, or idle and pending review, with no refresh for \-\-stale\-after), the idle sessions split by why they stopped when that is recorded, and the time from creation to close. A second section lists local runs from the run directories qargi local prepare made: finished (manifest DONE or BLOCKED), no manifest and still changing, or no manifest and quiet for \-\-local\-stale\-after (possibly stalled). The output says what it cannot tell you; it never prints a session's note or request.
+.RS
+.TP
+.BI "\-\-since " "DATE"
+only sessions and runs started on or after this date (2026\-10\-01).
+.RE
+.RS
+.TP
+.BI "\-\-instance " "NAME"
+only this instance's sessions (leaves the local runs out).
+.RE
+.RS
+.TP
+.BI "\-\-stale\-after " "DURATION"
+a running or idle\-pending cloud session unseen for this long looks stale (default 2h).
+.RE
+.RS
+.TP
+.BI "\-\-local\-stale\-after " "DURATION"
+a local run without a manifest and without file changes for this long is possibly stalled (default 30m).
+.RE
+.RS
+.TP
+.BI "\-\-runs\-root " "DIR"
+also scan DIR/qargi.* for local runs the registry does not list (or set QARGI_RUNS_ROOT).
+.RE
+.RS
+.TP
+.B \-\-json
+print the figures as JSON.
 .RE
 .TP
 .B qargi watch
@@ -1547,6 +1587,9 @@ the configuration directory (default $XDG_CONFIG_HOME/qargi).
 .TP
 .B QARGI_STATE
 the state directory (default $XDG_STATE_HOME/qargi).
+.TP
+.B QARGI_RUNS_ROOT
+a directory to scan for local run directories (qargi.*) in qargi report, besides the registry.
 .TP
 .B QARGI_PROJECT
 the project to use when the current directory is not inside its repository.

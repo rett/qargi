@@ -11,12 +11,13 @@
 #        registry.sh show NAME [--reconcile]
 #        registry.sh remove NAME
 #        registry.sh budget NAME CENTS --asked "..."   (change the spend ceiling of the instance's deployment)
-#        registry.sh refresh-prompt NAME --asked "..." [--plan TOKEN --approved "..."]   (rebuild the agent's prompt from the current contract)
+#        registry.sh refresh-prompt NAME [--if-stale] --asked "..." [--plan TOKEN --approved "..."]   (rebuild the agent's prompt from the current contract;
+#                         --if-stale does nothing when the prompt rendered now has the hash recorded at the last refresh)
 #        registry.sh normalize NAME --asked "..." [--approved "..."]   (rename an instance's resources to <project>-<role>, -environment, -memory, -reference, <project>-deployment-<role>)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-PLAN_ARG='' SESSION_ARG='' ARG2=''
+PLAN_ARG='' SESSION_ARG='' ARG2='' IFSTALE=''
 LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -36,6 +37,7 @@ while [ $# -gt 0 ]; do
     --plan) PLAN_ARG=$2; shift 2;;
     --budget) BUDGET=$2; shift 2;;
     --session) SESSION_ARG=$2; shift 2;;
+    --if-stale) IFSTALE=1; shift;;
     -*) die "unknown option $1";;
     *) if [ -z "$ARG" ]; then ARG=$1; else ARG2=$1; fi; shift;;
   esac
@@ -128,6 +130,18 @@ init_local() {
     '{location: "local", created: $t, local: {agent_file: $f, sha256: $s, model: $m, effort: (if $e=="" then null else $e end)}}')
   json_update "$REG" '.[$n] = $v' --arg n "$name" --argjson v "$rec"
   echo "registered local instance: $name"
+}
+
+# What the recorded prompt hash says about one instance, offline (see prompt_state in lib.sh).
+prompt_report() {
+  local n=$1 st at
+  st=$(prompt_state "$n")
+  at=$(jq -r --arg n "$n" '.[$n].prompt.at // "?"' "$REG")
+  case $st in
+    current) echo "PROMPT: current (matches the prompt rendered at $at)";;
+    stale*) echo "STALE: the prompt rendered now differs from the one pushed at $at (${st#stale }); qargi instances refresh-prompt $n --asked \"...\" shows what changes";;
+    unknown) echo "PROMPT: unknown (no hash recorded; the next refresh-prompt records one)";;
+  esac
 }
 
 # Staleness checks for one cloud instance; prints findings.
@@ -234,9 +248,20 @@ budget_set() {
 }
 
 refresh_prompt() {
-  need_asked; ant_ok
   local n=$1 i aid ag cur new aver ptok nv members='' newm='' mdiff='' id cv
   local -a mflag=()
+  if [ -n "$IFSTALE" ]; then   # offline: compare the hash recorded at the last refresh with the prompt rendered now
+    inst_get "$n" >/dev/null || exit 1
+    case $(prompt_state "$n") in
+      current) echo "the prompt of $n is unchanged since it was last rendered (hash matches); nothing done"
+        [ "${n#*-}" != lead ] || echo "  (a lead's pinned member versions are checked against the cloud only by refresh-prompt without --if-stale)"
+        return 0;;
+      unknown) echo "no prompt hash is recorded for $n; checking the cloud";;
+      none) die "refresh-prompt applies to cloud instances";;
+      *) echo "the prompt of $n changed since it was last rendered; planning the refresh";;
+    esac
+  fi
+  need_asked; ant_ok
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
   split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
@@ -252,6 +277,7 @@ refresh_prompt() {
     newm=$(jq -sc '.' <<<"$newm")
     [ "$members" = "$newm" ] || mdiff=1
   fi
+  [ "$cur" != "$new" ] || prompt_record "$n"   # the cloud has the prompt rendered now: remember its hash
   [ "$cur" != "$new" ] || [ -n "$mdiff" ] || { echo "the prompt of $aid v$aver is current"; return 0; }
   echo "PLAN: update $aid v$aver ($PROJECT/$ROLE) to the current contract and members; changes:"
   if [ "$cur" != "$new" ]; then
@@ -270,6 +296,7 @@ refresh_prompt() {
   ant beta:deployments update --deployment-id "$(jq -r .deployment_id <<<"$i")" --agent "$aid" </dev/null >/dev/null 2>&1 || die "agent updated but re-pointing the deployment failed"
   nv=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null | jq .agent.version)
   json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$n" --argjson v "$nv"
+  prompt_record "$n"
   echo "prompt refreshed$([ -z "$mdiff" ] || echo ", members re-pointed"); the deployment now pins agent v$nv"
 }
 
@@ -284,8 +311,9 @@ case $verb in
       *) die "init needs --location local|cloud";;
     esac;;
   list)
-    jq -r 'to_entries[] | "\(.key)\t\(.value.location)\t" +
-        (if .value.location=="cloud" then "agent v\(.value.agent.version_pinned) \(.value.agent.model // "?")/\(.value.agent.effort // "?")\tenv \(.value.environment_id)"
+    ps=$(for n in $(jq -r 'keys[]' "$REG"); do printf '%s\t%s\n' "$n" "$(prompt_state "$n")"; done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
+    jq -r --argjson ps "$ps" 'to_entries[] | "\(.key)\t\(.value.location)\t" +
+        (if .value.location=="cloud" then "agent v\(.value.agent.version_pinned) \(.value.agent.model // "?")/\(.value.agent.effort // "?")\tenv \(.value.environment_id)" + (if (($ps[.key] // "") | startswith("stale")) then "  prompt STALE" else "" end)
          else "model \(.value.local.model)/\(.value.local.effort // "default")\t\(.value.local.agent_file)" end)' "$REG" | column -t -s "$(printf '\t')"
     echo "-- active sessions --"
     jq -r 'to_entries[] | select(.value.closed_at==null) | "\(.key)\t\(.value.instance)\t\(.value.status)\tlabel=\(.value.label // "-")\tcost=\(.value.list_cost // "-")\tcollected=\(.value.outputs_collected)\treview=\(.value.review_state)"' "$TRK" | column -t -s "$(printf '\t')"
@@ -296,6 +324,7 @@ case $verb in
     inst_get "$ARG" | jq .
     jq --arg n "$ARG" 'to_entries | map(select(.value.instance==$n)) | map({session: .key} + .value)' "$TRK"
     stale_checks "$ARG"
+    prompt_report "$ARG"
     if [ "$(jq -r .location <<<"$(inst_get "$ARG")")" = cloud ]; then
       normalize "$ARG" plan 2>&1 | grep -E -- '->|note:|not a standard' | sed 's/^/NAMING: /' || true
     fi

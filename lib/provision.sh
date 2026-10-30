@@ -220,6 +220,7 @@ case $verb in
     fi
     if [ -n "$newstores" ]; then canonise; fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
+    prompt_record "$NAME"   # the agent was created with the prompt rendered above: remember its hash
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
   add-reference)
     need_asked; audit_log provision-add-reference "$NAME"
