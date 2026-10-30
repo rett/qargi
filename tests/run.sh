@@ -6,6 +6,7 @@ rc=0
 run() { echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo "$out" | tail -20; echo "FAILED: $*"; rc=1; fi; }
 run python3 tests/test_canon.py
 run python3 tests/test_help.py
+run python3 tests/test_membackend.py
 run python3 tests/test_transfer.py
 run python3 tests/test_discover.py
 run bash tests/test_watch.sh

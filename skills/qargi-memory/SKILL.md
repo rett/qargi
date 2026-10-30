@@ -1,7 +1,7 @@
 ---
 name: qargi-memory
 description: Check, reconcile and curate the two qargi memory stores of a project: the agent-written recipes store (<project>-memory) and the curated, read-only reference store (<project>-reference), both laid out by the versioned canon (shared/ plus roles/<role>/). Lint, plan/apply a migration, import a foreign store, seed a role, promote a file to shared, audit cross-role writes.
-argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lint STORE_ID
+argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lint STORE_ID | split|merge|copy FROM TO
 ---
 
 # /qargi-memory
@@ -51,5 +51,7 @@ baseline bullet it covers.
 A store at an older version gets a plan that only adds what a note lacks (`Kind`, `Applies to`,
 `Sources` from its folder and `Verified:` line) and never edits a body.
 A new canon version means a new migration; see `canon/CANON.md` § Changing the canon.
+
+`qargi memory split|copy|merge FROM TO` move notes between two stores (directories, `.jsonl` dumps or `memstore_` ids): `split` takes what `--prefix`, `--role` or `--note-kind` picks (`--archive` moves the originals to `/_archive/<date>/`), `copy` leaves the source alone, `merge` adds what `TO` lacks and moves a split's archived originals back. A collision goes to `/_conflicts/<date>/`, nothing is deleted, each note written records its origin in `Sources:`. Run without `--approved` to get the plan and its token, show it, and apply exactly that with `--plan TOKEN --approved "..."`; a store that changed since the plan is refused.
 
 `qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the lead role's READMEs and indexes from both stores (about 4K characters) and nothing else; notes are read on demand.
