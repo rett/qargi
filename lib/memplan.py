@@ -13,7 +13,11 @@ merge goes to /_conflicts/<date>/<path>, as the reconciler does. Both record the
 to the first `Sources:` line of the note's header block (or adding the line after the title). A segment ends
 `@<12 hex>`, the digest of the note as it was before the segment was added; only a segment whose digest matches
 the text it was taken from is ours (core, full, origin), so a hand-written look-alike is just text. core()
-takes one segment off again, which restores an archived note byte for byte.
+takes one segment off again, which restores an archived note byte for byte. A note with no `Sources:` line gets
+`Sources: origin not recorded (qargi memory); <segment>`; a note whose own line is exactly that placeholder text gets
+the segment appended like any other. Undoing tells them apart by the digest alone (the placeholder line is dropped
+when the text without it has the digest, kept when the text with it has), so the format has no flag for it and notes
+written by any earlier release restore the same way.
 
 For a later port, typed links or a link-rewriting step, the contract this module keeps:
 - The origin segment encodes paths and labels by percent-encoding every byte except A-Za-z0-9 - . _ ~ and /
@@ -90,17 +94,23 @@ def add_origin(content, segment):
 
 def _strip(content):
     """(text without the last origin segment, how, reference) when that segment is ours: its digest is that of the
-    text it was taken from. None otherwise (no segment, or one somebody wrote)."""
+    text it was taken from. None otherwise (no segment, or one somebody wrote). When what is left of the Sources: line
+    is only the placeholder, the line may be one add_origin inserted (the note had none) or the note's own (it says
+    the same words): the digest tells which, because it is that of the note as it was, so the text with the line
+    dropped and the text with it kept are tried and only the one that matches is returned."""
     L = content.split("\n")
     i = _sources_line(L)
     m = SEGMENT.search(L[i]) if i is not None else None
     if not m:
         return None
     L[i] = L[i][:m.start()] + m.group(4)
+    kept = "\n".join(L)
+    texts = [kept]
     if L[i].rstrip("\r") == "Sources: " + NO_SOURCE:
         del L[i]
-    text = "\n".join(L)
-    return (text, m.group(1), m.group(2)) if B.digest(text)[:12] == m.group(3) else None
+        texts.append("\n".join(L))
+    text = next((t for t in texts if B.digest(t)[:12] == m.group(3)), None)
+    return (text, m.group(1), m.group(2)) if text is not None else None
 
 
 def core(content):

@@ -28,7 +28,7 @@ def rand_content(r):
     if r.random() < .7:
         fields.append("Applies to: any")
     if r.random() < .6:
-        fields.append("Sources: %s" % r.choice(["maintainer, 2026-01-02", "docs/x.md@abc1234", "run 7", ""]))
+        fields.append("Sources: %s" % r.choice(["maintainer, 2026-01-02", "docs/x.md@abc1234", "run 7", "", P.NO_SOURCE]))
     r.shuffle(fields)
     body = ["word%d" % r.randrange(9) for _ in range(r.randrange(0, 4))]
     if r.random() < .15:
@@ -75,6 +75,13 @@ def rand_selector(r):
     if k == "kind":
         return {"kind": r.choice(KINDS)}
     return {"prefix": ["/roles/"], "kind": r.choice(KINDS)}
+
+
+def own_placeholder(content):
+    """Whether the note's own header Sources: line is exactly the placeholder text (one an earlier copy wrote, or one written by hand)."""
+    L = content.split("\n")
+    i = P._sources_line(L)
+    return i is not None and L[i].rstrip("\r") == "Sources: " + P.NO_SOURCE
 
 
 class Stores(unittest.TestCase):
@@ -485,6 +492,56 @@ class Provenance(unittest.TestCase):
         self.assertIn("; " + seg + "\r\n", P.add_origin(mixed, seg))
         self.assertEqual(P.core(P.add_origin(mixed, seg)), mixed)
 
+    def test_a_sources_line_that_is_the_placeholder_text_is_the_authors_and_comes_back(self):
+        base = "# N\n\nKind: rule\nSources: %s\nApplies to: any\n\nbody\n" % P.NO_SOURCE
+        none = "# N\n\nKind: rule\nApplies to: any\n\nbody\n"
+        for name, n in (("lf", base), ("crlf", base.replace("\n", "\r\n")), ("no final newline", base.rstrip("\n")),
+                        ("crlf, no final newline", base.replace("\n", "\r\n").rstrip("\r\n")), ("alone", "# N\nSources: %s\n" % P.NO_SOURCE),
+                        ("untitled", "Sources: %s\n" % P.NO_SOURCE)):
+            with self.subTest(name):
+                self.assertTrue(own_placeholder(n))
+                cp = P.copied("A", "/n.md", n)
+                self.assertEqual(cp.count("Sources:"), 1)                                         # still one line
+                self.assertEqual((P.core(cp), P.full(cp), P.origin(cp)), (n, n, ("copied", "/n.md")))
+                ar = P.add_origin(n, "archived from %s@%s on %s" % (P.q("/n.md"), B.digest(n)[:12], TODAY))
+                self.assertEqual((P.core(ar), P.full(ar), P.origin(ar)), (n, n, ("archived", "/n.md")))
+                hop = P.add_origin(cp, "archived from %s@%s on %s" % (P.q("/n.md"), B.digest(cp)[:12], TODAY))
+                self.assertEqual((P.core(P.core(hop)), P.full(hop)), (n, n))
+                self.assertTrue(P.same(n, cp))
+        # the other half: a note with no Sources: line gets one, and loses exactly that line again
+        for n in (none, none.replace("\n", "\r\n"), none.rstrip("\n"), "# N\n", "# N", "no title\n"):
+            cp = P.copied("A", "/n.md", n)
+            self.assertIn(P.NO_SOURCE, cp)
+            self.assertEqual((P.core(cp), P.full(cp)), (n, n), repr(n))
+            hop = P.add_origin(cp, "archived from %s@%s on %s" % (P.q("/n.md"), B.digest(cp)[:12], TODAY))
+            self.assertEqual((P.core(P.core(hop)), P.full(hop)), (n, n), repr(n))
+        # a note that has the placeholder and one without it are different notes, and neither turns into the other
+        self.assertFalse(P.same(base, none))
+        self.assertNotEqual(P.copied("A", "/n.md", base), P.copied("A", "/n.md", none))
+
+    def test_trailers_written_by_the_released_code_restore_as_they_did(self):
+        # literal text as 0.1.x-era qargi wrote it: no flag, the digest of the note as it was
+        orig = "# N\n\nKind: rule\n"
+        old = "# N\nSources: origin not recorded (qargi memory); copied from src:/n.md@%s\n\nKind: rule\n" % B.digest(orig)[:12]
+        self.assertEqual((P.core(old), P.origin(old)), (orig, ("copied", "/n.md")))
+        arch = "# N\r\nSources: origin not recorded (qargi memory); archived from /n.md@%s on 2026-10-29\r\n\r\nKind: rule\r\n" % B.digest(orig.replace("\n", "\r\n"))[:12]
+        self.assertEqual((P.core(arch), P.origin(arch)), (orig.replace("\n", "\r\n"), ("archived", "/n.md")))
+        own = "# N\n\nSources: maintainer\n"
+        oldown = "# N\n\nSources: maintainer; copied from src:/n.md@%s\n" % B.digest(own)[:12]
+        self.assertEqual(P.core(oldown), own)
+
+    def test_a_placeholder_with_a_look_alike_segment_stays_text(self):
+        n = "# N\n\nSources: %s\n" % P.NO_SOURCE
+        for digest in ("000000000000", B.digest("something else")[:12]):
+            fake = "# N\n\nSources: %s; copied from A:/n.md@%s\n" % (P.NO_SOURCE, digest)
+            self.assertEqual((P.core(fake), P.full(fake), P.origin(fake)), (fake, fake, (None, None)), digest)
+            self.assertFalse(P.same(n, fake))
+        ours = P.copied("A", "/n.md", "# N\n\n")
+        self.assertEqual(ours, "# N\nSources: %s; copied from A:/n.md@%s\n\n" % (P.NO_SOURCE, B.digest("# N\n\n")[:12]))
+        self.assertEqual(P.core(ours), "# N\n\n")
+        edited = ours.replace("# N", "# M")                                                      # edited afterwards: not ours any more
+        self.assertEqual(P.core(edited), edited)
+
 
 class Planning(Stores):
     def test_selector(self):
@@ -709,6 +766,49 @@ class Invariants(Stores):
             self.assertEqual({p: P.core(c) for p, c in got.items() if p in other}, other)
         self.each(check)
         self.assertGreater(sum(restored), 20)
+
+    def test_c2_a_sources_line_equal_to_the_placeholder_survives_split_and_merge(self):
+        base = "# N\n\nKind: rule\nSources: %s\n\nbody\n" % P.NO_SOURCE
+        bare = "# B\n\nKind: rule\n\nbody\n"
+        variants = [base, base.replace("\n", "\r\n"), base.rstrip("\n"), bare, bare.replace("\n", "\r\n"), bare.rstrip("\n")]
+
+        def check(kind, r):
+            files = {"/shared/%s.md" % i: c for i, c in enumerate(variants)}
+            files["/shared/plain.md"] = "# P\n\nSources: maintainer\n"
+            src, dst = self.store(kind, files), self.store(kind)
+            self.run_plan(P.split(src.list(), {"prefix": ["/shared/"]}, dst.list(), True, TODAY, "src"), src, dst)
+            self.assertEqual(self.snap(src).keys() & files.keys(), set())                       # all archived
+            plan = P.merge(src.list(), dst.list(), "conflicts", TODAY, "dst")
+            self.assertEqual(sum(n.startswith("restored ") for n in plan["notes"]), len(files))
+            P.apply_plan(plan, {"target": src}, dry_run=False)
+            self.assertEqual(self.snap(src), files)                                              # byte for byte
+            copy_to = self.store(kind)                                                           # a copy, and the segment taken off it again
+            self.run_plan(P.copy(src.list(), copy_to.list(), {"prefix": ["/shared/"]}, "conflicts", TODAY, "src"), src, copy_to)
+            self.assertEqual({p: P.core(c) for p, c in self.snap(copy_to).items()}, files)
+        self.each(check)
+
+    def test_c3_random_stores_with_the_placeholder_round_trip_and_are_covered(self):
+        seen = {"own": 0, "own crlf": 0, "own no final newline": 0, "none": 0}
+
+        def check(kind, r):
+            files = rand_store(r, n=r.randrange(4, 14))
+            for p, c in files.items():
+                if own_placeholder(c):
+                    seen["own"] += 1
+                    seen["own crlf"] += "\r\n" in c
+                    seen["own no final newline"] += not c.endswith("\n")
+                else:
+                    seen["none"] += P._sources_line(c.split("\n")) is None
+            src, dst = self.store(kind, files), self.store(kind)
+            self.run_plan(P.split(src.list(), {"prefix": ["/"]}, dst.list(), True, TODAY, "src"), src, dst)
+            P.apply_plan(P.merge(src.list(), dst.list(), "conflicts", TODAY, "dst"), {"target": src}, dry_run=False)
+            live = lambda m: {p: c for p, c in m.items() if not p.startswith("/_archive/")}
+            self.assertEqual(live(self.snap(src)), live(files))
+            for p, c in self.snap(dst).items():                                                  # and every copy lets go of its segment
+                self.assertIn(P.full(c), files.values(), p)
+        self.each(check)
+        for k, v in seen.items():
+            self.assertGreater(v, 2 if k == "own crlf" else 8, seen)         # the explicit variants are in the test above
 
     def test_d_a_concurrent_write_is_detected_and_nothing_changes(self):
         def check(kind, r):
