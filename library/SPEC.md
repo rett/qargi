@@ -243,6 +243,31 @@ A binding names a skill, a `schedule` (`cron` + IANA timezone, `rrule`, `interva
 on, it is an error unless the referrer is redirected to `superseded_by`. Bindings on a retired skill are
 refused. `retired` is terminal.
 
+## Who may modify a skill (invariant; approval)
+
+A skill is an instruction every later run obeys, so changing one changes every future run. Therefore:
+
+1. **Only core, built-in, qargi-sanctioned skills may carry out a skill modification.** The sanctioned set
+   is a manifest shipped with qargi (names and digests), verified at install. An agent, an imported,
+   federated or community skill, or a self-improvement loop never holds this authority, and a skill cannot
+   grant it to itself or claim it in its own files. The sanctioned skills act only by invoking host verbs;
+   they do not write skill files from inside an agent session.
+2. **Every modification needs proof that a person is present.** The modifications are: create, edit,
+   import, seal (re-approve edited content), remove, accept (a verdict), and an overlap decision. Proof is
+   a typed confirmation at the terminal or, later, a device-signed approval. A `--approved` text flag, an
+   environment variable or an approval string in a prompt is never proof, so an agent's shell cannot
+   satisfy it.
+3. **Agents cannot write under a skill directory.** The guard denies writes by agent tools and shells to the
+   library, the installed skills and the pack library. An agent that wants a change proposes it as a patch
+   or a plan in its run directory; the sanctioned skill turns an approved proposal into the write.
+4. **The mechanism that follows is the existing one.** A write changes the digest, so the skill's status
+   demotes by itself and its trials and verdicts must be redone before it is relied on.
+5. **Self-improvement proposes and never applies.** It cannot loosen a guardrail either.
+6. **Core skills change only through qargi's own release process,** never at run time.
+
+Status: the current `qargi skill` verbs approve with a text flag and a bypassable plan token, and the member
+guard has no rule against them; closing this is a prerequisite for any self-improvement loop.
+
 ## Compile targets
 
 Name rule applies to the compiled directory too: it equals the skill `id`.

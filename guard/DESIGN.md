@@ -25,6 +25,11 @@ unsafe actions, cost runaway and memory poisoning. "brad damage" in the request 
 - **Contained writes (tier 1), unattended, check unavailable.** Allowed and the run is marked
   `unverified`, only where a human apply step follows; where an action takes effect with no human step it
   is denied. `qargi-verify` refuses to apply an unverified run without a person.
+- **Skill modification.** Only core, built-in, qargi-sanctioned skills may modify a skill, only by invoking
+  host verbs, and always with proof that a person is present (a typed confirmation at the terminal or a
+  device-signed approval; never a flag, an environment variable or a string in a prompt). Agent tools and
+  shells are denied writes under skill directories. Self-improvement may propose a change and never apply
+  one. See `library/SPEC.md`, "Who may modify a skill".
 - **Cloud memory.** The recipes store is mounted read-only on Managed Agents; agents write notes through a
   qargi-run `memory_note` tool, and unreviewed notes are quarantined.
 - **Schema 1 now, implementations later.** Data classes, effect class, reversibility, audience, money,
@@ -162,8 +167,11 @@ approval expires into `skip`, never `allow`. Interactive sessions ask the person
 ## Gates (Proposed)
 
 Always ask, no exception possible: push or publish, external communication, credential use, destructive or
-irreversible actions, money, budget raise, writes to `shared/` memory or a reference store, accepting a
-skill, creating or widening a binding, changing peer trust. Pre-approved by a binding that only narrows:
+irreversible actions, money, budget raise, writes to `shared/` memory or a reference store, any
+modification of a skill (create, edit, import, seal, remove, accept, overlap decision), creating or
+widening a binding, changing peer trust. "Ask" means proof of a present person, as defined under Decided;
+today's `--approved "<words>"` flag does not meet it (verified: any caller can supply the words, and the
+`QARGI_NESTED` environment variable skips the plan-token check in `need_plan`). Pre-approved by a binding that only narrows:
 reads, in-clone edits, notes under the role's own memory folder, scheduled runs within budget. Approve
 plans and bindings, not each action. Measure asks per run as a tracked metric.
 
