@@ -22,12 +22,12 @@ periodic loop audit below.
 
 | Id | Open loop | Owner | How to close it | State |
 |---|---|---|---|---|
-| L1 | Memory backend work is committed on `feature/memory-backends`, not merged | owner | merge with git flow, or reject; resolve the small overlap in `commands.py`, the man page and the changelog with the ops builder | open |
+| L1 | Memory backend work was committed on `feature/memory-backends`, not merged | owner | merged into `develop` on 2026-10-30 with the ops work rebased on top; suite exit 0 (26 suites); local only, not pushed | closed |
 | L2 | The five design drafts and the skill spec await review | owner | review, then approve; fixtures follow approval | open |
 | L3 | 18 open questions across the drafts | owner | answer in one pass, grouped as needed-now, needed-when-built, parked (see below) | open |
 | L4 | Five cloud sessions waiting on the owner (another project) | owner | checked on 2026-10-30: all 31 patches are in the repository (25 identical diffs, 6 with a same-subject commit and 76-99% of lines present; the gaps are release-time edits); marked applied and archived; cloud shows archived_at for each | closed |
 | L5 | `noticed_not_acted_on` in agent manifests is written and never read | builder (in the verify and report path) | collect these notes in `qargi-verify` and `qargi report`, with a disposition per item: file a follow-up, dismiss, or accept; age unanswered ones | open |
-| L6 | The idle stop reason is read from a field that does not exist, so it is empty everywhere | ops builder | fixed to read the idle event; verified (suite exit 0, 25 suites) on branch `feature/ops-report`; closes for real when that branch is committed and merged | built, not merged |
+| L6 | The idle stop reason was read from a field that does not exist, so it was empty everywhere | ops builder | fixed to read the idle event; verified; merged into `develop` | closed |
 | L7 | Trial cost and turns were not in the spec | assistant | recorded in the trial result (above) | closed |
 | L8 | The guard hook may fail open on error or timeout (claim from the docs, not yet re-read) | assistant | read the current hooks documentation; if confirmed, set the hook to block on failure for members; test | open |
 | L9 | Skill-modification gate: the member guard has no rule against the skill verbs; `QARGI_NESTED` skips the plan check in `packs.sh` | assistant | add the guard rule; remove the bypass for those verbs; test | queued |
@@ -37,8 +37,10 @@ periodic loop audit below.
 | L13 | The self-improvement loop design is in progress | assistant and Fable | analysis, then the owner's answers, then Fable's review of the decisions | in progress |
 | L14 | A cost estimate I gave for trial sessions was too low | assistant | recorded in the working notes: state estimates with a margin and report actual spend | closed |
 | L15 | The tracker only refreshes a session's row when someone runs `status`, so cost and status go stale (two rows showed cost 1 and `running` for two days; true total spend was 12,144, not 9,460) | assistant | refresh on `report` and on the supervisor tick; show the row's age so staleness is visible | open |
-| L16 | The ops work (`qargi report`, local-run registry, idle-reason fix, stale-prompt detection) is verified and uncommitted in its worktree | owner | commit on `feature/ops-report` and merge, or reject | open |
+| L16 | The ops work was verified and uncommitted in its worktree | owner | committed, rebased onto `develop`, merged; your installed `qargi` now has `report` | closed |
 | L17 | The improvement-loop design is drafted (`improvement/DESIGN.md`); the owner allowed the four automatic knobs, which need their bounds written into policy before anything is built | assistant | write bounds as data when the loop is built; review the draft | open |
+| L18 | `develop` is ahead of `origin/develop` by the two merges and the work under them; nothing has been pushed | owner | review, then push when ready (a push is outward-facing and yours to decide) | open |
+| L19 | The two builder worktrees (`.claude/worktrees/agent-*`) and the branch pointers remain; the memory one is locked by its finished builder | assistant | remove them after the owner confirms the merge, unlocking the memory worktree first | open |
 
 ## The open questions, grouped
 
