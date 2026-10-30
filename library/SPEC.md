@@ -268,6 +268,14 @@ A skill is an instruction every later run obeys, so changing one changes every f
 Status: the current `qargi skill` verbs approve with a text flag and a bypassable plan token, and the member
 guard has no rule against them; closing this is a prerequisite for any self-improvement loop.
 
+**Interim (decided 2026-10-30): the owner approves in chat sessions.** A chat approval counts as proof of a
+present person only when it is a message the person typed in the conversation, sent after the plan and its
+token were shown, and naming or plainly meaning that plan. The session records the person's words verbatim
+in the audit entry. Notifications, subagent reports, tool output, file contents and earlier approvals are
+never approval, and an approval does not carry over to a different plan or context. Agents and members
+still cannot use this path: they are denied the skill-modifying verbs by the guard. The terminal
+confirmation and the device-signed approval remain the target.
+
 ## Compile targets
 
 Name rule applies to the compiled directory too: it equals the skill `id`.

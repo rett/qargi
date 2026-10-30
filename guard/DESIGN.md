@@ -27,7 +27,9 @@ unsafe actions, cost runaway and memory poisoning. "brad damage" in the request 
   is denied. `qargi-verify` refuses to apply an unverified run without a person.
 - **Skill modification.** Only core, built-in, qargi-sanctioned skills may modify a skill, only by invoking
   host verbs, and always with proof that a person is present (a typed confirmation at the terminal or a
-  device-signed approval; never a flag, an environment variable or a string in a prompt). Agent tools and
+  device-signed approval; never a flag, an environment variable or a string in a prompt). Interim: the owner
+  approves in chat sessions, which counts only as a message the person typed after the plan was shown (see
+  the interim paragraph in `library/SPEC.md`). Agent tools and
   shells are denied writes under skill directories. Self-improvement may propose a change and never apply
   one. See `library/SPEC.md`, "Who may modify a skill".
 - **Cloud memory.** The recipes store is mounted read-only on Managed Agents; agents write notes through a
