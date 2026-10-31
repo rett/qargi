@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Runs every test and the linter. No API access, no private data.
 set -u
+# hermetic: the project's cloud binding (set by bin/qargi for a bound project) must not reach the tests
+unset ANTHROPIC_PROFILE QARGI_CLOUD_WORKSPACE QARGI_CLOUD_PROJECT
 cd "$(dirname "$0")/.." || exit 1
 rc=0
 t0=$SECONDS
@@ -25,6 +27,7 @@ run bash tests/test_methodology.sh
 run bash tests/test_attach.sh
 run bash tests/test_new.sh
 run bash tests/test_flow.sh
+run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run python3 tests/test_migrate.py
 run python3 tests/test_home.py
