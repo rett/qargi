@@ -112,7 +112,8 @@ ability in the run directory, and under it the guard refuses an edit outside the
 output directory and a Bash command that writes into the clone. Whatever the ability,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
-install`, `qargi packs apply`) and any write in the pack library, `~/.claude/skills` or
+install`, `qargi packs apply`) and any write in the pack library, in `credentials/` or `install.json` of the
+configuration directory (not the rest of it), in `~/.claude/skills` or
 a `.claude/skills` directory outside its clone (also `~/.claude/agents` and
 `~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
 the member's clone stay writable, since they are the work product. The guard fails closed on an

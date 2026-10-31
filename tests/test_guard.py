@@ -171,7 +171,7 @@ class Skills(unittest.TestCase):
                       "~/.claude/skills/x/SKILL.md", "~/.claude/agents/m.md", "~/.claude/plugins/p/plugin.json"):
                 r = self.call(tool, {key: p})
                 self.assertEqual(r.returncode, 2, (tool, p, r.stderr))
-                self.assertIn("protected skill location", r.stderr)
+                self.assertIn("protected location", r.stderr)
             for p in ("skills/qargi-build/SKILL.md", os.path.join(c, "skills/new/SKILL.md"), "src/a.go", os.path.join(self.t, "run/out/report.md"),
                       ".claude/skills/p/SKILL.md", os.path.join(c, ".claude/skills/new/SKILL.md"), "sub/.claude/skills/q/SKILL.md",
                       os.path.join(self.t, "conf/projects/p.json"), os.path.join(ls, "../settings.json")):
@@ -202,7 +202,7 @@ class Skills(unittest.TestCase):
                   "echo $(echo y > %s/links.json)" % lib):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, (c, r.stderr))
-            self.assertIn("protected skill location", r.stderr)
+            self.assertIn("protected location", r.stderr)
 
     def test_bash_reads_and_other_writes_are_not_refused(self):
         lib, ls = self.lib, self.lskill
@@ -249,6 +249,57 @@ class Skills(unittest.TestCase):
         self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None).returncode, 0)
         self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh2")).returncode, 2)
 
+    def test_credentials_and_the_install_record_are_protected_the_rest_of_conf_is_not(self):
+        bases = {"QARGI_CONF": (self.conf, dict()),
+                 "QARGI_HOME": (os.path.join(self.t, "qh/config"), dict(QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                 "live": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
+                 "earlier": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None))}
+        for name, (base, env) in bases.items():
+            os.makedirs(os.path.join(base, "credentials"), exist_ok=True)
+            os.makedirs(os.path.join(base, "projects"), exist_ok=True)
+            for f in ("credentials/tok", "install.json", "instances.json", "projects/x.json"):
+                with open(os.path.join(base, f), "w") as fh:
+                    fh.write("{}")
+            cred, inst = os.path.join(base, "credentials/tok"), os.path.join(base, "install.json")
+            for target in (cred, inst, os.path.join(base, "credentials/new-token")):
+                for c in ("echo x > %s" % target, "echo x >> %s" % target, "echo x | tee %s" % target, "cp /dev/null %s" % target, "mv %s/f %s" % (self.clone, target),
+                          "rm %s" % target, "rm -f %s" % target, "touch %s" % target, "chmod 644 %s" % target, "sed -i s/a/b/ %s" % target, "ln -sf /x %s" % target):
+                    r = self.bash(c, **env)
+                    self.assertEqual(r.returncode, 2, (name, c, r.stderr))
+                    self.assertIn("protected location", r.stderr)
+                for tool in ("Write", "Edit"):
+                    r = self.call(tool, {"file_path": target}, **env)
+                    self.assertEqual(r.returncode, 2, (name, tool, target, r.stderr))
+            for c in ("rm -rf %s/credentials" % base, "mv %s/credentials /tmp/x" % base, "mv %s/install.json %s/run/out/" % (base, self.t)):
+                self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
+            # a link in the clone that leads to a protected path is followed and refused
+            link = os.path.join(self.clone, "to-%s" % name)
+            os.symlink(os.path.join(base, "credentials"), link)
+            self.assertEqual(self.call("Write", {"file_path": link + "/tok"}, **env).returncode, 2, name)
+            self.assertEqual(self.bash("echo x > %s/tok" % link, **env).returncode, 2, name)
+            os.symlink(inst, link + "-i")
+            self.assertEqual(self.call("Write", {"file_path": link + "-i"}, **env).returncode, 2, name)
+            # the rest of the configuration directory is not protected, and reading never is
+            for f in ("instances.json", "projects/x.json", "projects/new.json", "agents.json", "profiles/p.md"):
+                os.makedirs(os.path.join(base, "profiles"), exist_ok=True)
+                t = os.path.join(base, f)
+                for r in (self.bash("echo x > %s" % t, **env), self.call("Write", {"file_path": t}, **env), self.bash("cp /dev/null %s && rm %s" % (t, t), **env)):
+                    self.assertEqual(r.returncode, 0, (name, f, r.stderr))
+            for c in ("cat %s" % cred, "cat %s" % inst, "ls -la %s/credentials" % base, "cp %s %s/run/out/tok" % (cred, self.t), "grep -r x %s" % base,
+                      "cp -r %s/credentials %s/run/out/" % (base, self.t), "jq . %s" % inst):
+                r = self.bash(c, **env)
+                self.assertEqual(r.returncode, 0, (name, c, r.stderr))
+            self.assertEqual(self.call("Read", {"file_path": cred}, **env).returncode, 0)
+        # the guard knows nothing of the qargi verb: one that writes other conf files through the tool itself is not in its way
+        for c in ("qargi agent add worker", "qargi project init x --answers a.json", "qargi instances list"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_the_clone_exemption_still_holds_beside_the_new_roots(self):
+        os.makedirs(os.path.join(self.clone, "credentials"))
+        for c in ("echo y > credentials/tok", "echo y > install.json", "echo y > .claude/skills/p/SKILL.md", "mkdir -p config/credentials && echo y > config/credentials/t"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.clone, "credentials/tok")}).returncode, 0)
+
     def test_a_home_whose_dot_claude_is_a_link_is_still_protected(self):
         home2, real = os.path.join(self.t, "home2"), os.path.join(self.t, "elsewhere")
         os.makedirs(os.path.join(real, "skills/x"))
@@ -277,7 +328,7 @@ class Skills(unittest.TestCase):
                      ("Bash", {"command": "rm -rf .claude/skills/to-user/x"}), ("Write", {"file_path": "link-to-library/links.json"})):
             r = self.call(*call)
             self.assertEqual(r.returncode, 2, (call, r.stderr))
-            self.assertIn("protected skill location", r.stderr)
+            self.assertIn("protected location", r.stderr)
         # (b) .claude/skills outside any clone stays protected, also when reached from inside the clone with ..
         for call in (("Write", {"file_path": os.path.join(self.proj, ".claude/skills/p/SKILL.md")}), ("Write", {"file_path": "../../proj/.claude/skills/p/SKILL.md"}),
                      ("Bash", {"command": "echo y > ../../proj/.claude/skills/p/SKILL.md"}), ("Bash", {"command": "echo y > %s/.claude/skills/p/SKILL.md" % self.proj})):

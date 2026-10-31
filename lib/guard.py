@@ -18,7 +18,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
-    ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, and any .claude/skills directory
+    ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
+    directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
+    change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
+    read of a protected path stays allowed), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, and any .claude/skills directory
     outside the run's clone (a project's installed one). Inside the clone, found from the nearest `qargi local
     prepare` run directory, .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
@@ -200,15 +203,18 @@ def review_segment(toks, i, here):
 # --- skills: who may change one, and where they live
 
 def protected_roots():
-    """The directories whose content is a skill or the library of them (real paths)."""
+    """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
     # the library where the data lives now, the default and the QARGI_HOME one beside an override, and the earlier XDG
     # libraries, which stay as a backup after `qargi migrate home`
-    roots = {os.path.join(P.conf(), "packs"), os.path.join(P.root(), "config", "packs"), os.path.join(P.live_conf(), "packs"), os.path.join(home, ".qargi", "config", "packs"),
-             os.path.join(P.legacy_conf(), "packs"), os.path.join(home, ".config", "qargi", "packs"),
-             os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
+    # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
+    # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
+    roots = {os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
+    for conf in (P.conf(), os.path.join(P.root(), "config"), P.live_conf(), os.path.join(home, ".qargi", "config"), P.legacy_conf(),
+                 os.path.join(home, ".config", "qargi")):
+        roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -243,7 +249,7 @@ def skill_refusal(tool, inp, cwd):
     if tool in EDIT_TOOLS:
         fp = inp.get("file_path") or inp.get("notebook_path") or ""
         root = protected(resolve(cwd, fp)) if fp else None
-        return "%s on %s would change %s, a protected skill location" % (tool, fp, root) if root else None
+        return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (tool, fp, root) if root else None
     if tool != "Bash":
         return None
     return bash_skill_refusal(inp.get("command") or "", cwd, 0)
@@ -346,7 +352,7 @@ def protected_write(toks, i, here):
             continue
         root = protected(resolve(here, dest), what in DESTRUCTIVE)
         if root:
-            return "%s on %s would change %s, a protected skill location" % (what, dest, root)
+            return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (what, dest, root)
     return None
 
 

@@ -81,7 +81,7 @@ COMMANDS = {
                  "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
-                 "and writes in the pack library, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
+                 "and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
                  "ABILITY prints."),
         "scripts": ["agent.sh"],
         "verbs": {
