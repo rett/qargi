@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """qargi report: the figures from a fixture tracker and fixture local run directories. Offline; no cloud, no real state.
 Run: python3 tests/test_report.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, subprocess, sys, tempfile, unittest
 from datetime import datetime, timedelta, timezone
 
