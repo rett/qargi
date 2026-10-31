@@ -3,16 +3,17 @@
 # task branch of the real repository.
 #
 #   review.sh apply RUN_DIR [--branch BRANCH] [--project P]   agent/<slug> at the run's base with the patches applied
+#   review.sh prune [--project P] [--yes]                      list (or delete) agent/* branches merged into develop or a feature/*
 #
 # The branch is made in a temporary worktree of the project's repository (repo.path), so the user's checkout is never touched;
 # no ref other than the new branch changes. A patch that does not apply removes the worktree and the branch again.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-RUN_ARG='' BRANCH='' PROJ=''
+RUN_ARG='' BRANCH='' PROJ='' YES=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) PROJ=${2:?--project needs a name}; shift 2;; --branch) BRANCH=${2:?--branch needs a name}; shift 2;;
+    --project) PROJ=${2:?--project needs a name}; shift 2;; --branch) BRANCH=${2:?--branch needs a name}; shift 2;; --yes) YES=1; shift;;
     -*) die "unknown option $1";;
     *) [ -z "$RUN_ARG" ] || die "unexpected argument $1"; RUN_ARG=$1; shift;;
   esac
@@ -78,5 +79,21 @@ case $verb in
     echo "next:"
     echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
     echo "  qargi local clean $RUN";;
-  *) die "usage: qargi review apply ...";;
+  prune)
+    [ -z "$RUN_ARG" ] || die "usage: qargi review prune [--project P] [--yes]"
+    targets=$(g for-each-ref --format='%(refname:short)' refs/heads/develop 'refs/heads/feature/*')
+    cur=$(g symbolic-ref -q --short HEAD || true); n=0
+    while read -r b; do
+      [ -n "$b" ] || continue
+      [ "$b" != "$cur" ] || { echo "kept $b (checked out)"; continue; }
+      [ -z "$(held "$b")" ] || { echo "kept $b (checked out in $(held "$b"))"; continue; }
+      sha=$(sha_of "$b"); into=''
+      for t in $targets; do g merge-base --is-ancestor "$sha" "$t" && { into=$t; break; }; done
+      [ -n "$into" ] || continue
+      n=$((n + 1))
+      if [ -n "$YES" ]; then g branch -D "$b" >/dev/null && echo "deleted $b (was ${sha:0:12}, merged into $into)"
+      else echo "$b (${sha:0:12}) is merged into $into"; fi
+    done < <(g for-each-ref --format='%(refname:short)' 'refs/heads/agent/*')
+    if [ "$n" = 0 ]; then echo "no merged agent/* branches"; elif [ -z "$YES" ]; then echo "$n branch(es) would be deleted: qargi review prune --yes"; fi;;
+  *) die "usage: qargi review apply|prune ...";;
 esac

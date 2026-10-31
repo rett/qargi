@@ -435,6 +435,12 @@ COMMANDS = {
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run."),
                           examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
+            "prune": verb("List, or with --yes delete, the agent/* branches already merged into develop or a feature", [],
+                          [PROJECT_OPT, opt("--yes", "delete them (without it nothing changes)")],
+                          desc=("A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch -d makes, against that target "
+                                "rather than the checked-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; "
+                                "no other branch is touched. Prints each branch it lists or deleted."),
+                          examples=["qargi review prune", "qargi review prune --yes"]),
         },
     },
     "team": {
