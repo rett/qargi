@@ -21,8 +21,11 @@ prints the model.
 2. **Run tasks inside it** with `/qargi-task`: `--base feature/NAME`, as large as the feature allows (a long, proactive session
    beats many small ones), each with its own `--slug` and a `SCOPE` that does not overlap another task's. Tasks that touch
    different paths run in parallel; the same file goes one after the other. A task runs targeted checks only.
-3. **Take each task in**: `/qargi-verify` the series and apply it to a branch, then `qargi feature merge NAME BRANCH`, then
-   `qargi local clean RUN`.
+3. **Take each task in**: `/qargi-verify` the series; `qargi review apply RUN` (runs `review check` and `local verify`, creates
+   `agent/<slug>` in a temporary worktree at the run's base, applies the series, prints the next commands), then
+   `qargi feature merge NAME BRANCH`, then `qargi local clean RUN`, then `qargi review prune [--yes]` to delete merged `agent/*`
+   branches. Run `qargi local verify RUN` on every returned run before merging any of them: a passing verify arms the run
+   (afterwards the lead's own fast-forwards are accepted), but a run never verified before the first merge fails the strict check.
 4. **When the feature is complete**: `qargi feature sync NAME` (pulls in what other features landed; a conflict stops here, see
    below), then `qargi feature verify NAME` (the one whole-suite run), then `qargi feature finish NAME` (plan, then apply with
    `--plan` and `--approved`). That is the only merge into develop. Its run carries over to develop's new head, so a release

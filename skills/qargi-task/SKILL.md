@@ -125,8 +125,8 @@ The local agent gets no way to push, and you check afterwards that it did not.
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
-   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then a `TASK-BLOCK PATHS` block
-   with the values to paste into the task block exactly as printed. It records every ref of the real
+   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then, after a blank line, a `TASK-BLOCK PATHS` block
+   to paste into the task block exactly as printed. It records every ref of the real
    repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
 2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
@@ -137,7 +137,8 @@ The local agent gets no way to push, and you check afterwards that it did not.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent
    (or something it ran) pushed or wrote to the real repository: stop, tell the user,
-   and do not review further until they have seen it.
+   and do not review further until they have seen it. Verify every returned run before merging any of them (a run never verified
+   before the first merge fails the strict check).
 4. Then `/qargi-verify` on `OUT`.
 5. When the series is merged (or rejected) and you hold what you need, `qargi local clean <RUN>` removes the run:
    the clone, the bare copy, the output and the run's private TMP directory (on /dev/shm), so nothing is left behind.
