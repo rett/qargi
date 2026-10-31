@@ -20,3 +20,5 @@ the role adds.
 - Report the suite's result with verdict lines and counts (run, passed, failed,
   skipped) and what the touched tests cover that they did not before. Known flaky
   tests are kept in the memory store under `roles/test/status/`.
+- Before DONE, follow "Before you report DONE" in the contract: lint, change-specific commits with bodies,
+  `qargi review check OUT` at 0 fail, 0 warn, no `git stash`, SCOPE kept.
