@@ -62,6 +62,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
 
 ### Changed
+- `qargi feature verify` and `qargi release verify` run the project's test command without the project's cloud binding
+  (`ANTHROPIC_PROFILE`, `QARGI_CLOUD_WORKSPACE`, `QARGI_CLOUD_PROJECT`), and `tests/run.sh` unsets them, so a project with
+  a cloud binding can get a passing whole-suite record.
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
   `qargi-build|write|review|test` skills remain for now and are no longer what a task loads.
