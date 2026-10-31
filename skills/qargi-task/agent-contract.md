@@ -79,7 +79,7 @@ as coordinator-only are reported "not run".
 
 # Output files (in OUT)
 OUT is the output directory the task block gives (a local run: `RUN_DIR/out`; with no OUT given, RUN_DIR itself is the
-output directory). RUN_DIR only names the run; `qargi review check`, `local verify` and `local clean` read OUT.
+output directory). RUN_DIR only names the run; `qargi review check` and `qargi local clean` read OUT.
 patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
 BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
 change group it belongs to, why, which checks it passed), run.bundle
