@@ -11,6 +11,38 @@ sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
 verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'select(.command == $c) | .sha + " " + .result' "$f" 2>/dev/null; }
 branch_exists() { [ -n "$(sha_of "$1")" ]; }
 
+# remote_tip BRANCH -> RSTATE and RTIP, RWHY: asks the live remote (git ls-remote, bounded by QARGI_REMOTE_TIMEOUT, 10s) what
+# refs/heads/BRANCH is there, because the remote-tracking refs are as old as the last fetch. RSTATE is none (no origin),
+# found (RTIP), absent, or unchecked (RWHY says why). It never fails and never prompts.
+remote_tip() {
+  local out rc
+  RSTATE=none RTIP='' RWHY=''
+  g remote get-url origin >/dev/null 2>&1 || return 0
+  command -v timeout >/dev/null 2>&1 || { RSTATE=unchecked RWHY="no timeout command to bound the check"; return 0; }
+  out=$(GIT_TERMINAL_PROMPT=0 timeout "${QARGI_REMOTE_TIMEOUT:-10}" git -C "$REPO" ls-remote origin "refs/heads/$1" 2>&1) && rc=0 || rc=$?
+  if [ "$rc" = 124 ]; then RSTATE=unchecked RWHY="no answer from origin within ${QARGI_REMOTE_TIMEOUT:-10}s"; return 0; fi
+  if [ "$rc" != 0 ]; then RSTATE=unchecked RWHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); RWHY=${RWHY:-"git ls-remote failed"}; return 0; fi
+  RTIP=$(printf '%s\n' "$out" | awk -v r="refs/heads/$1" '$2 == r {print $1; exit}')
+  if [ -n "$RTIP" ]; then RSTATE=found; else RSTATE=absent; fi
+}
+# remote_report BRANCH: one line saying where the branch is on the live origin next to the local tip (nothing without an origin)
+remote_report() {
+  local b=$1 l n m
+  remote_tip "$b"; l=$(sha_of "$b")
+  case $RSTATE in
+    none) ;;
+    unchecked) echo "  origin $b: remote not checked ($RWHY)";;
+    absent) echo "  origin $b: not on origin${l:+ (local ${l:0:7})}";;
+    found)
+      if [ -z "$l" ]; then echo "  origin $b: remote ${RTIP:0:7}, no local branch"
+      elif [ "$l" = "$RTIP" ]; then echo "  origin $b: remote ${RTIP:0:7}, local ${l:0:7} (same)"
+      elif g cat-file -e "$RTIP^{commit}" 2>/dev/null; then
+        n=$(g rev-list --count "$RTIP..$l"); m=$(g rev-list --count "$l..$RTIP")
+        echo "  origin $b: remote ${RTIP:0:7}, local ${l:0:7} (local is $n ahead, $m behind)"
+      else echo "  origin $b: remote ${RTIP:0:7}, local ${l:0:7} (differ; the remote tip is not fetched yet)"; fi;;
+  esac
+}
+
 WT=''
 cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; }; }
 trap cleanup EXIT
