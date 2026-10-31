@@ -52,7 +52,7 @@ GROUPS = [
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
     ("Export and import", ["export", "import", "migrate"]),
-    ("Other", ["help", "version"]),
+    ("Other", ["upgrade", "help", "version"]),
 ]
 
 COMMANDS = {
@@ -248,6 +248,18 @@ COMMANDS = {
         "desc": "With --why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.",
         "usage": [("SID", "session:active"), ("STATE", ("applied", "rejected", "pending"))],
         "opts": [opt("--why", "why: wrong-scope, broke-check, style, too-slow, too-costly, skill-ignored, skill-wrong, brief-unclear, gate-noise or other", "CODE", REASONS)],
+    },
+    "upgrade": {
+        "summary": "Move the installed tool to a newer branch or tag of its origin",
+        "desc": ("Works on the root-owned checkout install.sh recorded (for example /opt/qargi). Without --approved it fetches the target, "
+                 "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
+                 "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
+                 "checked out detached; install.sh --user then runs as you and the members to refresh are listed. The git commands that write "
+                 "into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it."),
+        "scripts": ["upgrade.sh"],
+        "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
+                 opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],
+        "examples": ["qargi upgrade --branch develop", "qargi upgrade --branch develop --plan 1a2b3c4d5e6f --approved \"upgrade to develop\"", "qargi upgrade --tag v0.2.0"],
     },
     "cloud": {
         "summary": "Which ant profile and workspace each project uses",

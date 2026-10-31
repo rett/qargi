@@ -1741,6 +1741,31 @@ the request, in your words, for this migration; needed when the plan changes clo
 .RE
 .SS Other
 .TP
+.B qargi upgrade
+Move the installed tool to a newer branch or tag of its origin.
+.PP
+Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it.
+.RS
+.TP
+.BI "\-\-branch " "BRANCH"
+the branch to move to (default: the installed checkout's current branch).
+.RE
+.RS
+.TP
+.BI "\-\-tag " "TAG"
+a tag to check out instead.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.TP
 .B qargi help
 Show help.
 .PP
