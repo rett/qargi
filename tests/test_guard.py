@@ -323,6 +323,22 @@ class Skills(unittest.TestCase):
         for c in ("qargi agent add worker", "qargi project init x --answers a.json", "qargi instances list"):
             self.assertEqual(self.bash(c).returncode, 0, c)
 
+    def test_the_installed_tool_and_a_projects_member_definitions_are_protected(self):
+        tool = os.path.join(self.t, "opt/qargi")
+        os.makedirs(os.path.join(tool, "skills/qargi-build"))
+        os.makedirs(os.path.join(self.proj, ".claude/agents"))
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": tool}, f)
+        os.symlink(os.path.join(tool, "skills/qargi-build"), os.path.join(self.lskill, "qargi-build"))   # what install.sh makes
+        for target in (os.path.join(tool, "skills/qargi-build/SKILL.md"), os.path.join(self.lskill, "qargi-build/SKILL.md"),
+                       os.path.join(tool, "agents/member.md"), os.path.join(self.proj, ".claude/agents/m.md")):
+            self.assertEqual(self.call("Write", {"file_path": target}).returncode, 2, target)
+            r = self.bash("echo x > %s" % target)
+            self.assertEqual(r.returncode, 2, (target, r.stderr))
+        self.assertEqual(self.bash("rm -rf %s" % os.path.join(self.proj, ".claude")).returncode, 2)
+        self.assertEqual(self.bash("cat %s" % os.path.join(tool, "skills/qargi-build/SKILL.md")).returncode, 0)   # reading stays allowed
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.clone, ".claude/agents/m.md")}).returncode, 0)   # the clone's is work product
+
     def test_the_clone_exemption_still_holds_beside_the_new_roots(self):
         os.makedirs(os.path.join(self.clone, "credentials"))
         for c in ("echo y > credentials/tok", "echo y > install.json", "echo y > .claude/skills/p/SKILL.md", "mkdir -p config/credentials && echo y > config/credentials/t"):

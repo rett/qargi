@@ -24,8 +24,9 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
     directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
-    read of a protected path stays allowed), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, and any .claude/skills directory
-    outside the run's clone (a project's installed one). Inside the clone, found from the nearest `qargi local
+    read of a protected path stays allowed), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, the installed copy of the tool (the tool_root in install.json:
+    the skills there are linked from ~/.claude/skills), and any .claude/skills or .claude/agents directory
+    outside the run's clone (a project's installed ones). Inside the clone, found from the nearest `qargi local
     prepare` run directory, .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
@@ -250,6 +251,11 @@ def protected_roots():
                  os.path.join(home, ".config", "qargi")):
         roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
+    # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
+    # here, so it must be a root itself (it holds the skills, the member definition and the roles a member is launched with)
+    installed = P.installed_tool_root()
+    if installed:
+        roots.add(installed)
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -272,10 +278,11 @@ def protected(full, destructive=False):
     if in_clone(full):          # after the named roots: a link in the clone that leads to one was resolved and is denied above
         return None
     parts = full.split(os.sep)
-    if any(parts[k] == ".claude" and parts[k + 1] == "skills" for k in range(len(parts) - 1)):
-        return ".claude/skills"
-    if destructive and os.path.basename(full) == ".claude" and os.path.isdir(os.path.join(full, "skills")):
-        return ".claude/skills"
+    for sub in ("skills", "agents"):          # a project's installed skills and member definitions (the latter hold the hook that guards a member)
+        if any(parts[k] == ".claude" and parts[k + 1] == sub for k in range(len(parts) - 1)):
+            return ".claude/" + sub
+        if destructive and os.path.basename(full) == ".claude" and os.path.isdir(os.path.join(full, sub)):
+            return ".claude/" + sub
     return None
 
 
