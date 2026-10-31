@@ -46,7 +46,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
 GROUPS = [
-    ("Set up", ["project", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -276,6 +276,23 @@ COMMANDS = {
         "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
                  opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],
         "examples": ["qargi upgrade --branch develop", "qargi upgrade --branch develop --plan 1a2b3c4d5e6f --approved \"upgrade to develop\"", "qargi upgrade --tag v0.2.0"],
+    },
+    "methodology": {
+        "summary": "List and inspect the development and release methodologies",
+        "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
+                 "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
+                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). These verbs only read; "
+                 "qargi project new and adopt write, and only after a plan."),
+        "scripts": ["methodology.py"],
+        "verbs": {
+            "list": verb("List the methodologies and where they live"),
+            "show": verb("Print a methodology: branches, tests, CI, release steps, parameters, scaffold, deployment options", [("NAME", "methodology")]),
+            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")]),
+            "files": verb("Print the scaffold rendered with the parameters, writing nothing", [("NAME", "methodology")],
+                          [opt("--param", "a parameter as name=value (repeat)", "NAME=VALUE")],
+                          examples=["qargi methodology files gitflow --param project=acme --param test_command='make test'"]),
+            "deployment": verb("List the deployment options, or print one option's instructions", [("NAME", "methodology"), ("[ID]", "none")]),
+        },
     },
     "cloud": {
         "summary": "Which ant profile and workspace each project uses",

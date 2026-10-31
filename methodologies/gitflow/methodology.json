@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "name": "gitflow",
+  "version": 1,
+  "description": "Two long-lived branches (master, develop), a release branch per version, one task branch per unit of work, targeted checks per task and one full run per collection, a Keep a Changelog file, CI on pull requests, a tag on master.",
+  "params": {
+    "project": {"required": true, "help": "the project's name"},
+    "test_command": {"default": "make test", "help": "the command that runs the whole test suite"},
+    "version": {"default": "0.1.0", "help": "the first version"},
+    "year": {"default": "", "help": "the copyright year (default: this year)"}
+  },
+  "branches": {"long_lived": ["master", "develop"], "release": "feature/{version}", "task": "agent/{slug}"},
+  "versioning": {"file": "VERSION", "changelog": "CHANGELOG.md", "changelog_format": "keepachangelog", "scheme": "semver"},
+  "tests": {"task": "the targeted check that covers the change", "collection": "the full suite, once, after the related tasks are merged"},
+  "ci": {"provider": "github-actions", "file": ".github/workflows/test.yml", "runs_on": ["pull_request", "push:develop"]},
+  "release": [
+    "start the release branch feature/<version> from develop",
+    "run a task on its own branch; the lead verifies the work and merges it into the release branch; the run is cleaned up",
+    "repeat; after a collection of related tasks is merged, run the full suite once",
+    "when you say so: date the changelog and set the version, push the release branch and open a pull request into develop",
+    "when CI passes: merge into develop, then into master, and tag the release"
+  ],
+  "roles": {"build": {"base": "@dispatcher"}, "write": {"base": "@dispatcher"}, "review": {"base": "@dispatcher"}, "test": {"base": "@dispatcher"}},
+  "scaffold": [
+    {"src": "README.md", "dest": "README.md"},
+    {"src": "VERSION", "dest": "VERSION"},
+    {"src": "CHANGELOG.md", "dest": "CHANGELOG.md"},
+    {"src": "CONTRIBUTING.md", "dest": "CONTRIBUTING.md"},
+    {"src": "CLAUDE.md", "dest": "CLAUDE.md"},
+    {"src": "gitignore", "dest": ".gitignore"},
+    {"src": ".github/workflows/test.yml", "dest": ".github/workflows/test.yml"}
+  ],
+  "deployment": {
+    "note": "Deployment differs a lot between projects, so nothing is set up unless you choose it. Each option can be done for you or by hand.",
+    "options": [
+      {"id": "none", "title": "Nothing yet", "automatable": false,
+       "instructions": "The tag on master is the release. Decide how to ship it later."},
+      {"id": "github-release", "title": "A GitHub release with the built files", "automatable": true,
+       "instructions": "After the tag is pushed: build the files you ship from the tag, then `gh release create <tag> --verify-tag --title \"<project> <tag>\" --notes-file <notes> <files>`. Keep the notes in the changelog."},
+      {"id": "container-image", "title": "A container image built by CI on a tag", "automatable": true,
+       "instructions": "Add a Containerfile, then a workflow that runs on tags, builds the image and pushes it to your registry (GitHub Container Registry needs no extra account). Store registry credentials as repository secrets, never in the repository."},
+      {"id": "package-registry", "title": "A package published to a registry on a tag", "automatable": true,
+       "instructions": "Add the package metadata for your language (npm, PyPI, crates.io, Go modules), then a workflow that runs on tags and publishes with a token kept as a repository secret. Try it with the registry's test instance first."}
+    ]
+  }
+}

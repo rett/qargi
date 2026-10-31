@@ -373,6 +373,17 @@ def work_roles():
     return [(r, "") for r in list(C.ABILITIES) + own]
 
 
+def methodologies():
+    """The methodologies, the built-in one and yours: (name, description)."""
+    out = []
+    for base in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "methodologies"), os.path.join(conf(), "methodologies")):
+        for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            f = os.path.join(base, n, "methodology.json")
+            if os.path.isfile(f) and n not in [x[0] for x in out]:
+                out.append((n, _read(f).get("description", "")[:60]))
+    return out
+
+
 def stores():
     seen = {}
     for n, v in sorted(_read(os.path.join(conf(), "instances.json")).items()):
@@ -473,6 +484,8 @@ def by_type(t, words):
         return roles_of(words)
     if base == "workrole":
         return work_roles()
+    if base == "methodology":
+        return methodologies()
     if base == "store":
         return stores()
     if base == "deployment":

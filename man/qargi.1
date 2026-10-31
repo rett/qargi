@@ -100,6 +100,41 @@ List the stored projects.
 Check an answers file without storing it.
 .RE
 .TP
+.B qargi methodology
+List and inspect the development and release methodologies.
+.PP
+A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). These verbs only read; qargi project new and adopt write, and only after a plan.
+.RS
+.TP
+.B list
+List the methodologies and where they live.
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Print a methodology: branches, tests, CI, release steps, parameters, scaffold, deployment options.
+.RE
+.RS
+.TP
+.BI "check " "[NAME]"
+Validate one methodology, or all of them.
+.RE
+.RS
+.TP
+.BI "files " "NAME"
+Print the scaffold rendered with the parameters, writing nothing.
+.RS
+.TP
+.BI "\-\-param " "NAME=VALUE"
+a parameter as name=value (repeat).
+.RE
+.RE
+.RS
+.TP
+.BI "deployment " "NAME [ID]"
+List the deployment options, or print one option's instructions.
+.RE
+.TP
 .B qargi cloud
 Which ant profile and workspace each project uses.
 .PP

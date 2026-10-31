@@ -21,6 +21,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   targeted checks per task (the full suite belongs to the coordinator after a collection), and the task skill describes
   dispatching non-overlapping tasks in parallel.
 
+- Methodologies. A methodology is the way a project is developed and released, as data: branches (long-lived, release
+  `feature/<version>`, task `agent/<slug>`), versioning and changelog, test tiers (targeted per task, the whole suite once per
+  collection), CI, release steps, deployment options with instructions, and the generic files a new project starts with
+  (README, VERSION, CHANGELOG, CONTRIBUTING, CLAUDE.md, .gitignore, a GitHub Actions test workflow). `gitflow` ships in
+  `methodologies/`; add your own under `~/.qargi/config/methodologies/NAME/`. `qargi methodology list|show|check|files|deployment`
+  only read; the scaffold carries no reference to qargi.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
