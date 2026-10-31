@@ -75,10 +75,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   into `~/.claude`. `qargi packs check --target claude-code PROJECT` (read only) exits 1 on drift: a changed or unreviewed pack,
   a tampered, extra or missing rendered file, an enablement change, a rendered skill shadowed by `~/.claude/skills` or the
   checkout's `.claude/skills`, or a missing manifest. `--target managed-agents` is the existing cloud update of an instance.
+- `qargi packs apply --target claude-code` refuses at plan time, naming the pack and writing nothing: a `SKILL.md` whose name
+  differs from the pack name or whose front matter is not closed or has two `name` keys, a skill and a tool with the same name,
+  and a tool allowlist name outside letters, digits, `_`, `.` and `-`. Each plan stages into its own hidden directory under a
+  lock, so concurrent applies serialize and the second refuses if the render changed meanwhile.
+- `qargi packs check --target claude-code` also reports a rendered file that differs from the library copy, a changed file mode,
+  a group- or world-writable render, a malformed manifest, and a manifest naming another project or with role scoping other
+  than advisory.
+- `qargi local prepare` prints a WARNING block to stderr when the project's Claude Code render has drifted (the project is found
+  by matching the repository against the stored answers), with the findings and the fix, `qargi packs apply --target claude-code
+  PROJECT`. The run goes on; stdout and the TASK-BLOCK PATHS block are unchanged.
 - The guard protects that directory: members can no longer write under the state's `claude/` directory, and the operands of
   `packs render` are judged as write destinations.
 
 ### Changed
+- The plan token of `packs apply --target claude-code` also covers file modes, the manifest records them, and the swap installs
+  only the tree the token approved.
 - `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,
   and later checks compare with it: fast-forwards of `develop`, `master` and `agent|feature|release|hotfix/*` branches and new
   branches there are accepted, while remote refs, tags, deletions and rewrites still fail. A change now exits 2 (it was 1). Run
