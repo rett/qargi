@@ -1,0 +1,4 @@
+{
+  "class": "read-only",
+  "description": "Read a change someone else made, run its checks yourself and write a report with findings and a verdict; change no file of the repository."
+}

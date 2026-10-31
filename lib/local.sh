@@ -3,7 +3,7 @@
 # has no remote, runs git through a credential-less wrapper, and the coordinator
 # compares every ref of the real repository (and of its remote) before and after.
 #
-#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--ability A]
+#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R]
 #   local.sh verify RUN_DIR
 #
 # This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
@@ -37,7 +37,7 @@ case $verb in
   prepare)
     REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability) ABILITY=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability|--role) ABILITY=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
@@ -46,13 +46,15 @@ case $verb in
     else
       [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
     fi
-    case $ABILITY in build|write|review|test) ;; *) die "--ability build|write|review|test";; esac
+    [ "$ABILITY" != lead ] && valid_role "$ABILITY" || die "--role: one of $DA_ROLES (qargi role list)"
+    CLASS=$(role_class "$ABILITY")
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
     case $BASE in master|develop) ;; esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
     printf '%s\n' "$ABILITY" > "$RUN/ability"
+    printf '%s\n' "$CLASS" > "$RUN/class"
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
       printf '%s\n' "$URL" > "$RUN/repo.url"; [ -z "$CRED" ] || printf '%s\n' "$CRED" > "$RUN/cred.path"   # a path, never the token
@@ -86,6 +88,8 @@ WRAP
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     echo "RUN=$RUN"
     echo "ABILITY=$ABILITY"
+    echo "ROLE=$ABILITY"
+    echo "CLASS=$CLASS"
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
     echo "GIT=$RUN/git"

@@ -41,8 +41,32 @@ done
 # project: <project>-environment, <project>-memory, <project>-reference; the agent
 # and the deployment belong to a role: <project>-<role>, <project>-deployment-<role>.
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
-# The roles are the four abilities (build, review, write, test), each defined by a skill qargi-<ability>.
-DA_ROLES=${QARGI_ROLES:-"build review write test"}
+# A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions).
+# Four ship with qargi (build, write, review, test; <tool>/roles); you add your own under <config>/roles. Role names are one
+# lower-case token, unique across both places, and never "lead".
+ROLE_BUILTIN="build review write test"
+role_dir() { # name -> the directory of the role, or fails
+  local d
+  for d in "$QARGI_TOOL/roles/$1" "$DA_CONF/roles/$1"; do
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ]; then echo "$d"; return 0; fi
+  done
+  return 1
+}
+role_names() { # the built-in roles, then yours in name order
+  local r d
+  for r in $ROLE_BUILTIN; do echo "$r"; done
+  for d in "$DA_CONF"/roles/*/; do
+    r=$(basename "$d")
+    case " $ROLE_BUILTIN " in *" $r "*) continue;; esac
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ]; then echo "$r"; fi
+  done
+}
+role_class() { # name -> write | read-only (lead: coordinator)
+  [ "$1" != lead ] || { echo coordinator; return 0; }
+  local d; d=$(role_dir "$1") || return 1
+  jq -r '.class // "write"' "$d/role.json"
+}
+DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
 valid_role() { local r; for r in $DA_ROLES lead; do [ "$r" = "$1" ] && return 0; done; return 1; }
@@ -199,8 +223,7 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
-# contract, and the ability's skill (skills/qargi-<role>/SKILL.md, the same text a local member
-# loads), or for the lead its contract. Provisioning and refresh-prompt
+# contract, and the role's instructions (roles/<role>/ROLE.md, the same text a local member's task block carries), or for the lead its contract. Provisioning and refresh-prompt
 # build it the same way, so an agent can always be brought back in line with the tool.
 # The teams of a project as text for the lead's prompt: members, bases, scopes, standards,
 # rounds and budget, so a lead started from the console needs only a task.
@@ -223,7 +246,7 @@ lead_teams_block() { # project
 
 # tools_off ROLE PROJECT_JSON: the built-in tools a cloud role does not get (roles.<role>.tools_off overrides the default).
 tools_off() {
-  local d='web_search web_fetch'; case $1 in review|lead) d='web_search web_fetch edit';; esac
+  local d='web_search web_fetch'; case $(role_class "$1" 2>/dev/null) in read-only|coordinator) d='web_search web_fetch edit';; esac
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
@@ -239,7 +262,7 @@ agent_prompt() { # role [project]
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
   [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
-  if [ -f "$sk/qargi-$1/SKILL.md" ]; then echo; awk 'f>=2 {print} /^---$/ {f++}' "$sk/qargi-$1/SKILL.md"; fi
+  local rd; if rd=$(role_dir "$1"); then echo; cat "$rd/ROLE.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
 }
@@ -251,7 +274,7 @@ prompt_stamp() { # role project
   local sk sha; sk=$(prompt_root)/skills
   sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
   [ "${PIPESTATUS[0]}" = 0 ] || return 1
-  jq -nc --arg s "$sha" --arg k "$(cat "$sk/qargi-task/agent-contract.md" "$sk/qargi-$1/SKILL.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+  jq -nc --arg s "$sha" --arg k "$(cat "$sk/qargi-task/agent-contract.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the

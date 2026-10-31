@@ -362,8 +362,15 @@ def roles_of(words):
     have = list((d.get("roles") or {}))
     if d.get("teams") or not have:
         have.append("lead")
-    have = [r for r in C.ROLES if r in have] or list(C.ROLES)
+    have = [r for r in C.ROLES if r in have] + sorted(r for r in have if r not in C.ROLES) or list(C.ROLES)
     return [(r, "%s/%s" % ((d.get("roles") or {}).get(r, {}).get("model", ""), (d.get("roles") or {}).get(r, {}).get("effort", "")) if (d.get("roles") or {}).get(r) else "") for r in have]
+
+
+def work_roles():
+    """The roles a task can have: the built-in ones, then yours (no lead)."""
+    mine = os.path.join(conf(), "roles")
+    own = sorted(n for n in (os.listdir(mine) if os.path.isdir(mine) else []) if n not in C.ABILITIES and n != "lead" and os.path.isfile(os.path.join(mine, n, "role.json")))
+    return [(r, "") for r in list(C.ABILITIES) + own]
 
 
 def stores():
@@ -464,6 +471,8 @@ def by_type(t, words):
         return [(n, ", ".join(v.get("members", []))) for n, v in sorted((project_data(words).get("teams") or {}).items())]
     if base == "role":
         return roles_of(words)
+    if base == "workrole":
+        return work_roles()
     if base == "store":
         return stores()
     if base == "deployment":

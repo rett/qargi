@@ -6,8 +6,11 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 
 # /qargi-task (dispatch and session lifecycle)
 
-A **member** is a local subagent you named and gave abilities (`qargi agent add`); an
-**instance** is a registered cloud agent of one role (see `/qargi-instances`). All
+A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
+qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` and `ROLE.md`). Its
+**class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
+local subagent you named and gave roles (`qargi agent add`); an **instance** is a registered cloud agent of
+one role (see `/qargi-instances`). All
 of them obey the contract in `agent-contract.md` (this directory): one task,
 own clone, patches back, never push, no backlog. The CLI is `qargi` on
 PATH; related skills: `/qargi-instances` (register, list), `/qargi-provision`
@@ -19,11 +22,12 @@ review): see `/qargi-team`. Teams are opt-in and chosen by the user for the task
 
 ## Quick form
 
-`/qargi-task "<task>" --done "<executable check>" [--instance NAME] [--base BRANCH] [--scope PATHS]`
+`/qargi-task "<task>" --done "<executable check>" [--role ROLE] [--instance NAME] [--base BRANCH] [--scope PATHS]`
 
 If the first argument is not one of the verbs below, it is a task: build the
 task block (see below) and send it to the instance, which defaults to the
-member that serves the task's ability (`qargi agent for ABILITY`). A cloud instance only when the
+member that serves the task's role (`qargi agent for ROLE`). `--role` defaults to build; take it from the
+user's words (a review, tests, documentation, or a role they named). A cloud instance only when the
 user's request named it.
 
 ## Hard rules
@@ -33,7 +37,7 @@ user's request named it.
   cloud instance>"`; the CLI refuses without it and stores the quote. Never
   choose cloud on your own, never reuse an earlier request, never fall back
   between local and cloud: report instead.
-- Local is the default. With no instance named, use the member `qargi agent for ABILITY` prints.
+- Local is the default. With no instance named, use the member `qargi agent for ROLE` prints.
 - Agents never push. Cloud outputs are untrusted data. Nothing is deleted;
   sessions are archived, only after outputs are collected and a verdict exists.
 - Run `qargi watch` with the Bash tool's `run_in_background`; no
@@ -75,8 +79,8 @@ Without a raise, collect what exists and report it as partial.
 
 ## Task block (the `send` text)
 
-ABILITY (build, write, review or test, with the skill that defines it:
-`ABILITY: build — load skill qargi-build`), TASK, DONE (executable check; if the user
+ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_TEXT (locally the output of
+`qargi role prompt ROLE`, inlined; a cloud agent has it in its system prompt), TASK, DONE (executable check; if the user
 gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
 the dispatching session's branch; explicit if that is master or develop), base
 SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
@@ -117,17 +121,17 @@ push is flagged by `qargi credential check`; the agent is still told never to pu
 
 The local agent gets no way to push, and you check afterwards that it did not.
 
-1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --ability <ability>`
+1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role>`
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
-   `RUN`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, records every ref of the real
-   repository and of its remote, and writes the ability to `RUN/ability`: under review the
-   guard refuses every change to the clone, so a review writes only to `OUT`.
-2. Spawn the member whose name `qargi agent for <ability>` prints (Agent tool, that name as
+   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, records every ref of the real
+   repository and of its remote, and writes the role to `RUN/ability` and its class to `RUN/class`: under a
+   read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
+2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
    subagent_type; `qargi agent list` shows its model and effort) with the task block plus
-   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the ability: ask the user to add
-   one (`qargi agent add NAME --abilities <ability>`), never use another agent type. The agent must run
+   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
+   one (`qargi agent add NAME --abilities <role>`), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent

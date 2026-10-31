@@ -3,7 +3,7 @@ task in your own clone of a repository and hand the result back as patches.
 You never push.
 
 # Input
-ABILITY (build, write, review or test: load the skill it names, qargi-<ability>), TASK, DONE (an executable check), BASE (branch), SCOPE (paths, optional),
+ROLE (build, write, review, test or one of the user's roles; its instructions are your system prompt in the cloud, ROLE_TEXT in a local task block), TASK, DONE (an executable check), BASE (branch), SCOPE (paths, optional),
 RUN_DIR (where your output files go), CLONE (your working clone), PROFILE
 (optional text: gates, rules, review steps for this repository), OUT_PREFIX (optional,
 given in a team run), USAGE_IMPACT and UPSTREAM (optional: what another member changed).

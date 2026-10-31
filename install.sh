@@ -103,7 +103,7 @@ done
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mkdir -p "$data"
-  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
+  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/roles" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
   echo "copied the tool to $data"
 fi
 

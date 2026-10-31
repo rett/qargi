@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Roles. A role is a directory with `role.json` (its class, `write` or `read-only`, and a description) and `ROLE.md` (its
+  instructions). `build`, `write`, `review` and `test` ship in `roles/`; add your own under `~/.qargi/config/roles/NAME/`
+  (one lower-case token, never `lead`, never a built-in's name). `qargi role list|show|prompt|check`. A local task names its
+  role (`qargi local prepare --role R`, which records the class in `RUN/class`; `--ability` still works), the task block
+  carries the role's text, `qargi agent add --abilities` and `qargi agent for` take any role (a role of yours without a member
+  falls back to a member of the built-in role of the same class), and a cloud agent of a role gets its text in its system
+  prompt. The class, not the name `review`, decides what the guard allows and which cloud tools are off.
+
+### Changed
+- The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
+  ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
+  `qargi-build|write|review|test` skills remain for now and are no longer what a task loads.
+
 ### Security
 - A review member could lift its own read-only limit: the guard took the ability from `RUN/ability`, a file the member could
   write. The guard now refuses any write to a run's `ability` and `refs.before`, and a member that only reviews names its

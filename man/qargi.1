@@ -200,15 +200,40 @@ Delete a member's definition and its record.
 .RE
 .RS
 .TP
-.BI "for " "ABILITY"
-Print the member that serves an ability.
+.BI "for " "ROLE"
+Print the member that serves a role.
 .br
-The first member registered for the ability; a project's own members come first. Dispatch spawns this one.
+The first member registered for the role, else for a built\-in role of the same class (a read\-only role needs a member of review); a project's own members come first. Dispatch spawns this one.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 prefer that project's own members (default: the project of the current directory).
 .RE
+.RE
+.TP
+.B qargi role
+List and check the roles: what a member or cloud agent is for.
+.PP
+A role is a directory with role.json (its class, write or read\-only, and a description) and ROLE.md (its instructions). Four ship with qargi: build, write, review and test (review is read\-only). Add your own under ~/.qargi/config/roles/NAME/: a name of one lower\-case token, never lead. The class decides what the guard allows a member (read\-only: nothing in the clone changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt.
+.RS
+.TP
+.B list
+List the roles, their class and where they live.
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Print a role: its class, description and instructions.
+.RE
+.RS
+.TP
+.BI "prompt " "NAME"
+Print a role's instructions as a task block carries them.
+.RE
+.RS
+.TP
+.BI "check " "[NAME]"
+Validate one role, or all of them.
 .RE
 .TP
 .B qargi provision
@@ -1102,8 +1127,13 @@ where to put the run.
 .RE
 .RS
 .TP
+.BI "\-\-role " "ROLE"
+the task's role, written to RUN/ability with its class in RUN/class; a read\-only role keeps the clone unchanged (default build).
+.RE
+.RS
+.TP
 .BI "\-\-ability " "ABILITY"
-the task's ability, written to RUN/ability; under review the guard keeps the clone unchanged (default build).
+the earlier name of \-\-role.
 .RE
 .RE
 .RS
