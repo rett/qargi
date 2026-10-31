@@ -7,6 +7,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi release start` has a preflight. Before it creates the branch it checks what a release must update and refuses,
+  changing nothing, with a message naming the file and the fix: a man page (`man/*.1`) needs a `.TH` line with a date and a
+  version field, and the first commit now sets them to the release's date and `VERSION`; a `CHANGELOG.md` needs a
+  `## [Unreleased]` section with content (`--allow-empty-notes` waives that). Projects without a man page or changelog are
+  not checked for that part.
 - Roles. A role is a directory with `role.json` (its class, `write` or `read-only`, and a description) and `ROLE.md` (its
   instructions). `build`, `write`, `review` and `test` ship in `roles/`; add your own under `~/.qargi/config/roles/NAME/`
   (one lower-case token, never `lead`, never a built-in's name). `qargi role list|show|prompt|check`. A local task names its
@@ -57,6 +62,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
 
 ### Changed
+- `qargi feature verify` and `qargi release verify` run the project's test command without the project's cloud binding
+  (`ANTHROPIC_PROFILE`, `QARGI_CLOUD_WORKSPACE`, `QARGI_CLOUD_PROJECT`), and `tests/run.sh` unsets them, so a project with
+  a cloud binding can get a passing whole-suite record.
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
   `qargi-build|write|review|test` skills remain for now and are no longer what a task loads.
