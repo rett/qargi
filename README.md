@@ -70,11 +70,64 @@ four by default). `qargi agent for build` prints the member that serves an abili
 and dispatch spawns that one; `qargi agent list`, `rename`, `refresh` (re-render from the current definition) and `remove` manage them.
 One member may serve every ability, or each ability may have its own.
 
+A role is a directory with `role.json` (its class, write or read-only, and a description) and
+`ROLE.md` (its instructions). The four above ship with qargi; `review` is read-only. Add your own
+under `~/.qargi/config/roles/NAME/` (one lower-case token, never `lead`). The class decides what the
+guard allows; the text of a role cannot change it. `qargi role list` shows the roles and where they
+live, `role show NAME` prints one, `role prompt NAME` prints its instructions as a task block carries
+them, and `role check [NAME]` validates one role or all. `qargi local prepare --role ROLE` prepares a
+local run for that role (default `build`): a read-only role keeps the clone unchanged.
+
 Installations made with the earlier names (roles `dev` and `docs`, the fixed agents
 `qargi-dev`, `qargi-docs`, `qargi-review`, `qargi-test`, cloud agents named
 `<project>-agent-<role>`) move to these with `qargi migrate roles`: it prints a plan
 with every cloud call and a plan token, and applies exactly that plan with `--apply
 --plan TOKEN --asked "<your words>"`.
+
+## Methodologies
+
+A methodology is the way a project is developed and released, as data: its branches, versioning and
+changelog, test tiers, CI, release steps, deployment options and the generic files a new project
+starts with. One ships, `gitflow`; add your own under `~/.qargi/config/methodologies/NAME/`
+(`methodology.json` and a `scaffold/` directory). `qargi methodology list` shows them, `show NAME`
+prints one, and `check [NAME]` validates one or all. These verbs only read.
+
+- `qargi project new NAME [--dir DIR] [--param test_command='make test'] [--url URL]` starts a new
+  project on the methodology's branches with its generic files.
+- `qargi project attach [DIR]` reads an existing repository, shows the answers it would store and the
+  gaps against the methodology, and changes nothing in the repository.
+
+Both print a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
+words>"` (`qargi help approvals`).
+
+## Git-flow
+
+A project that follows `gitflow` is driven by the lead with `qargi feature` and `qargi release`
+(the `/qargi-flow` skill has the full process). Every merge is `--no-ff`, made in temporary
+worktrees: your checkout is never touched, a branch moves only after every merge succeeded, and a
+refusal changes nothing.
+
+1. `qargi feature start NAME --purpose "..."` cuts `feature/NAME` from develop. A feature is a broad
+   theme; `qargi feature list` shows the open ones and the files two of them both change.
+2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
+   Take each verified series in with `qargi feature merge NAME BRANCH`.
+3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
+   NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
+   develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
+   current.
+4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
+   suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
+   request into master so CI runs on the commit to be released; `qargi release finish VERSION`
+   merges into master, tags, merges back into develop and pushes. `release status` and `release
+   verify` work as for features.
+5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
+   `release push` and `release finish --hotfix` (into the open release branch instead of develop,
+   if there is one).
+
+Merging into develop or master, pushing and tagging each print a plan and a token first; apply it
+with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes nothing and exits 3,
+naming a worktree with the merge in progress: resolve and commit there, then run the same command
+with `--resolved`.
 
 ## Skills and command
 
