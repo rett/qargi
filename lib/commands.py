@@ -47,6 +47,8 @@ REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "ski
 
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
+REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
+               "and says 'remote not checked' when origin cannot be reached.")
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
@@ -85,10 +87,14 @@ COMMANDS = {
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
                             opt("--url", "the repository URL, when it has no origin remote", "URL"),
-                            PLAN, APPROVED, opt("--force", "replace stored answers")],
+                            PLAN, APPROVED, opt("--force", "replace the detected answers, keep the rest")],
                            desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
-                                 "stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change.")),
+                                 "stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change. It reads the tree of the "
+                                 "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
+                                 "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
+                                 "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
+                                 "cannot (the roles' models and effort, cloud, memory, budget).")),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
                         examples=["qargi project set acme roles.write.effort high"]),
@@ -149,16 +155,18 @@ COMMANDS = {
                  "and an approval."),
         "scripts": ["feature.sh"],
         "verbs": {
-            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT")]),
+            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT")],
+                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead."),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
                          desc="Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another."),
             "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT]),
             "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, RESOLVED_OPT]),
-            "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT]),
+            "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
+                           desc=REMOTE_NOTE),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT]),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
-                           desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. A merge that conflicts changes "
+                           desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. " + REMOTE_NOTE + " A merge that conflicts changes "
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge.")),
         },
@@ -176,13 +184,13 @@ COMMANDS = {
                           desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. "
                                 "A project without a man page or changelog is not checked for that part.")),
-            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
+            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT], desc=REMOTE_NOTE),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
-            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED]),
+            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED], desc=REMOTE_NOTE),
             "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
-                                 "the message names, commit, and run the same command with --resolved.")),
+                                 "the message names, commit, and run the same command with --resolved. " + REMOTE_NOTE)),
         },
     },
     "provision": {
@@ -408,8 +416,13 @@ COMMANDS = {
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
-                             opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)]),
-            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")]),
+                             opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)],
+                            desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
+                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.")),
+            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
+                           desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
+                                 "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
+                                 "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir")],
                           [opt("--discard", "also clean a run whose output holds no manifest")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
@@ -427,7 +440,7 @@ COMMANDS = {
                                 "A review run passes with a report.md that has a Findings section instead of patches.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
-                          desc=("Refuses unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
+                          desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
                                 "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
                                 "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
                                 "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "
