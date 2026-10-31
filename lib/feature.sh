@@ -86,7 +86,7 @@ case $verb in
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
-    if (cd "$WT" && bash -c "$TESTCMD"); then res=pass; else res=fail; fi
+    if run_suite; then res=pass; else res=fail; fi
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$BR")"
     echo "full suite: $res at $(g rev-parse --short "$BR")"; [ "$res" = pass ];;
   finish)

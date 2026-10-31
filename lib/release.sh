@@ -136,7 +136,7 @@ PY
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
-    if (cd "$WT" && bash -c "$TESTCMD"); then res=pass; else res=fail; fi
+    if run_suite; then res=pass; else res=fail; fi
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$on")"
     echo "full suite: $res at $(g rev-parse --short "$on")"; [ "$res" = pass ];;
   push)
