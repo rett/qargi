@@ -148,6 +148,23 @@ Twelve skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` d
 | `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
 | `/qargi-team` | a team on one task: a lead coordinating members for build, write and review; led by this session, a cloud lead, or a lead started in the console |
 
+## Skills and tools in a local Claude Code session
+
+Packs are enabled for a project by links (`qargi skill|tool link NAME --scope project ...`, see `/qargi-packs`). To use them in a Claude Code session on your machine, render them. `qargi packs apply --target claude-code PROJECT` prints a plan and a token; run it again with `--plan TOKEN --approved "<your words>"` to apply.
+
+The apply renders the union of the packs of all the project's roles into `~/.qargi/state/claude/PROJECT/` (`QARGI_HOME` or `QARGI_STATE` move it): the skills under `.claude/skills`, `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. It then prints the launch line that starts Claude Code with the render:
+
+```
+claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
+```
+
+(the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing.
+
+- Nothing is written into a repository or into `~/.claude`; the render lives in the state directory only.
+- Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
+- A member cannot change the render: the guard refuses its writes under `state/claude/`. Only you apply it.
+- A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
+
 ## Help, manual page and completion
 
 - `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help approvals`, `naming`, `memory`, `push`, `concepts` and `files` explain the ideas.

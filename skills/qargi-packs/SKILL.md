@@ -1,7 +1,7 @@
 ---
 name: qargi-packs
 description: Create or import skills and tools (MCP servers) into one library and attach them by scope: user, user-role, project, project-role. Review and approve at import, link to a scope, opt a role out, check for drift, and apply to provisioned or existing cloud agents. Names are globally unique, so there is no precedence to resolve.
-argument-hint: skill|tool new|import|seal|link|unlink|enable|disable|list|show|effective|check|remove ... | packs apply INSTANCE
+argument-hint: skill|tool new|import|seal|link|unlink|enable|disable|list|show|effective|check|remove ... | packs apply INSTANCE | packs apply|check --target claude-code PROJECT
 ---
 
 # /qargi-packs
@@ -64,5 +64,18 @@ recorded, not verified: it is not proof that a person agreed.
   and a token; with `--plan TOKEN --approved "..."` it uploads the custom skills, replaces
   the agent's skill, MCP-server and tool lists (a new agent version) and re-points the
   deployment. Vault ids a tool needs are reported, not attached.
+- **A local Claude Code session:** `qargi packs apply --target claude-code PROJECT`
+  prints the plan (what is added, changed or removed, shadowed skills, tools that need
+  credentials) and a token; with `--plan TOKEN --approved "..."` it renders the union of
+  the project's roles into `~/.qargi/state/claude/PROJECT/` (skills under
+  `.claude/skills`, `mcp.json`, `settings.json`, `MANIFEST.json`) and prints the launch
+  line `claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json`.
+  Same rule as the cloud apply: show the person the plan and wait for their go-ahead.
+  Nothing is written into a repository or `~/.claude`; role scoping is advisory (the
+  render is the union of roles); the guard refuses a member any write under
+  `state/claude/`. Vault credentials a tool needs are reported: the person configures
+  them. `qargi packs check --target claude-code PROJECT` reports drift and shadowing
+  (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
+  read only.
 - `qargi skill|tool check PROJECT ROLE` reviews and drift-checks what reaches a role.
   `remove NAME` is refused while the pack is linked.
