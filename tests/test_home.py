@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Where qargi keeps its data: the resolver (lib/paths.py and lib/lib.sh), the legacy refusal, installed and dev runs, and
 the install record install.sh writes. Every run uses a temporary HOME; nothing here touches the real directories."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, shutil, stat, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

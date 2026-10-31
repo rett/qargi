@@ -3,6 +3,7 @@
 The plan changes nothing, the apply needs its token and --asked, a second run finds nothing, and a failure in
 the middle stops with what is done and is finished by running it again.
 `python3 tests/test_migrate.py fixture DIR [PROJECT]` only builds the fixture in DIR (to look at the plan by hand)."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, shutil, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The command description (lib/commands.py) against the scripts, and the help, man page, completion and
 project inference built from it. Offline. Run: python3 tests/test_help.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import glob, json, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))

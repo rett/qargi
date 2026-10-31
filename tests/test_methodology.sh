@@ -2,6 +2,8 @@
 # Methodologies: list, show, check, the rendered scaffold, deployment options, and your own. Run: tests/test_methodology.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Simulation test: plan a migration, apply the steps to an in-memory store, plan
 again (must be a no-op) and check (must pass). Usage: canon_sim.py KIND FIXTURE.jsonl"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, subprocess, sys, tempfile, os
 kind, fixture = sys.argv[1], sys.argv[2]
 here = os.path.dirname(os.path.abspath(__file__))
