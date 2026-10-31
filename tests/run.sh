@@ -19,6 +19,7 @@ run python3 tests/test_supervise.py
 run bash tests/test_prompt.sh
 run python3 tests/test_guard.py
 run bash tests/test_agent.sh
+run bash tests/test_role.sh
 run python3 tests/test_migrate.py
 run python3 tests/test_home.py
 run python3 tests/test_migrate_home.py

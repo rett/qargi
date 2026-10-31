@@ -30,7 +30,7 @@ EOS
 chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
 DA=$PWD/bin/qargi
 # a scratch copy of the tool whose skill and preamble can be edited
-mkdir "$T/copy"; cp -r bin lib skills provision "$T/copy/"; DC=$T/copy/bin/qargi
+mkdir "$T/copy"; cp -r bin lib roles skills provision "$T/copy/"; DC=$T/copy/bin/qargi
 
 render() { bash -c ". '$1/lib/lib.sh'; agent_prompt build alpha"; }
 render "$PWD" > "$FAKE/system"; echo 1 > "$FAKE/aver"
@@ -57,14 +57,14 @@ $DA instances show alpha-build 2>&1 | grep -q "PROMPT: current" && ok "show says
 $DA instances list 2>&1 | grep -q STALE && no "current prompt marked STALE" || ok "list does not mark a current prompt"
 
 # the skill changes: stale, and the part is named
-echo "A new rule added to the build skill." >> "$T/copy/skills/qargi-build/SKILL.md"
+echo "A new rule added to the build skill." >> "$T/copy/roles/build/ROLE.md"
 $DC instances list 2>&1 | grep "alpha-build" | grep -q "prompt STALE" && ok "list marks the instance STALE" || no "list stale: $($DC instances list 2>&1)"
 $DC instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now differs.*(skill)" && ok "show says STALE and that the skill changed" || no "show stale skill: $($DC instances show alpha-build 2>&1 | tail -4)"
 # only the preamble changes: stale prompt, not skill
-cp "$T/copy/skills/qargi-build/SKILL.md" "$T/skill.mod"; cp skills/qargi-build/SKILL.md "$T/copy/skills/qargi-build/SKILL.md"
+cp "$T/copy/roles/build/ROLE.md" "$T/skill.mod"; cp roles/build/ROLE.md "$T/copy/roles/build/ROLE.md"
 echo "extra preamble line" >> "$T/copy/provision/templates/cloud-preamble.md"
 $DC instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now differs.*(prompt)" && ok "a change outside the skill is reported as the prompt" || no "show stale prompt: $($DC instances show alpha-build 2>&1 | tail -4)"
-cp "$T/skill.mod" "$T/copy/skills/qargi-build/SKILL.md"
+cp "$T/skill.mod" "$T/copy/roles/build/ROLE.md"
 
 # --if-stale on a stale prompt plans the refresh (and still needs --asked)
 $DC instances refresh-prompt alpha-build --if-stale >/dev/null 2>&1 && no "--if-stale on a stale prompt ran without --asked" || ok "a stale prompt still needs --asked"

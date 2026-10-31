@@ -46,7 +46,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
 GROUPS = [
-    ("Set up", ["project", "cloud", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -100,9 +100,23 @@ COMMANDS = {
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
                             desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
-            "for": verb("Print the member that serves an ability", [("ABILITY", ABILITIES)],
+            "for": verb("Print the member that serves a role", [("ROLE", "workrole")],
                         [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],
-                        desc="The first member registered for the ability; a project's own members come first. Dispatch spawns this one."),
+                        desc="The first member registered for the role, else for a built-in role of the same class (a read-only role needs a member of review); a project's own members come first. Dispatch spawns this one."),
+        },
+    },
+    "role": {
+        "summary": "List and check the roles: what a member or cloud agent is for",
+        "desc": ("A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions). "
+                 "Four ship with qargi: build, write, review and test (review is read-only). Add your own under ~/.qargi/config/roles/NAME/: "
+                 "a name of one lower-case token, never lead. The class decides what the guard allows a member (read-only: nothing in the clone "
+                 "changes); the text of a role cannot change it. A task block carries the role's text; a cloud agent of the role has it in its system prompt."),
+        "scripts": ["role.sh"],
+        "verbs": {
+            "list": verb("List the roles, their class and where they live"),
+            "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
+            "prompt": verb("Print a role's instructions as a task block carries them", [("NAME", "workrole")]),
+            "check": verb("Validate one role, or all of them", [("[NAME]", "workrole")]),
         },
     },
     "provision": {
@@ -310,7 +324,8 @@ COMMANDS = {
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
-                             opt("--ability", "the task's ability, written to RUN/ability; under review the guard keeps the clone unchanged (default build)", "ABILITY", ABILITIES)]),
+                             opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
+                             opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)]),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")]),
         },
     },

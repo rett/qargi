@@ -56,6 +56,7 @@ case $area in
   credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
   agent) exec "$lib/agent.sh" "$@";;
+  role) exec "$lib/role.sh" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;

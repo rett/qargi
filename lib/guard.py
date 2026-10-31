@@ -129,15 +129,23 @@ CLASSES = ("", "read-only")
 
 
 def is_review(run):
-    """True when the member is read-only by class or the run directory says review."""
-    return CLASS == "read-only" or ability_of(run) == "review"
+    """True when the member is read-only by class (its hook) or the run directory says so (its class file, or the review role)."""
+    return CLASS == "read-only" or ability_of(run) == "review" or run_class(run) == "read-only"
 
 
 def control_refusal(full):
-    """The reason a write to a run directory's control file (ability, refs.before) is refused, or None."""
-    if os.path.basename(full) in ("ability", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
+    """The reason a write to a run directory's control file (ability, class, refs.before) is refused, or None."""
+    if os.path.basename(full) in ("ability", "class", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
         return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
     return None
+
+
+def run_class(run):
+    try:
+        with open(os.path.join(run, "class")) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 def ability_of(run):

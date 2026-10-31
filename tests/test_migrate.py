@@ -247,7 +247,7 @@ class Migrate(unittest.TestCase):
         self.assertEqual({k: v["name"] for k, v in names.items()},
                          {"agent_dev": "alpha-build", "agent_docs": "alpha-write", "agent_review": "alpha-review", "agent_lead": "alpha-lead"})
         self.assertIn("Your role is build", names["agent_dev"]["system"])
-        self.assertIn("Ability: build", names["agent_dev"]["system"])
+        self.assertIn("Role: build", names["agent_dev"]["system"])
         self.assertEqual(sorted((x["id"], x["version"]) for x in names["agent_lead"]["multiagent"]["agents"]),
                          sorted((k, names[k]["version"]) for k in ("agent_dev", "agent_docs", "agent_review")))
         deps = {f[:-5]: self.jd(self.fake, "deployments", f) for f in os.listdir(os.path.join(self.fake, "deployments"))}

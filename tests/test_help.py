@@ -31,7 +31,7 @@ def doc_flags(cmd):
 
 
 # every kind of value the command data may name, and what completes it
-TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "member": 1, "store": 1, "deployment": 1,
+TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "workrole": 1, "member": 1, "store": 1, "deployment": 1,
          "model": 1, "branch": 1, "entry": 1, "key": 1, "value": 1, "seconds": 1, "cents": 1, "file": 1, "dir": 1, "help": 1}
 
 

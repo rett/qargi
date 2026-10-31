@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Members: the local agents that do the work, named by you. qargi ships one member definition
 # (agents/member.md); `add` renders it under the name you choose, with the abilities it serves
-# (build, write, review, test; each ability is defined by the skill qargi-<ability>, which the
-# member loads when a task block names it). The members are recorded in ~/.qargi/config/agents.json.
+# (roles: build, write, review, test and yours; a task block carries the role's text). The members are recorded in ~/.qargi/config/agents.json.
 #
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
 #   agent.sh list
@@ -14,7 +13,6 @@
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 TEMPLATE=$root/agents/member.md
-ABILITIES_ALL="build write review test"
 # the agent types Claude Code brings itself; a member must not shadow one
 BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
 
@@ -37,7 +35,7 @@ valid_name() { # name -> dies with the rule
     || die "'$n' is not a member name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
   lc=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')
   for b in $BUILTIN; do [ "$lc" != "$b" ] || die "'$n' is a built-in Claude Code agent type; choose another name"; done
-  case $n in lead|build|write|review|test) die "'$n' is a role of qargi; name the member after itself, for example forge or scribe";; esac
+  if [ "$n" = lead ] || valid_role "$n"; then die "'$n' is a role; name the member after itself, for example forge or scribe"; fi
 }
 
 agents_dir() { # project-or-empty -> the directory the definition goes to
@@ -62,7 +60,8 @@ hide_in_git() { # repo file: keep a project-level definition out of the reposito
 
 render() { # name abilities-csv model -> the definition on stdout
   # a member that only reviews is read-only by class, named in its hook command (under the protected agents directory)
-  local ga=''; [ "$2" != review ] || ga=' --class read-only'
+  local ga=' --class read-only' a
+  for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ga=''; done
   sed -e "s/{{GUARD_ARGS}}/$ga/g" -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
 }
 
@@ -72,7 +71,7 @@ add() {
   valid_name "$n"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
   for a in $(printf '%s' "${ABIL:-build,write,review,test}" | tr ',' ' '); do
-    case " $ABILITIES_ALL " in *" $a "*) ;; *) die "--abilities: a comma-separated list of build, write, review, test";; esac
+    [ "$a" != lead ] && valid_role "$a" || die "--abilities: a comma-separated list of roles ($DA_ROLES; qargi role list)"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
   [ -n "$list" ] || die "--abilities: give at least one"
@@ -135,10 +134,14 @@ case $verb in
     echo "removed member $n${f:+ ($f)}";;
   for)
     a=${POS[0]:-}
-    case " $ABILITIES_ALL " in *" $a "*) ;; *) die "usage: qargi agent for build|write|review|test [--project P]";; esac
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--project P]   (a role of: $DA_ROLES)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
     m=$(member_for "$a" "$PROJ")
-    [ -n "$m" ] || die "no member serves the $a ability: qargi agent add NAME --abilities $a"
+    if [ -z "$m" ]; then   # a role of yours without a member of its own: a member of the built-in role of the same class
+      case $(role_class "$a") in read-only) b=review;; *) b=build;; esac
+      [ "$b" = "$a" ] || m=$(member_for "$b" "$PROJ")
+    fi
+    [ -n "$m" ] || die "no member serves the $a role: qargi agent add NAME --abilities $a"
     echo "$m";;
   *) die "usage: qargi agent add|list|rename|refresh|remove|for ...";;
 esac
