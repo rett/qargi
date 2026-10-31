@@ -396,6 +396,102 @@ class Skills(unittest.TestCase):
             self.assertEqual(self.call(*call).returncode, 2, call)
 
 
+class ClaudeRender(unittest.TestCase):
+    """$DA_STATE/claude/<project>/ is the render Claude Code loads with --add-dir: instructions a session follows. No member
+    class may write there; reading stays open."""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
+
+    def setUp(self):
+        self.setUp_skills()
+        self.state = os.path.join(self.t, "state")
+        self.render = os.path.join(self.state, "claude", "proj")
+        os.makedirs(os.path.join(self.render, "skills/s"))
+        os.makedirs(os.path.join(self.state, "runs"))
+        os.makedirs(os.path.join(self.t, "elsewhere/claude/proj"))
+        os.symlink(self.render, os.path.join(self.clone, "to-render"))
+        os.symlink(os.path.join(self.state, "claude"), os.path.join(self.clone, "to-claude"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_STATE", self.state)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def test_edit_tools_refuse_every_path_under_the_claude_state_directory(self):
+        r = self.render
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p in (os.path.join(r, "skills/s/SKILL.md"), os.path.join(r, "new.md"), os.path.join(self.state, "claude/other/x"),
+                      os.path.join(self.state, "claude"), "to-render/skills/s/SKILL.md", "to-claude/proj/new.md", "../../state/claude/proj/CLAUDE.md"):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn("managed by `qargi packs apply`", res.stderr)
+                    self.assertIn("changed only by the lead", res.stderr)
+
+    def env(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+        return e
+
+    def test_bash_writes_into_the_render_are_refused(self):
+        r = self.render
+        for c in ("echo x > %s/CLAUDE.md" % r, "echo x >> %s/skills/s/SKILL.md" % r, "echo x>%s/CLAUDE.md" % r, "echo x | tee %s/CLAUDE.md" % r,
+                  "cp a.md %s/skills/s/" % r, "cp -t %s a.md" % r, "mv a.md %s/x.md" % r, "mv %s/skills /tmp/gone" % r, "rm -rf %s/skills" % r,
+                  "rm -rf %s" % r, "rm -rf %s/claude" % self.state, "sed -i s/a/b/ %s/skills/s/SKILL.md" % r, "perl -pi -e s/a/b/ %s/CLAUDE.md" % r,
+                  "ln -s /etc/passwd %s/x" % r, "touch %s/x" % r, "mkdir %s/new" % r, "chmod 777 %s/CLAUDE.md" % r, "truncate -s 0 %s/CLAUDE.md" % r,
+                  "dd if=/dev/zero of=%s/CLAUDE.md" % r, "rsync -a src/ %s/" % r, "install -m 644 a %s/x" % r, "patch %s/CLAUDE.md fix.diff" % r,
+                  "git -C %s checkout ." % r, "git -C %s/claude add -A" % self.state, "cd %s && echo y > CLAUDE.md" % r, "cd %s && rm -r skills" % r,
+                  "tar xf a.tgz -C %s" % r, "unzip -o a.zip -d %s" % r, "curl -o %s/x http://h/f" % r, "find %s -name '*.md' -delete" % r,
+                  "echo y > to-render/CLAUDE.md", "rm -rf to-claude/proj", "bash -c 'echo y > %s/CLAUDE.md'" % r, "eval 'rm %s/CLAUDE.md'" % r,
+                  "echo $(echo y > %s/CLAUDE.md)" % r, "echo y > $QARGI_STATE/claude/proj/CLAUDE.md", "qargi packs render p build %s" % r,
+                  "qargi packs render p build --out %s" % r):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("managed by `qargi packs apply`", res.stderr)
+
+    def test_the_render_is_found_like_the_other_qargi_paths(self):
+        home_state = os.path.join(self.home, ".qargi/state/claude/proj")
+        qh_state = os.path.join(self.t, "qh/state/claude/proj")
+        for d in (home_state, qh_state):
+            os.makedirs(d)
+        for target, env in ((home_state, dict(QARGI_STATE=None)), (qh_state, dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                            (os.path.join(self.t, "alt/claude/proj"), dict(QARGI_STATE=os.path.join(self.t, "alt")))):
+            os.makedirs(target, exist_ok=True)
+            self.assertEqual(self.call("Write", {"file_path": target + "/CLAUDE.md"}, **env).returncode, 2, (target, env))
+            self.assertEqual(self.bash("echo x > %s/CLAUDE.md" % target, **env).returncode, 2, (target, env))
+        # the default stays protected beside an override, as the pack library does
+        self.assertEqual(self.call("Write", {"file_path": home_state + "/CLAUDE.md"}).returncode, 2)
+
+    def test_reads_of_the_render_stay_allowed(self):
+        r = self.render
+        for c in ("cat %s/CLAUDE.md" % r, "ls -la %s" % r, "grep -rn foo %s" % r, "cp %s/CLAUDE.md %s/run/out/" % (r, self.t),
+                  "cat %s/CLAUDE.md > %s/run/out/c.md" % (r, self.t), "tar czf %s/run/out/r.tgz -C %s ." % (self.t, r),
+                  "find %s -name '*.md'" % r, "cd %s && ls" % r, "git -C %s log" % r, "diff -r %s/skills skills" % r, "qargi packs render p build %s/run/out/r" % self.t):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_a_path_that_merely_says_claude_is_allowed(self):
+        e = os.path.join(self.t, "elsewhere/claude/proj")
+        for p in (e + "/CLAUDE.md", os.path.join(self.state, "runs/claude/x"), os.path.join(self.state, "claude-notes.md"),
+                  os.path.join(self.state, "runs/x.log"), os.path.join(self.t, "state2/claude/proj/x")):
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0, p)
+            self.assertEqual(self.bash("echo x > %s" % p).returncode, 0, p)
+        for c in ("echo x > %s/runs/audit.log" % self.state, "rm -rf %s/runs/old" % self.state, "touch claude/x", "echo claude > notes.txt"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_packs_apply_is_refused_with_whatever_options(self):
+        for c in ("qargi packs apply --target claude-code", "qargi packs apply proj --target claude-code", "qargi packs apply --target=claude-code proj",
+                  "qargi packs apply proj --target claude-code --asked x", "/opt/q/bin/qargi packs apply --target claude-code",
+                  "bash -c 'qargi packs apply --target claude-code'", "sudo qargi packs apply proj --target claude-code", "echo $(qargi packs apply --target claude-code)",
+                  "lib/packs.sh packs apply proj --target claude-code", "qargi skill new x", "qargi tool link x"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, c)
+            self.assertIn("is not available to an agent", res.stderr)
+        self.assertEqual(self.bash("qargi packs render p build /tmp/o").returncode, 0)
+
+
 class FailsClosed(unittest.TestCase):
     """An exception inside the guard is a refusal (exit 2 with the reason), never a silent pass or a bare crash (exit 1)."""
     def run_main(self, payload, patch=None):
