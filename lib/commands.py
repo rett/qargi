@@ -43,9 +43,11 @@ NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup
 POLICY = opt("--policy", "what to do when a note differs: conflicts (put the incoming one in /_conflicts/<date>/, default) or keep (leave it and report)", "POLICY", ("conflicts", "keep"))
 KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND", ("memory", "reference"))
 
+REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
+
 GROUPS = [
     ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["start", "send", "status", "report", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -243,7 +245,21 @@ COMMANDS = {
     "mark": {
         "summary": "Record what happened to a session's work",
         "scripts": ["session.sh"],
+        "desc": "With --why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.",
         "usage": [("SID", "session:active"), ("STATE", ("applied", "rejected", "pending"))],
+        "opts": [opt("--why", "why: wrong-scope, broke-check, style, too-slow, too-costly, skill-ignored, skill-wrong, brief-unclear, gate-noise or other", "CODE", REASONS)],
+    },
+    "noticed": {
+        "summary": "What members noticed and did not act on, and what became of it",
+        "desc": ("Collecting a session's outputs records each noticed_not_acted_on note of its manifest (stored short, secret-looking strings "
+                 "redacted) in the append-only events file beside the audit log. Each note stays open until you give it a disposition: "
+                 "followup, dismissed (with --why), accepted or superseded. qargi report shows how many are open and how old the oldest is."),
+        "scripts": ["noticed.py"],
+        "verbs": {
+            "list": verb("Print the open notes, oldest first", [], [opt("--all", "every note, with its disposition")]),
+            "resolve": verb("Give a note a disposition", [("ID", "none"), ("DISPOSITION", ("followup", "dismissed", "accepted", "superseded"))],
+                            [opt("--why", "the reason; required to dismiss", "CODE", REASONS)]),
+        },
     },
     "track": {
         "summary": "Track a session that was started elsewhere (for example in the console)",

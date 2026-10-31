@@ -7,6 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi mark SID applied|rejected --why CODE` records a reason (codes in `lib/reasons.json`); `qargi report` counts them.
+  `mark` now refuses a session the tracker does not know.
+- `qargi noticed list|resolve`: collecting a session records the `noticed_not_acted_on` notes of its manifest
+  (short, secret-looking strings redacted, once each) in the append-only `events.jsonl` beside the audit log;
+  each stays open until given a disposition (followup, dismissed with `--why`, accepted, superseded);
+  `qargi report` shows how many are open and how old the oldest is, never the text.
 - `qargi agent refresh NAME`: re-render a member from the member definition qargi ships now, keeping its
   name, abilities and model, so members created before a change (such as the hardened hook) can catch up
   without being removed and re-added.

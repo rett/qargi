@@ -5,13 +5,13 @@
 #   session.sh send NAME "<task text>" [--label L] [--session SID] [--new] --asked "..."
 #   session.sh status [SID|NAME]
 #   session.sh stop SID
-#   session.sh mark SID applied|rejected|pending
+#   session.sh mark SID applied|rejected|pending [--why CODE]   (CODE from lib/reasons.json; only with applied or rejected)
 #   session.sh close SID [--no-outputs]   (--no-outputs: the task produced no files, e.g. memory curation)
 #   session.sh track NAME SID --asked "..."     (used by init)
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-LABEL='' SESSION='' NEW='' ASKED='' NOOUT='' POS=()
+LABEL='' SESSION='' NEW='' ASKED='' NOOUT='' WHY='' POS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --label) LABEL=$2; shift 2;;
@@ -19,6 +19,7 @@ while [ $# -gt 0 ]; do
     --new) NEW=1; shift;;
     --no-outputs) NOOUT=1; shift;;
     --asked) ASKED=$2; shift 2;;
+    --why) WHY=$2; shift 2;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
@@ -150,8 +151,15 @@ stop() {
 
 mark() {
   local sid=${POS[0]:-} st=${POS[1]:-}
-  case $st in applied|rejected|pending) ;; *) die "mark SID applied|rejected|pending";; esac
-  json_update "$TRK" '.[$s].review_state = $r' --arg s "$sid" --arg r "$st"
+  case $st in applied|rejected|pending) ;; *) die "mark SID applied|rejected|pending [--why CODE]";; esac
+  jq -e --arg s "$sid" 'has($s)' "$TRK" >/dev/null || die "session $sid is not tracked"
+  if [ -n "$WHY" ]; then
+    [ "$st" != pending ] || die "--why goes with applied or rejected"
+    jq -e --arg w "$WHY" '.codes | index($w)' "$(dirname "$(readlink -f "$0")")/reasons.json" >/dev/null \
+      || die "--why is one of: $(jq -r '.codes | join(", ")' "$(dirname "$(readlink -f "$0")")/reasons.json")"
+  fi
+  json_update "$TRK" '.[$s].review_state = $r | .[$s].review_reason = (if $w == "" then null else $w end)
+      | .[$s].reviewed_at = (if $r == "pending" then null else $t end)' --arg s "$sid" --arg r "$st" --arg w "$WHY" --arg t "$(now)"
 }
 
 # Close = archive, only after outputs are collected and a review verdict exists.

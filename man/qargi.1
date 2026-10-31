@@ -899,6 +899,31 @@ also scan DIR/qargi.* for local runs the registry does not list (or set QARGI_RU
 print the figures as JSON.
 .RE
 .TP
+.B qargi noticed
+What members noticed and did not act on, and what became of it.
+.PP
+Collecting a session's outputs records each noticed_not_acted_on note of its manifest (stored short, secret\-looking strings redacted) in the append\-only events file beside the audit log. Each note stays open until you give it a disposition: followup, dismissed (with \-\-why), accepted or superseded. qargi report shows how many are open and how old the oldest is.
+.RS
+.TP
+.B list
+Print the open notes, oldest first.
+.RS
+.TP
+.B \-\-all
+every note, with its disposition.
+.RE
+.RE
+.RS
+.TP
+.BI "resolve " "ID DISPOSITION"
+Give a note a disposition.
+.RS
+.TP
+.BI "\-\-why " "CODE"
+the reason; required to dismiss.
+.RE
+.RE
+.TP
 .B qargi watch
 Wait for a cloud session to stop; prints one line when it does.
 .PP
@@ -949,10 +974,17 @@ the task produced no files (for example memory curation).
 .TP
 .B qargi mark
 Record what happened to a session's work.
+.PP
+With \-\-why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.
 .RS
 .nf
 qargi mark SID STATE
 .fi
+.RE
+.RS
+.TP
+.BI "\-\-why " "CODE"
+why: wrong\-scope, broke\-check, style, too\-slow, too\-costly, skill\-ignored, skill\-wrong, brief\-unclear, gate\-noise or other.
 .RE
 .TP
 .B qargi track

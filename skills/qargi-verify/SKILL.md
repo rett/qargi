@@ -34,5 +34,7 @@ examples in `examples/`); without one, use the repository's own documented check
    unrelated changes, send it back to the agent to split, or split it by file yourself; do not
    fold commits together to tidy history. Check that each commit builds
    (`git rebase --exec 'go build ./...' <base>`, or the profile's equivalent) before you report. Ask before any push. Never merge to a
-   long-lived branch unless told. Then `qargi mark SID applied|rejected`
-   and `qargi close SID` for cloud sessions.
+   long-lived branch unless told. Then `qargi mark SID applied|rejected [--why CODE]`
+   (ask the user for the reason code when they reject, or when rework was needed; codes: `qargi mark --help`)
+   and `qargi close SID` for cloud sessions. List the manifest's `noticed_not_acted_on` notes to the user
+   (`qargi noticed list`; collecting records them) and record what they decide with `qargi noticed resolve`.

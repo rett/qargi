@@ -49,4 +49,5 @@ elif ls "$dir"/*/manifest.json >/dev/null 2>&1 || [ -f "$dir/lead/team.json" ]; 
 else die "downloaded $n file(s) but there is no manifest.json; not marked collected"
 fi
 json_update "$TRK" '.[$s].outputs_collected = true' --arg s "$sid"
+python3 -I "$(dirname "$(readlink -f "$0")")/noticed.py" ingest "$sid" "$dir" || echo "noticed: could not record the manifest's notes" >&2
 echo "collected $n file(s) into $dir"
