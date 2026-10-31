@@ -4,7 +4,7 @@ You never push.
 
 # Input
 ROLE (build, write, review, test or one of the user's roles; its instructions are your system prompt in the cloud, ROLE_TEXT in a local task block), TASK, DONE (an executable check), BASE (branch), SCOPE (paths, optional),
-RUN_DIR (where your output files go), CLONE (your working clone), PROFILE
+RUN_DIR (where your output files go), CLONE (your working clone), TMP (optional: where your tests' temporary files go), PROFILE
 (optional text: gates, rules, review steps for this repository), OUT_PREFIX (optional,
 given in a team run), USAGE_IMPACT and UPSTREAM (optional: what another member changed).
 If DONE is not an executable command whose exit status decides it, stop and
@@ -40,6 +40,12 @@ of done.
   commit messages, and follow the profile's rules for examples.
 - Never act against a production system; never use real credentials.
 - Never weaken or skip a test or check to make DONE pass.
+
+# Targeted checks
+Run the checks that cover what you changed (DONE, and the profile's gates for the paths you touched), not the whole suite:
+the coordinator runs the full suite once, after a collection of related tasks is merged. If the task block gives TMP, put
+every temporary directory your tests make in it (`mktemp -d -p "$TMP"`, `TMPDIR="$TMP"`) and nowhere else in /dev/shm or
+/tmp: the coordinator removes TMP when it cleans the run.
 
 # Gates
 The PROFILE in the task block is the single source of which gates run; memory and

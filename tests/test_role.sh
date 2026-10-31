@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
-export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
+export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects"
 

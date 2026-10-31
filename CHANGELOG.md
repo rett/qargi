@@ -15,6 +15,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   falls back to a member of the built-in role of the same class), and a cloud agent of a role gets its text in its system
   prompt. The class, not the name `review`, decides what the guard allows and which cloud tools are off.
 
+- `qargi local clean RUN` removes a collected, verified local run (clone, bare copy, output) and its private temporary
+  directory. `qargi local prepare` makes that directory (`TMP`, on `/dev/shm` when it exists, `QARGI_RUN_TMP` moves it) for
+  the agent's test sandboxes, so parallel runs never share files and a run leaves nothing behind. The agent contract asks for
+  targeted checks per task (the full suite belongs to the coordinator after a collection), and the task skill describes
+  dispatching non-overlapping tasks in parallel.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The

@@ -315,7 +315,7 @@ COMMANDS = {
         "opts": [ASKED],
     },
     "local": {
-        "summary": "Prepare and verify a local run that has no way to push",
+        "summary": "Prepare, verify and clean a local run that has no way to push",
         "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
@@ -327,6 +327,11 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)]),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")]),
+            "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir")],
+                          [opt("--discard", "also clean a run whose output holds no manifest")],
+                          desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
+                                "sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no "
+                                "manifest (collect first) and one whose repository refs changed (that is evidence).")),
         },
     },
     "review": {
