@@ -414,7 +414,7 @@ COMMANDS = {
                  "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
                  "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
                  "directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites "
-                 "old absolute paths (a project's credential file, local-runs.jsonl), and a plan token, and changes nothing. With the token "
+                 "old absolute paths (a project's credential file, local-runs.jsonl; the records audit.log, supervisor.log and run-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token "
                  "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
                  "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
                  "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "

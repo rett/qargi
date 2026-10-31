@@ -212,7 +212,8 @@ def protected_roots():
     # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
     # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     roots = {os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
-    for conf in (P.conf(), os.path.join(P.root(), "config"), P.live_conf(), os.path.join(home, ".qargi", "config"), P.legacy_conf(),
+    # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
+    for conf in (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(),
                  os.path.join(home, ".config", "qargi")):
         roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
     return sorted(os.path.realpath(r) for r in roots)

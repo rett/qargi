@@ -7,7 +7,7 @@ From ${XDG_CONFIG_HOME:-~/.config}/qargi and ${XDG_STATE_HOME:-~/.local/state}/q
 the live root (never a dev run's sandbox: a dev run refuses, see build).
 The plan lists every directory, file and link it will create (with modes and sha256 digests), the files it skips
 (*.lock) and the files whose old absolute paths it rewrites in the copy (a project's credential file, local-runs.jsonl,
-anything else that names the old directories; audit.log is a record and is copied as it is). The token is a hash of
+anything else that names the old directories; audit.log, supervisor.log and run-events/ are records and are copied byte for byte). The token is a hash of
 that plan, so a source that changed after you saw the plan is refused. Apply COPIES: the old directories are not
 touched and stay as a backup. It refuses when the new root exists and is not empty, and checks every copied file
 by digest after writing it; a failed apply removes what it made. It is idempotent: once applied (a marker in the
@@ -18,7 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402
 
 SCAN_LIMIT = 64 * 1024 * 1024        # larger files are copied as they are, not scanned for old paths
-NO_REWRITE = ("audit.log",)          # a record of what happened: copied as it is
+RECORDS = ("audit.log", "supervisor.log", "run-events/")   # state files that record what happened: copied byte for byte
+
+
+def is_record(side, rel):
+    return side == "state" and (rel in RECORDS[:2] or rel.startswith(RECORDS[2]))
 MARKER = "migrated-home.json"
 NAME_CHARS = r"\w.@+=-"
 
@@ -86,9 +90,11 @@ def scan(src, side, rl, entries, skipped):
                     with open(p, "rb") as fh:
                         data = fh.read()
                     e["sha"] = digest_bytes(data)
-                    if b"\0" not in data and name not in NO_REWRITE:
+                    if b"\0" not in data:
                         new = rewrite(data, rl)
-                        if new != data:
+                        if new != data and is_record(side, r):
+                            e["record"] = True              # names an old path, and is left as it is
+                        elif new != data:
                             e["rewritten"], e["new_sha"] = True, digest_bytes(new)
                 else:
                     e["sha"] = digest_file(p)
@@ -148,12 +154,15 @@ def show(plan):
         if e["kind"] == "dir":
             print("  dir   %-48s %04o" % (where, e["mode"]))
         elif e["kind"] == "file":
-            note = ("  rewrites old paths -> sha256 %s" % e["new_sha"][:12]) if e["rewritten"] else ("  (too large to scan for old paths)" if e.get("unscanned") else "")
+            note = ("  rewrites old paths -> sha256 %s" % e["new_sha"][:12]) if e["rewritten"] else ("  record: copied verbatim" if e.get("record") else None) or ("  (too large to scan for old paths)" if e.get("unscanned") else "")
             print("  file  %-48s %04o sha256 %s%s" % (where, e["mode"], e["sha"][:12], note))
         else:
             print("  link  %-48s -> %s%s" % (where, e["new_target"], "" if e["new_target"] == e["target"] else " (was %s)" % e["target"]))
     rew = [e for e in es if (e["kind"] == "file" and e["rewritten"]) or (e["kind"] == "link" and e["new_target"] != e["target"])]
     print("Rewritten in the copy (old config and state paths -> the new ones): %s" % (", ".join("%s/%s" % (e["side"], e["rel"]) for e in rew) or "none"))
+    rec = [e for e in es if e.get("record")]
+    print("Copied verbatim (records: state/audit.log, state/supervisor.log and state/run-events/ are never rewritten, even where they name an old path): %s" % (
+        ", ".join("state/" + e["rel"] for e in rec) or "none of them names one"))
     for s in plan["skipped"]:
         print("  skip  %s" % s)
 

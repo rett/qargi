@@ -50,6 +50,9 @@ class Home(unittest.TestCase):
         self.put(self.os_, "sessions.json.lock", "", 0o600)
         self.put(self.os_, "local-runs.jsonl", json.dumps({"run": self.os_ + "/runs/r1"}) + "\n" + json.dumps({"run": "/tmp/elsewhere"}) + "\n", 0o600)
         self.put(self.os_, "audit.log", json.dumps({"verb": "x", "detail": self.oc}) + "\n", 0o600)
+        self.put(self.os_, "run-events/a1.jsonl", json.dumps({"ev": "tool", "run": self.os_ + "/runs/r1"}) + "\n", 0o600)
+        self.put(self.os_, "run-events/quiet.jsonl", json.dumps({"ev": "stop"}) + "\n", 0o600)
+        self.put(self.os_, "supervisor.log", "nudged %s/runs/r1\n" % self.os_, 0o644)
         self.put(self.os_, "runs/r1/log.txt", "ran in %s\n" % self.os_, 0o644)
         os.symlink(self.oc + "/profiles/acme.md", os.path.join(self.oc, "profiles", "current"))
         self.before = (tree(self.oc), tree(self.os_))
@@ -127,6 +130,37 @@ class Home(unittest.TestCase):
         last = json.loads(open(os.path.join(ns, "audit.log")).read().splitlines()[-1])
         self.assertEqual((last["verb"], last["approved"]), ("migrate-home", "copy my data"))
         self.assertEqual(mode(os.path.join(ns, "audit.log")), 0o600)
+
+    def test_records_are_copied_byte_for_byte_and_the_plan_says_so(self):
+        r = self.q("migrate", "home")
+        line = next(x for x in r.stdout.splitlines() if x.startswith("Copied verbatim (records"))
+        for rec in ("state/audit.log", "state/supervisor.log", "state/run-events/a1.jsonl"):
+            self.assertIn(rec, line.split("): ", 1)[1])
+        self.assertNotIn("run-events/quiet.jsonl", line.split("): ", 1)[1])      # it names no old path, so the exemption changes nothing
+        rewritten = next(x for x in r.stdout.splitlines() if x.startswith("Rewritten in the copy"))
+        for rec in ("audit.log", "supervisor.log", "run-events"):
+            self.assertNotIn(rec, rewritten)
+        self.assertEqual(self.apply().returncode, 0)
+        ns = os.path.join(self.new, "state")
+        for rel in ("audit.log", "supervisor.log", "run-events/a1.jsonl", "run-events/quiet.jsonl"):
+            with open(os.path.join(self.os_, rel), "rb") as a, open(os.path.join(ns, rel), "rb") as b:
+                body = a.read()
+                if rel == "audit.log":
+                    self.assertTrue(b.read().startswith(body), rel)          # the migration appended its own line
+                else:
+                    self.assertEqual(b.read(), body, rel)
+        self.assertIn(self.os_.encode(), open(os.path.join(ns, "supervisor.log"), "rb").read())
+        # everything else that names an old path is still rewritten
+        for rel in ("local-runs.jsonl", "runs/r1/log.txt"):
+            self.assertNotIn(self.os_, open(os.path.join(ns, rel)).read(), rel)
+            self.assertIn(ns, open(os.path.join(ns, rel)).read(), rel)
+
+    def test_the_token_covers_the_record_exemption(self):
+        with_records = MH.token(self.build())
+        real = MH.is_record
+        MH.is_record = lambda side, rel: False
+        self.addCleanup(setattr, MH, "is_record", real)
+        self.assertNotEqual(with_records, MH.token(self.build()))
 
     def test_after_apply_qargi_works_and_a_second_plan_has_nothing_to_do(self):
         self.assertEqual(self.q("project", "list").returncode, 1, "the legacy refusal should hold before the copy")

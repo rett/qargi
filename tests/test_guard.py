@@ -250,10 +250,15 @@ class Skills(unittest.TestCase):
         self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh2")).returncode, 2)
 
     def test_credentials_and_the_install_record_are_protected_the_rest_of_conf_is_not(self):
+        qh, qh3, xdgc = (os.path.join(self.t, d) for d in ("qh", "qh3", "xdgc"))
         bases = {"QARGI_CONF": (self.conf, dict()),
-                 "QARGI_HOME": (os.path.join(self.t, "qh/config"), dict(QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                 "QARGI_HOME": (qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)),
+                 "QARGI_HOME beside QARGI_CONF": (qh3 + "/config", dict(QARGI_HOME=qh3)),
                  "live": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
-                 "earlier": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None))}
+                 "live beside QARGI_HOME": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None, QARGI_HOME=qh)),
+                 "earlier": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None)),
+                 "earlier through XDG_CONFIG_HOME": (xdgc + "/qargi", dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc)),
+                 "earlier default beside XDG_CONFIG_HOME": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc))}
         for name, (base, env) in bases.items():
             os.makedirs(os.path.join(base, "credentials"), exist_ok=True)
             os.makedirs(os.path.join(base, "projects"), exist_ok=True)
@@ -273,7 +278,7 @@ class Skills(unittest.TestCase):
             for c in ("rm -rf %s/credentials" % base, "mv %s/credentials /tmp/x" % base, "mv %s/install.json %s/run/out/" % (base, self.t)):
                 self.assertEqual(self.bash(c, **env).returncode, 2, (name, c))
             # a link in the clone that leads to a protected path is followed and refused
-            link = os.path.join(self.clone, "to-%s" % name)
+            link = os.path.join(self.clone, "to-%d" % len(os.listdir(self.clone)))
             os.symlink(os.path.join(base, "credentials"), link)
             self.assertEqual(self.call("Write", {"file_path": link + "/tok"}, **env).returncode, 2, name)
             self.assertEqual(self.bash("echo x > %s/tok" % link, **env).returncode, 2, name)
