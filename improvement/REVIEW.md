@@ -58,6 +58,27 @@ conflicts; the man page regenerates identically; the full suite exits 0 across 2
 10. Should the installed tool keep following the checkout, or switch to a copy installed from tagged
     releases? (follow or copy)
 
+### Owner answers (2026-10-30, typed in chat)
+
+After the review pass of `auto/queue` (suite re-run on an exported copy: 27 steps, exit 0) the owner wrote
+"answer the ten questions as recommended". The recommendations were these; they are the owner's answers now.
+
+| # | Answer | What it means |
+|---|---|---|
+| 1 | yes | the guard may refuse on its own errors; revisit if false blocks exceed about one a week |
+| 2 | replace | `QARGI_NESTED` becomes a parent plan token passed down; queued as L23, not urgent (the guard already stops a member setting it) |
+| 3 | not yet | cloud nudges stay prepared only; revisit with real stall data |
+| 4 | not yet | no turn or timeout floors until `report` has about 20 runs per ability |
+| 5 | yes, after the merge decision | the five builder worktrees (not two) stay until the owner decides on `auto/queue`; unlock the memory one first (L19) |
+| 6 | mtime-only | local detection stays file-modification-time only until the owner applies the printed hooks snippet; the assistant never edits the settings |
+| 7 | park | typed memory links wait for the owner's canon review |
+| 8 | review first | no skill-spec fixtures before the owner approves the spec |
+| 9 | next release | the core wording change (L11) ships with the next release |
+| 10 | copy | the installed tool should come from a copy of a tagged release; the switch is the owner's to run (L22) |
+
+**Not decided by these answers:** merging `auto/queue` into `develop` and pushing `develop`. Both stay the
+owner's explicit words. The builders' saved questions below are still open.
+
 ## Questions the builders saved for you
 
 **Supervisor**
