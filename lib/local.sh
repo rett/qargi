@@ -76,6 +76,29 @@ check_run() {
   return 2
 }
 
+# render_warning REPO URL -> when the project this run belongs to has a Claude Code render (packs apply --target claude-code),
+# runs its read-only check and, on findings, prints a WARNING block to stderr. Never fails the caller: a stale render must not
+# block work. The project is the stored answers whose repo.path (or repo.url) is the one given; none found, nothing printed.
+# No render directory (the usual case) costs no process: the glob below is the shell's own.
+render_warning() {
+  local m d prj f rp ru out
+  for m in "$DA_STATE"/claude/*/MANIFEST.json; do
+    [ -f "$m" ] || continue
+    d=$(dirname "$m"); prj=$(basename "$d"); f=$DA_CONF/projects/$prj.json
+    [ -f "$f" ] || continue
+    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
+    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
+    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
+    out=$("$(dirname "$0")/packs.sh" packs check --target claude-code "$prj" 2>&1) && return 0
+    { echo "WARNING: the Claude Code render of project $prj is out of date or altered (the run goes on):"
+      sed 's/^/  /' <<<"$out"
+      echo "  fix: qargi packs apply --target claude-code $prj"
+      echo; } >&2
+    return 0
+  done
+  return 0
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -135,6 +158,7 @@ WRAP
     jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" \
       '{run:$r, slug:$s, ability:$a, base:$b, started:$t}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
+    render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
     echo "ABILITY=$ABILITY"
     echo "ROLE=$ABILITY"
