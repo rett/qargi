@@ -68,6 +68,14 @@ COMMANDS = {
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
+            "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
+                           [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
+                            opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
+                            opt("--url", "the repository URL, when it has no origin remote", "URL"),
+                            PLAN, APPROVED, opt("--force", "replace stored answers")],
+                           desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
+                                 "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
+                                 "stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change.")),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
                         examples=["qargi project set acme roles.write.effort high"]),

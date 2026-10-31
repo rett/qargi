@@ -79,6 +79,43 @@ replace stored answers.
 .RE
 .RS
 .TP
+.BI "attach " "[DIR]"
+Attach to an existing repository: read it, show the answers and the gaps, store on approval.
+.br
+Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change.
+.RS
+.TP
+.BI "\-\-name " "NAME"
+the project name (default: from the remote or the directory).
+.RE
+.RS
+.TP
+.BI "\-\-methodology " "NAME"
+the methodology to compare with (default gitflow).
+.RE
+.RS
+.TP
+.BI "\-\-url " "URL"
+the repository URL, when it has no origin remote.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.B \-\-force
+replace stored answers.
+.RE
+.RE
+.RS
+.TP
 .BI "set " "[NAME] PATH VALUE"
 Change one answer.
 .br

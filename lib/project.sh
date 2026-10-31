@@ -8,6 +8,8 @@
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string)
+#   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
+#                                         read an existing repository, show the answers and the gaps, store on approval
 #   project.sh show NAME | list | validate FILE
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
@@ -166,6 +168,38 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model)/\(.value.effort)"' "$PROJ_DIR/$n.json";;
+  attach)
+    # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
+    dir=. name='' meth=gitflow url='' force='' PLAN_ARG='' APPROVED=''
+    while [ $# -gt 0 ]; do
+      case $1 in --name) name=$2; shift 2;; --methodology) meth=$2; shift 2;; --url) url=$2; shift 2;; --force) force=1; shift;;
+        --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
+    done
+    export PLAN_ARG   # need_plan reads it
+    det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth") || exit 1
+    [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
+    n=$(jq -r .answers.project <<<"$det")
+    valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
+    tok=$(jq -S -c .answers <<<"$det" | plan_token)
+    jq -r '"project \(.answers.project) from \(.found.path)\nmethodology: \(.methodology)\nremote: \(.found.remote // "none")\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
+    echo
+    echo "gaps against the $meth methodology (nothing is changed in the repository; adopting them is a separate, reviewed change):"
+    jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    if [ "$(jq '.questions | length' <<<"$det")" != 0 ]; then echo; echo "questions:"; jq -r '.questions[] | "  - " + .' <<<"$det"; fi
+    echo
+    if [ -z "$APPROVED" ]; then
+      echo "stored answers would be:"; jq .answers <<<"$det"
+      echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    need_plan "$tok"
+    [ ! -e "$PROJ_DIR/$n.json" ] || [ -n "$force" ] || die "project $n is already initialised (--force to replace)"
+    f=$(mktemp); jq .answers <<<"$det" > "$f"
+    out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
+    mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
+    mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
+    audit_log "project:attach" "$n"
+    echo "project $n stored in $PROJ_DIR/$n.json (approved: $APPROVED)";;
   set)
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"

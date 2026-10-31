@@ -28,6 +28,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `methodologies/`; add your own under `~/.qargi/config/methodologies/NAME/`. `qargi methodology list|show|check|files|deployment`
   only read; the scaffold carries no reference to qargi.
 
+- `qargi project attach [DIR]` attaches qargi to an existing repository without changing it. It reads the remote, branches, tags,
+  version and changelog files, test command and CI, prints the answers it would store, the gaps against the methodology and
+  what it could not determine, and a plan token; with `--plan` and `--approved` it stores the answers outside the repository.
+  Closing the gaps is a separate, reviewed change.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
