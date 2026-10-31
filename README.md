@@ -160,6 +160,10 @@ claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
 
 (the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing.
 
+The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from its pack name (or whose front matter is not closed or has two `name` keys), a skill and a tool with the same name, and a tool allowlist name with anything but letters, digits, `_`, `.` and `-`. Concurrent applies serialize on a lock (the second refuses if the render changed meanwhile), and the swap installs only the tree the token approved; the token also covers file modes. `check` also reports a rendered file that differs from the library copy, a mode change, a group- or world-writable render, a malformed manifest, and a manifest for another project or with role scoping other than advisory.
+
+`qargi local prepare` warns too: when the project has a render that has drifted, it prints a WARNING block to stderr with the findings and the fix (`qargi packs apply --target claude-code PROJECT`); the run goes on and its output is unchanged.
+
 - Nothing is written into a repository or into `~/.claude`; the render lives in the state directory only.
 - Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
 - A member cannot change the render: the guard refuses its writes under `state/claude/`. Only you apply it.
