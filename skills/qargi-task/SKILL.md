@@ -125,13 +125,14 @@ The local agent gets no way to push, and you check afterwards that it did not.
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
-   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, records every ref of the real
-   repository and of its remote, and writes the role to `RUN/ability` and its class to `RUN/class`: under a
+   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then a `TASK-BLOCK PATHS` block
+   with the values to paste into the task block exactly as printed. It records every ref of the real
+   repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
 2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
    subagent_type; `qargi agent list` shows its model and effort) with the task block plus
    `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
-   one (`qargi agent add NAME --abilities <role>`), never use another agent type. The agent must run
+   one (`qargi agent add NAME --abilities <role>`, the flag keeps its earlier name), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent
@@ -145,7 +146,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
 
 ## Features and releases
 
-The work of a project that follows git-flow runs inside features: tasks use `--base feature/NAME`, and the features, releases and
+The work of a project that follows git-flow runs inside features: tasks use `--base feature/NAME` and run targeted checks only (the lead runs the one whole-suite run per feature), and the features, releases and
 conflicts are the lead's process in `/qargi-flow`.
 
 ## Parallel tasks and targeted tests

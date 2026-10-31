@@ -27,3 +27,5 @@ the role adds.
   any PDF.
 - Log what you produced in `roles/write/project/history.md` of the memory store and
   remove open items once resolved.
+- Before DONE, follow "Before you report DONE" in the contract: lint, change-specific commits with bodies,
+  `qargi review check OUT` at 0 fail, 0 warn, no `git stash`, SCOPE kept.
