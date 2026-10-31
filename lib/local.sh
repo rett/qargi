@@ -5,6 +5,7 @@
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R]
 #   local.sh verify RUN_DIR
+#   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory
 #
 # This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
 # from a config). It is not a sandbox against an agent that deliberately goes around it
@@ -53,6 +54,11 @@ case $verb in
     case $BASE in master|develop) ;; esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
+    # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
+    # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
+    SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
+    if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
+    printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ABILITY" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
     if [ -n "$URL" ]; then
@@ -92,6 +98,7 @@ WRAP
     echo "CLASS=$CLASS"
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
+    echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
     echo "BASE_SHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")";;
   verify)
@@ -108,5 +115,18 @@ WRAP
       cat "$RUN/refs.diff" >&2
       exit 1
     fi;;
-  *) die "usage: local.sh prepare|verify ...";;
+  clean)
+    # after the series is collected and verified: remove the run (clone, bare copy, output, wrapper) and its temporary directory
+    RUN=${1:-}; shift || true; DISCARD=''
+    [ "${1:-}" != --discard ] || DISCARD=1
+    [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
+      || die "clean needs a RUN dir made by prepare"
+    [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
+    "$0" verify "$RUN" >/dev/null 2>&1 || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+    t=$(cat "$RUN/tmpdir" 2>/dev/null || true)
+    case $t in */qargi-run.??????|"$RUN"/tmp) [ ! -d "$t" ] || rm -rf -- "$t";; esac
+    rm -rf -- "$RUN"
+    echo "cleaned $RUN${t:+ and $t}";;
+  *) die "usage: local.sh prepare|verify|clean ...";;
 esac

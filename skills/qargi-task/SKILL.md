@@ -83,7 +83,7 @@ ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_
 `qargi role prompt ROLE`, inlined; a cloud agent has it in its system prompt), TASK, DONE (executable check; if the user
 gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
 the dispatching session's branch; explicit if that is master or develop), base
-SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
+SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE, TMP (local runs: the `TMP` that `prepare` printed).
 
 ## Profiles (kept outside the repository)
 
@@ -125,7 +125,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
-   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, records every ref of the real
+   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, records every ref of the real
    repository and of its remote, and writes the role to `RUN/ability` and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
 2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
@@ -138,6 +138,17 @@ The local agent gets no way to push, and you check afterwards that it did not.
    (or something it ran) pushed or wrote to the real repository: stop, tell the user,
    and do not review further until they have seen it.
 4. Then `/qargi-verify` on `OUT`.
+5. When the series is merged (or rejected) and you hold what you need, `qargi local clean <RUN>` removes the run:
+   the clone, the bare copy, the output and the run's private TMP directory (on /dev/shm), so nothing is left behind.
+   It refuses a run with no collected manifest (`--discard` for one that produced none) and one whose repository refs
+   changed. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
+
+## Parallel tasks and targeted tests
+
+Split a change into tasks whose paths do not overlap and dispatch them together (one `prepare` and one member launch
+each, in the same message, every task with its own `--slug`, `SCOPE` and `TMP`). Give each task the narrowest executable
+`DONE` (a test file or a script, not the suite); the full suite is run by you once, after the tasks of a collection are
+merged. Tasks that touch the same file go one after the other, the second based on the first's merged result.
 
 The barrier stops every ordinary push. It is not a sandbox against an agent that goes
 out of its way (it runs as your user); `verify` is what makes that visible.

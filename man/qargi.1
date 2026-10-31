@@ -1088,7 +1088,7 @@ the request, in your words, that names the cloud instance; recorded in the audit
 .RE
 .TP
 .B qargi local
-Prepare and verify a local run that has no way to push.
+Prepare, verify and clean a local run that has no way to push.
 .PP
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
@@ -1140,6 +1140,18 @@ the earlier name of \-\-role.
 .TP
 .BI "verify " "RUN_DIR"
 Compare the repository's refs with the snapshot taken by prepare.
+.RE
+.RS
+.TP
+.BI "clean " "RUN_DIR"
+Remove a collected, verified run and its temporary directory.
+.br
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence).
+.RS
+.TP
+.B \-\-discard
+also clean a run whose output holds no manifest.
+.RE
 .RE
 .TP
 .B qargi supervise
