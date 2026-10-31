@@ -77,5 +77,6 @@ recorded, not verified: it is not proof that a person agreed.
   them. `qargi packs check --target claude-code PROJECT` reports drift and shadowing
   (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
   read only.
+  The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or writable render files and a bad manifest.
 - `qargi skill|tool check PROJECT ROLE` reviews and drift-checks what reaches a role.
   `remove NAME` is refused while the pack is linked.
