@@ -67,6 +67,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   branch again; a run is applied once. `qargi review prune [--yes]` lists, or deletes, the `agent/*` branches already merged into
   `develop` or a `feature/*` branch.
 
+- `qargi packs apply --target claude-code PROJECT` renders the skills and tools a project has enabled into a managed state
+  directory, `$QARGI_STATE/claude/PROJECT`, replacing the previous render atomically, and prints the exact
+  `claude --add-dir ...` line that loads it. It needs no `--asked`; without `--approved` it prints a plan token. Skills render
+  under `.claude/skills`, tool packs as `mcp.json` and `settings.json`, with a manifest. Claude Code cannot enforce role scoping,
+  so the render is the union of the project's roles and role scoping is advisory there. Nothing is written into a repository or
+  into `~/.claude`. `qargi packs check --target claude-code PROJECT` (read only) exits 1 on drift: a changed or unreviewed pack,
+  a tampered, extra or missing rendered file, an enablement change, a rendered skill shadowed by `~/.claude/skills` or the
+  checkout's `.claude/skills`, or a missing manifest. `--target managed-agents` is the existing cloud update of an instance.
+- The guard protects that directory: members can no longer write under the state's `claude/` directory, and the operands of
+  `packs render` are judged as write destinations.
+
 ### Changed
 - `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,
   and later checks compare with it: fast-forwards of `develop`, `master` and `agent|feature|release|hotfix/*` branches and new
