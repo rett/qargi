@@ -7,6 +7,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi upgrade [--branch B | --tag T]`: plan, then apply with `--plan TOKEN --approved "..."`: moves the installed tool (the root-owned checkout
+  `install.sh` recorded) to a newer branch (fast-forward only on its current branch) or tag of its origin, re-runs
+  `install.sh --user` and lists the members to refresh. The writing git commands run through `sudo`; members cannot use the verb.
 - `qargi cloud list|show|set|unset|check|login`: bind a project to an `ant` profile and the workspace it must reach
   (the project's optional `cloud` answer). Every command about that project then runs `ant` under that profile,
   and a cloud call is refused if the profile no longer reaches the workspace; a conflicting `ANTHROPIC_PROFILE` is

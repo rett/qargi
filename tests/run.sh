@@ -14,6 +14,7 @@ run bash tests/test_session.sh
 run python3 tests/test_report.py
 run python3 tests/test_noticed.py
 run python3 tests/test_cloud.py
+run python3 tests/test_upgrade.py
 run python3 tests/test_supervise.py
 run bash tests/test_prompt.sh
 run python3 tests/test_guard.py
