@@ -27,6 +27,17 @@ A role gets every pack linked at a scope that reaches it, unless that role disab
 project answers; `enable` undoes it). `qargi skill|tool effective PROJECT ROLE` shows what
 a role gets; `unlink` removes a link.
 
+## Who may change a skill
+
+Only you, with the person present, run the verbs that change one: `new`, `import`,
+`seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover install` and
+`qargi packs apply`. A local member never does: its guard refuses these verbs and any
+write in the pack library or in a `.claude/skills` directory, and `QARGI_NESTED` does
+not stand in for the plan token of `import`, `seal` or `packs apply`. If a member
+thinks a skill should change, it says so in its report; you show the person the plan
+and token and wait for their go-ahead before you apply it. The `--approved` text is
+recorded, not verified: it is not proof that a person agreed.
+
 ## Create, import, approve
 
 - `qargi skill|tool new NAME` scaffolds one (a skill's placeholder description fails

@@ -48,6 +48,17 @@ while [ $# -gt 0 ]; do
 done
 export PLAN_ARG ASKED
 case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <verb> ...";; esac
+# Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): a caller that is itself approved
+# (QARGI_NESTED) has not approved this change, so the write verbs never honour it and the token is always required.
+# No caller nests them: discover.py already clears it, and provisioning only renders.
+case $KIND:$VERB in
+  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply) unset QARGI_NESTED;;
+esac
+need_token() { # expected-token; never empty, and never skipped
+  [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
+  need_plan "$1"
+}
 mkdir -p "$PACKS/skills" "$PACKS/tools"; [ -f "$LINKS" ] || echo '{"links":[]}' > "$LINKS"
 
 item_path() { if [ "$1" = skill ]; then echo "$PACKS/skills/$2"; else echo "$PACKS/tools/$2.json"; fi; }
@@ -166,7 +177,7 @@ if [ "$KIND" = packs ]; then
       [ -z "$vids" ] || echo "  note: these tools use vault(s) $vids; attach them to the deployment, they are not attached by this command"
       tok=$({ find "$W/out" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s' "$aid" "$aver" "$anth" "$off"; } | plan_token)
       if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
-      need_plan "$tok"; audit_log packs-apply "$INST agent $aid v$aver"
+      need_token "$tok"; audit_log packs-apply "$INST agent $aid v$aver"
       cust='[]'
       if [ -s "$W/out/custom_skills.txt" ]; then
         mkdir -p "$W/apply/skills"; cp -r "$W/out/skills/." "$W/apply/skills/"
@@ -227,7 +238,7 @@ case "$VERB" in
     review "$KIND" "$T/stage" || { echo "refused: fix the source first" >&2; exit 1; }
     TOK=$(content_hash "$T/stage")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (store it with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
-    need_plan "$TOK"; audit_log "$KIND-import" "$NAME from $SRCREC"
+    need_token "$TOK"; audit_log "$KIND-import" "$NAME from $SRCREC"
     P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC"
     echo "stored $KIND $NAME (content $TOK); link it to a scope to attach it";;
   list)
@@ -246,7 +257,7 @@ case "$VERB" in
     echo "== review of $KIND $NAME"; review "$KIND" "$P" || { echo "refused: fix it first" >&2; exit 1; }
     TOK=$(content_hash "$P")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (approve this content with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
-    need_plan "$TOK"; audit_log "$KIND-seal" "$NAME $TOK"
+    need_token "$TOK"; audit_log "$KIND-seal" "$NAME $TOK"
     src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src"; echo "sealed $KIND $NAME (content $TOK)";;
   link|unlink)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"

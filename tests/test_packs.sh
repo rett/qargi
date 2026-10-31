@@ -89,6 +89,24 @@ $DA packs apply alpha-write --asked "test" --approved x >/dev/null 2>&1 && no "a
 $DA packs apply alpha-write --asked "test" --plan "$tok" --approved "test" >/dev/null 2>&1 && ok "apply runs with the token" || no "apply failed"
 u=$(cat "$T/update.args" 2>/dev/null)
 grep -q -- '--skill' <<<"$u" && grep -q '"type":"custom"' <<<"$u" && grep -q 'skill_alpha-write' <<<"$u" && grep -q '"skill_id":"pdf"' <<<"$u" && ok "the agent gets its anthropic and custom skills" || no "skills in the update: $u"
+
+# --- QARGI_NESTED does not stand in for the plan token of a skill-changing verb
+mkdir -p "$T/src/good"; printf -- '---\nname: good\ndescription: Use when testing the nested rule.\n---\nbody\n' > "$T/src/good/SKILL.md"
+good_tok=$($DA skill import "$T/src/good" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+[ -n "$good_tok" ] || no "no token for the nested test import"
+QARGI_NESTED=1 $DA skill import "$T/src/good" --approved "an agent says so" >/dev/null 2>&1 && no "a nested import skipped the token" || ok "a nested import without the token is refused"
+QARGI_NESTED=1 $DA skill import "$T/src/good" --plan 000000000000 --approved x >/dev/null 2>&1 && no "a nested import took a wrong token" || ok "a nested import with a wrong token is refused"
+[ ! -e "$T/c/packs/skills/good" ] && ok "nothing was stored by the refused nested imports" || no "a refused import stored the skill"
+QARGI_NESTED=1 $DA skill import "$T/src/good" --plan "$good_tok" --approved "a person read the review" >/dev/null 2>&1 && [ -d "$T/c/packs/skills/good" ] && ok "a nested import with the right token works (the token is what counts)" || no "nested import with the token"
+tail -1 "$T/s/audit.log" | jq -e '.verb=="skill-import" and .nested==false' >/dev/null && ok "the audit line does not claim the call was nested" || no "audit nested flag: $(tail -1 "$T/s/audit.log")"
+echo "more" >> "$T/c/packs/skills/good/SKILL.md"
+QARGI_NESTED=1 $DA skill seal good --approved "x" >/dev/null 2>&1 && no "a nested seal skipped the token" || ok "a nested seal without the token is refused"
+mkdir -p "$T/nosum"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/nosum/sha256sum"; chmod 755 "$T/nosum/sha256sum"
+out=$(PATH=$T/nosum:$PATH $DA skill seal good --plan '' --approved "x" 2>&1) && no "an empty token was accepted" || { grep -q "no plan token" <<<"$out" && ok "an empty expected token is an error, not a match for an empty --plan" || no "empty token message: $out"; }
+QARGI_NESTED=1 $DA tool import "$T/t.json" --name issues2 --approved "x" >/dev/null 2>&1 && no "a nested tool import skipped the token" || ok "a nested tool import without the token is refused"
+QARGI_NESTED=1 $DA packs apply alpha-write --asked "test" --approved x >/dev/null 2>&1 && no "a nested packs apply skipped the token" || ok "a nested packs apply without the token is refused"
+rm -f "$T/update.args"
+QARGI_NESTED=1 $DA packs apply alpha-write --asked "test" --approved x >/dev/null 2>&1; [ ! -e "$T/update.args" ] && ok "and it did not touch the agent" || no "agent updated by a nested apply"
 grep -q 'mcp_toolset' <<<"$u" && grep -q 'agent_toolset_20260401' <<<"$u" && ok "the agent keeps its toolset and gains the MCP tool" || no "tools in the update"
 grep -q '"name":"web_fetch","enabled":false' <<<"$u" && grep -q '"name":"web_search","enabled":false' <<<"$u" && ! grep -q '"name":"edit"' <<<"$u" && ok "apply switches the web tools off for a write role and keeps edit" || no "tool configs in the update: $u"
 exit $fail

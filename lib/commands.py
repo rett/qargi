@@ -31,6 +31,9 @@ def verb(summary, args=(), opts=(), desc="", examples=()):
             "opts": list(opts), "desc": desc, "examples": list(examples)}
 
 
+HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the run's event file under the state directory "
+            "(ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, "
+            "so it cannot block an agent. Register it with qargi supervise hooks.")
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
@@ -42,7 +45,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 
 GROUPS = [
     ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["start", "send", "status", "report", "watch", "collect", "stop", "close", "mark", "track", "local"]),
+    ("Run a task", ["start", "send", "status", "report", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -76,7 +79,9 @@ COMMANDS = {
         "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
                  "abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi-build, "
                  "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
-                 "rule: the guard refuses changes to the clone under that ability. Dispatch spawns the member qargi agent for "
+                 "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
+                 "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
+                 "and writes in the pack library, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
                  "ABILITY prints."),
         "scripts": ["agent.sh"],
         "verbs": {
@@ -149,7 +154,9 @@ COMMANDS = {
         "summary": "Create or import skills and attach them by scope",
         "desc": ("Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project "
                  "and role), user-role, project, or project-role. Imported content is shown, hashed and approved before it is stored, and "
-                 "any later change is drift until you seal it again."),
+                 "any later change is drift until you seal it again. Only you, with the person present, change a skill: a local member's "
+                 "guard refuses the verbs new, import, seal, remove, link, unlink, enable and disable, and writes in the pack library, "
+                 "and QARGI_NESTED does not stand in for the plan token of import and seal."),
         "scripts": ["packs.sh"],
         "verbs": "PACK",
     },
@@ -166,7 +173,7 @@ COMMANDS = {
         "verbs": {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "apply": verb("Update an existing cloud agent with its skills and tools", [("INSTANCE", "instance")], [ASKED, PLAN, APPROVED],
-                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push."),
+                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push. Always needs --plan (QARGI_NESTED does not skip it); a local member's guard refuses it."),
         },
     },
     "start": {
@@ -346,7 +353,8 @@ COMMANDS = {
                  "each role of a project by the stack it sees in the repository, leaving out what the role has. install asks which scope the tool "
                  "should reach (user, user-role, project, project-role), then goes through the existing gates: a skill or an MCP server is "
                  "imported with its review and your approval of exactly that content, linked at the scope, and offered to the cloud agents it "
-                 "reaches with the plan shown first. Nothing found online is installed on trust."),
+                 "reaches with the plan shown first. Nothing found online is installed on trust. install changes skills, so a local "
+                 "member's guard refuses it."),
         "scripts": ["discover.py"],
         "verbs": {
             "sources": verb("List what is searched", []),
@@ -444,6 +452,49 @@ COMMANDS = {
             "session-start": verb("Print the SessionStart hook output for the current project",
                                   opts=[opt("--project", "the project, instead of finding it from the directory", "PROJECT", "project"),
                                         opt("--role", "the role to load (default lead)", "ROLE", ROLES)]),
+            "subagent-start": verb("Record that a subagent started (SubagentStart hook)", desc=HOOK_REC),
+            "subagent-stop": verb("Record that a subagent stopped and how many background tasks it still had (SubagentStop hook)", desc=HOOK_REC),
+            "tool-use": verb("Record a successful tool call: its name and a hash of its input (PostToolUse hook)", desc=HOOK_REC),
+            "tool-failure": verb("Record a failed tool call: its name, a hash of its input, whether it was an interrupt (PostToolUseFailure hook)", desc=HOOK_REC),
+            "notification": verb("Record the type of a notification, for example permission_prompt (Notification hook)", desc=HOOK_REC),
+            "stop-failure": verb("Record the error type a turn ended with, for example rate_limit (StopFailure hook)", desc=HOOK_REC),
+            "pre-compact": verb("Record that the context is being compacted (PreCompact hook)", desc=HOOK_REC),
+        },
+    },
+    "supervise": {
+        "summary": "Find stalled agent runs: notify, prepare a nudge, never act alone",
+        "desc": ("Hooks only record (the run-event verbs of qargi hook append ids, times, a tool name and a hash to a per-run file under "
+                 "the state directory; no command, message or error text). One idempotent "
+                 "tick is the only actor: it folds those files, the local-run registry and the session tracker into runs.json and classifies "
+                 "each unfinished run in a fixed order: waiting on an approval (not a stall), stopped by an API error, interim (turn ended, "
+                 "background work running, a cap of about 35 minutes), looping (three identical tool digests in a row), suspected dead (no "
+                 "activity for too long); for cloud sessions requires_action, budget_reached, stale while running, idle awaiting review. It acts "
+                 "only by printing `QARGI SUPERVISE <class> <run> <next-action>` lines, appending to supervisor.log and the audit log "
+                 "(origin supervisor), and PREPARING a nudge in nudges.jsonl. A nudge is a fixed template, at most 2 per run with at least "
+                 "10 minutes between them, never while the run waits on an approval or has little budget left, and never an approval. A "
+                 "script cannot message a local subagent: the coordinating session delivers the prepared nudge and records it with delivered, "
+                 "and only then does it count. A cloud nudge is sent only by nudge, which needs --asked. Nothing sends automatically; the "
+                 "thresholds are data in lib/supervise-defaults.json, conservative floors until `qargi report` shows real run lengths. "
+                 "Run the tick on a timer or a loop; status warns when it has not run for twice its interval."),
+        "scripts": ["supervise.sh", "supervise.py"],
+        "verbs": {
+            "tick": verb("Fold the events, classify the runs, print what needs attention, prepare nudges",
+                         opts=[opt("--now", "act as of this time (2026-10-30T12:00:00Z); for tests and replays", "ISO"), opt("--json", "print the result as JSON")],
+                         desc="Run twice with nothing new it prints nothing the second time.",
+                         examples=["qargi supervise tick"]),
+            "status": verb("Show the runs by class and the nudges waiting; warns when the tick is overdue",
+                           opts=[opt("--now", "compare the last tick with this time", "ISO"), opt("--json", "print the registry as JSON")]),
+            "nudge": verb("Send the fixed nudge to a cloud session, only when the caps allow", [("SID", "session:active")],
+                          [ASKED, opt("--now", "act as of this time; for tests and replays", "ISO")],
+                          desc=("Refused when the session waits on an approval or has little budget left, when 2 nudges were already counted, or "
+                                "within 10 minutes of the last one. The message is the fixed template, never text from the agent."),
+                          examples=["qargi supervise nudge sesn_abc --asked \"nudge it, it has been quiet for hours\""]),
+            "delivered": verb("Record that you delivered a local run's prepared nudge", [("KEY", "none")],
+                              [opt("--now", "record this delivery time; for tests and replays", "ISO")],
+                              desc="KEY is the agent id the tick printed. Only then does the nudge count against the cap."),
+            "hooks": verb("Print the settings.json hook snippet for the run-event handlers",
+                          opts=[opt("--qargi", "the command to put in the snippet (default qargi)", "COMMAND")],
+                          desc="It never writes the file: merge the entries into your Claude Code settings.json yourself."),
         },
     },
     "help": {
