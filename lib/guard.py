@@ -264,7 +264,28 @@ def protected_roots():
     installed = P.installed_tool_root()
     if installed:
         roots.add(installed)
+    roots.update(claude_render_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
+
+
+def claude_render_roots(P=None, home=None):
+    """The claude/ directory of the state: the render that `packs apply --target claude-code` makes of a project's enabled
+    skills and tools, which Claude Code loads with --add-dir. Its content is instructions a session follows, so it is
+    protected like the pack library. Found like the other qargi paths: QARGI_STATE, else <root>/state, and the default
+    ~/.qargi/state beside an override (real paths, so a link into it is followed)."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "claude")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def refusal_text(what, dest, root):
+    """The sentence for a refused write: the generic one, or for the claude render the reason it is protected."""
+    if root in claude_render_roots():
+        return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
+                "`qargi packs apply` and changed only by the lead" % (what, dest, root))
+    return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (what, dest, root)
 
 
 def in_clone(full):
@@ -299,7 +320,7 @@ def skill_refusal(tool, inp, cwd):
     if tool in EDIT_TOOLS:
         fp = inp.get("file_path") or inp.get("notebook_path") or ""
         root = protected(resolve(cwd, fp)) if fp else None
-        return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (tool, fp, root) if root else None
+        return refusal_text(tool, fp, root) if root else None
     if tool != "Bash":
         return None
     return bash_skill_refusal(inp.get("command") or "", cwd, 0)
@@ -396,6 +417,10 @@ def protected_write(toks, i, here):
                 cands.append((prog, t.split("=", 1)[1]))
             elif t.startswith("-t") and not t.startswith("--") and len(t) > 2:
                 cands.append((prog, t[2:]))
+    if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
+        words = args if prog in SCRIPTS else args[1:]
+        if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
+            cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "dd":
         cands += [(prog, t[3:]) for t in rest if t.startswith("of=")]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):
@@ -410,7 +435,7 @@ def protected_write(toks, i, here):
             continue
         root = protected(resolve(here, dest), what in DESTRUCTIVE)
         if root:
-            return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (what, dest, root)
+            return refusal_text(what, dest, root)
     return None
 
 
