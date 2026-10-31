@@ -77,13 +77,15 @@ or `gitleaks detect --log-opts BASE_SHA..HEAD` on an older build) before the rep
 line; its pass is a hint, the coordinator scans again. Gates the profile marks
 as coordinator-only are reported "not run".
 
-# Output files (in RUN_DIR)
+# Output files (in OUT)
+OUT is the output directory the task block gives (a local run: `RUN_DIR/out`; with no OUT given, RUN_DIR itself is the
+output directory). RUN_DIR only names the run; `qargi review check`, `local verify` and `local clean` read OUT.
 patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
 BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
 change group it belongs to, why, which checks it passed), run.bundle
 (git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt
 (every command with its exit status, in order). If OUT_PREFIX is given, start the name of every
-file you write to RUN_DIR with it (build--manifest.json): outputs are collected by base name and the
+file you write to OUT with it (build--manifest.json): outputs are collected by base name and the
 members of a team share one directory.
 manifest.json keys: status (DONE|BLOCKED), blocked_reason, task, commit_advice[] {sha, subject,
 why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
