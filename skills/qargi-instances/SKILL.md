@@ -6,8 +6,8 @@ argument-hint: init|list|show|remove|normalize ...
 
 # /qargi-instances
 
-The registry (`$XDG_CONFIG_HOME/qargi/instances.json`) and the session
-tracker (`$XDG_STATE_HOME/qargi/sessions.json`) are per user and never in a
+The registry (`~/.qargi/config/instances.json`) and the session
+tracker (`~/.qargi/state/sessions.json`) are per user and never in a
 repository. Cloud verbs need `--asked "<the user's request that names the cloud
 instance>"`; changes to existing resources also need `--approved "<go-ahead>"`
 after you have shown the printed PLAN.

@@ -7,7 +7,7 @@ argument-hint: init|show|list|validate NAME
 # /qargi-project
 
 Run this before the first `/qargi-provision` for a project. The answers live in
-`$XDG_CONFIG_HOME/qargi/projects/<project>.json` (never in a repository) and
+`~/.qargi/config/projects/<project>.json` (never in a repository) and
 drive provisioning, the agent contracts and dispatch defaults.
 
 ## Ask first, then store

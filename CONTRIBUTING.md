@@ -27,6 +27,8 @@ templates; `examples/` sample repository profiles.
 `tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
 guard, members, the memory backends and their split/merge invariants, the role migration, role seeds, shellcheck). It needs no API access and no private data.
 
+Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
+
 ## Changing the canon
 
 The layout of memory stores is versioned (`canon/CANON.md`, `canon/layout.json`).

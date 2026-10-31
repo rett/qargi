@@ -6,7 +6,7 @@ argument-hint: <run directory with patches/ and manifest.json>
 
 # /qargi-verify (you are the coordinator)
 
-Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`$XDG_CONFIG_HOME/qargi/profiles/<repo>.md`;
+Gates come from the repository's profile, which is the single source of which gates run (the reference store explains them, it does not add or drop any) (`~/.qargi/config/profiles/<repo>.md`;
 examples in `examples/`); without one, use the repository's own documented checks.
 
 0. `qargi review check RUN_DIR`: confirms the output is a numbered series with one patch

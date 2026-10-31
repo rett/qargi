@@ -42,7 +42,7 @@ user's request named it.
   apply (`provision apply`, `canon apply|import`, `instances normalize`, an agent update)
   must be given `--plan TOKEN` and refuses if the plan has changed. Never allow-list these
   verbs in the Claude Code settings: the permission prompt is the user's real control.
-  Every gated verb is also logged in `$XDG_STATE_HOME/qargi/audit.log`.
+  Every gated verb is also logged in `~/.qargi/state/audit.log`.
 - A cloud session without a spend budget is refused (`send`) or not registered (`init`).
 - Every submitted patch is reviewed (`/qargi-verify`) before it is applied, and it is applied as
   separate, change-specific commits, never squashed. The agent commits as it goes and returns
@@ -85,7 +85,7 @@ SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
 
 A profile holds a repository's gates, rules and coordinator review steps. It
 lives under the user's config directory, never in the project:
-`$XDG_CONFIG_HOME/qargi/profiles/<name>.md`, where `<name>` is the
+`~/.qargi/config/profiles/<name>.md`, where `<name>` is the
 repository directory's name (override with `--profile NAME|FILE`). Before a
 `send`, read it and inline its text as PROFILE. No profile is fine. Nothing
 qargi related is ever added to a project's committed files.
