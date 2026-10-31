@@ -165,13 +165,17 @@ COMMANDS = {
     },
     "release": {
         "summary": "Releases and hotfixes by the git-flow rules",
-        "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog. "
+        "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. "
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
                  "a develop whose head passed the whole suite. Pushing, merging and tagging need the plan token and an approval."),
         "scripts": ["release.sh"],
         "verbs": {
-            "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog date (default today)", "YYYY-MM-DD")]),
+            "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
+                                                                                                    opt("--allow-empty-notes", "release although '## [Unreleased]' in CHANGELOG.md is empty")],
+                          desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
+                                "with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. "
+                                "A project without a man page or changelog is not checked for that part.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED]),

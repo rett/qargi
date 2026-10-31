@@ -16,7 +16,7 @@ case "\$*" in *"pr checks"*) [ "\$(cat "$T/ci" 2>/dev/null)" != fail ];; *"pr cr
 G
 chmod +x "$T/bin/gh"; export PATH=$T/bin:$PATH
 R=$T/app; git init -q -b master "$R"; git init -q --bare "$T/origin.git"
-echo 0.1.0 > "$R/VERSION"; printf '# Changelog\n\n## [Unreleased]\n' > "$R/CHANGELOG.md"
+echo 0.1.0 > "$R/VERSION"; printf '# Changelog\n\n## [Unreleased]\n\n- a change\n' > "$R/CHANGELOG.md"
 git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" push -q origin master develop
 git -C "$R" checkout -q -b parked   # the main checkout is on neither long-lived branch
 jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
@@ -117,8 +117,8 @@ git -C "$R" merge-base --is-ancestor "$rs" develop && git -C "$R" merge-base --i
 $REL start 0.2.0 >/dev/null 2>&1 && no "a tag that exists was reused" || ok "a released version cannot be started again"
 
 # --- a hotfix goes into the open release branch when there is one; the version conflict the model warns about is resolved
-$REL verify 0.3.0 >/dev/null 2>&1; $REL start 0.3.0 >/dev/null 2>&1
-$REL start 0.2.1 --hotfix >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
+$REL verify 0.3.0 >/dev/null 2>&1; $REL start 0.3.0 --allow-empty-notes >/dev/null 2>&1
+$REL start 0.2.1 --hotfix --allow-empty-notes >/dev/null 2>&1 && [ "$(git -C "$R" rev-parse hotfix/0.2.1~1)" = "$(git -C "$R" rev-parse master)" ] && ok "a hotfix is cut from master" || no "hotfix start"
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" hotfix/0.2.1; echo fix > "$w/fix.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "the fix"; git -C "$R" worktree remove --force "$w"
 t=$($REL push 0.2.1 --hotfix | tok); $REL push 0.2.1 --hotfix --plan "$t" --approved go >/dev/null 2>&1
 d2=$(git -C "$R" rev-parse develop); r2=$(git -C "$R" rev-parse release/0.3.0); m2=$(git -C "$R" rev-parse master)
@@ -132,7 +132,7 @@ hout=$($REL finish 0.2.1 --hotfix --resolved --plan "$t" --approved go 2>&1); rc
 git -C "$R" show master:fix.txt >/dev/null 2>&1 && git -C "$R" rev-parse -q --verify refs/tags/0.2.1 >/dev/null && ok "and in master, tagged" || no "hotfix master"
 
 # --- two conflicting merges in one finish are each resolved once; a forgotten --resolved does not destroy a resolution
-$REL verify 0.4.0 >/dev/null 2>&1; $REL start 0.4.0 >/dev/null 2>&1
+$REL verify 0.4.0 >/dev/null 2>&1; $REL start 0.4.0 --allow-empty-notes >/dev/null 2>&1
 t=$($REL push 0.4.0 | tok); $REL push 0.4.0 --plan "$t" --approved go >/dev/null 2>&1
 side() { w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q --detach "$w" "$1"; echo "$2" > "$w/VERSION"; git -C "$w" add -A; git -C "$w" commit -q -m "$2"; git -C "$R" update-ref "refs/heads/$1" "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"; }
 side master master-side; side develop develop-side
@@ -152,7 +152,7 @@ fout=$($REL finish 0.4.0 --resolved --plan "$t" --approved go 2>&1); rc=$?
 [ ! -f "$cm.done" ] && [ "$(git -C "$T/origin.git" rev-parse master)" = "$msha" ] && git -C "$T/origin.git" rev-parse -q --verify refs/tags/0.4.0 >/dev/null && ok "pushed together with the tag, and the bookkeeping is cleared" || no "push/bookkeeping"
 # a refused push changes nothing (a fresh repository, so no earlier history interferes)
 R2=$T/app2; git init -q -b master "$R2"; git init -q --bare "$T/origin2.git"
-echo 0.1.0 > "$R2/VERSION"; printf '# Changelog\n\n## [Unreleased]\n' > "$R2/CHANGELOG.md"
+echo 0.1.0 > "$R2/VERSION"; printf '# Changelog\n\n## [Unreleased]\n\n- a change\n' > "$R2/CHANGELOG.md"
 git -C "$R2" add -A && git -C "$R2" commit -q -m one && git -C "$R2" branch develop && git -C "$R2" remote add origin "$T/origin2.git" && git -C "$R2" push -q origin master develop
 git -C "$R2" checkout -q -b parked
 jq -n --arg p "$R2" '{schema:1, project:"app2", methodology:"gitflow", repo:{url:"https://github.com/acme/app2", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app2.json"
