@@ -73,6 +73,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   clone, as it already did `.claude/skills`. Reading stays allowed.
 
 ### Added
+- A GitHub Actions workflow runs the whole test suite on pull requests and on pushes to `develop`.
 - `qargi packs load [PACK] --role R [--project P]`: read-only. Without a pack it lists what the role has enabled, with each
   description; with one it prints its approved text and the library path of its other files. It reads the links when called,
   so linking, unlinking, enabling and disabling take effect at once, and it refuses a pack that fails its review or changed
