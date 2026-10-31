@@ -18,16 +18,61 @@ def git(d, *args):
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def read(d, rel):
-    try:
-        with open(os.path.join(d, rel), encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except OSError:
+class Tree:
+    """The files of one commit of the repository, read with git (ls-tree, show): never the working tree."""
+
+    def __init__(self, d, ref):
+        self.d, self.ref = d, ref
+        out = git(d, "ls-tree", "-r", "--name-only", "-z", ref) if ref else ""
+        self.files = set(p for p in out.split("\0") if p)
+        self.dirs = set()
+        for p in self.files:
+            while "/" in p:
+                p = p.rsplit("/", 1)[0]
+                self.dirs.add(p)
+
+    def read(self, rel):
+        if rel not in self.files:
+            return ""
+        r = subprocess.run(["git", "-C", self.d, "show", "%s:%s" % (self.ref, rel)], capture_output=True)
+        return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+
+    def exists(self, rel):
+        rel = rel.rstrip("/")
+        return rel in self.files or rel in self.dirs
+
+    def listdir(self, rel):
+        pre = rel.rstrip("/") + "/"
+        return [p[len(pre):] for p in self.files if p.startswith(pre) and "/" not in p[len(pre):]]
+
+
+def read(t, rel):
+    return t.read(rel)
+
+
+def exists(t, rel):
+    return t.exists(rel)
+
+
+def integration_ref(d, long_lived, branches):
+    """(ref, why): the methodology's integration branch (its last long-lived one), else the default branch, else HEAD."""
+    def has(b):
+        for full in ("refs/heads/" + b, "refs/remotes/origin/" + b):
+            if git(d, "rev-parse", "--verify", "-q", full + "^{commit}"):
+                return full
         return ""
-
-
-def exists(d, rel):
-    return os.path.exists(os.path.join(d, rel))
+    if long_lived:
+        r = has(long_lived[-1])
+        if r:
+            return r, "the methodology's integration branch %s" % long_lived[-1]
+    dflt = git(d, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").replace("origin/", "", 1)
+    for b in ([dflt] if dflt else []) + ["master", "main", "trunk"]:
+        r = has(b)
+        if r:
+            return r, "the default branch %s (no %s branch)" % (b, long_lived[-1] if long_lived else "integration")
+    if git(d, "rev-parse", "--verify", "-q", "HEAD^{commit}"):
+        return "HEAD", "HEAD (no integration or default branch found)"
+    return "", "no commit yet"
 
 
 def project_name(d, remote):
@@ -125,17 +170,21 @@ def detect(d, name=None, methodology="gitflow"):
     head = git(d, "symbolic-ref", "--short", "-q", "HEAD")
     long_lived = [b for b in ("master", "main", "trunk", "develop") if b in branches]
     tags = git(d, "tag", "--sort=-creatordate").splitlines()
+    where, md, m = M.load(methodology)
+    ref, ref_why = integration_ref(d, (m.get("branches") or {}).get("long_lived", []), branches)
+    dpath, d = d, Tree(d, ref)   # from here on d is the tree of ref
     cmd, why = test_command(d)
-    ci = sorted(f for f in (os.listdir(os.path.join(d, ".github/workflows")) if exists(d, ".github/workflows") else []) if f.endswith((".yml", ".yaml")))
+    ci = sorted(f for f in d.listdir(".github/workflows") if f.endswith((".yml", ".yaml")))
     found = {
-        "path": d, "remote": remote, "current_branch": head, "branches": branches, "long_lived": long_lived,
+        "ref": ref and git(dpath, "rev-parse", "--abbrev-ref", ref) or ref, "ref_why": ref_why,
+        "path": dpath, "remote": remote, "current_branch": head, "branches": branches, "long_lived": long_lived,
         "tags": tag_pattern(tags), "version": version_info(d), "changelog": changelog_info(d),
         "test_command": cmd, "test_command_from": why, "language": language(d), "ci_workflows": ci,
         "files": {f: exists(d, f) for f in ("README.md", "CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", "LICENSE", ".gitignore")},
-        "dirty": bool(git(d, "status", "--porcelain")),
+        "dirty": bool(git(dpath, "status", "--porcelain")),
+        "url": https_url(remote) if remote else "",
     }
-    pname = name or project_name(d, remote)
-    where, md, m = M.load(methodology)
+    pname = name or project_name(dpath, remote)
     questions = []
     if not remote:
         questions.append("repo.url: the repository has no origin remote; give its https URL (qargi project set %s repo.url ...)" % pname)
@@ -149,7 +198,7 @@ def detect(d, name=None, methodology="gitflow"):
         roles[r] = {"base": base, "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high" if r in ("build", "test") else "medium", "apt": [], "skills": []}
     answers = {
         "schema": 1, "project": pname, "methodology": methodology,
-        "repo": {"url": https_url(remote) if remote else "https://github.com/OWNER/REPO", "path": d, "credential_file": "",
+        "repo": {"url": https_url(remote) if remote else "https://github.com/OWNER/REPO", "path": dpath, "credential_file": "",
                  "long_lived": long_lived or ["master", "develop"]},
         "roles": roles, "memory": {"memory_store": "", "reference_store": ""}, "budget_cents": 500,
     }
