@@ -27,6 +27,7 @@ run bash tests/test_methodology.sh
 run bash tests/test_attach.sh
 run bash tests/test_new.sh
 run bash tests/test_flow.sh
+run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run python3 tests/test_migrate.py
 run python3 tests/test_home.py
