@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- A review member could lift its own read-only limit: the guard took the ability from `RUN/ability`, a file the member could
+  write. The guard now refuses any write to a run's `ability` and `refs.before`, and a member that only reviews names its
+  class in the hook command of its definition (under the protected agents directory), which holds on every task whatever the
+  run file says. Run `qargi agent refresh NAME` for existing members to get the new hook; a guard given an unknown class
+  refuses every call.
+
 ### Added
 - `qargi upgrade [--branch B | --tag T]`: plan, then apply with `--plan TOKEN --approved "..."`: moves the installed tool (the root-owned checkout
   `install.sh` recorded) to a newer branch (fast-forward only on its current branch) or tag of its origin, re-runs

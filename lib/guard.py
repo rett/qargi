@@ -6,8 +6,11 @@ out of its way can still get around it, which is why verify exists.
 
 Publishing: git push, gh, ssh, scp, sftp, and changing a remote.
 
-Review is read-only as a rule: `qargi local prepare` writes the task's ability to RUN/ability. When the nearest run
-directory above the call's cwd or file path says review, the guard also refuses an edit outside RUN/out (the report
+Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
+under the protected ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
+and falls back on `qargi local prepare`, which writes the task's ability to RUN/ability; the guard refuses any write to
+that file and to refs.before, so a member cannot change the ability it is judged by. When the class says read-only, or
+the nearest run directory above the call's cwd or file path says review, the guard also refuses an edit outside RUN/out (the report
 and the manifest) and a Bash command that writes into the clone: a redirection into it, a command that creates,
 changes or removes files there, or a git command that changes the work tree or the history.
 
@@ -112,6 +115,30 @@ def run_dir(path):
     return None
 
 
+def read_class(argv):
+    """The class the hook command line names: "" (none) or "read-only". Anything else is an error the caller refuses."""
+    if "--class" not in argv:
+        return ""
+    k = argv.index("--class")
+    return argv[k + 1] if k + 1 < len(argv) else None
+
+
+CLASS = ""
+CLASSES = ("", "read-only")
+
+
+def is_review(run):
+    """True when the member is read-only by class or the run directory says review."""
+    return CLASS == "read-only" or ability_of(run) == "review"
+
+
+def control_refusal(full):
+    """The reason a write to a run directory's control file (ability, refs.before) is refused, or None."""
+    if os.path.basename(full) in ("ability", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
+        return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
+    return None
+
+
 def ability_of(run):
     try:
         with open(os.path.join(run, "ability")) as f:
@@ -169,8 +196,11 @@ def review_refusal(tool, inp, cwd):
         if not fp:
             return None
         full = os.path.realpath(os.path.join(cwd, fp))
+        why = control_refusal(full)
+        if why:
+            return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
-        if run and ability_of(run) == "review" and not inside(full, os.path.join(run, "out")):
+        if run and is_review(run) and not inside(full, os.path.join(run, "out")):
             return "under the review ability only the report and the manifest in RUN_DIR may be written (%s is not)" % fp
         return None
     if tool != "Bash":
@@ -194,8 +224,11 @@ def review_segment(toks, i, here):
         return os.path.realpath(os.path.join(here, os.path.expanduser(p)))
     for what, dest in write_targets(toks, i):
         full = resolve_(dest)
+        why = control_refusal(full)
+        if why:
+            return why
         run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
-        if run and ability_of(run) == "review" and inside(full, os.path.join(run, "clone")):
+        if run and is_review(run) and inside(full, os.path.join(run, "clone")):
             return "under the review ability nothing in the clone may be changed (%s into %s)" % (what, dest)
     return None
 
@@ -408,6 +441,12 @@ def decide():
 
 
 def main():
+    global CLASS
+    cls = read_class(sys.argv[1:])
+    if cls not in CLASSES:
+        print("qargi guard: unknown class %r in the hook command; refusing every call until the member is refreshed." % cls, file=sys.stderr)
+        return 2
+    CLASS = cls
     try:
         return decide()
     except Exception as e:                                # fail closed: a guard that cannot decide refuses
