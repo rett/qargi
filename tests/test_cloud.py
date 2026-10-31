@@ -13,7 +13,6 @@ while [ $# -gt 0 ]; do case $1 in --profile) p=$2; shift 2;; *) break;; esac; do
 echo "$p $*" >> "$STUB_LOG"
 case "$1 $2" in
   "profile list") printf '* claude\n  qargi\n';;
-  "profile get") case $p in qargi) echo "$STUB_QARGI_WS";; claude) echo wrkspc_01ClaudeClaudeClaude;; *) exit 1;; esac;;
   "auth status") exit 0;;
   "auth login") echo "login $*" >> "$STUB_LOG";;
   *) echo '{}';;
@@ -32,6 +31,7 @@ class T(unittest.TestCase):
         with open(os.path.join(self.bin, "ant"), "w") as f:
             f.write(STUB)
         os.chmod(os.path.join(self.bin, "ant"), 0o755)
+        self.set_login("qargi", WS, WS)
         self.env = dict(os.environ, HOME=self.t, QARGI_STATE=self.state, QARGI_CONF=self.conf, STUB_LOG=self.log, STUB_QARGI_WS=WS,
                         PATH=self.bin + ":" + os.environ["PATH"])
         self.env.pop("ANTHROPIC_PROFILE", None)
@@ -40,6 +40,15 @@ class T(unittest.TestCase):
         with open(self.proj, "w") as f:
             json.dump({"schema": 1, "project": "alpha", "repo": {"url": "https://github.com/example/alpha", "long_lived": ["main"]},
                        "roles": {"build": {"base": "main", "push": {"mode": "none"}, "model": "m", "effort": "high"}}, "memory": {}, "budget_cents": 500}, f)
+
+    def set_login(self, profile, login_ws, config_ws):
+        base = os.path.join(self.t, ".config", "anthropic")
+        for d in ("configs", "credentials"):
+            os.makedirs(os.path.join(base, d), exist_ok=True)
+        with open(os.path.join(base, "configs", profile + ".json"), "w") as f:
+            json.dump({"authentication": {"type": "user_oauth"}, "workspace_id": config_ws}, f)
+        with open(os.path.join(base, "credentials", profile + ".json"), "w") as f:
+            json.dump({"type": "oauth_token", "access_token": "SECRET", "workspace_id": login_ws}, f)
 
     def q(self, *a, **kw):
         return subprocess.run([BIN, *a], capture_output=True, text=True, env=kw.get("env", self.env), stdin=subprocess.DEVNULL)
@@ -63,10 +72,11 @@ class T(unittest.TestCase):
     def test_check(self):
         self.q("cloud", "set", "alpha", "--profile", "qargi", "--workspace-id", WS)
         self.assertEqual(self.q("cloud", "check", "alpha").returncode, 0)
-        self.env["STUB_QARGI_WS"] = OTHER                                           # the profile was re-bound elsewhere
+        self.set_login("qargi", OTHER, WS)                                         # the login is bound elsewhere; the config still says WS
         r = self.q("cloud", "check", "alpha")
         self.assertEqual(r.returncode, 1)
         self.assertIn("not " + WS, r.stderr)
+        self.assertIn("does not rebind", r.stderr)
         self.q("cloud", "set", "alpha", "--profile", "ghost", "--workspace-id", WS)
         self.assertIn("does not exist", self.q("cloud", "check", "alpha").stderr)
 
@@ -93,7 +103,7 @@ class T(unittest.TestCase):
         self.q("cloud", "set", "alpha", "--profile", "qargi", "--workspace-id", WS)
         with open(os.path.join(self.conf, "instances.json"), "w") as f:
             json.dump({"alpha-build": {"location": "cloud", "agent": {"id": "a"}, "deployment_id": "dep_1"}}, f)
-        self.env["STUB_QARGI_WS"] = OTHER
+        self.set_login("qargi", OTHER, WS)
         r = self.q("instances", "show", "alpha-build")
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("does not reach workspace " + WS, r.stderr)
