@@ -149,8 +149,9 @@ cc_inputs() { # project outfile
     [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
     if [ -e "$P" ]; then
       want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
-      if review "$k" "$P" >/dev/null 2>&1; then rv=true; else rv=false; fi
-      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P")" --arg a "$want" --argjson rv "$rv" --arg r "$r" \
+      # an unreadable file makes the pack fail its review (and keeps sha256sum's complaints off the screen)
+      if [ -z "$(find "$P" ! -readable -print -quit 2>/dev/null)" ] && review "$k" "$P" >/dev/null 2>&1; then rv=true; else rv=false; fi
+      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P" 2>/dev/null)" --arg a "$want" --argjson rv "$rv" --arg r "$r" \
         '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r}' >> "$out.rows"
     else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r}' >> "$out.rows"; fi
   done <<<"$rows"
@@ -166,22 +167,42 @@ cc_launch() { # dir: the exact command that loads the render
   [ ! -f "$1/settings.json" ] || c="$c --settings $1/settings.json"
   echo "launch: $c"
 }
+cc_cleanup() { # the temporary files, this run's staging directory and the lock file, whatever the exit
+  local st
+  if [ -n "${CC_W:-}" ]; then
+    st=$(jq -r '.stage // empty' "$CC_W/token.stage" 2>/dev/null)
+    [ -z "$st" ] || [ "$(dirname "$st")" != "$DA_STATE/claude" ] || rm -rf "$st"
+    rm -rf "$CC_W"
+  fi
+  [ -z "${CC_LK:-}" ] || rm -f "$CC_LK"
+}
+cc_lock() { # project: exclusive lock for plan+swap on claude/.PROJECT.lock; the file is removed at exit, so re-check the inode
+  CC_LK=$DA_STATE/claude/.$1.lock
+  while :; do
+    [ ! -L "$CC_LK" ] || rm -f "$CC_LK"
+    exec 9>"$CC_LK" || die "cannot open the lock file $CC_LK"
+    flock 9 || die "cannot lock $CC_LK"
+    [ /proc/self/fd/9 -ef "$CC_LK" ] && break
+  done
+}
 cc_main() { # verb: apply|check
-  local prj=${ARGS[0]:-} PY W tok live
+  local prj=${ARGS[0]:-} PY tok live
   [ -n "$prj" ] || die "$1 --target claude-code needs PROJECT"
   PY=$(dirname "$(readlink -f "$0")")/packs_claude.py
-  W=$(mktemp -d); trap 'rm -rf "$W" "$DA_STATE/claude/.$prj.new"' EXIT
-  cc_inputs "$prj" "$W/in.json"
+  CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
+  cc_inputs "$prj" "$CC_W/in.json"
   live=$DA_STATE/claude/$prj
-  if [ "$1" = check ]; then python3 -I "$PY" check "$W/in.json"; exit $?; fi
-  python3 -I "$PY" plan "$W/in.json" "$W/token" || exit 1
-  tok=$(cat "$W/token")
+  if [ "$1" = check ]; then python3 -I "$PY" check "$CC_W/in.json"; exit $?; fi
+  python3 -I "$PY" prep "$CC_W/in.json" || exit 1
+  cc_lock "$prj"
+  python3 -I "$PY" plan "$CC_W/in.json" "$CC_W/token" || exit 1
+  tok=$(cat "$CC_W/token")
   if [ -z "$APPROVED" ]; then
     echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
   fi
   need_token "$tok"
   audit_log packs-apply-claude-code "$prj $tok"
-  python3 -I "$PY" swap "$W/in.json" || exit 1
+  python3 -I "$PY" swap "$CC_W/in.json" "$CC_W/token.stage" "$tok" || exit 1
   echo "applied: $live"; cc_launch "$live"
   exit 0
 }
