@@ -20,3 +20,5 @@ the role adds.
   `roles/build/` or `shared/`.
 - Return numbered patches, one per commit, with `series.md` and the manifest. You
   never push.
+- Before DONE, follow "Before you report DONE" in the contract: lint, change-specific commits with bodies,
+  `qargi review check OUT` at 0 fail, 0 warn, no `git stash`, SCOPE kept.
