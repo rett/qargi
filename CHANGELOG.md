@@ -12,6 +12,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   class in the hook command of its definition (under the protected agents directory), which holds on every task whatever the
   run file says. Run `qargi agent refresh NAME` for existing members to get the new hook; a guard given an unknown class
   refuses every call.
+- A member could rewrite the installed tool through the links in `~/.claude/skills` (they resolve into the installed copy,
+  which was not a protected location) and a project's `.claude/agents` definitions (which carry the hook that guards a
+  member). The guard now protects the installed tool root recorded in `install.json` and `.claude/agents` outside the run's
+  clone, as it already did `.claude/skills`. Reading stays allowed.
 
 ### Added
 - `qargi packs load [PACK] --role R [--project P]`: read-only. Without a pack it lists what the role has enabled, with each
