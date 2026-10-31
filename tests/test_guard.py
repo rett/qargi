@@ -32,7 +32,7 @@ class Guard(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(d)), ["member.md"], "qargi ships one member definition")
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
-        self.assertIn('command: "qargi __guard"', text)
+        self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
         self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
@@ -56,8 +56,8 @@ class Review(unittest.TestCase):
         with open(os.path.join(self.run, "ability"), "w") as f:
             f.write(a + "\n")
 
-    def call(self, tool, inp, cwd=None):
-        return subprocess.run([BIN, "__guard"], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
+    def call(self, tool, inp, cwd=None, *args):
+        return subprocess.run([BIN, "__guard", *args], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
                               capture_output=True, text=True)
 
     def writes(self):
@@ -95,6 +95,30 @@ class Review(unittest.TestCase):
         self.ability("build")
         for tool, inp in self.writes() + self.reads():
             self.assertEqual(self.call(tool, inp).returncode, 0, (tool, inp))
+
+    def test_the_class_in_the_hook_holds_whatever_the_run_file_says(self):
+        self.ability("build")                                   # the file says build; the class in the hook says read-only
+        for tool, inp in self.writes():
+            r = self.call(tool, inp, None, "--class", "read-only")
+            self.assertEqual(r.returncode, 2, (tool, inp, r.stderr))
+        for tool, inp in self.reads():
+            self.assertEqual(self.call(tool, inp, None, "--class", "read-only").returncode, 0, (tool, inp))
+
+    def test_a_member_cannot_change_the_run_record(self):
+        self.ability("review")
+        a, b = os.path.join(self.run, "ability"), os.path.join(self.run, "refs.before")
+        for cls in ((), ("--class", "read-only")):
+            for tool, inp in (("Write", {"file_path": a}), ("Edit", {"file_path": b}),
+                              ("Bash", {"command": "printf build > %s" % a}), ("Bash", {"command": "echo x >> %s" % b}),
+                              ("Bash", {"command": "cd %s && printf build > ability" % self.run})):
+                r = self.call(tool, inp, self.out, *cls)
+                self.assertEqual(r.returncode, 2, (tool, inp, cls, r.stderr))
+        with open(a) as f:
+            self.assertEqual(f.read().strip(), "review")
+
+    def test_an_unknown_class_refuses_every_call(self):
+        self.assertEqual(self.call("Bash", {"command": "ls"}, None, "--class", "root").returncode, 2)
+        self.assertEqual(self.call("Bash", {"command": "ls"}, None, "--class").returncode, 2)
 
     def test_outside_a_run_nothing_changes(self):
         self.ability("review")

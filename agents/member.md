@@ -8,7 +8,7 @@ hooks:
     - matcher: "Bash|Edit|Write|NotebookEdit"
       hooks:
         - type: command
-          command: "qargi __guard"
+          command: "qargi __guard{{GUARD_ARGS}}"
           timeout: 20
           onFailure: "block"
 ---

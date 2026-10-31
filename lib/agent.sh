@@ -61,7 +61,9 @@ hide_in_git() { # repo file: keep a project-level definition out of the reposito
 }
 
 render() { # name abilities-csv model -> the definition on stdout
-  sed -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
+  # a member that only reviews is read-only by class, named in its hook command (under the protected agents directory)
+  local ga=''; [ "$2" != review ] || ga=' --class read-only'
+  sed -e "s/{{GUARD_ARGS}}/$ga/g" -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
 }
 
 add() {
