@@ -8,6 +8,8 @@
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string)
+#   project.sh new NAME [--methodology M] [--dir D] [--url U] [--deployment ID] [--param k=v] [--plan T --approved W]
+#                                         create a project directory with a git repository and the methodology's generic files
 #   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
 #                                         read an existing repository, show the answers and the gaps, store on approval
 #   project.sh show NAME | list | validate FILE
@@ -168,6 +170,64 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model)/\(.value.effort)"' "$PROJ_DIR/$n.json";;
+  new)
+    # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
+    n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
+    meth=gitflow dir='' url='' dep='' force='' PLAN_ARG='' APPROVED='' PARAMS=()
+    while [ $# -gt 0 ]; do
+      case $1 in --methodology) meth=$2; shift 2;; --dir) dir=$2; shift 2;; --url) url=$2; shift 2;; --deployment) dep=$2; shift 2;;
+        --param) PARAMS+=(--param "$2"); shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
+    done
+    export PLAN_ARG   # need_plan reads it
+    lib=$(dirname "$0")
+    [ -n "$dir" ] || dir=$PWD/$n
+    dir=${dir/#\~/$HOME}; case $dir in /*) ;; *) dir=$PWD/$dir;; esac
+    [ -d "$(dirname "$dir")" ] || die "$(dirname "$dir") does not exist: create it first, or give --dir"
+    if [ -e "$dir" ]; then [ -d "$dir" ] && [ -z "$(ls -A "$dir")" ] || die "$dir exists and is not an empty directory"; fi
+    files=$(python3 -I "$lib/methodology.py" files "$meth" --param "project=$n" "${PARAMS[@]}") || exit 1
+    if [ -n "$dep" ]; then python3 -I "$lib/methodology.py" deployment "$meth" "$dep" >/dev/null || exit 1; fi
+    [ ! -e "$PROJ_DIR/$n.json" ] || die "project $n is already initialised (qargi project show $n)"
+    long=$(python3 -I - "$lib" "$meth" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
+print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
+PY
+    ) || exit 1
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$(jq -S -c . <<<"$files")" | plan_token)
+    echo "new project $n with the $meth methodology at $dir"
+    echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
+    echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"
+    if [ -n "$url" ]; then echo "  qargi answers stored for $url (outside the repository)"; else echo "  no --url: the answers are stored later, when the remote exists: qargi project attach $dir --url URL"; fi
+    echo "  deployment: ${dep:-not chosen (see below)}"
+    echo
+    if [ -z "$APPROVED" ]; then
+      python3 -I "$lib/methodology.py" deployment "$meth"
+      echo; echo "choose one with --deployment ID (qargi methodology deployment $meth ID shows how); you can do it by hand or ask for it to be done for you"
+      echo; echo "plan token: $tok   (create with: qargi project new $n --plan $tok --approved \"...\" plus the same options)"
+      exit 0
+    fi
+    need_plan "$tok"
+    mkdir -p "$dir"
+    jq -r '.[] | [.dest, (.content | @base64)] | @tsv' <<<"$files" | while IFS=$'\t' read -r rel b64; do
+      mkdir -p "$dir/$(dirname "$rel")"; printf '%s' "$b64" | base64 -d > "$dir/$rel"
+    done
+    first=${long%% *}; last=${long##* }
+    git -C "$dir" init -q -b "$first" || die "git init failed in $dir"
+    git -C "$dir" add -A
+    git -C "$dir" commit -q -m "Start $n" || die "the first commit failed (is a git user.name and user.email set?); the files are in $dir"
+    for b in $long; do [ "$b" = "$first" ] || git -C "$dir" branch "$b"; done
+    git -C "$dir" checkout -q "$last"
+    audit_log "project:new" "$n"
+    echo "created $dir (on $last, $(git -C "$dir" rev-parse --short HEAD))"
+    if [ -n "$url" ]; then
+      det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth") || exit 1
+      f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
+      out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
+      mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
+      echo "project $n stored in $PROJ_DIR/$n.json"
+    fi
+    if [ -n "$dep" ]; then echo; python3 -I "$lib/methodology.py" deployment "$meth" "$dep"; fi
+    echo; echo "next: create the repository on your host and push (git remote add origin URL; git push -u origin ${long// / })"
+    echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
   attach)
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
     dir=. name='' meth=gitflow url='' force='' PLAN_ARG='' APPROVED=''

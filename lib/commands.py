@@ -68,6 +68,15 @@ COMMANDS = {
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
+            "new": verb("Start a new project: its directory, a git repository on the methodology's branches and generic files", [("NAME", "none")],
+                        [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
+                         opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
+                         opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
+                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"), PLAN, APPROVED],
+                        desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
+                              "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
+                              "is created: say where it goes with git. The files mention no tool of yours."),
+                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme --deployment github-release"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),

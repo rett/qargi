@@ -33,6 +33,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   what it could not determine, and a plan token; with `--plan` and `--approved` it stores the answers outside the repository.
   Closing the gaps is a separate, reviewed change.
 
+- `qargi project new NAME` starts a project from a methodology: it prints a plan (directory, branches, files, deployment
+  options with instructions) and a token; with `--plan` and `--approved` it creates the directory, runs `git init`, writes the
+  generic files in a first commit and creates the long-lived branches, leaving you on `develop`. With `--url` the qargi answers are
+  stored too. Nothing is pushed and no remote is created. `--deployment ID` records a deployment option and prints how to do it.
+  The generated `.gitignore` excludes `.claude/worktrees/` and `.claude/settings.local.json`.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The

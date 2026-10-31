@@ -14,3 +14,7 @@
 # build output
 dist/
 build/
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json

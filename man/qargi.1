@@ -79,6 +79,48 @@ replace stored answers.
 .RE
 .RS
 .TP
+.BI "new " "NAME"
+Start a new project: its directory, a git repository on the methodology's branches and generic files.
+.br
+Prints the plan (directory, branches, files, deployment options with instructions) and a token; with \-\-plan and \-\-approved it creates the directory, runs git init, writes the generic files in a first commit and creates the long\-lived branches. Nothing is pushed and no remote is created: say where it goes with git. The files mention no tool of yours.
+.RS
+.TP
+.BI "\-\-methodology " "NAME"
+the methodology (default gitflow).
+.RE
+.RS
+.TP
+.BI "\-\-dir " "DIR"
+where to create it (default ./NAME; must be absent or empty).
+.RE
+.RS
+.TP
+.BI "\-\-param " "NAME=VALUE"
+a methodology parameter as name=value (repeat), for example test_command.
+.RE
+.RS
+.TP
+.BI "\-\-url " "URL"
+the repository URL; with it the qargi answers are stored too.
+.RE
+.RS
+.TP
+.BI "\-\-deployment " "ID"
+a deployment option to record and explain (see qargi methodology deployment).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
 .BI "attach " "[DIR]"
 Attach to an existing repository: read it, show the answers and the gaps, store on approval.
 .br
