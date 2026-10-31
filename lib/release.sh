@@ -8,7 +8,9 @@
 # and a pull request into master runs CI on the commit that will be released.
 #
 #   release.sh start VERSION [--hotfix]     branch from develop (master for a hotfix); the first commit bumps VERSION and dates
-#                                           the changelog. A release starts only from a develop whose head passed `verify`.
+#                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
+#                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
+#                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #   release.sh status VERSION [--hotfix]
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts)
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
@@ -19,11 +21,11 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED=''
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY=''
 while [ $# -gt 0 ]; do
   case $1 in
     --project) PROJ=$2; shift 2;; --date) DATE=$2; shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;;
-    --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;;
+    --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
@@ -58,20 +60,62 @@ case $verb in
     b0=$(sha_of "$BASE")
     worktree "$BASE"
     git -C "$WT" checkout -q --detach "$b0"
+    # the preflight: every file the release must update is checked and rewritten in the temporary worktree first; a refusal
+    # exits before any branch exists, so nothing has changed
+    oldver=''; [ -f "$WT/VERSION" ] && oldver=$(tr -d '[:space:]' < "$WT/VERSION")
     if [ -f "$WT/VERSION" ]; then echo "$VER" > "$WT/VERSION"; git -C "$WT" add VERSION; fi
-    if [ -f "$WT/CHANGELOG.md" ] && grep -q '^## \[Unreleased\]' "$WT/CHANGELOG.md"; then
-      python3 -I - "$WT/CHANGELOG.md" "$VER" "$DATE" <<'PY'
-import sys
-p, ver, date = sys.argv[1:4]
+    while IFS= read -r mp; do
+      [ -n "$mp" ] || continue
+      python3 -I - "$WT/$mp" "$mp" "$VER" "$DATE" "$oldver" <<'PY' || exit 1
+import re, sys
+path, name, ver, date, old = sys.argv[1:6]
+def refuse(why):
+    sys.exit("qargi: %s: %s. Fix: make its .TH line read .TH NAME SECTION \"DATE\" \"NAME VERSION\", then start the release again." % (name, why))
+lines = open(path, encoding="utf-8").read().split("\n")
+for i, l in enumerate(lines):
+    if l.startswith(".TH ") or l == ".TH":
+        break
+else:
+    refuse("it has no .TH line, so the release cannot set its date and version")
+tok = re.findall(r'"[^"]*"|\S+', lines[i])
+if len(tok) < 5:
+    refuse("its .TH line has no date and source (version) fields, so the bump cannot update them")
+src = tok[4].strip('"')
+if old and old in src:
+    src = src.replace(old, ver)
+else:
+    m = list(re.finditer(r"\d+\.\d+\.\d+[\w.+-]*", src))
+    if not m:
+        refuse("the source field of its .TH line (%s) carries no version, so the bump cannot update it" % tok[4])
+    src = src[:m[-1].start()] + ver + src[m[-1].end():]
+tok[3] = '"%s"' % date
+tok[4] = '"%s"' % src
+lines[i] = " ".join(tok)
+open(path, "w", encoding="utf-8").write("\n".join(lines))
+PY
+      git -C "$WT" add "$mp"
+    done < <(git -C "$WT" ls-files | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true)
+    if [ -f "$WT/CHANGELOG.md" ]; then
+      python3 -I - "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" <<'PY' || exit 1
+import re, sys
+p, ver, date, allow = sys.argv[1:5]
 t = open(p, encoding="utf-8").read()
+m = re.search(r"^## \[Unreleased\][^\n]*\n", t, re.M)
+if not m:
+    sys.exit("qargi: CHANGELOG.md has no '## [Unreleased]' section to release. Fix: add one with the changes of this release, then start again.")
+rest = t[m.end():]
+n = re.search(r"^## ", rest, re.M)
+body = rest[:n.start()] if n else rest
+if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
+    sys.exit("qargi: CHANGELOG.md has nothing under '## [Unreleased]'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again.")
 open(p, "w", encoding="utf-8").write(t.replace("## [Unreleased]", "## [Unreleased]\n\n## [%s] - %s" % (ver, date), 1))
 PY
       git -C "$WT" add CHANGELOG.md
     fi
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
-    echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog is dated $DATE"
-    echo "other files that carry the version (a man page, a manifest) are yours to bump on this branch"
+    echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
+    echo "other files that carry the version (a manifest) are yours to bump on this branch"
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
   status)
     h=$(sha_of "$BR")
