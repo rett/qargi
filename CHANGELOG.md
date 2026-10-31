@@ -48,7 +48,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `develop` (a hotfix: into the open release branch), delete, push. Merges are made in temporary worktrees and a branch moves only
   after every merge succeeded; a conflict changes nothing, keeps the merge in progress in a worktree it names (exit 3), and
   `--resolved` applies the merge you resolved. Merging and pushing need a plan token and an approval; a release starts only from
-  a `develop` whose head passed the whole suite.
+  a `develop` whose head passed the whole suite. A finished feature's whole-suite run carries over to `develop`'s new head, and
+  a feature must contain `develop` to finish, so a release needs no extra run. A release or hotfix finishes only on the commit that is
+  on origin with passing checks, and pushes master, develop and the tag together or not at all.
+
+- The `qargi-flow` skill: the lead's git-flow process with the qargi commands (features and tasks, the one whole-suite run per feature,
+  releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
 
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an

@@ -50,6 +50,7 @@ case $verb in
     need_free "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    merge_forget "feature-$NAME_ARG-merge-${EXTRA//\//_}"
     echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   sync)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
@@ -57,6 +58,7 @@ case $verb in
     need_free "$BR"
     merge_step "$h" refs/heads/develop "feature-$NAME_ARG-sync" "Merge branch 'develop' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    merge_forget "feature-$NAME_ARG-sync"
     echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   list)
     branches=$(g for-each-ref --format='%(refname:short)' 'refs/heads/feature/*')
@@ -91,22 +93,29 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ "$(verified "$BR")" = "$h pass" ] || die "the whole suite has no passing run at the head of $BR (qargi feature verify $NAME_ARG); the branch must not move after it"
     d0=$(sha_of develop); [ -n "$d0" ] || die "no develop branch"
+    g merge-base --is-ancestor "$d0" "$BR" || die "develop has moved on since $BR was cut: qargi feature sync $NAME_ARG, verify again, then finish (the run must have seen what develop now holds)"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin 2>/dev/null || die "fetch failed"
       if g rev-parse -q --verify refs/remotes/origin/develop >/dev/null; then g merge-base --is-ancestor origin/develop develop || die "develop is behind or differs from origin/develop: reconcile them first"; fi
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" | plan_token)
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG --plan $tok --approved \"...\")"; exit 0; fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     need_free develop "$BR"
-    merge_step "$d0" "refs/heads/$BR" "feature-$NAME_ARG-into-develop" "Merge branch '$BR' into develop"
-    g update-ref refs/heads/develop "$MERGED" "$d0" || die "could not move develop (it changed meanwhile)"
+    k="feature-$NAME_ARG-into-develop"
+    merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
+    # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
+    if g remote get-url origin >/dev/null 2>&1; then
+      g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
+    fi
+    g update-ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
+    merge_forget "$k"
+    jq -c --arg s "$MERGED" '.sha = $s' "$(rec "$BR")" > "$(rec develop)"
     [ -n "$KEEP" ] || g update-ref -d "refs/heads/$BR" "$h"
     audit_log "feature:finish" "$PROJ $NAME_ARG"
-    echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR")"
+    echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
     if g remote get-url origin >/dev/null 2>&1; then
-      g push -q origin develop || die "the push failed; the merge exists locally"
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
       echo "pushed develop"
     fi;;

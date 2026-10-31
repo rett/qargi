@@ -43,13 +43,6 @@ if [ -n "$HOTFIX" ]; then BR=${HOT_PAT//\{version\}/$VER} BASE=master KIND=hotfi
 RELPREFIX=${REL_PAT%%\{version\}*}
 open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPREFIX}*"; }   # the open release branches
 
-# the checks of the pull request into master; with no origin there is no CI, which is said, not hidden
-ci_green() {
-  g remote get-url origin >/dev/null 2>&1 || { echo "note: no origin remote, so no CI ran on $BR" >&2; return 0; }
-  command -v gh >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
-  gh -R "$(jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||')" pr checks "$BR" >/dev/null 2>&1
-}
-
 case $verb in
   start)
     branch_exists "$BR" && die "$BR exists already"
@@ -127,32 +120,45 @@ PY
       [ "$n" -le 1 ] || die "more than one release branch is open ($(echo "$rels" | tr '\n' ' ')): merge this hotfix into the right one by hand"
       [ "$n" = 0 ] || second=$rels
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" | plan_token)
-    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff, delete $BR, push master, $second and the tag"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" | plan_token)
+    echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
-    ci_green || die "the pull request's checks have not all passed: nothing was merged or pushed"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin || die "fetch failed"
+      g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null || die "$BR is not on origin: qargi release push $VER${HOTFIX:+ --hotfix} (CI must see what is released)"
+      [ "$(g rev-parse "origin/$BR")" = "$h" ] || die "origin/$BR is not the local $BR: the pull request's checks ran on a different commit. Push it (qargi release push) and wait for the checks"
       for b in master "$second"; do
         if g rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null; then
           g merge-base --is-ancestor "origin/$b" "$b" || die "$b is behind or differs from origin/$b: reconcile them first"
         fi
       done
+      command -v gh >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
+      gh -R "$(jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||')" pr checks "$BR" >/dev/null 2>&1 || die "the pull request's checks have not all passed (or there is no pull request for $BR): nothing was merged or pushed"
+    else
+      [ "$(verified "$BR")" = "$h pass" ] || die "the repository has no origin, so no CI: the whole suite must have a passing run at the head of $BR (qargi release verify $VER${HOTFIX:+ --hotfix})"
+      echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
     need_free master "$second" "$BR"
     m0=$(sha_of master); s0=$(sha_of "$second")
-    merge_step "$m0" "refs/heads/$BR" "$KIND-$VER-into-master" "Merge branch '$BR'"
+    k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
+    merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"
     nm=$MERGED
-    merge_step "$s0" "refs/heads/$BR" "$KIND-$VER-into-${second//\//_}" "Merge branch '$BR' into $second"
+    merge_step "$s0" "refs/heads/$BR" "$k2" "Merge branch '$BR' into $second"
     ns=$MERGED
-    g update-ref refs/heads/master "$nm" "$m0" && g update-ref "refs/heads/$second" "$ns" "$s0" || die "could not move master and $second"
     g tag -a "$VER" -m "$VER" "$nm"
+    if g remote get-url origin >/dev/null 2>&1; then
+      # all or none: the push comes before any local branch moves, so a failure changes nothing
+      if ! g push -q --atomic origin "$nm:refs/heads/master" "$ns:refs/heads/$second" "refs/tags/$VER"; then
+        g tag -d "$VER" >/dev/null 2>&1; die "the push failed; nothing was changed locally or on origin (run it again)"
+      fi
+    fi
+    g update-ref refs/heads/master "$nm" "$m0" && g update-ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
+    merge_forget "$k1" "$k2"
     [ -n "$KEEP" ] || g update-ref -d "refs/heads/$BR" "$h"
     audit_log "release:finish" "$PROJ $VER"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     if g remote get-url origin >/dev/null 2>&1; then
-      g push -q origin master "$second" "refs/tags/$VER" || die "the push failed; the merges and the tag exist locally"
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
       echo "pushed master, $second and tag $VER"
     else

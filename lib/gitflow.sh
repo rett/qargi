@@ -7,7 +7,8 @@
 g() { git -C "$REPO" "$@"; }
 rec() { echo "$RDIR/$PROJ-${1//\//_}.json"; }   # branch -> the file that records its last full-suite run
 sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
-verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r '.sha + " " + .result' "$f" 2>/dev/null; }
+# "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command
+verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'select(.command == $c) | .sha + " " + .result' "$f" 2>/dev/null; }
 branch_exists() { [ -n "$(sha_of "$1")" ]; }
 
 WT=''
@@ -25,25 +26,36 @@ wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user
 # merge_step INTO_SHA FROM KEY MESSAGE -> MERGED (the merge commit); a --no-ff merge made in a temporary worktree.
 # On a conflict nothing moves: the worktree is kept as the place to resolve it (STATE/conflicts/PROJ-KEY) with the merge in
 # progress, the conflicted files are listed and the command exits 3. Resolve and commit there, then run the same command with
-# --resolved: the commit is used if it is a merge of exactly INTO_SHA and FROM, with nothing left unmerged.
+# --resolved: the commit is used if it is a merge of exactly INTO_SHA and FROM, with nothing left unmerged. Running the command
+# again without --resolved while a resolution is waiting is refused, not overwritten.
 merge_step() {
-  local into=$1 from=$2 key=$3 msg=$4 dir from_sha files
-  dir=$DA_STATE/conflicts/$PROJ-$key
+  local into=$1 from=$2 key=$3 msg=$4 dir from_sha files out donef di df dm
+  dir=$DA_STATE/conflicts/$PROJ-$key; donef=$dir.done
   from_sha=$(g rev-parse "$from")
-  if [ -n "${RESOLVED:-}" ] && [ -d "$dir" ]; then
-    [ -z "$(git -C "$dir" diff --name-only --diff-filter=U)" ] && [ ! -f "$(git -C "$dir" rev-parse --git-path MERGE_HEAD)" ] \
-      || die "the merge in $dir is not finished: resolve the conflicts, git add them, git commit, then run this again with --resolved"
-    [ "$(git -C "$dir" rev-parse HEAD^1 2>/dev/null)" = "$into" ] && [ "$(git -C "$dir" rev-parse HEAD^2 2>/dev/null)" = "$from_sha" ] \
-      || die "the commit in $dir is not a merge of $from into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
-    MERGED=$(git -C "$dir" rev-parse HEAD)
-    g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
-    return 0
+  if [ -n "${RESOLVED:-}" ]; then
+    # a merge resolved earlier in this command whose refs have not moved yet: used again, so it is never resolved twice
+    if [ -f "$donef" ] && read -r di df dm < "$donef" && [ "$di" = "$into" ] && [ "$df" = "$from_sha" ]; then MERGED=$dm; return 0; fi
+    if [ -d "$dir" ]; then
+      [ -z "$(git -C "$dir" diff --name-only --diff-filter=U)" ] && [ ! -f "$(git -C "$dir" rev-parse --git-path MERGE_HEAD)" ] \
+        || die "the merge in $dir is not finished: resolve the conflicts, git add them, git commit, then run this again with --resolved"
+      [ "$(git -C "$dir" rev-parse HEAD^1 2>/dev/null)" = "$into" ] && [ "$(git -C "$dir" rev-parse HEAD^2 2>/dev/null)" = "$from_sha" ] \
+        || die "the commit in $dir is not a merge of $from into the current head (the branches moved, or it is not a merge commit): remove it with git worktree remove --force $dir and start over"
+      MERGED=$(git -C "$dir" rev-parse HEAD)
+      printf '%s %s %s\n' "$into" "$from_sha" "$MERGED" > "$donef"
+      g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"
+      return 0
+    fi
+  elif [ -d "$dir" ]; then
+    die "a merge is waiting to be resolved in $dir: finish it there (git add, git commit) and run this again with --resolved, or abandon it with git worktree remove --force $dir"
+  elif [ -f "$donef" ] && read -r di df _ < "$donef" && [ "$di" = "$into" ] && [ "$df" = "$from_sha" ]; then
+    die "a merge you resolved is waiting to be applied: run this again with --resolved (or abandon it with rm $donef)"
   fi
-  if [ -d "$dir" ]; then g worktree remove --force "$dir" >/dev/null 2>&1 || rm -rf "$dir"; fi
+  rm -f "$donef"
   worktree "$into"
-  if git -C "$WT" merge -q --no-ff "$from" -m "$msg" >/dev/null 2>&1; then MERGED=$(git -C "$WT" rev-parse HEAD); cleanup; return 0; fi
-  mkdir -p "$DA_STATE/conflicts"
+  if out=$(git -C "$WT" merge -q --no-ff "$from" -m "$msg" 2>&1); then MERGED=$(git -C "$WT" rev-parse HEAD); cleanup; return 0; fi
   files=$(git -C "$WT" diff --name-only --diff-filter=U)
+  if [ -z "$files" ]; then cleanup; die "merging $from failed without a conflict: $out"; fi
+  mkdir -p "$DA_STATE/conflicts"
   g worktree move "$WT" "$dir" >/dev/null 2>&1 || { cleanup; die "the merge of $from conflicts, and the worktree to resolve it in could not be kept; nothing was changed"; }
   WT=''
   echo "qargi: merging $from conflicts. Nothing was changed. Conflicted files:" >&2
@@ -52,6 +64,7 @@ merge_step() {
   echo "Then run the same command again with --resolved. (git worktree remove --force $dir abandons it.)" >&2
   exit 3
 }
+merge_forget() { local k; for k in "$@"; do rm -f "$DA_STATE/conflicts/$PROJ-$k.done"; done; }   # after the refs moved
 
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
