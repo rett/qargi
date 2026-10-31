@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Skills and tools ("packs"): one library, names globally unique, attached by scope links.
 #
-#   library   $XDG_CONFIG_HOME/qargi/packs/skills/<name>/   (a directory with SKILL.md)
-#             $XDG_CONFIG_HOME/qargi/packs/tools/<name>.json (an MCP server with an allowlist)
-#   links     $XDG_CONFIG_HOME/qargi/packs/links.json
+#   library   ~/.qargi/config/packs/skills/<name>/   (a directory with SKILL.md)
+#             ~/.qargi/config/packs/tools/<name>.json (an MCP server with an allowlist)
+#   links     ~/.qargi/config/packs/links.json
 #
 # A link attaches a pack at a scope: user (every project and role), user-role (one role of every
 # project), project (every role of one project), project-role (one role of one project). A role

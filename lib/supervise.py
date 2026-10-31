@@ -27,7 +27,9 @@ import fcntl, hashlib, json, os, re, signal, sys, time
 from datetime import datetime, timezone, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+sys.path.insert(0, HERE)
+import paths as P  # noqa: E402  where the data lives
+STATE = P.state()
 DEFAULTS = os.environ.get("QARGI_SUPERVISE_DEFAULTS") or os.path.join(HERE, "supervise-defaults.json")
 
 EVENTS = {"subagent-start": "start", "subagent-stop": "stop", "tool-use": "tool", "tool-failure": "fail",
@@ -105,7 +107,7 @@ def hook_event(verb):
     try:
         signal.signal(signal.SIGALRM, lambda *a: os._exit(0))
         signal.alarm(4)
-        if verb not in EVENTS or sys.stdin.isatty():
+        if verb not in EVENTS or sys.stdin.isatty() or P.legacy_pending():   # not before `qargi migrate home`: it must not create the new root
             return
         p = json.loads(sys.stdin.buffer.read(4000000).decode("utf-8", "replace"))
         if not isinstance(p, dict):

@@ -6,7 +6,7 @@
 # SessionStart hook returns; prints nothing outside a registered project.
 #   hook.sh session-start [--project P] [--role lead]
 # The run-event handlers (subagent-start|subagent-stop|tool-use|tool-failure|notification|stop-failure|pre-compact) read the
-# hook's JSON on stdin and append one small line to $QARGI_STATE/run-events/<agent_id>.jsonl (see supervise.py). They only
+# hook's JSON on stdin and append one small line to ~/.qargi/state/run-events/<agent_id>.jsonl (see supervise.py). They only
 # record, read no content, and always exit 0 at once: they run before anything else so no failure here can block an agent.
 case ${1:-} in
   subagent-start|subagent-stop|tool-use|tool-failure|notification|stop-failure|pre-compact)
@@ -56,8 +56,10 @@ MS=$(jq -r '.memory.memory_store // ""' "$PCFG"); RS=$(jq -r '.memory.reference_
 [ -z "$RS" ] || fetch reference "$RS" &
 wait
 
-python3 -I - "$PRJ" "$HROLE" "$MS" "$RS" "$tmp" <<'PY'
+QARGI_LIB=$(dirname "$(readlink -f "$0")") python3 -I - "$PRJ" "$HROLE" "$MS" "$RS" "$tmp" <<'PY'
 import json, os, sys
+sys.path.insert(0, os.environ["QARGI_LIB"])
+import paths as P
 prj, role, ms, rs, tmp = sys.argv[1:6]
 parts, n = [], 0
 for kind, sid in (("memory", ms), ("reference", rs)):
@@ -73,7 +75,7 @@ if not parts:
 grant = ""
 if role == "lead":
     try:
-        lp = (json.load(open(os.path.join(os.environ.get("QARGI_CONF") or os.path.expanduser("~/.config/qargi"), "projects", prj + ".json"))).get("lead") or {}).get("push") or {}
+        lp = (json.load(open(os.path.join(P.conf(), "projects", prj + ".json"))).get("lead") or {}).get("push") or {}
     except Exception:
         lp = {}
     if lp.get("local"):

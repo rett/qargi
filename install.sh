@@ -18,10 +18,15 @@
 # A --project install never touches the repository's committed files: the paths
 # are hidden through the repository's local .git/info/exclude, and the install
 # is refused if any of them is already tracked. The instance registry, session
-# tracker and profiles are always per user (XDG dirs). Install at one level only.
+# tracker and profiles are always per user (~/.qargi). Install at one level only.
+#
+# --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
+# QARGI_HOME when set; --uninstall removes it). A checkout run from any other place is then a dev run that keeps its data
+# in its own .qargi directory (see README, Running a branch checkout). The record is not written while the data is still
+# in the earlier XDG directories: run `qargi migrate home` first, then install.sh --user again.
 set -eu
 
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(cd "$(dirname "$0")" && pwd -P)
 skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-team qargi-build qargi-write qargi-review qargi-test"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
@@ -45,6 +50,7 @@ completion=$xdg/bash-completion/completions/qargi
 zshcomp=$xdg/zsh/site-functions/_qargi
 fishcomp=${XDG_CONFIG_HOME:-$HOME/.config}/fish/completions/qargi.fish
 src=$here
+liveconf=${QARGI_CONF:-${QARGI_HOME:-$HOME/.qargi}/config}   # where the install record goes: the live location, never a dev sandbox
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
 # Agent definitions an earlier version of this tool linked from its agents/ folder; they no longer exist there.
@@ -85,6 +91,7 @@ if [ -n "$uninstall" ]; then
     if [ -L "$p" ] || { [ -e "$p" ] && [ -n "$force" ]; }; then rm -rf "$p"; echo "removed $p"
     elif [ -e "$p" ]; then echo "kept $p (not a symlink; use --force to remove)"; fi
   done
+  [ "$mode" != user ] || [ ! -f "$liveconf/install.json" ] || { rm -f "$liveconf/install.json"; echo "removed $liveconf/install.json"; }
   exit 0
 fi
 
@@ -120,6 +127,17 @@ if [ "$mode" = user ]; then
   fi
   echo "installed skills in $target, command at $cmd, man page at $manpage ($kind)"
   echo "completion: bash $completion, zsh $zshcomp, fish $fishcomp"
+  if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ ! -e "$HOME/.qargi" ] \
+     && { [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/qargi" ] || [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/qargi" ]; }; then
+    echo "note: your data is still in the earlier XDG directories, so the install was not recorded; run: qargi migrate home, then install.sh --user again" >&2
+  elif command -v jq >/dev/null 2>&1; then
+    mkdir -p "$liveconf"; chmod 700 "$liveconf"
+    jq -n --arg r "$(cd "$src" && pwd -P)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg v "$(cat "$src/VERSION")" '{tool_root:$r, installed_at:$t, version:$v}' > "$liveconf/install.json"
+    chmod 600 "$liveconf/install.json"
+    echo "recorded the install in $liveconf/install.json (a checkout run from elsewhere keeps its data in its own .qargi)"
+  else
+    echo "note: jq is not installed, so the install was not recorded in $liveconf/install.json" >&2
+  fi
   ! command -v zsh >/dev/null 2>&1 || echo "note: for zsh add this to ~/.zshrc before compinit: fpath=($(dirname "$zshcomp") \$fpath)" >&2
   command -v man >/dev/null 2>&1 && ! man -w qargi >/dev/null 2>&1 && echo "note: man does not find it yet; add $xdg/man to MANPATH (or: man -l $manpage)" >&2 || true
   echo "note: bash loads the completion in new shells when bash-completion is installed; otherwise add to ~/.bashrc: source $completion" >&2

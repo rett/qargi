@@ -123,7 +123,7 @@ class Skills(unittest.TestCase):
         shutil.rmtree(self.t, ignore_errors=True)
 
     def call(self, tool, inp, cwd=None, **env):
-        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "XDG_CONFIG_HOME", "HOME")}
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
         e.update({"HOME": self.home, "QARGI_CONF": self.conf}, **env)
         e = {k: v for k, v in e.items() if v is not None}
         return subprocess.run([BIN, "__guard"], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
@@ -227,6 +227,27 @@ class Skills(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         r = self.bash("echo x > %s/.config/qargi/packs/links.json" % self.home)         # the default stays protected beside QARGI_CONF
         self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_the_pack_library_is_protected_where_the_data_lives_now_and_where_it_was(self):
+        for d in (".qargi/config/packs", ".config/qargi/packs", "qh/config/packs", "qh2/config/packs", "xdgc/qargi/packs"):
+            os.makedirs(os.path.join(self.t, d if d.startswith(("qh", "xdgc")) else "home/" + d), exist_ok=True)
+        new_default = "%s/.qargi/config/packs/links.json" % self.home
+        old_default = "%s/.config/qargi/packs/links.json" % self.home
+        for target, env in ((new_default, dict(QARGI_CONF=None)),                                    # ~/.qargi/config
+                            (old_default, dict(QARGI_CONF=None)),                                    # the earlier library stays protected
+                            (os.path.join(self.t, "qh/config/packs/links.json"), dict(QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                            (os.path.join(self.t, "xdgc/qargi/packs/links.json"), dict(QARGI_CONF=None, XDG_CONFIG_HOME=os.path.join(self.t, "xdgc")))):
+            r = self.bash("echo x > %s" % target, **env)
+            self.assertEqual(r.returncode, 2, (target, r.stderr))
+            r = self.call("Write", {"file_path": target}, **env)
+            self.assertEqual(r.returncode, 2, (target, r.stderr))
+        # protection stops at the library: the rest of the new root is not a skill
+        r = self.bash("echo x > %s/.qargi/config/instances.json" % self.home, QARGI_CONF=None)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # QARGI_HOME is the root; XDG_CONFIG_HOME no longer moves it
+        other = os.path.join(self.t, "qh2/config/packs/links.json")
+        self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh2")).returncode, 2)
 
     def test_a_home_whose_dot_claude_is_a_link_is_still_protected(self):
         home2, real = os.path.join(self.t, "home2"), os.path.join(self.t, "elsewhere")

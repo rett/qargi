@@ -17,8 +17,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
-  - a write under a protected location: the pack library ($QARGI_CONF/packs, else $XDG_CONFIG_HOME/qargi/packs, else
-    ~/.config/qargi/packs), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, and any .claude/skills directory
+  - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
+    ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, and any .claude/skills directory
     outside the run's clone (a project's installed one). Inside the clone, found from the nearest `qargi local
     prepare` run directory, .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
@@ -201,10 +201,14 @@ def review_segment(toks, i, here):
 
 def protected_roots():
     """The directories whose content is a skill or the library of them (real paths)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
-    conf = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "qargi")
-    roots = {os.path.join(conf, "packs"), os.path.join(home, ".config", "qargi", "packs"), os.path.join(home, ".claude", "skills"),
-             os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
+    # the library where the data lives now, the default and the QARGI_HOME one beside an override, and the earlier XDG
+    # libraries, which stay as a backup after `qargi migrate home`
+    roots = {os.path.join(P.conf(), "packs"), os.path.join(P.root(), "config", "packs"), os.path.join(P.live_conf(), "packs"), os.path.join(home, ".qargi", "config", "packs"),
+             os.path.join(P.legacy_conf(), "packs"), os.path.join(home, ".config", "qargi", "packs"),
+             os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
     return sorted(os.path.realpath(r) for r in roots)
 
 

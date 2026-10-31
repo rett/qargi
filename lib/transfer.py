@@ -12,14 +12,15 @@ memory, hashes must match, and nothing is written before the plan has been shown
 import datetime, getpass, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, termios, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths as P  # noqa: E402  where the data lives
 import roles as ROLES  # noqa: E402  the role names before the abilities
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FORMAT = 1
 MAX_ARCHIVE = 256 * 1024 * 1024
-CONF = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
-STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+CONF = P.conf()
+STATE = P.state()
 TTY_IN = os.environ.get("QARGI_TTY_IN", "/dev/tty")
 TTY_OUT = os.environ.get("QARGI_TTY_OUT", "/dev/tty")
 

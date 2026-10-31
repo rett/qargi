@@ -14,6 +14,7 @@ case $area in
   help|-h|--help) exec python3 -I "$help" show "$@";;
   __complete) exec python3 -I "$help" complete "$@";;
   __guard) exec python3 -I "$lib/guard.py";;
+  version) cat "$root/VERSION"; exit 0;;
 esac
 # qargi COMMAND --help and qargi COMMAND VERB --help
 case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
@@ -23,6 +24,8 @@ case $area:${1:-} in
   hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
     "$lib/hook.sh" "$@" || true; exit 0;;
 esac
+# Only the earlier XDG layout exists: stop before anything creates the new root (lib/paths.py; lib.sh checks too).
+case $area:${1:-} in migrate:home) ;; *) python3 -I "$lib/paths.py" check || exit 1;; esac
 # What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
 _rf=$(mktemp)
 if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then

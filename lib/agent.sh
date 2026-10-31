@@ -2,7 +2,7 @@
 # Members: the local agents that do the work, named by you. qargi ships one member definition
 # (agents/member.md); `add` renders it under the name you choose, with the abilities it serves
 # (build, write, review, test; each ability is defined by the skill qargi-<ability>, which the
-# member loads when a task block names it). The members are recorded in $XDG_CONFIG_HOME/qargi/agents.json.
+# member loads when a task block names it). The members are recorded in ~/.qargi/config/agents.json.
 #
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
 #   agent.sh list

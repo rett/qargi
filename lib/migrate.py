@@ -346,8 +346,11 @@ def build(names, work):
 
 
 def main(argv):
+    if argv[:1] == ["home"]:
+        import migrate_home
+        return migrate_home.main(argv[1:])
     if argv[:1] != ["roles"]:
-        print("usage: qargi migrate roles [--member-names build=NAME,...] [--apply --plan TOKEN --asked \"...\"]", file=sys.stderr)
+        print("usage: qargi migrate roles|home [--member-names build=NAME,...] [--apply --plan TOKEN --asked \"...\"]", file=sys.stderr)
         return 2
     apply, token, asked, names_arg = False, "", "", ""
     i = 1
