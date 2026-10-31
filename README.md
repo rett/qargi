@@ -112,7 +112,8 @@ ability in the run directory, and under it the guard refuses an edit outside the
 output directory and a Bash command that writes into the clone. Whatever the ability,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
-install`, `qargi packs apply`) and any write in the pack library, `~/.claude/skills` or
+install`, `qargi packs apply`) and any write in the pack library, in `credentials/` or `install.json` of the
+configuration directory (not the rest of it), in `~/.claude/skills` or
 a `.claude/skills` directory outside its clone (also `~/.claude/agents` and
 `~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
 the member's clone stay writable, since they are the work product. The guard fails closed on an
@@ -158,7 +159,7 @@ Each verb prints its plan and a plan token and changes nothing until you run it 
 - **state**: the session tracker and the audit log (the audit log is only ever appended to).
 - **credentials**: token files. Only an encrypted archive may hold them; the tokens in the cloud vault are not exported.
 
-Both ask what to include (or take `--only`/`--project`). Export asks for an optional password; with one the whole archive is encrypted with gpg (AES-256) and the password never appears in a command line (`--password-file` for scripts). Import asks for the password if the archive is encrypted, shows what is inside, asks which parts and projects, and for each part how to treat what exists: `merge` (add what is missing), `overwrite` (also replace what differs) or `replace` (make it match the archive, removing the rest; you must type `replace` to allow the removals). It prints the plan, writes nothing until you confirm, and saves whatever it replaces or removes under `$XDG_STATE_HOME/qargi/backups/`. The archive is treated as untrusted: names, kinds of entry and checksums are verified before anything is read. `qargi import FILE --dry-run` prints the plan without a terminal.
+Both ask what to include (or take `--only`/`--project`). Export asks for an optional password; with one the whole archive is encrypted with gpg (AES-256) and the password never appears in a command line (`--password-file` for scripts). Import asks for the password if the archive is encrypted, shows what is inside, asks which parts and projects, and for each part how to treat what exists: `merge` (add what is missing), `overwrite` (also replace what differs) or `replace` (make it match the archive, removing the rest; you must type `replace` to allow the removals). It prints the plan, writes nothing until you confirm, and saves whatever it replaces or removes under `~/.qargi/state/backups/`. The archive is treated as untrusted: names, kinds of entry and checksums are verified before anything is read. `qargi import FILE --dry-run` prints the plan without a terminal.
 
 ## Install
 
@@ -173,12 +174,22 @@ files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove (copies need `--force`). An existing real directory is
 never replaced without `--force`. Install at one level only. The command is
 always user-level, so install `--user` before `--project`. The instance
-registry, session tracker and profiles are per user, under the XDG config and
-state directories, whichever level installs the skills. Repository rules for
-agents go in a profile under `$XDG_CONFIG_HOME/qargi/profiles/`, also
+registry, session tracker and profiles are per user, under `~/.qargi/config` and
+`~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
+agents go in a profile under `~/.qargi/config/profiles/`, also
 outside the repository: nothing qargi related is added to a project's
 committed files. `--project` installs are hidden from git through the
 repository's local `.git/info/exclude`.
+
+### Where the data lives
+
+Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
+
+An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`. While only those exist, every command except `help`, `version`, the completion, the guard and the run-event hooks stops and tells you to run `qargi migrate home`. It prints the plan (every file, mode and digest, and the files whose old paths it rewrites; the records `audit.log`, `supervisor.log` and `run-events/` are copied byte for byte) and a token; with `--plan TOKEN --approved "<words>"` it copies, checks every file by digest and leaves the old directories untouched as a backup. It never creates an empty `~/.qargi` next to old data.
+
+### Running a branch checkout
+
+`install.sh --user` records the tool it installed in `~/.qargi/config/install.json`. A checkout run from anywhere else, for example `bin/qargi` in a worktree, is then a dev run: it keeps its data in `<checkout>/.qargi` (ignored by git), prints `qargi: dev run from ...; data in ...` on stderr once per command, and never touches your live projects, credentials or audit log. The installed copy (for example `/opt/qargi`) is for confirming committed work and managing live projects, and never writes into its own directory. Without `install.json` a checkout behaves as the installed one. To point a dev run at live data on purpose set `QARGI_HOME=~/.qargi`; any explicit `QARGI_HOME`, `QARGI_CONF` or `QARGI_STATE` overrides the sandbox, and `qargi migrate home` refuses in a dev run unless one of them is set. Members call `qargi __guard` and the hooks from `PATH`, which is the installed copy: put `<checkout>/bin` first on `PATH` to test a branch's guard or hooks.
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).

@@ -12,7 +12,10 @@ Usage: report.py [--since DATE] [--instance NAME] [--stale-after DURATION] [--lo
 import json, os, statistics, sys
 from datetime import datetime, timezone
 
-STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths as P  # noqa: E402  where the data lives
+
+STATE = P.state()
 REVIEW = ("pending", "applied", "rejected", "not-applicable")
 # status_idle stop reasons (Managed Agents): end_turn is a turn that ended on its own; the others need a person.
 FINISHED = ("end_turn",)

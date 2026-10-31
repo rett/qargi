@@ -13,6 +13,9 @@ roles` (lib/migrate.sh) and `qargi import` (lib/transfer.py) use it, and only th
 """
 import json, os, re, sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths as P  # noqa: E402  where the data lives
+
 ROLE = {"dev": "build", "docs": "write"}
 ABILITIES = ("build", "write", "review", "test")
 # the per-role local agents an earlier version installed, and the ability each one served
@@ -101,11 +104,11 @@ def store_plan(mems, today):
 
 # --- local state ---------------------------------------------------------------------------------------------------
 def conf():
-    return os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
+    return P.conf()
 
 
 def state():
-    return os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+    return P.state()
 
 
 def jload(path, default):

@@ -103,7 +103,7 @@ Check an answers file without storing it.
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi\-build, qargi\-write, qargi\-review, qargi\-test) the member loads when the task block names it. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
+A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi\-build, qargi\-write, qargi\-review, qargi\-test) the member loads when the task block names it. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -1614,7 +1614,22 @@ print the plan and stop; changes nothing.
 .B qargi migrate
 Bring an installation made with older names to the current ones.
 .PP
-roles renames what was made with the role names dev and docs (now build and write) and the four fixed local agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved definitions; in every project's two memory stores the role folders and the role names in indexes, README and marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their prompts, rebuilt as refresh\-prompt does; and the old agent symlinks, replaced by members (qargi agent add). Without \-\-apply it prints the plan, with every cloud call, and a plan token. It is re\-runnable: what is renamed already is left out, and it stops at the first failure.
+home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. roles renames what was made with the role names dev and docs (now build and write) and the four fixed local agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved definitions; in every project's two memory stores the role folders and the role names in indexes, README and marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their prompts, rebuilt as refresh\-prompt does; and the old agent symlinks, replaced by members (qargi agent add). Without \-\-apply it prints the plan, with every cloud call, and a plan token. It is re\-runnable: what is renamed already is left out, and it stops at the first failure.
+.RS
+.TP
+.B home
+Plan, then copy, the data from the XDG directories to ~/.qargi.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
 .RS
 .TP
 .B roles
@@ -1684,36 +1699,42 @@ A team:
 .fi
 .SH FILES
 .TP
-.I $XDG_CONFIG_HOME/qargi/projects/NAME.json
+.I ~/.qargi/config/projects/NAME.json
 the answers about a project.
 .TP
-.I $XDG_CONFIG_HOME/qargi/instances.json
+.I ~/.qargi/config/instances.json
 the registry of instances.
 .TP
-.I $XDG_CONFIG_HOME/qargi/profiles/NAME.md
+.I ~/.qargi/config/profiles/NAME.md
 a repository's gates and review rules, given to agents with a task.
 .TP
-.I $XDG_CONFIG_HOME/qargi/packs/
+.I ~/.qargi/config/packs/
 the library of skills and tools, and their links.
 .TP
-.I $XDG_CONFIG_HOME/qargi/credentials/
+.I ~/.qargi/config/credentials/
 token files, mode 600.
 .TP
-.I $XDG_STATE_HOME/qargi/sessions.json
+.I ~/.qargi/config/install.json
+the tool root install.sh recorded; a checkout run from elsewhere is a dev run.
+.TP
+.I ~/.qargi/state/sessions.json
 the tracker of cloud sessions.
 .TP
-.I $XDG_STATE_HOME/qargi/audit.log
+.I ~/.qargi/state/audit.log
 append\-only record of every approved or cloud verb, with your words.
 .TP
-.I $XDG_STATE_HOME/qargi/runs/
+.I ~/.qargi/state/runs/
 collected outputs of runs.
 .SH ENVIRONMENT
 .TP
+.B QARGI_HOME
+the directory that holds config/ and state/ (default ~/.qargi; a dev run: <checkout>/.qargi, see qargi help dev).
+.TP
 .B QARGI_CONF
-the configuration directory (default $XDG_CONFIG_HOME/qargi).
+the configuration directory (default $QARGI_HOME/config); wins over QARGI_HOME.
 .TP
 .B QARGI_STATE
-the state directory (default $XDG_STATE_HOME/qargi).
+the state directory (default $QARGI_HOME/state); wins over QARGI_HOME.
 .TP
 .B QARGI_RUNS_ROOT
 a directory to scan for local run directories (qargi.*) in qargi report, besides the registry.

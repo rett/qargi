@@ -10,17 +10,18 @@ import glob, json, os, shutil, subprocess, sys, textwrap
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import commands as C  # noqa: E402
+import paths as P  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
 BOLD = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
 def conf():
-    return os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
+    return P.conf()
 
 
 def state():
-    return os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+    return P.state()
 
 
 def b(s):

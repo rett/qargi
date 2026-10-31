@@ -81,7 +81,7 @@ COMMANDS = {
                  "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
-                 "and writes in the pack library, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
+                 "and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
                  "ABILITY prints."),
         "scripts": ["agent.sh"],
         "verbs": {
@@ -410,15 +410,25 @@ COMMANDS = {
     },
     "migrate": {
         "summary": "Bring an installation made with older names to the current ones",
-        "desc": ("roles renames what was made with the role names dev and docs (now build and write) and the four fixed local "
+        "desc": ("home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and "
+                 "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
+                 "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
+                 "directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites "
+                 "old absolute paths (a project's credential file, local-runs.jsonl; the records audit.log, supervisor.log and run-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token "
+                 "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
+                 "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
+                 "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
+                 "roles renames what was made with the role names dev and docs (now build and write) and the four fixed local "
                  "agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved "
                  "definitions; in every project's two memory stores the role folders and the role names in indexes, README and "
                  "marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their "
                  "prompts, rebuilt as refresh-prompt does; and the old agent symlinks, replaced by members (qargi agent add). "
                  "Without --apply it prints the plan, with every cloud call, and a plan token. It is re-runnable: what is renamed "
                  "already is left out, and it stops at the first failure."),
-        "scripts": ["migrate.py"],
+        "scripts": ["migrate.py", "migrate_home.py"],
         "verbs": {
+            "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
+                         examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
             "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
                           [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
                            opt("--apply", "apply the plan the token names"), PLAN,
@@ -579,16 +589,25 @@ TOPICS = {
         "tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.",
         "The GitHub tool cannot create releases; those stay with this session."]),
     "files": ("Where things are", [
-        "Configuration: $XDG_CONFIG_HOME/qargi (default ~/.config/qargi): projects/, instances.json, profiles/, packs/, credentials/.",
-        "State: $XDG_STATE_HOME/qargi (default ~/.local/state/qargi): sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
-        "Overrides: QARGI_CONF and QARGI_STATE replace those two directories. QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
+        "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
+        "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
+        "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used "
+        "(the earlier layout under them is copied by qargi migrate home; until then qargi stops and says so). QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
         "Nothing is stored in a repository."]),
+    "dev": ("Running a branch checkout", [
+        "install.sh --user records the tool it installed in ~/.qargi/config/install.json. A checkout run from any other place (its own bin/qargi, "
+        "for example in a worktree) is then a dev run: it keeps its configuration and state in <checkout>/.qargi (ignored by version control), prints "
+        "'qargi: dev run from ...' on stderr once per command, and never touches your live data. Without install.json every checkout is the installed one.",
+        "QARGI_HOME, QARGI_CONF or QARGI_STATE, when set, win: QARGI_HOME=~/.qargi makes a dev run use live data on purpose.",
+        "help, version, completion, the guard and the run-event hooks print no banner. Members call qargi __guard from PATH, which is the installed "
+        "copy; put <checkout>/bin first on PATH to test the guard or the hooks of a branch."]),
 }
 
 ENVIRONMENT = [
-    ("QARGI_CONF", "the configuration directory (default $XDG_CONFIG_HOME/qargi)"),
-    ("QARGI_STATE", "the state directory (default $XDG_STATE_HOME/qargi)"),
+    ("QARGI_HOME", "the directory that holds config/ and state/ (default ~/.qargi; a dev run: <checkout>/.qargi, see qargi help dev)"),
+    ("QARGI_CONF", "the configuration directory (default $QARGI_HOME/config); wins over QARGI_HOME"),
+    ("QARGI_STATE", "the state directory (default $QARGI_HOME/state); wins over QARGI_HOME"),
     ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
@@ -597,14 +616,15 @@ ENVIRONMENT = [
 ]
 
 FILES = [
-    ("$XDG_CONFIG_HOME/qargi/projects/NAME.json", "the answers about a project"),
-    ("$XDG_CONFIG_HOME/qargi/instances.json", "the registry of instances"),
-    ("$XDG_CONFIG_HOME/qargi/profiles/NAME.md", "a repository's gates and review rules, given to agents with a task"),
-    ("$XDG_CONFIG_HOME/qargi/packs/", "the library of skills and tools, and their links"),
-    ("$XDG_CONFIG_HOME/qargi/credentials/", "token files, mode 600"),
-    ("$XDG_STATE_HOME/qargi/sessions.json", "the tracker of cloud sessions"),
-    ("$XDG_STATE_HOME/qargi/audit.log", "append-only record of every approved or cloud verb, with your words"),
-    ("$XDG_STATE_HOME/qargi/runs/", "collected outputs of runs"),
+    ("~/.qargi/config/projects/NAME.json", "the answers about a project"),
+    ("~/.qargi/config/instances.json", "the registry of instances"),
+    ("~/.qargi/config/profiles/NAME.md", "a repository's gates and review rules, given to agents with a task"),
+    ("~/.qargi/config/packs/", "the library of skills and tools, and their links"),
+    ("~/.qargi/config/credentials/", "token files, mode 600"),
+    ("~/.qargi/config/install.json", "the tool root install.sh recorded; a checkout run from elsewhere is a dev run"),
+    ("~/.qargi/state/sessions.json", "the tracker of cloud sessions"),
+    ("~/.qargi/state/audit.log", "append-only record of every approved or cloud verb, with your words"),
+    ("~/.qargi/state/runs/", "collected outputs of runs"),
 ]
 
 WORKFLOW = [

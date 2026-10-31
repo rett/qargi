@@ -114,8 +114,10 @@ class Render(unittest.TestCase):
             self.assertTrue(H.show_topic(t))
 
     def test_cli_help_forms(self):
+        home = tempfile.mkdtemp()                       # never the real home: some commands look at it
+        self.addCleanup(shutil.rmtree, home, True)
         def run(*a, env=None):
-            return subprocess.run([BIN, *a], capture_output=True, text=True, env=dict(os.environ, **(env or {})), stdin=subprocess.DEVNULL)
+            return subprocess.run([BIN, *a], capture_output=True, text=True, env=dict(os.environ, QARGI_HOME=home, **(env or {})), stdin=subprocess.DEVNULL)
         self.assertEqual(run("help").returncode, 0)
         r = run("lead", "--help")
         self.assertEqual(r.returncode, 0)
