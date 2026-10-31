@@ -39,6 +39,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stored too. Nothing is pushed and no remote is created. `--deployment ID` records a deployment option and prints how to do it.
   The generated `.gitignore` excludes `.claude/worktrees/` and `.claude/settings.local.json`.
 
+- Git-flow, as its author described it. `qargi feature start|list|sync|merge|status|verify|finish`: a feature is a broad, related branch
+  cut from `develop`; verified task branches are merged into it with `--no-ff`; the whole suite runs once when it is complete, and
+  only then is it merged into `develop` (one merge per feature). Several features can be open at once; `feature list` shows their
+  purposes and the files two of them both change. `qargi release start|status|verify|push|finish VERSION [--hotfix]`:
+  `release/<version>` from `develop` (a hotfix from `master`), the version bump as its first commit, a pull request into `master`
+  so CI runs on the commit that will be released, then merge into `master` with `--no-ff`, an annotated tag, merge into
+  `develop` (a hotfix: into the open release branch), delete, push. Merges are made in temporary worktrees and a branch moves only
+  after every merge succeeded; a conflict changes nothing, keeps the merge in progress in a worktree it names (exit 3), and
+  `--resolved` applies the merge you resolved. Merging and pushing need a plan token and an approval; a release starts only from
+  a `develop` whose head passed the whole suite.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The

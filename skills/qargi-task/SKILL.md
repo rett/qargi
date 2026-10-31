@@ -143,6 +143,19 @@ The local agent gets no way to push, and you check afterwards that it did not.
    It refuses a run with no collected manifest (`--discard` for one that produced none) and one whose repository refs
    changed. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
 
+## Features, tasks and develop (git-flow)
+
+Work follows git-flow. A **feature** is a broad, related theme on its own branch (`qargi feature start NAME --purpose "..."`);
+several can be open at once (`qargi feature list` shows their purposes and any file two of them both change: keep related work in
+one feature, unrelated work in another). A **task** is a unit of that feature, run on `agent/<slug>` in an executor's clone
+with `--base feature/NAME`; make tasks as large as the feature allows, so each session runs long and proactively. After
+`/qargi-verify` applies a task's series to a branch, merge it with `qargi feature merge NAME BRANCH` and `qargi local clean`
+the run. Tasks get targeted checks only. When the feature is complete: `qargi feature sync NAME` (pull in what other features
+landed), then `qargi feature verify NAME` (the one whole-suite run), then `qargi feature finish NAME` (plan, then
+`--plan`/`--approved`): the only merge into develop. A merge that conflicts (exit 3) changes nothing and leaves the merge in
+progress in a worktree it names: resolve it there (you may delegate that to a build task, or do it yourself), commit, and rerun
+the same command with `--resolved`. Releases and hotfixes are `qargi release ...` (see `qargi release --help`).
+
 ## Parallel tasks and targeted tests
 
 Split a change into tasks whose paths do not overlap and dispatch them together (one `prepare` and one member launch
