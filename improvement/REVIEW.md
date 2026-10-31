@@ -96,10 +96,13 @@ is not pushed.
 | Should `install.sh --user` offer to migrate? | No: it prints a note only. |
 | Rewriting embedded paths during migration | Not in records: `audit.log`, `run-events/*.jsonl` and `supervisor.log` are copied verbatim. |
 
-Built on `feature/qargi-home` (awaiting review; not merged). Not yet done: the `/opt/qargi` clone itself (needs
-the owner's `sudo`), the migration of the real data, and the `qargi agent refresh` (L20) and `qargi upgrade`
-ideas. Merging `feature/qargi-home` into `develop` makes every command refuse until the owner runs
-`qargi migrate home`, so merge it together with that step.
+Built on `feature/qargi-home`; the owner typed "merge feature/qargi-home once the builder is done" and it is in
+`develop` as `5093d4a` (suite re-run by me on an exported copy of the tip `4a0f0ee`: 29 items, exit 0; guard,
+credentials and verbatim records spot-checked on synthetic data). The installed `qargi` therefore refuses every
+data command until the owner applies `qargi migrate home`. The plan for the real data was printed on
+2026-10-30 (64 files, 1.6 MB, one file rewritten; token `8f0b1f3b988d`, valid only while the sources are
+unchanged; applying needs the owner's typed go-ahead after seeing the plan). Not yet done: that apply, the
+`/opt/qargi` clone (needs the owner's `sudo`), and the `qargi agent refresh` (L20) and `qargi upgrade` ideas.
 
 ## Questions the builders saved for you
 
