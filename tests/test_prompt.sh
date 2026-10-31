@@ -3,6 +3,8 @@
 # Offline (fake ant). The prompt is changed in a scratch copy of the tool, never in the checkout. Run: tests/test_prompt.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 T=$(mktemp -d); fail=0
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake

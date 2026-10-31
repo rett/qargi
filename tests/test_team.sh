@@ -4,6 +4,8 @@
 # Run: tests/test_team.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s FAKE=$T/fake

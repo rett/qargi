@@ -2,6 +2,7 @@
 """qargi supervise: hook handlers, the run registry, the tick's classes, the nudge caps. No model, no cloud, no real state:
 every test uses temporary QARGI_STATE and QARGI_CONF directories, fixtures, and a fake `ant`. Hook events get their time from
 QARGI_NOW so the scenarios are exact. Run: python3 tests/test_supervise.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import inspect, json, os, shutil, subprocess, sys, tempfile, threading, time, unittest
 from datetime import datetime, timedelta, timezone
 
