@@ -418,13 +418,29 @@ COMMANDS = {
         },
     },
     "review": {
-        "summary": "Check what an agent returned",
-        "scripts": ["review_check.py"],
+        "summary": "Check what an agent returned and put it on a task branch",
+        "scripts": ["review_check.py", "review.sh"],
         "verbs": {
             "check": verb("Check a run: numbered patches, messages, manifest, groups", [("RUN_DIR", "dir")],
                           [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
                           desc=("Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
                                 "A review run passes with a report.md that has a Findings section instead of patches.")),
+            "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
+                          [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
+                          desc=("Refuses unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
+                                "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
+                                "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
+                                "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "
+                                "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
+                                "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
+                                "local clean still accepts the run."),
+                          examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
+            "prune": verb("List, or with --yes delete, the agent/* branches already merged into develop or a feature", [],
+                          [PROJECT_OPT, opt("--yes", "delete them (without it nothing changes)")],
+                          desc=("A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch -d makes, against that target "
+                                "rather than the checked-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; "
+                                "no other branch is touched. Prints each branch it lists or deleted."),
+                          examples=["qargi review prune", "qargi review prune --yes"]),
         },
     },
     "team": {
