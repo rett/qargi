@@ -276,12 +276,19 @@ COMMANDS = {
                                 "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
                                 "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
                                 "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
-                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.")),
+                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.\n"
+                                "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
+                                "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
+                                "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
+                                "concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token "
+                                "approved; the token also covers the file modes, which the manifest records.")),
             "check": verb("Check a Claude Code render for drift (read only)", [("PROJECT", "project")], [TARGET],
                           desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
-                                "checkout's .claude/skills, and a missing manifest (nothing rendered yet).")),
+                                "checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from "
+                                "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
+                                "render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.")),
         },
     },
     "start": {
@@ -432,7 +439,11 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)],
                             desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.")),
+                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.\n"
+                                  "When the project (found by matching the repository against the stored answers) has a Claude Code render "
+                                  "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
+                                  "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
+                                  "TASK-BLOCK PATHS block are unchanged.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
                            desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
