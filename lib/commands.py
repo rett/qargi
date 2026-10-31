@@ -45,9 +45,13 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
+PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
+RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
+HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
+
 GROUPS = [
-    ("Set up", ["project", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Run a task", ["feature", "release", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -68,6 +72,23 @@ COMMANDS = {
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
+            "new": verb("Start a new project: its directory, a git repository on the methodology's branches and generic files", [("NAME", "none")],
+                        [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
+                         opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
+                         opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
+                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"), PLAN, APPROVED],
+                        desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
+                              "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
+                              "is created: say where it goes with git. The files mention no tool of yours."),
+                        examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
+            "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
+                           [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
+                            opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
+                            opt("--url", "the repository URL, when it has no origin remote", "URL"),
+                            PLAN, APPROVED, opt("--force", "replace stored answers")],
+                           desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
+                                 "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
+                                 "stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change.")),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
                         examples=["qargi project set acme roles.write.effort high"]),
@@ -117,6 +138,47 @@ COMMANDS = {
             "show": verb("Print a role: its class, description and instructions", [("NAME", "workrole")]),
             "prompt": verb("Print a role's instructions as a task block carries them", [("NAME", "workrole")]),
             "check": verb("Validate one role, or all of them", [("[NAME]", "workrole")]),
+        },
+    },
+    "feature": {
+        "summary": "Develop on a feature branch; merge it into develop once, when complete",
+        "desc": ("A feature branch is cut from develop and can be as broad as a theme. The lead merges the verified series of each related "
+                 "task into it with --no-ff; tasks get targeted checks only. When the feature is complete the whole suite runs once on it and it is "
+                 "merged into develop with --no-ff and deleted. The merges are made in temporary worktrees and a branch moves only after every merge "
+                 "succeeded, so your checkout is never touched and a conflict changes nothing. Merging into develop and pushing need the plan token "
+                 "and an approval."),
+        "scripts": ["feature.sh"],
+        "verbs": {
+            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT")]),
+            "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
+                         desc="Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another."),
+            "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT]),
+            "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, RESOLVED_OPT]),
+            "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT]),
+            "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT]),
+            "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
+                           [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
+                           desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. A merge that conflicts changes "
+                                 "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
+                                 "and the same command with --resolved applies exactly that merge.")),
+        },
+    },
+    "release": {
+        "summary": "Releases and hotfixes by the git-flow rules",
+        "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog. "
+                 "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
+                 "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
+                 "a develop whose head passed the whole suite. Pushing, merging and tagging need the plan token and an approval."),
+        "scripts": ["release.sh"],
+        "verbs": {
+            "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog date (default today)", "YYYY-MM-DD")]),
+            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
+            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
+            "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED]),
+            "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
+                           desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
+                                 "the message names, commit, and run the same command with --resolved.")),
         },
     },
     "provision": {
@@ -276,6 +338,23 @@ COMMANDS = {
         "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
                  opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],
         "examples": ["qargi upgrade --branch develop", "qargi upgrade --branch develop --plan 1a2b3c4d5e6f --approved \"upgrade to develop\"", "qargi upgrade --tag v0.2.0"],
+    },
+    "methodology": {
+        "summary": "List and inspect the development and release methodologies",
+        "desc": ("A methodology is the way a project is developed and released, as data: its branches, versioning and changelog, test tiers, "
+                 "CI, release steps and deployment options, and the generic files a new project starts with. One ships with qargi (gitflow); "
+                 "add your own under ~/.qargi/config/methodologies/NAME/ (methodology.json and a scaffold/ directory). These verbs only read; "
+                 "qargi project new and adopt write, and only after a plan."),
+        "scripts": ["methodology.py"],
+        "verbs": {
+            "list": verb("List the methodologies and where they live"),
+            "show": verb("Print a methodology: branches, tests, CI, release steps, parameters, scaffold, deployment options", [("NAME", "methodology")]),
+            "check": verb("Validate one methodology, or all of them", [("[NAME]", "methodology")]),
+            "files": verb("Print the scaffold rendered with the parameters, writing nothing", [("NAME", "methodology")],
+                          [opt("--param", "a parameter as name=value (repeat)", "NAME=VALUE")],
+                          examples=["qargi methodology files gitflow --param project=acme --param test_command='make test'"]),
+            "deployment": verb("List the deployment options, or print one option's instructions", [("NAME", "methodology"), ("[ID]", "none")]),
+        },
     },
     "cloud": {
         "summary": "Which ant profile and workspace each project uses",

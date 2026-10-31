@@ -21,6 +21,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   targeted checks per task (the full suite belongs to the coordinator after a collection), and the task skill describes
   dispatching non-overlapping tasks in parallel.
 
+- Methodologies. A methodology is the way a project is developed and released, as data: branches (long-lived, release
+  `feature/<version>`, task `agent/<slug>`), versioning and changelog, test tiers (targeted per task, the whole suite once per
+  collection), CI, release steps, deployment options with instructions, and the generic files a new project starts with
+  (README, VERSION, CHANGELOG, CONTRIBUTING, CLAUDE.md, .gitignore, a GitHub Actions test workflow). `gitflow` ships in
+  `methodologies/`; add your own under `~/.qargi/config/methodologies/NAME/`. `qargi methodology list|show|check|files|deployment`
+  only read; the scaffold carries no reference to qargi.
+
+- `qargi project attach [DIR]` attaches qargi to an existing repository without changing it. It reads the remote, branches, tags,
+  version and changelog files, test command and CI, prints the answers it would store, the gaps against the methodology and
+  what it could not determine, and a plan token; with `--plan` and `--approved` it stores the answers outside the repository.
+  Closing the gaps is a separate, reviewed change.
+
+- `qargi project new NAME` starts a project from a methodology: it prints a plan (directory, branches, files, deployment
+  options with instructions) and a token; with `--plan` and `--approved` it creates the directory, runs `git init`, writes the
+  generic files in a first commit and creates the long-lived branches, leaving you on `develop`. With `--url` the qargi answers are
+  stored too. Nothing is pushed and no remote is created. `--deployment ID` records a deployment option and prints how to do it.
+  The generated `.gitignore` excludes `.claude/worktrees/` and `.claude/settings.local.json`.
+
+- Git-flow, as its author described it. `qargi feature start|list|sync|merge|status|verify|finish`: a feature is a broad, related branch
+  cut from `develop`; verified task branches are merged into it with `--no-ff`; the whole suite runs once when it is complete, and
+  only then is it merged into `develop` (one merge per feature). Several features can be open at once; `feature list` shows their
+  purposes and the files two of them both change. `qargi release start|status|verify|push|finish VERSION [--hotfix]`:
+  `release/<version>` from `develop` (a hotfix from `master`), the version bump as its first commit, a pull request into `master`
+  so CI runs on the commit that will be released, then merge into `master` with `--no-ff`, an annotated tag, merge into
+  `develop` (a hotfix: into the open release branch), delete, push. Merges are made in temporary worktrees and a branch moves only
+  after every merge succeeded; a conflict changes nothing, keeps the merge in progress in a worktree it names (exit 3), and
+  `--resolved` applies the merge you resolved. Merging and pushing need a plan token and an approval; a release starts only from
+  a `develop` whose head passed the whole suite. A finished feature's whole-suite run carries over to `develop`'s new head, and
+  a feature must contain `develop` to finish, so a release needs no extra run. A release or hotfix finishes only on the commit that is
+  on origin with passing checks, and pushes master, develop and the tag together or not at all.
+
+- The `feature finish` and `release finish` plans list the commits and files being merged, so the approval is informed.
+- The `qargi-flow` skill: the lead's git-flow process with the qargi commands (features and tasks, the one whole-suite run per feature,
+  releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
+
 ### Changed
 - The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The

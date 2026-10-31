@@ -27,7 +27,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
-skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-team qargi-build qargi-write qargi-review qargi-test"
+skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team qargi-build qargi-write qargi-review qargi-test"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -71,7 +71,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-verify|qargi-team|qargi-build|qargi-write|qargi-review|qargi-test)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-verify|qargi-flow|qargi-team|qargi-build|qargi-write|qargi-review|qargi-test)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
@@ -103,7 +103,7 @@ done
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mkdir -p "$data"
-  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/roles" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
+  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/roles" "$here/methodologies" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
   echo "copied the tool to $data"
 fi
 

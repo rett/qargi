@@ -57,6 +57,9 @@ case $area in
   local) exec "$lib/local.sh" "$@";;
   agent) exec "$lib/agent.sh" "$@";;
   role) exec "$lib/role.sh" "$@";;
+  feature) exec "$lib/feature.sh" "$@";;
+  release) exec "$lib/release.sh" "$@";;
+  methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;

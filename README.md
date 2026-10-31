@@ -89,6 +89,7 @@ Twelve skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` d
 | `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), reviewed at import, checked for drift |
 | `/qargi-memory` | `lint`, `get`, the canon (`check`, `plan`, `apply`, `import`, `promote`), the session-start autoload |
 | `/qargi-verify` | the coordinator's procedure for verifying and applying returned patches |
+| `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
 | `/qargi-team` | a team on one task: a lead coordinating members for build, write and review; led by this session, a cloud lead, or a lead started in the console |
 
 ## Help, manual page and completion

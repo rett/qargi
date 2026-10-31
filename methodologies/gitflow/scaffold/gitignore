@@ -1,0 +1,20 @@
+# editors and operating systems
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# local environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# build output
+dist/
+build/
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json

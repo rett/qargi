@@ -143,6 +143,11 @@ The local agent gets no way to push, and you check afterwards that it did not.
    It refuses a run with no collected manifest (`--discard` for one that produced none) and one whose repository refs
    changed. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
 
+## Features and releases
+
+The work of a project that follows git-flow runs inside features: tasks use `--base feature/NAME`, and the features, releases and
+conflicts are the lead's process in `/qargi-flow`.
+
 ## Parallel tasks and targeted tests
 
 Split a change into tasks whose paths do not overlap and dispatch them together (one `prepare` and one member launch
