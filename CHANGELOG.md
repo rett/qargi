@@ -52,6 +52,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   a feature must contain `develop` to finish, so a release needs no extra run. A release or hotfix finishes only on the commit that is
   on origin with passing checks, and pushes master, develop and the tag together or not at all.
 
+- The `feature finish` and `release finish` plans list the commits and files being merged, so the approval is informed.
 - The `qargi-flow` skill: the lead's git-flow process with the qargi commands (features and tasks, the one whole-suite run per feature,
   releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
 

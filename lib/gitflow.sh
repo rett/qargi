@@ -66,6 +66,17 @@ merge_step() {
 }
 merge_forget() { local k; for k in "$@"; do rm -f "$DA_STATE/conflicts/$PROJ-$k.done"; done; }   # after the refs moved
 
+# what a merge would bring in, for the plan the person approves: BASE BRANCH
+show_incoming() {
+  local base=$1 br=$2 n
+  n=$(g rev-list --count "$base..$br")
+  echo "  brings $n commit(s) into $base:"
+  g log --format='    %h %s' "$base..$br" | head -30
+  [ "$n" -le 30 ] || echo "    ... and $((n - 30)) more"
+  echo "  files changed: $(g diff --shortstat "$base...$br" | sed 's/^ *//')"
+  g diff --name-only "$base...$br" | head -30 | sed 's/^/    /'
+  [ "$(g diff --name-only "$base...$br" | wc -l)" -le 30 ] || echo "    ... (more files)"
+}
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
   af=$DA_CONF/projects/$PROJ.json

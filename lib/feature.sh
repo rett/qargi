@@ -100,6 +100,7 @@ case $verb in
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" | plan_token)
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
+    show_incoming develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     need_free develop "$BR"

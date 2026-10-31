@@ -44,6 +44,7 @@ $F status search | grep -q "at an older head" && ok "a merge after verify makes 
 $F finish search >/dev/null 2>&1 && no "finish accepted a stale run" || ok "and finish refuses it"
 $F verify search >/dev/null 2>&1
 out=$($F finish search 2>&1); t=$(tok <<<"$out")
+grep -q "brings 6 commit(s) into develop" <<<"$out" && grep -q "task t1" <<<"$out" && grep -q "files changed: 3 files changed" <<<"$out" && grep -q "    t3.txt" <<<"$out" && ok "the finish plan lists the commits and files being merged" || no "plan content: $out"
 [ -n "$t" ] && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "the finish plan changes nothing" || no "plan: $out"
 $F finish search --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
 git -C "$R" checkout -q develop
