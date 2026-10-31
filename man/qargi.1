@@ -749,11 +749,28 @@ Refused while it is linked.
 .RE
 .TP
 .B qargi packs
-Render or apply the skills and tools a role gets.
+Render, load or apply the skills and tools a role gets.
 .RS
 .TP
 .BI "render " "[PROJECT] ROLE OUTDIR"
 Write what a role gets into a directory (used by provisioning).
+.RE
+.RS
+.TP
+.BI "load " "[PACK]"
+Show what a role has enabled, or print one pack's text.
+.br
+Read\-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved.
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role whose packs (required).
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project (default: inferred from here).
+.RE
 .RE
 .RS
 .TP

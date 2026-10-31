@@ -21,6 +21,7 @@
 #   packs.sh skill|tool check   PROJECT ROLE         review, drift and missing packs of that role
 #   packs.sh skill|tool remove  NAME                 refused while linked
 #   packs.sh packs render PROJECT ROLE OUTDIR        (provisioning)
+#   packs.sh packs load [NAME] --role R [--project P]   what the role has enabled, or one pack's text (reads only)
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
@@ -159,6 +160,37 @@ if [ "$KIND" = packs ]; then
           jq -c 'map(if .name == "github" then del(.tools.merge_pull_request) else . end)' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"
         fi
       fi;;
+    load)
+      # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
+      # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
+      PRJ=${PROJECT:-$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer)}; ROL=$ROLE; LN=${ARGS[0]:-}
+      [ -n "$PRJ" ] || die "load: name the project with --project P (none was inferred from here)"
+      valid_role "$ROL" || die "load: --role is one of: $DA_ROLES"
+      vet() { # kind name -> dies unless the pack is sound; sets P
+        P=$(item_path "$1" "$2"); [ -e "$P" ] || die "attached pack $1:$2 is not in the library"
+        review "$1" "$P" >/dev/null || die "pack $1:$2 fails its review (qargi $1 check $PRJ $ROL)"
+        want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
+        { [ -z "$want" ] || [ "$want" = "$(content_hash "$P")" ]; } || die "pack $1:$2 changed since it was approved (drift); it is not loaded"
+      }
+      if [ -z "$LN" ]; then
+        echo "enabled for $PRJ/$ROL (qargi packs load NAME --role $ROL --project $PRJ prints one):"
+        while read -r e; do
+          [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; vet "$k" "$n"
+          if [ "$k" = skill ]; then d=$(sed -n 's/^description: *//p' "$P/SKILL.md" | head -1); echo "  skill $n: ${d:-no description}"
+          else echo "  tool  $n (MCP server; not loaded into a session by this verb)"; fi
+        done < <(effective "$PRJ" "$ROL")
+        exit 0
+      fi
+      printf '%s\n' "$LN" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || die "load: not a pack name: $LN"
+      e=$(effective "$PRJ" "$ROL" | grep -x -E "(skill|tool):$(printf '%s' "$LN" | sed 's/[.]/\\./g')" | head -1)
+      [ -n "$e" ] || die "load: $LN is not enabled for $PRJ/$ROL (link it, or see: qargi packs load --role $ROL --project $PRJ)"
+      k=${e%%:*}; vet "$k" "$LN"
+      if [ "$k" = skill ]; then
+        echo "== skill $LN (approved library content; files beside it: $P)"; cat "$P/SKILL.md"
+        others=$(cd "$P" && find . -type f ! -name .pack.json ! -name SKILL.md | sed 's#^\./#  #' | sort)
+        [ -z "$others" ] || { echo; echo "== other files of $LN, relative to $P"; echo "$others"; }
+      else echo "== tool $LN (MCP server definition)"; cat "$P"; fi
+      exit 0;;
     apply)
       INST=${ARGS[0]:-}; need_asked; ant_ok
       i=$(inst_get "$INST") || exit 1; [ "$(jq -r .location <<<"$i")" = cloud ] || die "apply is for cloud instances"
@@ -200,7 +232,7 @@ if [ "$KIND" = packs ]; then
       nv=$(ant beta:deployments retrieve --deployment-id "$did" </dev/null 2>/dev/null | jq .agent.version)
       json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$INST" --argjson v "$nv"
       echo "applied; the deployment now pins agent v$nv";;
-    *) die "usage: packs.sh packs render|apply ...";;
+    *) die "usage: packs.sh packs render|load|apply ...";;
   esac
   exit 0
 fi

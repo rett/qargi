@@ -14,6 +14,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   refuses every call.
 
 ### Added
+- `qargi packs load [PACK] --role R [--project P]`: read-only. Without a pack it lists what the role has enabled, with each
+  description; with one it prints its approved text and the library path of its other files. It reads the links when called,
+  so linking, unlinking, enabling and disabling take effect at once, and it refuses a pack that fails its review or changed
+  since it was approved. Members may run it.
 - `qargi upgrade [--branch B | --tag T]`: plan, then apply with `--plan TOKEN --approved "..."`: moves the installed tool (the root-owned checkout
   `install.sh` recorded) to a newer branch (fast-forward only on its current branch) or tag of its origin, re-runs
   `install.sh --user` and lists the members to refresh. The writing git commands run through `sudo`; members cannot use the verb.

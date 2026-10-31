@@ -109,4 +109,17 @@ rm -f "$T/update.args"
 QARGI_NESTED=1 $DA packs apply alpha-write --asked "test" --approved x >/dev/null 2>&1; [ ! -e "$T/update.args" ] && ok "and it did not touch the agent" || no "agent updated by a nested apply"
 grep -q 'mcp_toolset' <<<"$u" && grep -q 'agent_toolset_20260401' <<<"$u" && ok "the agent keeps its toolset and gains the MCP tool" || no "tools in the update"
 grep -q '"name":"web_fetch","enabled":false' <<<"$u" && grep -q '"name":"web_search","enabled":false' <<<"$u" && ! grep -q '"name":"edit"' <<<"$u" && ok "apply switches the web tools off for a write role and keeps edit" || no "tool configs in the update: $u"
+# --- load: what a role has enabled, read at call time
+proj gamma
+$DA skill new loadme >/dev/null; desc loadme "Use for the load test."; mkdir -p "$T/c/packs/skills/loadme/refs"; echo extra > "$T/c/packs/skills/loadme/refs/x.md"; seal loadme
+$DA skill link loadme --scope project-role --project gamma --role build >/dev/null
+out=$($DA packs load --project gamma --role build 2>&1) && grep -q "skill loadme: Use for the load test." <<<"$out" && ok "load lists the enabled packs with their descriptions" || no "load index: $out"
+out=$($DA packs load loadme --project gamma --role build 2>&1) && grep -q "^== skill loadme" <<<"$out" && grep -q "refs/x.md" <<<"$out" && ok "load prints one pack's text and lists its other files" || no "load pack: $out"
+$DA packs load loadme --project gamma --role write >/dev/null 2>&1 && no "a pack not enabled for the role was loaded" || ok "load refuses a pack that is not enabled for that role"
+$DA packs load '../x' --project gamma --role build >/dev/null 2>&1 && no "a path-like name was accepted" || ok "load refuses a name that is not a pack name"
+$DA skill disable gamma build loadme >/dev/null; $DA packs load loadme --project gamma --role build >/dev/null 2>&1 && no "a disabled pack was loaded" || ok "disabling takes effect at once"
+$DA skill enable gamma build loadme >/dev/null
+echo tampered >> "$T/c/packs/skills/loadme/SKILL.md"
+$DA packs load loadme --project gamma --role build >/dev/null 2>&1 && no "a drifted pack was loaded" || ok "load refuses a pack that changed since it was approved"
+$DA packs load --project gamma >/dev/null 2>&1 && no "load without a role" || ok "load needs a role"
 exit $fail
