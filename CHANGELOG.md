@@ -61,7 +61,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `qargi-flow` skill: the lead's git-flow process with the qargi commands (features and tasks, the one whole-suite run per feature,
   releases, hotfixes, resolving conflicts). A session that leads is pointed at it when it starts.
 
+- `qargi review apply RUN_DIR` puts a collected run on a task branch of the project's repository: it needs `review check` and
+  `local verify` to pass, creates `agent/<slug>` (or `--branch`) at the commit the base had when the run was prepared and applies
+  the patches with `git am` in a temporary worktree, so your checkout is never touched. A patch that does not apply removes the
+  branch again; a run is applied once. `qargi review prune [--yes]` lists, or deletes, the `agent/*` branches already merged into
+  `develop` or a `feature/*` branch.
+
 ### Changed
+- `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,
+  and later checks compare with it: fast-forwards of `develop`, `master` and `agent|feature|release|hotfix/*` branches and new
+  branches there are accepted, while remote refs, tags, deletions and rewrites still fail. A change now exits 2 (it was 1). Run
+  `qargi local verify` on every run before merging any of them.
+- `qargi local prepare` ends its output with a blank line and a `TASK-BLOCK PATHS` block (`RUN_DIR`, `CLONE`, `OUT`, `TMP`, `GIT`,
+  `BASE_SHA`); a caller that evals the output must stop at the blank line.
+- `qargi project attach` reads the tree of the integration branch (`develop`, else the default branch, else `HEAD`) and says which,
+  not the working tree. It prints origin as read and the normalised url. When answers are already stored it shows stored against
+  detected and the fields the stored file lacks, stays read-only and gives no plan token; with `--force` the plan keeps what it
+  cannot detect (the roles' models and effort, cloud, memory, budget).
+- `qargi feature start` refuses a name origin already has, asked live with `git ls-remote`.
+- `qargi feature status|finish` and `qargi release status|push|finish` ask the live origin with `git ls-remote` where the branches
+  are (`QARGI_REMOTE_TIMEOUT` seconds, default 10) instead of the last fetch, and print `remote not checked` when origin cannot
+  be reached.
+- `tests/run.sh` runs without the caller's cloud binding or any `QARGI_*` or `ANTHROPIC_*` variable and with a fresh `HOME`, and
+  every test is hermetic (`tests/hermetic.sh`, `tests/hermetic.py`): fresh qargi config and state, and failing `ant` and `claude`
+  stubs first on `PATH`.
+- The role and contract text lists the rules to follow before DONE. Every cloud agent's prompt changes: run
+  `qargi instances refresh-prompt NAME --if-stale` for each.
 - `qargi feature verify` and `qargi release verify` run the project's test command without the project's cloud binding
   (`ANTHROPIC_PROFILE`, `QARGI_CLOUD_WORKSPACE`, `QARGI_CLOUD_PROJECT`), and `tests/run.sh` unsets them, so a project with
   a cloud binding can get a passing whole-suite record.

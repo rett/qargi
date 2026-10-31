@@ -124,7 +124,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "attach " "[DIR]"
 Attach to an existing repository: read it, show the answers and the gaps, store on approval.
 .br
-Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change.
+Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget).
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -153,7 +153,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RS
 .TP
 .B \-\-force
-replace stored answers.
+replace the detected answers, keep the rest.
 .RE
 .RE
 .RS
@@ -1015,6 +1015,8 @@ A feature branch is cut from develop and can be as broad as a theme. The lead me
 .TP
 .BI "start " "NAME"
 Cut feature/NAME from develop.
+.br
+Refuses a name origin already has (asked live with git ls\-remote), so another person's branch is not shadowed; fetch it instead.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1072,6 +1074,8 @@ use the merge you resolved and committed in the conflict worktree.
 .TP
 .BI "status " "NAME"
 Show the feature: commits ahead of develop and whether the whole suite passed at its head.
+.br
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1093,7 +1097,7 @@ the project, instead of the one inferred from here.
 .BI "finish " "NAME"
 Merge the feature into develop with \-\-no\-ff and delete it.
 .br
-Needs a passing whole\-suite run at the feature's head. Pushes develop if the repository has an origin. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
+Needs a passing whole\-suite run at the feature's head. Pushes develop if the repository has an origin. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1156,6 +1160,8 @@ release although '## [Unreleased]' in CHANGELOG.md is empty.
 .TP
 .BI "status " "VERSION"
 Show the branch, its commits and whether the whole suite passed at its head.
+.br
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1186,6 +1192,8 @@ a hotfix: branch from master, finish into master and the open release branch (or
 .TP
 .BI "push " "VERSION"
 Push the branch and open the pull request into master.
+.br
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1212,7 +1220,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "finish " "VERSION"
 After the checks pass: merge into master, tag, merge back, delete the branch, push.
 .br
-Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved.
+Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1447,6 +1455,8 @@ The agent works in a clone of a bare copy that has no remote, runs git through a
 .TP
 .B prepare
 Make the clone and the wrapper for a local agent.
+.br
+Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.
 .RS
 .TP
 .BI "\-\-repo " "DIR"
@@ -1492,6 +1502,8 @@ the earlier name of \-\-role.
 .TP
 .BI "verify " "RUN_DIR"
 Compare the repository's refs with the snapshot taken by prepare.
+.br
+Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: your own fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.
 .RE
 .RS
 .TP
@@ -1604,7 +1616,7 @@ accept a manifest with no commits (a team member that was blocked or had nothing
 .BI "apply " "RUN_DIR"
 Apply a collected, checked run to a task branch of the repository.
 .br
-Refuses unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run.
+Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
