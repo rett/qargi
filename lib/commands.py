@@ -37,6 +37,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+TARGET = opt("--target", "claude-code renders for a local Claude Code session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
 NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
@@ -266,8 +267,28 @@ COMMANDS = {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "load": verb("Show what a role has enabled, or print one pack's text", [("[PACK]", "pack")], [opt("--role", "the role whose packs (required)", "ROLE", ROLES), opt("--project", "the project (default: inferred from here)", "PROJECT", "project")],
                          desc="Read-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved."),
-            "apply": verb("Update an existing cloud agent with its skills and tools", [("INSTANCE", "instance")], [ASKED, PLAN, APPROVED],
-                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push. Always needs --plan (QARGI_NESTED does not skip it); a local member's guard refuses it."),
+            "apply": verb("Update an existing cloud agent, or render for a local Claude Code session", [("INSTANCE|PROJECT", "instance")], [TARGET, ASKED, PLAN, APPROVED],
+                          desc=("Without --target (or with managed-agents) this updates the existing cloud agent INSTANCE with its skills and tools; "
+                                "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
+                                "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
+                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
+                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/claude/PROJECT, replacing the "
+                                "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
+                                "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
+                                "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
+                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.\n"
+                                "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
+                                "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
+                                "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
+                                "concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token "
+                                "approved; the token also covers the file modes, which the manifest records.")),
+            "check": verb("Check a Claude Code render for drift (read only)", [("PROJECT", "project")], [TARGET],
+                          desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
+                                "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
+                                "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
+                                "checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from "
+                                "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
+                                "render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.")),
         },
     },
     "start": {
@@ -418,7 +439,11 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)],
                             desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.")),
+                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.\n"
+                                  "When the project (found by matching the repository against the stored answers) has a Claude Code render "
+                                  "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
+                                  "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
+                                  "TASK-BLOCK PATHS block are unchanged.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
                            desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
