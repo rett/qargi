@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Runs every test and the linter. No API access, no private data.
 set -u
-# hermetic: the project's cloud binding (set by bin/qargi for a bound project) must not reach the tests
-unset ANTHROPIC_PROFILE QARGI_CLOUD_WORKSPACE QARGI_CLOUD_PROJECT
+# hermetic: nothing of the caller's cloud binding or qargi setup reaches the tests, and HOME is a fresh directory
+# (each test also scrubs itself, see tests/hermetic.sh and tests/hermetic.py)
+for _v in $(compgen -e); do case $_v in ANTHROPIC_*|QARGI_*) unset "$_v";; esac; done
+HOME=$(mktemp -d); export HOME
+trap 'rm -rf "$HOME"' EXIT
 cd "$(dirname "$0")/.." || exit 1
 rc=0
 t0=$SECONDS

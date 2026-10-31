@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """qargi discover: search, recommend, show and install; offline (fake curl, a test catalog, scripted terminal answers)."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, shutil, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

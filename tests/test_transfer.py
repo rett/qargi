@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """qargi export / import: offline, with a fake ant, real gpg in a throwaway home and scripted terminal answers."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import hashlib, io, json, os, shutil, stat, subprocess, sys, tarfile, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

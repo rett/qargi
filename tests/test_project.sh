@@ -2,6 +2,8 @@
 # Table tests for `qargi project validate|set` (no API). Run: tests/test_project.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 T=$(mktemp -d); export QARGI_CONF=$T/c QARGI_STATE=$T/s
 DA=./bin/qargi; fail=0
 base=$($DA project template demo | jq '.repo.url="https://github.com/example/demo"')

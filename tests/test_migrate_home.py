@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """qargi migrate home: the copy from the XDG directories to ~/.qargi. Every test runs under a temporary HOME."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import hashlib, json, os, shutil, stat, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
