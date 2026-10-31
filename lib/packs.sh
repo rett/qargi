@@ -23,6 +23,8 @@
 #   packs.sh packs render PROJECT ROLE OUTDIR        (provisioning)
 #   packs.sh packs load [NAME] --role R [--project P]   what the role has enabled, or one pack's text (reads only)
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
+#   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
+#   packs.sh packs check --target claude-code PROJECT                                  drift of that render (read only)
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
 # hashed and approved before it is stored, and any later change fails `check` and provisioning
@@ -31,7 +33,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -43,6 +45,7 @@ while [ $# -gt 0 ]; do
     --approved) APPROVED=$2; shift 2;;
     --plan) PLAN_ARG=$2; shift 2;;
     --asked) ASKED=$2; shift 2;;
+    --target) TARGET=$2; shift 2;;
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
@@ -135,7 +138,60 @@ set_off() { # project role json-array
   "$(dirname "$0")/project.sh" set "$1" "roles.$2.packs_off" "$3" >/dev/null
 }
 
+# Claude Code target: the facts only this script knows (links, review, hashes) go to packs_claude.py as one JSON file.
+cc_inputs() { # project outfile
+  local prj=$1 out=$2 roles r e k n P want rv rows
+  [ -f "$DA_CONF/projects/$prj.json" ] || die "no stored answers for project '$prj'"
+  roles=$(jq -r '.roles | keys[]' "$DA_CONF/projects/$prj.json" | grep -vx lead)
+  rows=$(for r in $roles; do effective "$prj" "$r" | sed "s/^/$r /"; done)
+  : > "$out.rows"
+  while read -r r e; do
+    [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
+    if [ -e "$P" ]; then
+      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
+      if review "$k" "$P" >/dev/null 2>&1; then rv=true; else rv=false; fi
+      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P")" --arg a "$want" --argjson rv "$rv" --arg r "$r" \
+        '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r}' >> "$out.rows"
+    else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r}' >> "$out.rows"; fi
+  done <<<"$rows"
+  jq -s --arg p "$prj" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" '
+    {project:$p, state:$s, home:$h, checkout:$c,
+     packs: (group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, path:.[0].path, sha256:.[0].sha256, approved:.[0].approved,
+                                              review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
+  rm -f "$out.rows"
+}
+cc_launch() { # dir: the exact command that loads the render
+  local c="claude --add-dir $1"
+  [ ! -f "$1/mcp.json" ] || c="$c --mcp-config $1/mcp.json"
+  [ ! -f "$1/settings.json" ] || c="$c --settings $1/settings.json"
+  echo "launch: $c"
+}
+cc_main() { # verb: apply|check
+  local prj=${ARGS[0]:-} PY W tok live
+  [ -n "$prj" ] || die "$1 --target claude-code needs PROJECT"
+  PY=$(dirname "$(readlink -f "$0")")/packs_claude.py
+  W=$(mktemp -d); trap 'rm -rf "$W" "$DA_STATE/claude/.$prj.new"' EXIT
+  cc_inputs "$prj" "$W/in.json"
+  live=$DA_STATE/claude/$prj
+  if [ "$1" = check ]; then python3 -I "$PY" check "$W/in.json"; exit $?; fi
+  python3 -I "$PY" plan "$W/in.json" "$W/token" || exit 1
+  tok=$(cat "$W/token")
+  if [ -z "$APPROVED" ]; then
+    echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
+  fi
+  need_token "$tok"
+  audit_log packs-apply-claude-code "$prj $tok"
+  python3 -I "$PY" swap "$W/in.json" || exit 1
+  echo "applied: $live"; cc_launch "$live"
+  exit 0
+}
+
 if [ "$KIND" = packs ]; then
+  case $VERB:$TARGET in
+    apply:claude-code|check:claude-code) cc_main "$VERB";;
+    apply:|apply:managed-agents) ;;
+    apply:*|check:*) die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code";;
+  esac
   case $VERB in
     render)
       PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; OUT=${ARGS[2]:-}; [ -n "$OUT" ] || die "render needs PROJECT ROLE OUTDIR"
