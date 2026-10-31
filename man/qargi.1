@@ -1616,6 +1616,23 @@ the project, instead of the one inferred from here.
 the branch to create (default agent/<slug> of the run).
 .RE
 .RE
+.RS
+.TP
+.B prune
+List, or with \-\-yes delete, the agent/* branches already merged into develop or a feature.
+.br
+A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch \-d makes, against that target rather than the checked\-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; no other branch is touched. Prints each branch it lists or deleted.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-yes
+delete them (without it nothing changes).
+.RE
+.RE
 .TP
 .B qargi team
 Run a task with a lead and role agents (opt\-in).
