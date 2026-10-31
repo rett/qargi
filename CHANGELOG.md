@@ -7,6 +7,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi cloud list|show|set|unset|check|login`: bind a project to an `ant` profile and the workspace it must reach
+  (the project's optional `cloud` answer). Every command about that project then runs `ant` under that profile,
+  and a cloud call is refused if the profile no longer reaches the workspace; a conflicting `ANTHROPIC_PROFILE` is
+  refused. Projects without a binding are unchanged. qargi never reads or writes a token: `login` runs
+  `ant auth login` on your own terminal, and members cannot use `set`, `unset` or `login`; the guard also protects
+  `~/.config/anthropic`.
+- `qargi mark SID applied|rejected --why CODE` records a reason (codes in `lib/reasons.json`); `qargi report` counts them.
+  `mark` now refuses a session the tracker does not know.
+- `qargi noticed list|resolve`: collecting a session records the `noticed_not_acted_on` notes of its manifest
+  (short, secret-looking strings redacted, once each) in the append-only `events.jsonl` beside the audit log;
+  each stays open until given a disposition (followup, dismissed with `--why`, accepted, superseded);
+  `qargi report` shows how many are open and how old the oldest is, never the text.
+- `qargi agent refresh NAME`: re-render a member from the member definition qargi ships now, keeping its
+  name, abilities and model, so members created before a change (such as the hardened hook) can catch up
+  without being removed and re-added.
 - `qargi memory split|merge|copy FROM TO`: move memory between two stores, each a directory of
   notes, a `.jsonl` dump or a `memstore_` id. Nothing is deleted: what a split archives goes to
   `/_archive/<date>/` and a collision to `/_conflicts/<date>/`, with the origin of every note

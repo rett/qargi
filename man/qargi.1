@@ -100,6 +100,51 @@ List the stored projects.
 Check an answers file without storing it.
 .RE
 .TP
+.B qargi cloud
+Which ant profile and workspace each project uses.
+.PP
+A project can be bound to an ant profile and the workspace that profile must reach (the project's optional cloud answer). Every qargi command about that project then runs ant under that profile, and a cloud call is refused if the profile no longer reaches the workspace, so work never lands in another project's workspace. A project without a binding uses ant's active profile. qargi stores and checks the binding; it never reads or writes a token. login runs ant auth login on your terminal; a member or a script cannot.
+.RS
+.TP
+.B list
+Print every project's binding.
+.RE
+.RS
+.TP
+.BI "show " "[PROJECT]"
+Print one project's binding.
+.RE
+.RS
+.TP
+.BI "set " "[PROJECT]"
+Bind a project to an ant profile and a workspace.
+.RS
+.TP
+.BI "\-\-profile " "NAME"
+the ant profile name.
+.RE
+.RS
+.TP
+.BI "\-\-workspace\-id " "ID"
+the workspace the profile must reach (wrkspc_...).
+.RE
+.RE
+.RS
+.TP
+.BI "unset " "[PROJECT]"
+Remove a project's binding.
+.RE
+.RS
+.TP
+.BI "check " "[PROJECT]"
+Check that the profile exists and reaches the workspace (reads the ant profile only).
+.RE
+.RS
+.TP
+.BI "login " "[PROJECT]"
+Log the project's profile in, bound to its workspace (your terminal only).
+.RE
+.TP
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
@@ -140,6 +185,13 @@ List the members, their abilities and definitions.
 .TP
 .BI "rename " "OLD NEW"
 Rename a member and its definition.
+.RE
+.RS
+.TP
+.BI "refresh " "NAME"
+Re\-render a member from the member definition qargi ships now.
+.br
+Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
 .RE
 .RS
 .TP
@@ -892,6 +944,31 @@ also scan DIR/qargi.* for local runs the registry does not list (or set QARGI_RU
 print the figures as JSON.
 .RE
 .TP
+.B qargi noticed
+What members noticed and did not act on, and what became of it.
+.PP
+Collecting a session's outputs records each noticed_not_acted_on note of its manifest (stored short, secret\-looking strings redacted) in the append\-only events file beside the audit log. Each note stays open until you give it a disposition: followup, dismissed (with \-\-why), accepted or superseded. qargi report shows how many are open and how old the oldest is.
+.RS
+.TP
+.B list
+Print the open notes, oldest first.
+.RS
+.TP
+.B \-\-all
+every note, with its disposition.
+.RE
+.RE
+.RS
+.TP
+.BI "resolve " "ID DISPOSITION"
+Give a note a disposition.
+.RS
+.TP
+.BI "\-\-why " "CODE"
+the reason; required to dismiss.
+.RE
+.RE
+.TP
 .B qargi watch
 Wait for a cloud session to stop; prints one line when it does.
 .PP
@@ -942,10 +1019,17 @@ the task produced no files (for example memory curation).
 .TP
 .B qargi mark
 Record what happened to a session's work.
+.PP
+With \-\-why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.
 .RS
 .nf
 qargi mark SID STATE
 .fi
+.RE
+.RS
+.TP
+.BI "\-\-why " "CODE"
+why: wrong\-scope, broke\-check, style, too\-slow, too\-costly, skill\-ignored, skill\-wrong, brief\-unclear, gate\-noise or other.
 .RE
 .TP
 .B qargi track

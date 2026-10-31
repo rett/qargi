@@ -43,9 +43,11 @@ NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup
 POLICY = opt("--policy", "what to do when a note differs: conflicts (put the incoming one in /_conflicts/<date>/, default) or keep (leave it and report)", "POLICY", ("conflicts", "keep"))
 KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND", ("memory", "reference"))
 
+REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
+
 GROUPS = [
-    ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["start", "send", "status", "report", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Set up", ["project", "cloud", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -95,6 +97,8 @@ COMMANDS = {
                                   "qargi agent add worker    # one member for all four abilities"]),
             "list": verb("List the members, their abilities and definitions"),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
+                            desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print the member that serves an ability", [("ABILITY", ABILITIES)],
                         [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],
@@ -241,7 +245,40 @@ COMMANDS = {
     "mark": {
         "summary": "Record what happened to a session's work",
         "scripts": ["session.sh"],
+        "desc": "With --why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.",
         "usage": [("SID", "session:active"), ("STATE", ("applied", "rejected", "pending"))],
+        "opts": [opt("--why", "why: wrong-scope, broke-check, style, too-slow, too-costly, skill-ignored, skill-wrong, brief-unclear, gate-noise or other", "CODE", REASONS)],
+    },
+    "cloud": {
+        "summary": "Which ant profile and workspace each project uses",
+        "desc": ("A project can be bound to an ant profile and the workspace that profile must reach (the project's optional cloud answer). "
+                 "Every qargi command about that project then runs ant under that profile, and a cloud call is refused if the profile no "
+                 "longer reaches the workspace, so work never lands in another project's workspace. A project without a binding uses ant's "
+                 "active profile. qargi stores and checks the binding; it never reads or writes a token. login runs ant auth login on your "
+                 "terminal; a member or a script cannot."),
+        "scripts": ["cloud.py"],
+        "verbs": {
+            "list": verb("Print every project's binding"),
+            "show": verb("Print one project's binding", [("PROJECT", "project", True)]),
+            "set": verb("Bind a project to an ant profile and a workspace", [("PROJECT", "project")],
+                        [opt("--profile", "the ant profile name", "NAME"), opt("--workspace-id", "the workspace the profile must reach (wrkspc_...)", "ID")]),
+            "unset": verb("Remove a project's binding", [("PROJECT", "project")]),
+            "check": verb("Check that the profile exists and reaches the workspace (reads the ant profile only)", [("PROJECT", "project", True)]),
+            "login": verb("Log the project's profile in, bound to its workspace (your terminal only)", [("PROJECT", "project")]),
+        },
+        "examples": ["qargi cloud set qargi --profile qargi --workspace-id wrkspc_01AbC...", "qargi cloud login qargi", "qargi cloud check"],
+    },
+    "noticed": {
+        "summary": "What members noticed and did not act on, and what became of it",
+        "desc": ("Collecting a session's outputs records each noticed_not_acted_on note of its manifest (stored short, secret-looking strings "
+                 "redacted) in the append-only events file beside the audit log. Each note stays open until you give it a disposition: "
+                 "followup, dismissed (with --why), accepted or superseded. qargi report shows how many are open and how old the oldest is."),
+        "scripts": ["noticed.py"],
+        "verbs": {
+            "list": verb("Print the open notes, oldest first", [], [opt("--all", "every note, with its disposition")]),
+            "resolve": verb("Give a note a disposition", [("ID", "none"), ("DISPOSITION", ("followup", "dismissed", "accepted", "superseded"))],
+                            [opt("--why", "the reason; required to dismiss", "CODE", REASONS)]),
+        },
     },
     "track": {
         "summary": "Track a session that was started elsewhere (for example in the console)",

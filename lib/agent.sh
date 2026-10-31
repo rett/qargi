@@ -7,6 +7,7 @@
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
 #   agent.sh list
 #   agent.sh rename OLD NEW
+#   agent.sh refresh NAME      re-render a member from the current definition, keeping its name, abilities and model
 #   agent.sh remove NAME
 #   agent.sh for ABILITY [--project P]     the member that serves ABILITY: dispatch spawns it
 . "$(dirname "$0")/lib.sh"
@@ -115,6 +116,15 @@ case $verb in
     if [ -f "$f" ]; then sed "s/^name: $old\$/name: $new/" "$f" > "$nf" && rm -f "$f"; fi
     json_update "$MEMBERS_FILE" '.[$new] = (.[$old] | .file = $f) | del(.[$old])' --arg old "$old" --arg new "$new" --arg f "$nf"
     echo "renamed member $old -> $new ($nf)";;
+  refresh)
+    n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME"
+    rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
+    [ -f "$TEMPLATE" ] || die "the member definition is missing: $TEMPLATE"
+    f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
+    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r '.model // "sonnet"' <<<"$rec")")
+    if [ -f "$f" ] && [ "$new" = "$(cat "$f")" ]; then echo "member $n is current ($f)"; exit 0; fi
+    mkdir -p "$(dirname "$f")"; printf '%s\n' "$new" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
+    echo "refreshed member $n ($f); sessions started afterwards use it";;
   remove)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent remove NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
@@ -128,5 +138,5 @@ case $verb in
     m=$(member_for "$a" "$PROJ")
     [ -n "$m" ] || die "no member serves the $a ability: qargi agent add NAME --abilities $a"
     echo "$m";;
-  *) die "usage: qargi agent add|list|rename|remove|for ...";;
+  *) die "usage: qargi agent add|list|rename|refresh|remove|for ...";;
 esac

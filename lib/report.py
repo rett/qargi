@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
+import noticed as N  # noqa: E402  the notes members saw and did not act on
 
 STATE = P.state()
 REVIEW = ("pending", "applied", "rejected", "not-applicable")
@@ -227,6 +228,7 @@ def scope(rows, now, stale_after):
     out = {"sessions": len(rows), "review": {k: 0 for k in REVIEW}, "status": {}}
     spend, unknown_cost, applied = 0.0, 0, 0
     pending, stale, spans = [], [], []
+    reasons = {}
     idle = {"finished": 0, "stopped_by_qargi": 0, "needs_input": {}, "not_recorded": 0, "other": {}}
     for sid, r in rows:
         rv, st = r.get("review_state"), r.get("status") or "unknown"
@@ -239,6 +241,9 @@ def scope(rows, now, stale_after):
             spend += c
         if rv == "applied":
             applied += 1
+        if rv in ("applied", "rejected") and r.get("review_reason"):
+            k = "%s: %s" % (rv, r["review_reason"])
+            reasons[k] = reasons.get(k, 0) + 1
         a = age(now, r.get("last_seen"))
         item = {"session": sid, "instance": r.get("instance"), "label": r.get("label") or "-", "status": st, "age_seconds": a}
         waiting = rv == "pending" and r.get("closed_at") is None and st not in NOT_SETTLED
@@ -269,6 +274,7 @@ def scope(rows, now, stale_after):
     out["stale"] = sorted(stale, key=key)
     out["time_to_close_seconds"] = {"count": len(spans), "median": statistics.median(spans) if spans else None, "max": max(spans) if spans else None}
     out["idle"] = idle
+    out["reasons"] = reasons
     return out
 
 
@@ -335,6 +341,8 @@ def render_scope(s, title, stale_after, out):
         if i["other"]:
             out.append("    other stop reason: %s" % counts(i["other"]))
         out.append("    reason a session went idle: not recorded for %d" % i["not_recorded"])
+    if s.get("reasons"):
+        out.append("  reasons given with mark --why: %s" % counts(s["reasons"]))
     t = s["time_to_close_seconds"]
     out.append("  created to closed: %s" % (("%d closed, median %s, max %s" % (t["count"], hms(t["median"]), hms(t["max"]))) if t["count"] else "no closed session"))
     out.append("  pending review, oldest first:" + (" none" if not s["pending_review"] else ""))
@@ -377,6 +385,12 @@ def render(rep):
         out.append("Local runs: not shown (%s)" % rep["local_skipped"])
     if rep.get("supervisor") is not None:
         render_supervisor(rep["supervisor"], out)
+    nt = rep.get("noticed")
+    if nt and (nt["open"] or nt["resolved"]):
+        out.append("")
+        out.append("Noticed, not acted on (qargi noticed list): %d open%s" % (nt["open"], (", oldest " + hms(nt["oldest_open_seconds"])) if nt["oldest_open_seconds"] is not None else ""))
+        if nt["resolved"]:
+            out.append("  resolved: %s" % counts(nt["resolved"]))
     out.append("")
     out.append("What this cannot tell you:")
     out += ["  - " + x for x in rep["limits"] + (LOCAL_LIMITS if rep.get("local") is not None else [])]
@@ -443,6 +457,7 @@ def main(argv):
         except OSError:
             pass
         rep["supervisor"] = supervisor_section(runs if isinstance(runs, dict) else {}, [e for e in nudges if isinstance(e, dict)])
+    rep["noticed"] = N.summary(N.read_events(os.path.join(STATE, "events.jsonl")), now)
     print(json.dumps(rep, indent=2, sort_keys=True) if as_json else render(rep))
     return 0
 

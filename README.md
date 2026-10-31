@@ -67,7 +67,7 @@ The members are yours to name: `qargi agent add forge --abilities build,test` re
 the one member definition qargi ships into `~/.claude/agents/forge.md` (`--project
 NAME` puts it in that repository, hidden from git), with the abilities it serves (all
 four by default). `qargi agent for build` prints the member that serves an ability,
-and dispatch spawns that one; `qargi agent list`, `rename` and `remove` manage them.
+and dispatch spawns that one; `qargi agent list`, `rename`, `refresh` (re-render from the current definition) and `remove` manage them.
 One member may serve every ability, or each ability may have its own.
 
 Installations made with the earlier names (roles `dev` and `docs`, the fixed agents
@@ -193,3 +193,10 @@ An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).
+
+## Cloud profiles per project
+
+`qargi cloud set PROJECT --profile NAME --workspace-id wrkspc_...` binds a project to an `ant` profile and the workspace it must
+reach; `qargi cloud login PROJECT` logs that profile in on your terminal, and `qargi cloud check` verifies it. From then on every
+command about the project runs `ant` under that profile and refuses to touch another workspace. Without a binding, `ant`'s
+active profile is used.

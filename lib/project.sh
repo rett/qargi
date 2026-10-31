@@ -57,6 +57,10 @@ if cf:
         inside = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
         if inside.returncode == 0 and inside.stdout.strip() == "true":
             bad.append("repo.credential_file: %s is inside a git working tree; keep it outside every repository" % cf)
+cl = c.get("cloud")
+if cl is not None:
+    need(isinstance(cl, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", str(cl.get("profile", ""))) and re.fullmatch(r"wrkspc_[A-Za-z0-9]{10,}", str(cl.get("workspace_id", ""))),
+         "cloud: {profile: an ant profile name, workspace_id: wrkspc_...} (qargi cloud set)")
 r = c.get("roles", {})
 need(isinstance(r, dict) and r, "roles: enable at least one role")
 efforts = {"low", "medium", "high", "xhigh", "max"}
