@@ -46,7 +46,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
 GROUPS = [
-    ("Set up", ["project", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "cloud", "agent", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -248,6 +248,25 @@ COMMANDS = {
         "desc": "With --why, also records the reason (a code from lib/reasons.json); qargi report counts the reasons.",
         "usage": [("SID", "session:active"), ("STATE", ("applied", "rejected", "pending"))],
         "opts": [opt("--why", "why: wrong-scope, broke-check, style, too-slow, too-costly, skill-ignored, skill-wrong, brief-unclear, gate-noise or other", "CODE", REASONS)],
+    },
+    "cloud": {
+        "summary": "Which ant profile and workspace each project uses",
+        "desc": ("A project can be bound to an ant profile and the workspace that profile must reach (the project's optional cloud answer). "
+                 "Every qargi command about that project then runs ant under that profile, and a cloud call is refused if the profile no "
+                 "longer reaches the workspace, so work never lands in another project's workspace. A project without a binding uses ant's "
+                 "active profile. qargi stores and checks the binding; it never reads or writes a token. login runs ant auth login on your "
+                 "terminal; a member or a script cannot."),
+        "scripts": ["cloud.py"],
+        "verbs": {
+            "list": verb("Print every project's binding"),
+            "show": verb("Print one project's binding", [("PROJECT", "project", True)]),
+            "set": verb("Bind a project to an ant profile and a workspace", [("PROJECT", "project")],
+                        [opt("--profile", "the ant profile name", "NAME"), opt("--workspace-id", "the workspace the profile must reach (wrkspc_...)", "ID")]),
+            "unset": verb("Remove a project's binding", [("PROJECT", "project")]),
+            "check": verb("Check that the profile exists and reaches the workspace (reads the ant profile only)", [("PROJECT", "project", True)]),
+            "login": verb("Log the project's profile in, bound to its workspace (your terminal only)", [("PROJECT", "project")]),
+        },
+        "examples": ["qargi cloud set qargi --profile qargi --workspace-id wrkspc_01AbC...", "qargi cloud login qargi", "qargi cloud check"],
     },
     "noticed": {
         "summary": "What members noticed and did not act on, and what became of it",

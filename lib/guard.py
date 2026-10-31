@@ -59,7 +59,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py")              # the command and the scripts behind the refused verbs
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py")              # the command and the scripts behind the refused verbs
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
@@ -216,6 +216,7 @@ def protected_roots():
     for conf in (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(),
                  os.path.join(home, ".config", "qargi")):
         roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
+    roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -312,9 +313,13 @@ def skill_verb(prog, rest):
             return None
     if name == "discover.py":
         words = ["discover"] + words
+    if name == "cloud.py":
+        words = ["cloud"] + words
     area, verb = (words + ["", ""])[:2]
     if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply")) \
-            or (area == "import" and name == "qargi"):
+            or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")):
+        if area == "cloud":
+            return "qargi cloud %s changes which cloud workspace a project uses and is not available to an agent" % verb
         return "%s changes a skill and is not available to an agent" % ("qargi import" if area == "import" else "qargi %s %s" % (area, verb))
     return None
 

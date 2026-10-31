@@ -193,3 +193,10 @@ An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).
+
+## Cloud profiles per project
+
+`qargi cloud set PROJECT --profile NAME --workspace-id wrkspc_...` binds a project to an `ant` profile and the workspace it must
+reach; `qargi cloud login PROJECT` logs that profile in on your terminal, and `qargi cloud check` verifies it. From then on every
+command about the project runs `ant` under that profile and refuses to touch another workspace. Without a binding, `ant`'s
+active profile is used.

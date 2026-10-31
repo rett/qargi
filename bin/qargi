@@ -33,7 +33,20 @@ if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
   if [ "${#_resolved[@]}" -gt 0 ]; then area=${_resolved[0]}; set -- "${_resolved[@]:1}"; fi
   rm -f "$_rf"
 else rm -f "$_rf"; exit 2; fi
+# The project's cloud binding (qargi cloud): ant runs under the project's profile for this command, and lib.sh checks the
+# workspace before a cloud call. A command that is about no project, or a project without a binding, is left as it is.
 case $area in
+  cloud|help|version) ;;
+  *) mapfile -t _cb < <(python3 -I "$lib/cloud.py" for-args "$area" "$@" 2>/dev/null || true)
+     if [ -n "${_cb[1]:-}" ]; then
+       if [ -n "${ANTHROPIC_PROFILE:-}" ] && [ "$ANTHROPIC_PROFILE" != "${_cb[1]}" ]; then
+         echo "qargi: project ${_cb[0]} uses ant profile ${_cb[1]} (qargi cloud show), but ANTHROPIC_PROFILE is $ANTHROPIC_PROFILE; unset it or change the binding" >&2; exit 1
+       fi
+       export ANTHROPIC_PROFILE=${_cb[1]} QARGI_CLOUD_WORKSPACE=${_cb[2]} QARGI_CLOUD_PROJECT=${_cb[0]}
+     fi;;
+esac
+case $area in
+  cloud) exec python3 -I "$lib/cloud.py" "$@";;
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;

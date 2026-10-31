@@ -7,6 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi cloud list|show|set|unset|check|login`: bind a project to an `ant` profile and the workspace it must reach
+  (the project's optional `cloud` answer). Every command about that project then runs `ant` under that profile,
+  and a cloud call is refused if the profile no longer reaches the workspace; a conflicting `ANTHROPIC_PROFILE` is
+  refused. Projects without a binding are unchanged. qargi never reads or writes a token: `login` runs
+  `ant auth login` on your own terminal, and members cannot use `set`, `unset` or `login`; the guard also protects
+  `~/.config/anthropic`.
 - `qargi mark SID applied|rejected --why CODE` records a reason (codes in `lib/reasons.json`); `qargi report` counts them.
   `mark` now refuses a session the tracker does not know.
 - `qargi noticed list|resolve`: collecting a session records the `noticed_not_acted_on` notes of its manifest

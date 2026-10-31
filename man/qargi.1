@@ -100,6 +100,51 @@ List the stored projects.
 Check an answers file without storing it.
 .RE
 .TP
+.B qargi cloud
+Which ant profile and workspace each project uses.
+.PP
+A project can be bound to an ant profile and the workspace that profile must reach (the project's optional cloud answer). Every qargi command about that project then runs ant under that profile, and a cloud call is refused if the profile no longer reaches the workspace, so work never lands in another project's workspace. A project without a binding uses ant's active profile. qargi stores and checks the binding; it never reads or writes a token. login runs ant auth login on your terminal; a member or a script cannot.
+.RS
+.TP
+.B list
+Print every project's binding.
+.RE
+.RS
+.TP
+.BI "show " "[PROJECT]"
+Print one project's binding.
+.RE
+.RS
+.TP
+.BI "set " "[PROJECT]"
+Bind a project to an ant profile and a workspace.
+.RS
+.TP
+.BI "\-\-profile " "NAME"
+the ant profile name.
+.RE
+.RS
+.TP
+.BI "\-\-workspace\-id " "ID"
+the workspace the profile must reach (wrkspc_...).
+.RE
+.RE
+.RS
+.TP
+.BI "unset " "[PROJECT]"
+Remove a project's binding.
+.RE
+.RS
+.TP
+.BI "check " "[PROJECT]"
+Check that the profile exists and reaches the workspace (reads the ant profile only).
+.RE
+.RS
+.TP
+.BI "login " "[PROJECT]"
+Log the project's profile in, bound to its workspace (your terminal only).
+.RE
+.TP
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
