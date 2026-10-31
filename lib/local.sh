@@ -33,13 +33,14 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
   fi
 }
 
-# compare REPO REF AFTER -> prints each offending change, returns 1 if there is one. Everything but a local branch
+# compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
 # (remote refs, refs/remotes, tags, stash, ...) must be identical. A local branch may only move forward (old tip is an
 # ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
 # lead's own merges do. Used with refs.before while the run has no passing verify, with RUN/verified after one.
 compare() {
-  local repo=$1 ref=$2 aft=$3 bad=0 name old new
+  local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
   local hd='^local refs/heads/'
+  [ -z "$strict" ] || hd='^$^'   # strict: no line is treated as a branch, so the whole snapshot is diffed
   if ! diff -u <(grep -v "$hd" "$ref") <(grep -v "$hd" "$aft"); then bad=1; fi
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
   while read -r _ name old; do
@@ -60,15 +61,15 @@ compare() {
 
 # check RUN -> 0 and records RUN/verified when the refs are as the rule allows; 2 otherwise
 check_run() {
-  local run=$1 repo='' ref
+  local run=$1 repo='' ref strict=1
   ref=$run/refs.before
-  [ ! -f "$run/verified" ] || ref=$run/verified
+  [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
   if [ -f "$run/repo.url" ]; then
     snapshot_url "$(cat "$run/repo.url")" "$(cat "$run/cred.path" 2>/dev/null)" > "$run/refs.after"
   else
     repo=$(cat "$run/repo.path"); snapshot "$repo" > "$run/refs.after"
   fi
-  if compare "$repo" "$ref" "$run/refs.after" > "$run/refs.diff"; then
+  if compare "$repo" "$ref" "$run/refs.after" "$strict" > "$run/refs.diff"; then
     cp "$run/refs.after" "$run/verified"
     return 0
   fi
