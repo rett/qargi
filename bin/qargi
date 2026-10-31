@@ -50,7 +50,7 @@ case $area in
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
-  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; *) usage;; esac;;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply) exec "$lib/review.sh" "$@";; *) usage;; esac;;
   skill|tool) exec "$lib/packs.sh" "$area" "$@";;
   packs) exec "$lib/packs.sh" packs "$@";;
   credential) exec "$lib/cred.sh" "$@";;
