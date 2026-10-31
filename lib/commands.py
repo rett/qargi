@@ -172,10 +172,12 @@ COMMANDS = {
         "verbs": "PACK",
     },
     "packs": {
-        "summary": "Render or apply the skills and tools a role gets",
+        "summary": "Render, load or apply the skills and tools a role gets",
         "scripts": ["packs.sh"],
         "verbs": {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
+            "load": verb("Show what a role has enabled, or print one pack's text", [("[PACK]", "pack")], [opt("--role", "the role whose packs (required)", "ROLE", ROLES), opt("--project", "the project (default: inferred from here)", "PROJECT", "project")],
+                         desc="Read-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved."),
             "apply": verb("Update an existing cloud agent with its skills and tools", [("INSTANCE", "instance")], [ASKED, PLAN, APPROVED],
                           desc="The lead's GitHub tool arrives this way when the project grants a cloud push. Always needs --plan (QARGI_NESTED does not skip it); a local member's guard refuses it."),
         },

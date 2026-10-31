@@ -172,7 +172,7 @@ class Skills(unittest.TestCase):
 
     def test_lets_the_read_only_verbs_through(self):
         for c in ("qargi skill list", "qargi skill show x", "qargi tool check p build", "qargi skill effective p build", "qargi discover search pdf",
-                  "qargi packs render p build /tmp/o", "qargi export a.tgz", "qargi help skill",
+                  "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi export a.tgz", "qargi help skill",
                   "git commit -m 'qargi skill new is refused for members'", "grep -rn 'qargi skill link' docs", "echo qargi skill remove x",
                   "ls skills", "qargi local verify"):
             r = self.bash(c)

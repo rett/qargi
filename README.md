@@ -107,9 +107,11 @@ the members with `qargi agent add`. A member may call `Bash`, `Read`, `Edit`, `W
 `Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every Bash, Edit,
 Write and NotebookEdit call passes `qargi __guard`. The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
-rule rather than a missing tool: `qargi local prepare --ability review` records the
-ability in the run directory, and under it the guard refuses an edit outside the run's
-output directory and a Bash command that writes into the clone. Whatever the ability,
+rule rather than a missing tool: a member that only reviews names its class in the hook
+command of its definition, and `qargi local prepare --ability review` records the ability
+in the run directory for a member that serves several abilities (the guard refuses any
+write to that record). Under review the guard refuses an edit outside the run's output
+directory and a Bash command that writes into the clone. Whatever the ability,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
 install`, `qargi packs apply`) and any write in the pack library, in `credentials/` or `install.json` of the
