@@ -2,6 +2,7 @@
 """Memory backends, the ops executor and split/merge/copy/migrate on random stores. Offline: directories, JSONL
 dumps and a fake `ant`. The invariants are checked over many seeded random stores, on both reference backends.
 Run: python3 tests/test_membackend.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import hashlib, json, os, random, re, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))

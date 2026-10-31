@@ -33,6 +33,49 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
   fi
 }
 
+# compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
+# (remote refs, refs/remotes, tags, stash, ...) must be identical. A local branch may only move forward (old tip is an
+# ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
+# lead's own merges do. Used with refs.before while the run has no passing verify, with RUN/verified after one.
+compare() {
+  local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
+  local hd='^local refs/heads/'
+  [ -z "$strict" ] || hd='^$^'   # strict: no line is treated as a branch, so the whole snapshot is diffed
+  if ! diff -u <(grep -v "$hd" "$ref") <(grep -v "$hd" "$aft"); then bad=1; fi
+  allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
+  while read -r _ name old; do
+    new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
+    if [ -z "$new" ]; then echo "branch deleted: $name (was $old)"; bad=1
+    elif [ "$new" != "$old" ]; then
+      if ! allowed "$name"; then echo "branch moved, not an allowed branch: $name $old -> $new"; bad=1
+      elif ! git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then echo "branch rewritten (not a fast-forward): $name $old -> $new"; bad=1; fi
+    fi
+  done < <(grep "$hd" "$ref")
+  while read -r _ name new; do
+    grep -q "^local $name " "$ref" && continue
+    case $name in refs/heads/develop|refs/heads/master) ;; *) allowed "$name" && continue;; esac
+    echo "branch created, not an allowed branch: $name $new"; bad=1
+  done < <(grep "$hd" "$aft")
+  return $bad
+}
+
+# check RUN -> 0 and records RUN/verified when the refs are as the rule allows; 2 otherwise
+check_run() {
+  local run=$1 repo='' ref strict=1
+  ref=$run/refs.before
+  [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
+  if [ -f "$run/repo.url" ]; then
+    snapshot_url "$(cat "$run/repo.url")" "$(cat "$run/cred.path" 2>/dev/null)" > "$run/refs.after"
+  else
+    repo=$(cat "$run/repo.path"); snapshot "$repo" > "$run/refs.after"
+  fi
+  if compare "$repo" "$ref" "$run/refs.after" "$strict" > "$run/refs.diff"; then
+    cp "$run/refs.after" "$run/verified"
+    return 0
+  fi
+  return 2
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -100,20 +143,25 @@ WRAP
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
-    echo "BASE_SHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")";;
+    BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
+    echo "BASE_SHA=$BSHA"
+    echo
+    echo "TASK-BLOCK PATHS"
+    echo "RUN_DIR=$RUN"
+    echo "CLONE=$RUN/clone"
+    echo "OUT=$RUN/out"
+    echo "TMP=$TMPD"
+    echo "GIT=$RUN/git"
+    echo "BASE_SHA=$BSHA";;
   verify)
     RUN=${1:-}; [ -f "$RUN/refs.before" ] || die "verify needs a RUN dir made by prepare"
-    if [ -f "$RUN/repo.url" ]; then
-      snapshot_url "$(cat "$RUN/repo.url")" "$(cat "$RUN/cred.path" 2>/dev/null)" > "$RUN/refs.after"
-    else
-      snapshot "$(cat "$RUN/repo.path")" > "$RUN/refs.after"
-    fi
-    if diff -u "$RUN/refs.before" "$RUN/refs.after" > "$RUN/refs.diff"; then
-      echo "refs unchanged: nothing was pushed to the repository or its remote"
+    if check_run "$RUN"; then
+      if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
+      else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
       cat "$RUN/refs.diff" >&2
-      exit 1
+      exit 2
     fi;;
   clean)
     # after the series is collected and verified: remove the run (clone, bare copy, output, wrapper) and its temporary directory

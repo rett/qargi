@@ -110,7 +110,10 @@ refusal changes nothing.
 1. `qargi feature start NAME --purpose "..."` cuts `feature/NAME` from develop. A feature is a broad
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
-   Take each verified series in with `qargi feature merge NAME BRANCH`.
+   Per task: `qargi review check RUN` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
+   `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi review prune [--yes]` to
+   delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
+   merging any of them.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is

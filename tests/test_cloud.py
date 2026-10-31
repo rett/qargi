@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """qargi cloud: the per-project ant profile binding, with a stub ant. Offline; temporary state.
 Run: python3 tests/test_cloud.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, stat, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

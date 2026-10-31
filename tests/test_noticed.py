@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """qargi noticed and mark --why: notes from a manifest, dispositions, the report lines. Offline; temporary state.
 Run: python3 tests/test_noticed.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, subprocess, sys, tempfile, unittest
 from datetime import datetime, timezone
 
