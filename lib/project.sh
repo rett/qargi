@@ -240,26 +240,54 @@ PY
     [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     n=$(jq -r .answers.project <<<"$det")
     valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
-    tok=$(jq -S -c .answers <<<"$det" | plan_token)
-    jq -r '"project \(.answers.project) from \(.found.path)\nmethodology: \(.methodology)\nremote: \(.found.remote // "none")\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
+    sf=$PROJ_DIR/$n.json; stored=''
+    [ ! -f "$sf" ] || stored=1
+    ans=$(jq -c .answers <<<"$det")
+    if [ -n "$stored" ] && [ -n "$force" ]; then
+      # replace only what was detected; keep every answer that cannot be detected (roles, cloud, memory, budget, ...)
+      ans=$(jq -c --argjson det "$det" --arg urlgiven "$url" '
+        ($det.answers) as $d | ($det.found) as $f
+        | ($d * .) as $m
+        | $m | .methodology = $d.methodology | .repo.path = $d.repo.path
+        | (if $urlgiven != "" or $f.remote != "" then .repo.url = $d.repo.url else . end)
+        | (if ($f.long_lived | length) > 0 then .repo.long_lived = $d.repo.long_lived else . end)
+        | (if $d.test_command then .test_command = $d.test_command else . end)' "$sf")
+    fi
+    tok=$(jq -S -c . <<<"$ans" | plan_token)
+    jq -r '"project \(.answers.project) from \(.found.path)\nread from: \(.found.ref | if . == "" then "no commit" else . end) (\(.found.ref_why); the checked-out branch is \(.found.current_branch | if . == "" then "none" else . end), the working tree is not read)\nmethodology: \(.methodology)\nremote (origin as read): \(.found.remote // "none")" + (if (.found.remote // "") != "" and .found.url != .found.remote then "\nrepo.url (normalised to https, no .git, no credentials): \(.found.url)" else "" end) + "\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
+    if [ -n "$stored" ]; then
+      echo
+      echo "ALREADY STORED: the answers of project $n are in $sf; stored vs detected (only what is detected):"
+      jq -r --argjson det "$det" '
+        [["repo.url", .repo.url, $det.answers.repo.url], ["repo.long_lived", (.repo.long_lived | join(",")), ($det.answers.repo.long_lived | join(","))],
+         ["repo.path", .repo.path, $det.answers.repo.path], ["test_command", .test_command, $det.answers.test_command], ["methodology", .methodology, $det.answers.methodology]]
+        | map(select(.[2] != null and .[1] != .[2])) | if length == 0 then "  no difference" else .[] | "  \(.[0]): stored \(.[1] // "(missing)" | tojson), detected \(.[2] | tojson)" end' "$sf"
+      miss=$(jq -r --argjson det "$det" '. as $s | [$det.answers | paths(type != "object") | select(.[-1] | type == "string") | select(. as $p | $s | getpath($p) == null) | join(".")] | .[]' "$sf")
+      if [ -n "$miss" ]; then echo "  answers the current schema wants and the stored file lacks (--force adds them with defaults):"; sed 's/^/    - /' <<<"$miss"; fi
+    fi
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; adopting them is a separate, reviewed change):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
-    if [ "$(jq '.questions | length' <<<"$det")" != 0 ]; then echo; echo "questions:"; jq -r '.questions[] | "  - " + .' <<<"$det"; fi
+    qs=$(jq -r --arg st "$stored" 'if $st == "" then .questions[] else empty end' <<<"$det")
+    if [ -n "$qs" ]; then echo; echo "questions:"; sed 's/^/  - /' <<<"$qs"; fi
     echo
+    if [ -n "$stored" ] && [ -z "$force" ]; then
+      echo "nothing to store: project $n is already initialised. To replace the detected fields and keep the rest (roles, cloud, memory, budget): qargi project attach $dir --force"
+      [ -z "$APPROVED" ] || die "project $n is already initialised (--force to replace)"
+      exit 0
+    fi
     if [ -z "$APPROVED" ]; then
-      echo "stored answers would be:"; jq .answers <<<"$det"
-      echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\")"
+      echo "stored answers would be:"; jq . <<<"$ans"
+      echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
     fi
     need_plan "$tok"
-    [ ! -e "$PROJ_DIR/$n.json" ] || [ -n "$force" ] || die "project $n is already initialised (--force to replace)"
-    f=$(mktemp); jq .answers <<<"$det" > "$f"
+    f=$(mktemp); jq . <<<"$ans" > "$f"
     out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
-    mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
+    mv "$f" "$sf"; chmod 600 "$sf"
     audit_log "project:attach" "$n"
-    echo "project $n stored in $PROJ_DIR/$n.json (approved: $APPROVED)";;
+    echo "project $n stored in $sf (approved: $APPROVED)";;
   set)
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
