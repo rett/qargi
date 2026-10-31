@@ -152,7 +152,7 @@ ant_ok() {
   ant auth status >/dev/null 2>&1 || die "ant is not logged in (run: ant auth login${QARGI_CLOUD_PROJECT:+, or: qargi cloud login $QARGI_CLOUD_PROJECT})"
   # a project bound to a workspace (qargi cloud): the profile in use must still reach it, so nothing lands in another one
   if [ -n "${QARGI_CLOUD_WORKSPACE:-}" ]; then
-    [ "$(ant profile get workspace_id 2>/dev/null)" = "$QARGI_CLOUD_WORKSPACE" ] \
+    [ "$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/cloud.py" workspace "${ANTHROPIC_PROFILE:-default}" 2>/dev/null)" = "$QARGI_CLOUD_WORKSPACE" ] \
       || die "ant profile ${ANTHROPIC_PROFILE:-?} does not reach workspace $QARGI_CLOUD_WORKSPACE, which project ${QARGI_CLOUD_PROJECT:-?} is bound to: qargi cloud check ${QARGI_CLOUD_PROJECT:-}"
   fi
 }

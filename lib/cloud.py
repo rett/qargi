@@ -14,6 +14,7 @@ Usage: cloud.py list
        cloud.py unset PROJECT
        cloud.py check [PROJECT]          the profile exists and reaches the workspace (local; one `ant profile` read)
        cloud.py login PROJECT            log the project's profile in, bound to its workspace (needs a terminal)
+       cloud.py workspace PROFILE        the workspace the profile's login reaches (the dispatcher's check uses it)
        cloud.py for-args WORDS...        (dispatcher) prints project, profile, workspace id, one per line"""
 import glob, json, os, re, subprocess, sys
 
@@ -89,9 +90,29 @@ def profiles():
     return [l.lstrip("* ").strip() for l in r.stdout.splitlines() if l.strip()] if r.returncode == 0 else None
 
 
+def _json(path):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def workspaces_of(profile):
+    """(effective, config, login): the workspace a profile really reaches. The login (the stored OAuth credential) is bound to
+    one workspace when it is made; the profile's config can say another, because `ant profile set` edits the file and does not
+    rebind the token. The login wins. Only the workspace_id field of the credential file is read, never a token."""
+    base = os.environ.get("ANTHROPIC_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".config", "anthropic")
+    cfg = _json(os.path.join(base, "configs", profile + ".json"))
+    cpath = (cfg.get("authentication") or {}).get("credentials_path") or os.path.join(base, "credentials", profile + ".json")
+    login = _json(cpath).get("workspace_id") or None
+    conf = cfg.get("workspace_id") or None
+    return (login or conf), conf, login
+
+
 def live_workspace(profile):
-    r = ant(["--profile", profile, "profile", "get", "workspace_id"])
-    return r.stdout.strip() if r.returncode == 0 else None
+    return workspaces_of(profile)[0]
 
 
 def check(project, quiet=False):
@@ -106,7 +127,9 @@ def check(project, quiet=False):
     elif b["profile"] not in have:
         msg = "profile %s does not exist: qargi cloud login %s" % (b["profile"], project)
     else:
-        w = live_workspace(b["profile"])
+        w, conf, login = workspaces_of(b["profile"])
+        if login and conf and login != conf:
+            print("%s: note: profile %s says workspace %s but its login is bound to %s (ant profile set does not rebind a login)" % (project, b["profile"], conf, login), file=sys.stderr)
         if w == b["workspace_id"]:
             if not quiet:
                 print("%s: profile %s reaches %s" % (project, b["profile"], w))
@@ -133,6 +156,10 @@ def main(argv):
         b = binding(p) if p else None
         print("%s\n%s\n%s" % (p or "", b["profile"] if b else "", b["workspace_id"] if b else ""))
         return 0
+    if verb == "workspace" and len(rest) == 1:
+        w = workspaces_of(rest[0])[0]
+        print(w or "")
+        return 0 if w else 1
     if verb == "list":
         for p in projects():
             b = binding(p)
