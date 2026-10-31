@@ -38,6 +38,14 @@ case $verb in
   start)
     branch_exists "$BR" && die "$BR exists already"
     branch_exists develop || die "no develop branch to start from"
+    # a branch of this name that only exists on origin is somebody's work: ask the live remote, not the tracking refs
+    remote_tip "$BR"
+    case $RSTATE in
+      found) die "origin already has $BR (at ${RTIP:0:7}) and there is no local $BR: pick it up with git fetch origin && git branch $BR origin/$BR, or choose another name";;
+      unchecked)
+        echo "qargi: remote not checked ($RWHY)" >&2
+        g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null && die "origin/$BR was seen at the last fetch and origin cannot be asked now: fetch it or choose another name";;
+    esac
     g branch "$BR" develop
     mkdir -p "$DA_STATE/features"; jq -nc --arg p "$PURPOSE" --arg t "$(now)" '{purpose:$p, started:$t}' > "$DA_STATE/features/$PROJ-$NAME_ARG.json"
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
