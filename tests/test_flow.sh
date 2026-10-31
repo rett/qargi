@@ -209,7 +209,19 @@ out=$($F status v1 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "origin develop: remote not checked (" <<<"$out" && ok "an unreachable origin is reported as 'remote not checked (reason)' and status still succeeds" || no "unreachable feature status rc=$rc: $out"
 out=$($REL status 0.1.1 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "remote not checked (" <<<"$out" && ok "so does release status" || no "unreachable release status rc=$rc: $out"
+out=$($F start unreach 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "remote not checked (" <<<"$out" && git -C "$R3" rev-parse -q --verify refs/heads/feature/unreach >/dev/null && ok "an unreachable origin does not stop feature start (it says so)" || no "unreachable start rc=$rc: $out"
 git -C "$R3" remote set-url origin "$O3"
 
+# --- feature start refuses a name that origin already has (asked live), unless the local branch exists
+git -C "$R3" push -q "$U3" develop:refs/heads/feature/theirs
+! git -C "$R3" rev-parse -q --verify refs/remotes/origin/feature/theirs >/dev/null && ok "(setup) feature/theirs is on origin and not in the tracking refs" || no "setup: theirs is tracked"
+out=$($F start theirs 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "origin already has feature/theirs" <<<"$out" && ! git -C "$R3" rev-parse -q --verify refs/heads/feature/theirs >/dev/null && ok "feature start refuses a branch that exists only on origin and creates nothing" || no "start theirs rc=$rc: $out"
+out=$($F start v1 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "feature/v1 exists already" <<<"$out" && ok "an existing local branch keeps its message even when origin has it too" || no "start v1 rc=$rc: $out"
+git -C "$R3" fetch -q origin; git -C "$R3" push -q "$U3" --delete feature/theirs
+out=$($F start theirs 2>&1); rc=$?
+[ $rc = 0 ] && git -C "$R3" rev-parse -q --verify refs/heads/feature/theirs >/dev/null && ok "a stale tracking ref of a branch that is gone from origin does not block the start" || no "start after delete rc=$rc: $out"
 rm -rf "$T"
 exit $fail
