@@ -37,6 +37,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+TARGET = opt("--target", "claude-code renders for a local Claude Code session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
 NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
@@ -266,8 +267,21 @@ COMMANDS = {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "load": verb("Show what a role has enabled, or print one pack's text", [("[PACK]", "pack")], [opt("--role", "the role whose packs (required)", "ROLE", ROLES), opt("--project", "the project (default: inferred from here)", "PROJECT", "project")],
                          desc="Read-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved."),
-            "apply": verb("Update an existing cloud agent with its skills and tools", [("INSTANCE", "instance")], [ASKED, PLAN, APPROVED],
-                          desc="The lead's GitHub tool arrives this way when the project grants a cloud push. Always needs --plan (QARGI_NESTED does not skip it); a local member's guard refuses it."),
+            "apply": verb("Update an existing cloud agent, or render for a local Claude Code session", [("INSTANCE|PROJECT", "instance")], [TARGET, ASKED, PLAN, APPROVED],
+                          desc=("Without --target (or with managed-agents) this updates the existing cloud agent INSTANCE with its skills and tools; "
+                                "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
+                                "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
+                                "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
+                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/claude/PROJECT, replacing the "
+                                "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
+                                "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
+                                "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
+                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.")),
+            "check": verb("Check a Claude Code render for drift (read only)", [("PROJECT", "project")], [TARGET],
+                          desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
+                                "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
+                                "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
+                                "checkout's .claude/skills, and a missing manifest (nothing rendered yet).")),
         },
     },
     "start": {
