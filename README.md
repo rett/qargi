@@ -191,12 +191,16 @@ An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`
 
 `install.sh --user` records the tool it installed in `~/.qargi/config/install.json`. A checkout run from anywhere else, for example `bin/qargi` in a worktree, is then a dev run: it keeps its data in `<checkout>/.qargi` (ignored by git), prints `qargi: dev run from ...; data in ...` on stderr once per command, and never touches your live projects, credentials or audit log. The installed copy (for example `/opt/qargi`) is for confirming committed work and managing live projects, and never writes into its own directory. Without `install.json` a checkout behaves as the installed one. To point a dev run at live data on purpose set `QARGI_HOME=~/.qargi`; any explicit `QARGI_HOME`, `QARGI_CONF` or `QARGI_STATE` overrides the sandbox, and `qargi migrate home` refuses in a dev run unless one of them is set. Members call `qargi __guard` and the hooks from `PATH`, which is the installed copy: put `<checkout>/bin` first on `PATH` to test a branch's guard or hooks.
 
-Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
-license, see [LICENSE](LICENSE).
-
 ## Cloud profiles per project
 
 `qargi cloud set PROJECT --profile NAME --workspace-id wrkspc_...` binds a project to an `ant` profile and the workspace it must
 reach; `qargi cloud login PROJECT` logs that profile in on your terminal, and `qargi cloud check` verifies it. From then on every
 command about the project runs `ant` under that profile and refuses to touch another workspace. Without a binding, `ant`'s
 active profile is used.
+
+## Upgrading the installed tool
+
+`qargi upgrade --branch develop` fetches that branch of the installed checkout's origin (for example `/opt/qargi`), shows the commits and files that would change and prints a plan token; `qargi upgrade --branch develop --plan TOKEN --approved "..."` applies exactly that (fast-forward only on the current branch, `--tag T` for a tag), re-runs `install.sh --user` and lists the members to refresh. The git commands that write into the root-owned checkout run through `sudo`.
+
+Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
+license, see [LICENSE](LICENSE).

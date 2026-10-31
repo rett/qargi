@@ -59,7 +59,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py")              # the command and the scripts behind the refused verbs
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh")              # the command and the scripts behind the refused verbs
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
@@ -315,9 +315,13 @@ def skill_verb(prog, rest):
         words = ["discover"] + words
     if name == "cloud.py":
         words = ["cloud"] + words
+    if name == "upgrade.sh":
+        words = ["upgrade"] + words
     area, verb = (words + ["", ""])[:2]
     if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply")) \
-            or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")):
+            or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
+        if area == "upgrade":
+            return "qargi upgrade changes the installed tool and its skills and is not available to an agent"
         if area == "cloud":
             return "qargi cloud %s changes which cloud workspace a project uses and is not available to an agent" % verb
         return "%s changes a skill and is not available to an agent" % ("qargi import" if area == "import" else "qargi %s %s" % (area, verb))
