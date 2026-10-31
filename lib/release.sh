@@ -121,14 +121,13 @@ PY
     h=$(sha_of "$BR")
     if [ -z "$h" ]; then
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: $(v=$(verified "$BASE"); if [ -z "$v" ]; then echo "not run"; elif [ "${v%% *}" = "$(sha_of "$BASE")" ]; then echo "${v##* } at this head"; else echo "${v##* } at an older head"; fi)"
+      remote_report "$BASE"
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
-    if g remote get-url origin >/dev/null 2>&1; then
-      if g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then echo "pushed: origin/$BR$([ "$(g rev-parse "origin/$BR")" = "$h" ] || echo ' (differs from local)')"; else echo "pushed: no"; fi
-    fi
+    remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true;;
   verify)
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
@@ -144,6 +143,7 @@ PY
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     tok=$(printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h" | plan_token)
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
+    remote_report "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     g push -q -u origin "$BR" || die "pushing $BR failed"
@@ -166,6 +166,7 @@ PY
     fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" | plan_token)
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
+    remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
