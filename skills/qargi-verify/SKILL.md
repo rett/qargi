@@ -20,20 +20,24 @@ examples in `examples/`); without one, use the repository's own documented check
    and changelog entry with it). Run the profile's private-name or secret scrub on the
    patches; grep commit messages for private names and trailers
    (`git interpret-trailers`). Refuse on a hit.
-3. Scratch checkout of the base: `git am --3way` on the collected `*.patch` files in name order (a cloud collect is a flat directory, a local run has `OUT/patches/`); rebuild
+3. Scratch checkout of the base: for a local run `qargi review apply RUN_DIR` (it runs `review check` and `local verify`, creates
+   `agent/<slug>` in a temporary worktree at the run's base, applies the series and prints the next commands); for a cloud collect
+   `git am --3way` the flat directory of `*.patch` files in name order. Rebuild
    generated files the profile names; run the profile's gates (long ones with
    `run_in_background`, trusting only their verdict lines); then run the DONE
    command verbatim. Only your own runs count.
 4. Anything the profile marks for a second-model review gets one before it is
    applied.
 5. Report to the user: DONE or BLOCKED, evidence, deviations, the agent's
-   "noticed, not acted on". On approval apply to the feature branch (`git am`),
-   apply the profile's coordinator steps (for example renumbering a changelog
+   "noticed, not acted on". On approval, for a local run, take the branch in with
+   `qargi feature merge NAME BRANCH`, then `qargi local clean RUN_DIR`, then `qargi review prune [--yes]` (lists, or with `--yes` deletes,
+   the merged `agent/*` branches); otherwise apply to the feature branch (`git am`). Apply the profile's coordinator steps (for example renumbering a changelog
    item), strip trailers, commit. **Never squash.** Apply the agent's commits as the separate,
    change-specific commits they are (`git am`, author reset to the user); if one mixes
    unrelated changes, send it back to the agent to split, or split it by file yourself; do not
    fold commits together to tidy history. Check that each commit builds
-   (`git rebase --exec 'go build ./...' <base>`, or the profile's equivalent) before you report. Ask before any push. Never merge to a
+   (`git rebase --exec 'go build ./...' <base>`, or the profile's equivalent) before you report. Run `qargi local verify RUN_DIR` on EVERY returned run before merging any of them: a passing verify arms the run, after which
+   the lead's own fast-forwards are accepted, but a run never verified before the first merge fails the strict check. Ask before any push. Never merge to a
    long-lived branch unless told. Then `qargi mark SID applied|rejected [--why CODE]`
    (ask the user for the reason code when they reject, or when rework was needed; codes: `qargi mark --help`)
    and `qargi close SID` for cloud sessions. List the manifest's `noticed_not_acted_on` notes to the user
