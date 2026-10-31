@@ -9,7 +9,7 @@ mkdir -p "$HOME" "$T/c"
 
 $DA methodology list | grep -q "^gitflow .*built-in" && ok "list shows the built-in methodology" || no "list: $($DA methodology list)"
 $DA methodology check >/dev/null 2>&1 && ok "the built-in methodology checks out" || no "check: $($DA methodology check 2>&1)"
-$DA methodology show gitflow | grep -q "feature/{version}" && ok "show prints the branch model" || no "show"
+$DA methodology show gitflow | grep -q "release/{version}" && ok "show prints the branch model" || no "show"
 out=$($DA methodology files gitflow --param project=acme --param test_command="make check" --param version=0.3.0 2>&1)
 for f in README.md VERSION CHANGELOG.md CONTRIBUTING.md CLAUDE.md .gitignore .github/workflows/test.yml; do jq -e --arg f "$f" 'any(.[]; .dest == $f)' <<<"$out" >/dev/null 2>&1 || no "scaffold lacks $f"; done
 jq -r '.[] | select(.dest=="VERSION") | .content' <<<"$out" | grep -qx 0.3.0 && ok "the version parameter fills VERSION" || no "VERSION: $out"
