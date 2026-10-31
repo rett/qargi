@@ -36,6 +36,10 @@ grep -qx '/.claude/agents/smith.md' "$T/repo/.git/info/exclude" && [ -z "$(git -
 
 $DA agent rename forge anvil >/dev/null 2>&1 && [ -f "$A/anvil.md" ] && [ ! -e "$A/forge.md" ] && grep -q '^name: anvil$' "$A/anvil.md" && [ "$($DA agent for test)" = anvil ] && ok "rename moves the definition and the record" || no "rename"
 $DA agent rename anvil scribe >/dev/null 2>&1 && no "rename onto a member" || ok "rename refuses a name in use"
+sed -i '/onFailure/d;/timeout: 20/d' "$A/anvil.md"; cp "$A/anvil.md" "$T/old.md"
+$DA agent refresh anvil >/dev/null 2>&1 && grep -q 'onFailure: "block"' "$A/anvil.md" && grep -q '^name: anvil$' "$A/anvil.md" && grep -q 'build, test' "$A/anvil.md" && [ "$($DA agent for test)" = anvil ] && ok "refresh re-renders from the current definition, keeping name and abilities" || no "refresh"
+$DA agent refresh anvil 2>&1 | grep -q "is current" && ok "refresh of a current member says so" || no "refresh idempotent"
+$DA agent refresh nobody >/dev/null 2>&1 && no "refresh of an unknown member" || ok "refresh refuses an unknown member"
 $DA agent remove anvil >/dev/null 2>&1 && [ ! -e "$A/anvil.md" ] && [ "$($DA agent for test)" = worker ] && ok "remove deletes the definition and the record" || no "remove"
 $DA agent remove worker >/dev/null 2>&1; $DA agent for review >/dev/null 2>&1 && no "for found a removed member" || ok "for fails, with a hint, when no member serves the ability"
 $DA agent for review 2>&1 | grep -q "qargi agent add NAME --abilities review" && ok "the hint names the command" || no "hint"

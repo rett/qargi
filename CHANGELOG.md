@@ -7,6 +7,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi agent refresh NAME`: re-render a member from the member definition qargi ships now, keeping its
+  name, abilities and model, so members created before a change (such as the hardened hook) can catch up
+  without being removed and re-added.
 - `qargi memory split|merge|copy FROM TO`: move memory between two stores, each a directory of
   notes, a `.jsonl` dump or a `memstore_` id. Nothing is deleted: what a split archives goes to
   `/_archive/<date>/` and a collision to `/_conflicts/<date>/`, with the origin of every note

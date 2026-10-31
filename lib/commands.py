@@ -95,6 +95,8 @@ COMMANDS = {
                                   "qargi agent add worker    # one member for all four abilities"]),
             "list": verb("List the members, their abilities and definitions"),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
+                            desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print the member that serves an ability", [("ABILITY", ABILITIES)],
                         [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],

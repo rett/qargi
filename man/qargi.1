@@ -143,6 +143,13 @@ Rename a member and its definition.
 .RE
 .RS
 .TP
+.BI "refresh " "NAME"
+Re\-render a member from the member definition qargi ships now.
+.br
+Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+.RE
+.RS
+.TP
 .BI "remove " "NAME"
 Delete a member's definition and its record.
 .RE
