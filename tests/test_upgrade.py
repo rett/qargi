@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """qargi upgrade against a local origin and a stub install.sh. Offline; temporary state. Run: python3 tests/test_upgrade.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

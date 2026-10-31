@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reconciler tests on synthetic stores (no API, no private data).
 Run: python3 tests/test_canon.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import datetime, json, os, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))

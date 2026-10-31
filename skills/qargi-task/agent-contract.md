@@ -41,6 +41,23 @@ of done.
 - Never act against a production system; never use real credentials.
 - Never weaken or skip a test or check to make DONE pass.
 
+# Before you report DONE
+Each of these cost an earlier executor a failed check or a lost run; do them first.
+- Lint what you touched: `shellcheck -x -S warning` on every shell file you add or change, tests
+  included, and the project's own lint step for other languages. The whole-suite run stops at lint,
+  so an unused variable in a new test costs a full run.
+- Deliver change-specific commits, each with a body saying what changed and why. A commit with only a
+  subject fails `qargi review check`, and so does one monolithic commit that touches code, tests,
+  docs and changelog together.
+- Write the patches into `OUT/patches` (from `git format-patch --binary BASE_SHA..HEAD`), with
+  `OUT/manifest.json` (including `commit_advice` and `patch_groups`) and `OUT/series.md`, then run
+  `qargi review check OUT` and repeat until it reports `0 fail, 0 warn`.
+- Never use `git stash`: the stash is shared with other sessions. Set work aside in a WIP commit.
+- Use RUN_DIR, CLONE, OUT, TMP and GIT exactly as the task block gives them. If a path looks wrong,
+  say so in the report instead of substituting another.
+- Do not edit files outside SCOPE. List the changes you wanted there under "Needs from the lead" in
+  `series.md`.
+
 # Targeted checks
 Run the checks that cover what you changed (DONE, and the profile's gates for the paths you touched), not the whole suite:
 the coordinator runs the full suite once, after a collection of related tasks is merged. If the task block gives TMP, put
@@ -60,13 +77,15 @@ or `gitleaks detect --log-opts BASE_SHA..HEAD` on an older build) before the rep
 line; its pass is a hint, the coordinator scans again. Gates the profile marks
 as coordinator-only are reported "not run".
 
-# Output files (in RUN_DIR)
+# Output files (in OUT)
+OUT is the output directory the task block gives (a local run: `RUN_DIR/out`; with no OUT given, RUN_DIR itself is the
+output directory). RUN_DIR only names the run; `qargi review check` and `qargi local clean` read OUT.
 patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
 BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
 change group it belongs to, why, which checks it passed), run.bundle
 (git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt
 (every command with its exit status, in order). If OUT_PREFIX is given, start the name of every
-file you write to RUN_DIR with it (build--manifest.json): outputs are collected by base name and the
+file you write to OUT with it (build--manifest.json): outputs are collected by base name and the
 members of a team share one directory.
 manifest.json keys: status (DONE|BLOCKED), blocked_reason, task, commit_advice[] {sha, subject,
 why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
