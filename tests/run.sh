@@ -39,6 +39,7 @@ run bash tests/test_project.sh
 run bash tests/test_local.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
+run bash tests/test_packs_claude.sh
 run bash tests/test_review.sh
 run bash tests/test_team.sh
 run bash tests/test_leadcred.sh
