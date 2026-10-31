@@ -1586,7 +1586,7 @@ the command to put in the snippet (default qargi).
 .SS Review and apply
 .TP
 .B qargi review
-Check what an agent returned.
+Check what an agent returned and put it on a task branch.
 .RS
 .TP
 .BI "check " "RUN_DIR"
@@ -1597,6 +1597,40 @@ Refuses a monolithic patch, a commit without a message body and a manifest that 
 .TP
 .B \-\-allow\-empty
 accept a manifest with no commits (a team member that was blocked or had nothing to change).
+.RE
+.RE
+.RS
+.TP
+.BI "apply " "RUN_DIR"
+Apply a collected, checked run to a task branch of the repository.
+.br
+Refuses unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-branch " "BRANCH"
+the branch to create (default agent/<slug> of the run).
+.RE
+.RE
+.RS
+.TP
+.B prune
+List, or with \-\-yes delete, the agent/* branches already merged into develop or a feature.
+.br
+A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch \-d makes, against that target rather than the checked\-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; no other branch is touched. Prints each branch it lists or deleted.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-yes
+delete them (without it nothing changes).
 .RE
 .RE
 .TP
