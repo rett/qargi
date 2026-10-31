@@ -167,5 +167,61 @@ grep -q "nothing was changed locally or on origin" <<<"$fout" && ok "and says no
 rm "$T/origin2.git/hooks/pre-receive"
 fout=$($REL finish 0.5.0 --plan "$t" --approved go 2>&1) && ok "so it can simply be run again" || no "rerun after push failure: $fout"
 [ "$(git -C "$T/origin2.git" rev-parse master)" = "$(git -C "$R2" rev-parse master)" ] && git -C "$T/origin2.git" rev-parse -q --verify refs/tags/0.5.0 >/dev/null && ok "and then master and the tag are on origin" || no "after rerun"
+# --- refusals exit non-zero; what is pushed is read from the live remote, not from stale tracking refs
+R3=$T/app3; O3=$T/origin3.git; U3=file://$T/origin3.git; git init -q -b master "$R3"; git init -q --bare "$O3"
+echo 0.1.0 > "$R3/VERSION"; git -C "$R3" add -A && git -C "$R3" commit -q -m one && git -C "$R3" branch develop && git -C "$R3" remote add origin "$O3" && git -C "$R3" push -q origin master develop
+git -C "$R3" checkout -q -b parked
+jq -n --arg p "$R3" '{schema:1, project:"app3", methodology:"gitflow", repo:{url:"https://github.com/acme/app3", path:$p, long_lived:["master","develop"]}}' > "$T/c/projects/app3.json"
+export QARGI_PROJECT=app3
+$F start v1 >/dev/null 2>&1
+out=$($F verify v1 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no test_command" <<<"$out" && ok "feature verify with no test_command refuses with a non-zero exit" || no "feature verify refusal rc=$rc: $out"
+out=$($REL verify 0.1.1 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no test_command" <<<"$out" && ok "release verify with no test_command refuses with a non-zero exit" || no "release verify refusal rc=$rc: $out"
+$F verify nosuch >/dev/null 2>&1; rc1=$?; $REL verify 0.1.1 --hotfix >/dev/null 2>&1; rc2=$?
+[ $rc1 != 0 ] && [ $rc2 != 0 ] && ok "the other verify refusals (no branch, no test_command) exit non-zero too" || no "refusals rc=$rc1,$rc2"
+jq '.test_command = "false"' "$T/c/projects/app3.json" > "$T/c/projects/app3.new" && mv "$T/c/projects/app3.new" "$T/c/projects/app3.json"
+$F verify v1 >/dev/null 2>&1; rc1=$?; $REL verify 0.1.1 >/dev/null 2>&1; rc2=$?
+[ $rc1 = 1 ] && [ $rc2 = 1 ] && ok "a suite that fails keeps its exit code (1)" || no "failing suite rc=$rc1,$rc2"
+jq '.test_command = "true"' "$T/c/projects/app3.json" > "$T/c/projects/app3.new" && mv "$T/c/projects/app3.new" "$T/c/projects/app3.json"
+# develop is sent to origin by a file:// URL (not the remote's own), so refs/remotes/origin/develop stays where it was: only the live remote knows
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R3" worktree add -q --detach "$w" develop; echo more > "$w/more.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "pushed develop"
+git -C "$R3" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R3" worktree remove --force "$w"
+git -C "$R3" push -q "$U3" develop; d3=$(git -C "$R3" rev-parse --short develop)
+[ "$(git -C "$R3" rev-parse origin/develop)" != "$(git -C "$R3" rev-parse develop)" ] && ok "(setup) the tracking ref of origin/develop is stale" || no "setup: tracking ref is fresh"
+out=$($F status v1 2>&1)
+grep -q "origin develop: remote $d3, local $d3 (same)" <<<"$out" && ok "feature status reads the live remote: develop is pushed" || no "feature status: $out"
+grep -q "origin feature/v1: not on origin" <<<"$out" && ok "and says a feature branch is not on origin" || no "feature status v1: $out"
+git -C "$R3" push -q "$U3" develop:refs/heads/feature/v1
+git -C "$R3" update-ref refs/heads/feature/v1 "$(git -C "$R3" rev-parse develop~1)"
+out=$($F status v1 2>&1)
+grep -q "origin feature/v1: remote $d3, local .* (local is 0 ahead, 1 behind)" <<<"$out" && ok "a branch that differs shows both tips and the distance" || no "feature status differs: $out"
+$REL verify 0.1.1 >/dev/null 2>&1
+out=$($REL start 0.1.1 --allow-empty-notes 2>&1; $REL push 0.1.1 2>&1)
+grep -q "origin release/0.1.1: not on origin" <<<"$out" && ok "the release push plan says where the branch is on origin" || no "release push plan: $out"
+git -C "$R3" push -q "$U3" release/0.1.1; r3=$(git -C "$R3" rev-parse --short release/0.1.1)
+out=$($REL status 0.1.1 2>&1)
+grep -q "origin release/0.1.1: remote $r3, local $r3 (same)" <<<"$out" && grep -q "origin develop: remote $d3, local $d3 (same)" <<<"$out" && ok "release status reads the live remote for the branch and for develop" || no "release status: $out"
+out=$($REL finish 0.1.1 2>&1)
+grep -q "origin master: remote" <<<"$out" && grep -q "origin develop: remote $d3" <<<"$out" && ok "the release finish plan shows the live remote tips" || no "release finish plan: $out"
+git -C "$R3" remote set-url origin "$T/nonexistent.git"
+out=$($F status v1 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "origin develop: remote not checked (" <<<"$out" && ok "an unreachable origin is reported as 'remote not checked (reason)' and status still succeeds" || no "unreachable feature status rc=$rc: $out"
+out=$($REL status 0.1.1 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "remote not checked (" <<<"$out" && ok "so does release status" || no "unreachable release status rc=$rc: $out"
+out=$($F start unreach 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "remote not checked (" <<<"$out" && git -C "$R3" rev-parse -q --verify refs/heads/feature/unreach >/dev/null && ok "an unreachable origin does not stop feature start (it says so)" || no "unreachable start rc=$rc: $out"
+git -C "$R3" remote set-url origin "$O3"
+
+# --- feature start refuses a name that origin already has (asked live), unless the local branch exists
+git -C "$R3" push -q "$U3" develop:refs/heads/feature/theirs
+! git -C "$R3" rev-parse -q --verify refs/remotes/origin/feature/theirs >/dev/null && ok "(setup) feature/theirs is on origin and not in the tracking refs" || no "setup: theirs is tracked"
+out=$($F start theirs 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "origin already has feature/theirs" <<<"$out" && ! git -C "$R3" rev-parse -q --verify refs/heads/feature/theirs >/dev/null && ok "feature start refuses a branch that exists only on origin and creates nothing" || no "start theirs rc=$rc: $out"
+out=$($F start v1 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "feature/v1 exists already" <<<"$out" && ok "an existing local branch keeps its message even when origin has it too" || no "start v1 rc=$rc: $out"
+git -C "$R3" fetch -q origin; git -C "$R3" push -q "$U3" --delete feature/theirs
+out=$($F start theirs 2>&1); rc=$?
+[ $rc = 0 ] && git -C "$R3" rev-parse -q --verify refs/heads/feature/theirs >/dev/null && ok "a stale tracking ref of a branch that is gone from origin does not block the start" || no "start after delete rc=$rc: $out"
 rm -rf "$T"
 exit $fail
