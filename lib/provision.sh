@@ -192,7 +192,7 @@ case $verb in
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
       cur=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config') || die "cannot read the shared environment $ENVID"
-      lst() { printf '%s' "$1" | xargs -n1 2>/dev/null | jq -R . | jq -sc 'unique'; }
+      lst() { printf '%s' "$1" | xargs -r -n1 2>/dev/null | jq -R . | jq -sc 'unique'; }
       new=$(jq -c --argjson a "$(lst "$ENV_APT")" --argjson p "$(lst "$ENV_PIP")" --argjson g "$(lst "$ENV_GO")" \
         '.packages.apt = ((.packages.apt // []) + $a | unique) | .packages.pip = ((.packages.pip // []) + $p | unique) | .packages.go = ((.packages.go // []) + $g | unique)' <<<"$cur")
       if [ "$new" != "$(jq -c . <<<"$cur")" ]; then
