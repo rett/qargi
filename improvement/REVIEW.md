@@ -79,6 +79,28 @@ After the review pass of `auto/queue` (suite re-run on an exported copy: 27 step
 **Not decided by these answers:** merging `auto/queue` into `develop` and pushing `develop`. Both stay the
 owner's explicit words. The builders' saved questions below are still open.
 
+**Update (same day):** the owner typed "merge"; `auto/queue` is in `develop` as `c41787a` (the tree is identical
+to the one the full suite passed on) and the five builder worktrees were removed (branches kept). `develop`
+is not pushed.
+
+### Owner decisions on where qargi lives (2026-10-30, typed in chat)
+
+| Question | Decision |
+|---|---|
+| Where is the installed tool? | A checkout at `/opt/qargi`, the same way another project of the owner's installs, used by `install.sh --user` (it links to the directory it runs from). The installed copy confirms committed work and manages live projects. |
+| Data location | `~/.qargi/config` and `~/.qargi/state`, not XDG (reasons: one unit, private variables instead of the shared `XDG_*`, credentials outside the dotfile-synced `~/.config`, consistent with `~/.claude`). `QARGI_HOME`, `QARGI_CONF` and `QARGI_STATE` override; XDG users set the last two. |
+| Existing data | An explicit `qargi migrate home`: plan with token, apply only with the owner's typed go-ahead; it copies (old directories stay as a backup), rewrites embedded absolute paths. Until it runs, commands refuse on the old layout. |
+| Branch checkouts | A checkout that is not the installed tool runs in its own sandbox `<checkout>/.qargi/` with a stderr banner; `QARGI_HOME=~/.qargi` deliberately uses live data. `install.sh` records the installed root in `install.json`. |
+| Guard scope for the new location | Only the pack library, `<conf>/credentials` and `<conf>/install.json` (not the whole config directory, which members' verbs also write). |
+| `MOVED` pointer in the old directories | No: they stay strictly read-only. |
+| Should `install.sh --user` offer to migrate? | No: it prints a note only. |
+| Rewriting embedded paths during migration | Not in records: `audit.log`, `run-events/*.jsonl` and `supervisor.log` are copied verbatim. |
+
+Built on `feature/qargi-home` (awaiting review; not merged). Not yet done: the `/opt/qargi` clone itself (needs
+the owner's `sudo`), the migration of the real data, and the `qargi agent refresh` (L20) and `qargi upgrade`
+ideas. Merging `feature/qargi-home` into `develop` makes every command refuse until the owner runs
+`qargi migrate home`, so merge it together with that step.
+
 ## Questions the builders saved for you
 
 **Supervisor**
