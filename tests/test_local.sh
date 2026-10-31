@@ -91,4 +91,26 @@ git -C "$T/r3" update-ref refs/remotes/origin/zz HEAD
 [ "$(rc "$P3")" = 2 ] && ok "a refs/remotes change fails" || no "refs/remotes change accepted"
 git -C "$T/r3" update-ref -d refs/remotes/origin/zz
 rm -rf "$C1" "$TM"
+# a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
+git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
+mkdir -p "$T/c/projects"
+jq -n --arg p "$T/r4" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:$p,long_lived:["main"]},
+  roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
+  memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
+mk4() { ./bin/qargi local prepare --repo "$T/r4" --base main --slug "$1" --scratch "$T" 2>"$T/err"; }
+tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+out=$(mk4 w0); [ ! -s "$T/err" ] && ok "no render: prepare prints no warning" || no "no render: $(cat "$T/err")"
+Q=./bin/qargi
+$Q skill new s-w >/dev/null; sed -i "s/^description: .*/description: Use for s-w./" "$T/c/packs/skills/s-w/SKILL.md"
+$Q skill seal s-w --plan "$($Q skill seal s-w | tokof)" --approved test >/dev/null
+$Q skill link s-w --scope project --project alpha >/dev/null
+$Q packs apply --target claude-code alpha --plan "$($Q packs apply --target claude-code alpha | tokof)" --approved test >/dev/null
+out=$(mk4 w1); [ -f "$T/s/claude/alpha/MANIFEST.json" ] && [ ! -s "$T/err" ] && ok "a clean render: no warning" || no "clean render: $(cat "$T/err")"
+echo tamper >> "$T/s/claude/alpha/.claude/skills/s-w/SKILL.md"
+out=$(mk4 w2); rcw=$?
+grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && grep -q 'SKILL.md' "$T/err" && grep -q 'fix: qargi packs apply --target claude-code alpha' "$T/err" && [ $rcw = 0 ] \
+  && ok "a drifted render: a WARNING with the findings and the fix, and prepare still succeeds" || no "drift: $rcw $(cat "$T/err")"
+blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out"); W2=$(runof <<<"$out")
+[ "$(sed -n '1p' <<<"$blk")" = "RUN_DIR=$W2" ] && [ "$(wc -l <<<"$blk")" = 6 ] && ! grep -q WARNING <<<"$out" && ok "the paths block is intact and the warning is not in stdout" || no "block: $blk"
+rm -rf "$T/s/claude/alpha"; out=$(mk4 w3); [ ! -s "$T/err" ] && ok "no render again: no warning" || no "removed render: $(cat "$T/err")"
 exit $fail
