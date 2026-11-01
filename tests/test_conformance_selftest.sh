@@ -11,6 +11,7 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 T=$(mktemp -d -p "$HERMETIC")
 ROOT=$PWD
 BROKEN=tests/providers/broken
+tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
 
 # the validator: a good value passes, a bad one is named
 V="python3 -I tests/providers/lib/validate.py"
@@ -60,11 +61,11 @@ conf nosuchprovider >/dev/null 2>&1; [ $? = 2 ] && ok "an unknown provider is a 
 conf >/dev/null 2>&1; [ $? = 2 ] && ok "no provider is a usage error (exit 2)" || no "no provider exit"
 
 # hermetic: the caller's environment does not reach it, and it leaves nothing behind
-before=$(ls "${TMPDIR:-/tmp}" | wc -l)
-QARGI_CONF=/nonexistent QARGI_STATE=/nonexistent QARGI_TRANSPORT=/bin/false ANTHROPIC_API_KEY=x conf claude >/dev/null 2>&1 && ok "a polluted caller environment does not change the result" || no "pollution changed the result"
-after=$(ls "${TMPDIR:-/tmp}" | wc -l)
-[ "$before" = "$after" ] && ok "the harness removes its temporary files" || no "temporary files left behind ($before -> $after)"
+mkdir "$T/tmp"
+TMPDIR=$T/tmp QARGI_CONF=/nonexistent QARGI_STATE=/nonexistent QARGI_TRANSPORT=/bin/false ANTHROPIC_API_KEY=x conf claude >/dev/null 2>&1 && ok "a polluted caller environment does not change the result" || no "pollution changed the result"
+[ -z "$(ls -A "$T/tmp")" ] && ok "the harness removes its temporary files" || no "temporary files left behind: $(ls "$T/tmp")"
 cd "$ROOT" || exit 1
-[ -z "$(git status --porcelain tests lib 2>/dev/null | grep -v '^??')" ] && ok "no tracked file changed" || no "a tracked file changed"
+tree_after=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
+[ "$tree_before" = "$tree_after" ] && ok "the run changes no tracked file" || no "a tracked file changed"
 [ $fail = 0 ] && echo "conformance selftest: all checks passed"
 exit $fail
