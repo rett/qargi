@@ -294,6 +294,8 @@ prompt_root() {
 agent_prompt() { # role [project]
   local root; root=$(prompt_root)
   local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 sk=$root/skills
+  # a base (worker, reviewer) is a role-neutral agent: the role text comes with each session, so the agent itself holds only a short fallback
+  if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
   [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
