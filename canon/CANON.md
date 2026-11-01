@@ -120,20 +120,22 @@ runs it, and so does `qargi memory lint`.
 ## Role rules
 
 - The role is the ability of the task: named in a cloud agent's prompt, and in a
-  member's task block (`ABILITY: build`). An agent loads `/README.md`,
+  member's task block (`ROLE: build (class write)`). An agent loads `/README.md`,
   `/shared/INDEX.md` and `/roles/<its role>/INDEX.md`, then only what the task
   needs, and never reads or writes under another role's folder. `shared/` is written only by
   promotion (`qargi canon promote`) or by the person; an agent proposes.
 - Roles come from the fixed list (`build`, `review`, `write`, `test`, plus `lead`) and from the
   project's stored answers. A role folder for a role the project does not use is a
-  deviation.
+  deviation. A cloud base agent (`<project>-worker`, `<project>-reviewer`) is not a role: it
+  runs the role named for each session.
 - This isolation is hygiene, not a trust boundary: a store mounts whole, so an agent can
   read or write another role's folder if it ignores its instructions. If a role must be
   truly separate, give it its own stores.
-- It is by convention and made auditable, not enforced: It is made auditable,
-  not enforced: `qargi canon audit` reads the memory version history and
-  reports a session titled for one role (`<project>-<role>-<task>`) writing under
-  another role's folder.
+- It is by convention and made auditable, not enforced: `qargi canon audit`
+  reads the memory version history and reports a session titled for one role
+  (`<project>-<role>-<task>`) writing under another role's folder. It reads the
+  role from the session title, so a base session (`<project>-worker-<task>`) is
+  not attributed to a role yet.
 - Promote content that turns out to serve every role with `qargi canon
   promote`; never copy it.
 
