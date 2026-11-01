@@ -34,6 +34,17 @@ run: never) and never pushes; a verb that changes the marshal exits 2 inside a m
 "remote not checked": reads continue on the cache, a claim stays provisional and the next verb completes or drops it.
 Environment: QARGI_REMOTE_TIMEOUT (seconds for a fetch or push, default 10) and QARGI_MARSHAL_MONO (the monotonic clock; tests).
 
+Integrity. The switch file also holds `integrity`: off (the default, everything above), advisory or strict. Writes are signed with
+this machine's key ($QARGI_CONF/credentials/marshal_ed25519, lib/marshal_sign.py) whenever the mode is not off and the key exists
+(strict refuses to write without one). A reader in advisory or strict verifies every record against the allowed signers file
+($STATE/marshal/<project>.signers) and tags it signed, unsigned or INVALID ("cannot verify" for a sig_v it does not know). Advisory
+uses every record and shows the tag; strict ignores what is not signed, with a warning, and falls back to the last accepted record
+of the feature. The last accepted record of each feature is kept in $STATE/features/.accepted-<project>.json {name: [rev, oid]}
+(a high-water mark): a record with a lower rev, the same rev and another oid, or that does not descend from the accepted one is a
+rollback, warned about as such and never used. A write decides on, and builds on, the last accepted record when the ref's head is
+not one, so junk or replayed pushes can neither renew a lease (the timer counts the accepted oid only) nor block the lead. A ref
+that vanishes without a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
+
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
 Run through lib/marshal.sh; python3 -I, standard library only."""
@@ -89,6 +100,8 @@ def capped(s):
 class Ctx:
     def __init__(self, a, be=None):
         self.state, self.project, self.repo = a.state, a.project, a.repo
+        self.conf = getattr(a, "conf", "") or ""
+        self.name = getattr(a, "name", None)
         self.be = be or LocalBackend()
         self.fetch_ok = not getattr(a, "no_fetch", False) and not getattr(self.be, "member", False)
         self.ttl = a.ttl if a.ttl and a.ttl > 0 else 15
@@ -186,6 +199,7 @@ def check_name(name):
 class LocalBackend:
     """One JSON file per feature in $STATE/features, this machine only (the default). The lease is the wall clock: renewed_at."""
     refs = False
+    integrity = "off"
     ghost_fix = True              # a record whose branch is gone is abandoned on a read
     no_age = "stale"              # the lease of a record without a readable renewed_at
     renewed_word = "renewed"
@@ -295,8 +309,129 @@ def soft_rec(path):
 
 
 class Snap:
-    def __init__(self, feats, done, bad, why, bad_done=frozenset()):
+    """What a read of the cache found. feats is what a reader shows, base what a write decides on and builds on (the same unless the
+    head of a ref is not an accepted record: then base is the last accepted one); both carry _oid (the head, which a push leases),
+    _acc (the oid the content comes from) and, with integrity on, _tag, _why and _signer."""
+    def __init__(self, feats, done, bad, why, bad_done=frozenset(), base=None):
         self.feats, self.done, self.bad, self.why, self.bad_done = feats, done, bad, why, bad_done
+        self.base = feats if base is None else base
+
+
+class Integrity:
+    """The signature rules of one read of the cache (advisory and strict): tags each record, keeps the high-water mark, finds
+    rollbacks, falls back to the last accepted record and notices a vanished ref."""
+    BAD = ("INVALID", "cannot verify")
+
+    def __init__(self, be, ctx):
+        self.be, self.ctx, self.R = be, ctx, be.R
+        self.S = self.R.sign_mod()
+        self.strict = be.integrity == "strict"
+        self.signers = os.path.join(ctx.state, "marshal", "%s.signers" % ctx.project)
+        self.marks_path = os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project)
+        self.tags = {}
+        self.notes = []
+
+    def classify(self, kind, name, rec, parents, message):
+        """-> (tag, why): signed | unsigned | INVALID | cannot verify."""
+        S = self.S
+        if "sig_v" not in rec and "signer" not in rec:
+            return "unsigned", ""
+        sv = rec.get("sig_v")
+        if type(sv) is not int or sv != 1:
+            return "cannot verify", "its sig_v is not 1"
+        signer = rec.get("signer")
+        if not S.principal_ok(signer):
+            return "INVALID", "its signer is not a valid id"
+        rev = rec.get("rev")
+        if type(rev) is not int or rev < 0:
+            return "INVALID", "it has no rev"
+        if len(parents) > 1:
+            return "INVALID", "a record commit has one parent at most"
+        armor, why = S.armor_from_message(message)
+        if not armor:
+            return "INVALID", why
+        ld = rec.get("lead")
+        try:
+            payload = S.signed_payload(self.ctx.project, name, kind, rev, parents[0] if parents else None, ld.get("id") if isinstance(ld, dict) else None, rec)
+        except ValueError as e:
+            return "INVALID", "its payload cannot be rebuilt: %s" % e
+        ok, why = S.verify(payload, armor, self.signers, signer)
+        return ("signed", "") if ok else ("INVALID", why)
+
+    def verify(self, kind, name, oid, rec, parents, message):
+        """The callback of marshal_refs.read: strict ignores what is not signed, advisory uses everything and only tags."""
+        tag, why = self.classify(kind, name, rec, parents, message)
+        self.tags[(kind, name)] = (tag, why, rec.get("signer") if tag == "signed" else None)
+        if tag == "signed" or not self.strict:
+            return None
+        return "not accepted (integrity strict): %s" % (("it is not signed" if tag == "unsigned" else "%s: %s" % (tag, why)),)
+
+    def marks(self):
+        try:
+            return self.S.hw_load(self.marks_path)
+        except self.S.SignError as e:
+            raise Refuse("the high-water mark file cannot be used (%s): fix or remove %s" % (clean(str(e))[:200], self.marks_path))
+
+    def entry(self, rec, head, acc, tag, why, signer):
+        return dict(rec, _oid=head, _acc=acc, _tag=tag, _why=clean(why)[:300], _signer=signer)
+
+    def fallback(self, name, marks, head):
+        """The last accepted record of `name` as an entry whose head is `head`, or None (no mark, or its commit is gone)."""
+        m = marks.get(name)
+        if not m:
+            return None
+        rec, _ = self.R.read_one(self.ctx.repo, m[1], name)
+        if rec is None or sane(rec):
+            return None
+        sg = rec.get("signer")
+        return self.entry(rec, head or m[1], m[1], "signed", "the last accepted record", sg if self.S.principal_ok(sg) else None)
+
+    def settle(self, feats, done, ignored, heads, persist, only=None):
+        """-> (view {name: entry}, base {name: entry}, bad {names of refs with no usable record at all}). Moves the mark for the records it
+        accepts (persist; with `only`, for that feature alone: a record nobody asked about has not been read) and collects the warnings
+        in self.notes."""
+        S, R, repo = self.S, self.R, self.ctx.repo
+        marks = self.marks()
+        view, base, bad = {}, {}, set()
+        for name, (oid, rec) in feats.items():
+            tag, why, signer = self.tags.get(("features", name), ("unsigned", "", None))
+            cur = self.entry(rec, oid, oid, tag, why, signer)
+            if tag == "signed":
+                ok, w = S.hw_check(marks, name, rec["rev"], oid, lambda a, b: R.is_ancestor(repo, a, b))
+                if ok:
+                    if persist and only in (None, name):
+                        S.hw_record(self.marks_path, name, rec["rev"], oid)
+                    view[name] = base[name] = cur
+                    continue
+                self.notes.append((name, "ignoring refs/qargi/features/%s on the remote: %s" % (name, w)))
+                fb = self.fallback(name, marks, oid)
+                if fb:
+                    view[name] = base[name] = fb
+                else:
+                    bad.add(name)
+                continue
+            view[name] = cur
+            base[name] = self.fallback(name, marks, oid) or cur
+            if tag in self.BAD:
+                self.notes.append((name, "refs/qargi/features/%s is %s%s (integrity advisory: the record is still used)" % (name, tag, (": " + why) if why else "")))
+        for ref, _ in ignored:
+            if not ref.startswith("refs/qargi/features/"):
+                continue
+            name = ref.rsplit("/", 1)[1]
+            if not R.name_ok(name) or name in view:
+                continue
+            fb = self.fallback(name, marks, heads.get(ref))
+            if fb:
+                view[name] = base[name] = fb
+            else:
+                bad.add(name)
+        for name, (oid, rec) in done.items():
+            if self.tags.get(("done", name), ("unsigned",))[0] == "signed" and persist and only in (None, name):
+                S.hw_drop(self.marks_path, name)
+        for name in sorted(marks):
+            if "refs/qargi/features/" + name not in heads and name not in done:
+                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s: it was deleted or rewound" % (name, name)))
+        return view, base, bad
 
 
 class RefsBackend:
@@ -309,11 +444,13 @@ class RefsBackend:
     no_age = "live"
     renewed_word = "last change seen"
 
-    def __init__(self, remote):
+    def __init__(self, remote, integrity="off"):
         self.R = refs_mod()
         self.remote = remote
+        self.integrity = integrity
         self.member = self.R.in_member_run()
         self.snap = None
+        self.heads = {}
         self.warned = set()
 
     # -- the cache
@@ -334,18 +471,39 @@ class RefsBackend:
             if fetch:
                 ok, w = R.refresh(ctx.repo, self.remote)
                 why = None if ok else w
-            feats, done, ignored = R.read(ctx.repo, sane)
-            ages = R.observed(ctx.state, ctx.project, {n: o for n, (o, _) in feats.items()}, persist=not self.member)
+            heads = self.heads = {}
+            guard = Integrity(self, ctx) if self.integrity != "off" else None
+            feats, done, ignored = R.read(ctx.repo, sane, guard.verify if guard else None, heads)
+            bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
+            if guard:
+                view, based, bad = guard.settle(feats, done, ignored, heads, not self.member, ctx.name)
+                notes = guard.notes
+            else:
+                view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
+                notes = []
+            # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
+            ages = R.observed(ctx.state, ctx.project, {n: e["_acc"] for n, e in based.items()}, persist=not self.member)
         finally:
             lk.close()
+        # with integrity on, a read about one feature warns about that feature only (the others are not what was asked, and a project that
+        # still has unsigned records from before would repeat the same warnings on every call)
+        only = ctx.name if self.integrity != "off" else None
         for ref, w in ignored:
-            if (ref, w) not in self.warned:
+            if (ref, w) not in self.warned and (only is None or ref.rsplit("/", 1)[-1] == only):
                 self.warned.add((ref, w))
-                print("qargi: warning: ignoring %s on the remote: %s" % (ref, w), file=sys.stderr)
-        bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
+                print("qargi: warning: ignoring %s on the remote: %s" % (clean(ref), clean(w)), file=sys.stderr)
+        for n, w in notes:
+            if ("", w) not in self.warned and (only is None or n == only):
+                self.warned.add(("", w))
+                print("qargi: warning: %s" % clean(w), file=sys.stderr)
         bad_done = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/done/") and R.name_ok(r.rsplit("/", 1)[1])}
-        self.snap = Snap({n: dict(rec, _oid=o, _age=ages.get(n, 0)) for n, (o, rec) in feats.items()},
-                         {n: dict(rec, _oid=o) for n, (o, rec) in done.items()}, bad, why, bad_done)
+        for e in list(view.values()) + [b for n, b in based.items() if b is not view.get(n)]:
+            e["_age"] = ages.get(e["feature"], 0)
+        dn = {}
+        for n, (o, rec) in done.items():
+            tag, tw, signer = guard.tags.get(("done", n), ("unsigned", "", None)) if guard else ("unsigned", "", None)
+            dn[n] = dict(rec, _oid=o, _tag=tag, _why=clean(tw)[:300], _signer=signer)
+        self.snap = Snap(view, dn, bad, why, bad_done, based)
         return why
 
     def snapshot(self, ctx):
@@ -387,7 +545,7 @@ class RefsBackend:
     # -- writing
     def stamp(self, ctx, name, new, base):
         """The record to write: no private key, rev + 1, no control character, not over the size a reader accepts."""
-        new = {k: v for k, v in new.items() if not k.startswith("_") and k not in NOTE_KEYS}
+        new = {k: v for k, v in new.items() if not k.startswith("_") and k not in NOTE_KEYS and k not in ("sig_v", "signer")}
         rev0 = (base or {}).get("rev", 0)
         new["rev"] = (rev0 if isinstance(rev0, int) and not isinstance(rev0, bool) else 0) + 1
         new["updated_at"] = iso(ctx.t)
@@ -411,13 +569,31 @@ class RefsBackend:
                 rec["done_seen"] = self.done_oid(name)
         write_local(ctx.path(name), rec)
 
-    def push_one(self, ctx, name, new, remote_oid):
-        """Commit new on top of the remote's commit and push it with a lease on that commit (create-only when there is none)
-        -> (status, why)."""
+    def signer(self, ctx):
+        """The Signer for a write, or None (integrity off, or no key in advisory). Strict never writes a record its readers would ignore."""
+        if self.integrity == "off":
+            return None
+        sg = self.R.signer_for(ctx.conf, ctx.project)
+        if sg is None and self.integrity == "strict":
+            raise Refuse("integrity is strict but this machine has no signing key, so its records would be ignored: qargi marshal key init, then trust the line it prints on every machine (qargi marshal signers add)")
+        return sg
+
+    def accepted(self, ctx, name, rev, oid):
+        """Our own signed write is an accepted record."""
+        if not self.member:
+            try:
+                self.R.sign_mod().hw_record(os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project), name, rev, oid)
+            except self.R.sign_mod().SignError as e:
+                print("qargi: warning: the high-water mark was not updated: %s" % clean(str(e))[:200], file=sys.stderr)
+
+    def push_one(self, ctx, name, new, remote_oid, parent=None, sign=None):
+        """Commit new on top of `parent` (default: the remote's commit) and push it with a lease on the remote's commit (create-only when
+        there is none) -> (status, why). The parent differs from the lease when the head is junk and the commit builds on the last accepted
+        record: the push then replaces the junk."""
         R = self.R
         ref = "refs/qargi/features/" + name
         try:
-            commit = R.write(ctx.repo, new, remote_oid, "marshal: %s rev %s" % (name, new.get("rev")))
+            commit = R.write(ctx.repo, new, parent or remote_oid, "marshal: %s rev %s" % (name, new.get("rev")), sign)
         except OSError as e:
             raise Refuse("cannot write the record of %s: %s" % (name, e))
         st, why = R.marshal_push(ctx.repo, self.remote, [(commit, ref, remote_oid or R.ZERO)])
@@ -426,6 +602,8 @@ class RefsBackend:
             try:
                 R.update_cache(ctx.repo, ref, commit)
                 R.observe_own(ctx.state, ctx.project, name, commit)
+                if sign is not None:
+                    self.accepted(ctx, name, new.get("rev"), commit)
             finally:
                 lk.close()
         return st, why
@@ -442,12 +620,14 @@ class RefsBackend:
     def update_locked(self, ctx, name, fn, create, path):
         R = self.R
         retried, last = False, ""
+        signer = self.signer(ctx)
         for _ in range(5):
             why = self.load(ctx, True)
             snap = self.snap
             if name in snap.bad:
-                raise Refuse("refs/qargi/features/%s exists on the remote but holds no valid record (see the warning above): ask whoever owns the remote to remove it" % name)
-            remote = snap.feats.get(name)
+                raise Refuse("refs/qargi/features/%s exists on the remote but holds no valid record (see the warning above): ask whoever owns the remote to remove it%s" % (
+                    name, "; an unsigned record from before integrity was switched on is signed by the owner with: qargi marshal resign %s --approved WORDS" % name if self.integrity == "strict" else ""))
+            remote = snap.base.get(name)
             prov = self.provisional(ctx, name)
             if prov is not None and why is None:
                 # settle a claim that was not pushed: complete it when the remote still has no such feature, adopt the remote's record when
@@ -458,7 +638,7 @@ class RefsBackend:
                     print("qargi: the provisional claim of %s was dropped, not pushed: the feature was finished on the remote meanwhile (refs/qargi/done/%s exists)" % (name, name), file=sys.stderr)
                     prov = None
                 elif remote is None:
-                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k not in NOTE_KEYS}, None)
+                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k not in NOTE_KEYS and k not in ("sig_v", "signer")}, None, None, signer)
                     if st == "ok":
                         self.mirror(ctx, name, prov)
                     if st in ("ok", "rejected"):
@@ -486,26 +666,30 @@ class RefsBackend:
                 return res
             new = self.stamp(ctx, name, new, rec)
             remote_oid = remote["_oid"] if remote else None
+            parent_oid = remote["_acc"] if remote else None
             finishing = new.get("status") == "finished"
             wrote_prov = False
             if finishing and name in snap.bad_done:
                 raise Refuse("refs/qargi/done/%s exists on the remote but holds no valid record (see the warning above): ask whoever owns the remote to remove it, then finish again" % name)
             if finishing:
                 try:
-                    st, last, _ = R.finish(ctx.repo, self.remote, name, new, remote_oid, (snap.done.get(name) or {}).get("_oid"))
+                    st, last, _ = R.finish(ctx.repo, self.remote, name, new, remote_oid, (snap.done.get(name) or {}).get("_oid"), signer, parent_oid)
                 except OSError as e:
                     raise Refuse("cannot write the record of %s: %s" % (name, e))
                 if st == "ok":
                     lk = self.repo_lock(ctx)
                     try:
                         R.observe_own(ctx.state, ctx.project, name, None)
+                        if self.integrity != "off" and not self.member:
+                            sg = R.sign_mod()
+                            sg.hw_drop(os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project), name)
                     finally:
                         lk.close()
             else:
                 if remote is None and create:
                     self.mirror(ctx, name, new, "provisional")      # first the local note, then the create-only push
                     wrote_prov = True
-                st, last = self.push_one(ctx, name, new, remote_oid)
+                st, last = self.push_one(ctx, name, new, remote_oid, parent_oid, signer)
             if st == "ok":
                 if finishing:
                     try:
@@ -526,6 +710,42 @@ class RefsBackend:
                 raise Refuse("feature %s changed while it was being updated, or the remote refused the push (%s); try again" % (name, last))
             retried = True
         raise Refuse("feature %s could not be updated (%s); try again" % (name, last or "the remote kept changing"))
+
+
+def refs_resign(be, ctx, name):
+    """Sign the unsigned head of refs/qargi/features/NAME: a signed commit on top of it, rev + 1, the record otherwise as it is.
+    -> the new rev, or None when the head is signed already."""
+    R = be.R
+    sg = R.signer_for(ctx.conf, ctx.project)
+    if sg is None:
+        raise Refuse("this machine has no signing key: qargi marshal key init")
+    path = ctx.path(name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".lock", "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        for attempt in range(2):
+            why = be.load(ctx, True)
+            if why is not None:
+                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+            head = be.heads.get("refs/qargi/features/" + name)
+            if head is None:
+                raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
+            rec, w = R.read_one(ctx.repo, head, name)
+            if rec is None or sane(rec):
+                raise Refuse("refs/qargi/features/%s holds no valid record (%s): nothing to sign" % (name, w or sane(rec)))
+            info = R.commit_info(ctx.repo, head)
+            tag, w = Integrity(be, ctx).classify("features", name, rec, info[0], info[1]) if info else ("INVALID", "its commit cannot be read")
+            if tag == "signed":
+                return None
+            if tag != "unsigned":
+                raise Refuse("refs/qargi/features/%s is %s (%s): resign only signs an unsigned record" % (name, tag, clean(w)[:200]))
+            new = be.stamp(ctx, name, rec, rec)
+            st, last = be.push_one(ctx, name, new, head, head, sg)
+            if st == "ok":
+                return new["rev"]
+            if st == "unreachable":
+                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
+        raise Refuse("feature %s changed while it was being signed, or the remote refused the push (%s); try again" % (name, last))
 
 
 # ---- git -----------------------------------------------------------------------------------------------------------
@@ -649,6 +869,10 @@ def describe(ctx, name, rec, files_cache, derived=True):
          "finished_at": rec["finished_at"]}
     if ctx.be.refs:
         d["provisional"] = rec.get("state") == "provisional"
+    if ctx.be.integrity != "off":
+        d["integrity"] = rec.get("_tag") or "unsigned"
+        d["integrity_note"] = clean(rec.get("_why") or "")[:300]
+        d["signer"] = clean(rec.get("_signer") or "")
     if derived:
         d["tasks"], d["agent_branches"] = tasks_of(ctx, name), (unmerged_agents(ctx, name) if d["branch"] else [])
         d["worktrees"], d["overlap"] = worktrees_of(ctx, name), (overlaps(ctx, name, files_cache) if d["branch"] else {})
@@ -664,7 +888,7 @@ def lead_word(d, brief=False):
 def brief_line(d):
     goal = " ".join((d["goal"] or d["purpose"]).split())[:60]
     status = d["status"] + (" (branch gone)" if d["ghost"] else "") + (" (provisional: not on the remote yet)" if d.get("provisional") else "")
-    return "%s  lead=%s  %s  %s" % (d["feature"], lead_word(d, True), status, goal)
+    return "%s  lead=%s  %s  %s%s" % (d["feature"], lead_word(d, True), status, goal, "  [%s]" % d["integrity"] if d.get("integrity") else "")
 
 
 def indent(s, n):
@@ -672,7 +896,9 @@ def indent(s, n):
 
 
 def print_full(d, raw_lens):
-    print("feature %s of %s" % (d["feature"], d["project"]))
+    print("feature %s of %s%s" % (d["feature"], d["project"], "  [%s]" % d["integrity"] if d.get("integrity") else ""))
+    if d.get("integrity"):
+        print("  integrity: %s%s" % (d["integrity"], (" by " + d["signer"]) if d["signer"] else ((": " + d["integrity_note"]) if d["integrity_note"] else "")))
     if d["lead"]:
         age = "?" if d["minutes_since_renewal"] is None else d["minutes_since_renewal"]
         print("  lead: %s (%s@%s) %s, renewed %s min ago (ttl %d min), since %s" % (d["lead"]["id"], d["lead"]["user"], d["lead"]["host"], d["lease"].upper(), age, d["ttl_minutes"], d["lead"]["since"]))
@@ -939,6 +1165,19 @@ def v_finish(ctx, a):
         print("finished %s" % a.name)
 
 
+def v_resign(ctx, a):
+    check_name(a.name)
+    if not " ".join((a.approved or "").split()):
+        raise Refuse("resign needs --approved WORDS: your go-ahead, in your words, to sign the record of %s" % a.name)
+    if not ctx.be.refs:
+        raise Refuse("resign applies to the shared refs backend (qargi marshal enable)")
+    rev = refs_resign(ctx.be, ctx, a.name)
+    if rev is None:
+        print("%s is signed already" % a.name)
+    else:
+        print("signed %s (rev %d)" % (a.name, rev))
+
+
 def warnings_for(ctx, d, rec_exists):
     w = []
     if d["ghost"]:
@@ -994,7 +1233,7 @@ def usage_exit(msg):
 def choose_backend(a):
     """--backend refs --remote R, or --backend local; without --backend the switch $STATE/marshal/<project>.enabled decides
     (the marshal enable verb writes it: {backend, remote, ...}); no switch means the local backend."""
-    be, remote = a.backend, a.remote
+    be, remote, integrity = a.backend, a.remote, "off"
     if be is None:
         p = os.path.join(a.state, "marshal", "%s.enabled" % a.project)
         try:
@@ -1006,26 +1245,29 @@ def choose_backend(a):
             raise Refuse("the marshal switch %s cannot be read (%s); fix it, or remove it with the marshal disable verb" % (p, e))
         if not isinstance(sw, dict):
             raise Refuse("the marshal switch %s is not a JSON object; fix it, or remove it with the marshal disable verb" % p)
-        be, remote = sw.get("backend"), sw.get("remote")
+        be, remote, integrity = sw.get("backend"), sw.get("remote"), sw.get("integrity", "off")
+        if integrity not in ("off", "advisory", "strict"):
+            raise Refuse("the integrity %r in the marshal switch %s is unknown (off, advisory or strict); fix it with: qargi marshal enable --integrity MODE" % (clean(str(integrity))[:40], p))
     if be == "local":
         return LocalBackend()
     if be == "refs":
         remote = remote or "origin"
         if not isinstance(remote, str) or not refs_mod().remote_ok(remote):
             raise Refuse("the marshal remote %r is not a remote name" % (remote,))
-        return RefsBackend(remote)
+        return RefsBackend(remote, integrity)
     raise Refuse("the marshal backend %r is unknown (local or refs)" % (be,))
 
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --ttl, --purpose, --lenient, --backend and --remote are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend and --remote are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
-    p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish"])
+    p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
     p.add_argument('--state', required=True)
     p.add_argument('--project', required=True)
     p.add_argument('--repo', default="")
+    p.add_argument('--conf', default="")
     p.add_argument('--ttl', type=int, default=15)
     p.add_argument('--as', dest="as_id")
     p.add_argument('--goal'), p.add_argument('--plan'), p.add_argument('--note'), p.add_argument('--status')

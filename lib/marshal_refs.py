@@ -7,11 +7,14 @@ the remote's (fetched with +refs/qargi/*:refs/qargi/* --prune; a plain git fetch
 working tree or the index: only objects and refs under refs/qargi/ are written.
 
   refresh(repo, remote)        fetch the cache -> (ok, why)
-  read(repo)                   the valid records of the cache -> (features, done, ignored); a ref or record that is not
+  read(repo, check, verify)    the valid records of the cache -> (features, done, ignored); a ref or record that is not
                                valid (bad name, not a commit, other files in the tree, not a regular file, over 64 KiB, not a
                                JSON object, control characters, `feature` other than the ref name) is ignored and listed in
-                               `ignored` as (ref, why): data from a remote is never trusted and never crashes a reader
-  write(repo, rec, parent, ...) a commit holding rec as record.json -> its oid
+                               `ignored` as (ref, why): data from a remote is never trusted and never crashes a reader. verify
+                               is called for each record that passed with the commit's real parents and message (the signature
+                               is in the message) and may ignore it too
+  write(repo, rec, parent, ..., sign) a commit holding rec as record.json -> its oid; with sign (a Signer) the record carries
+                               sig_v and signer and the armored signature of lib/marshal_sign.py is the body of the commit message
   marshal_push(repo, remote, updates, atomic) the ONLY pusher: refs under refs/qargi/features|done only, always with a
                                --force-with-lease=REF:EXPECT (40 zeros: the ref must not exist), GIT_TERMINAL_PROMPT=0 and a
                                timeout -> ("ok" | "rejected" | "unreachable", detail)
@@ -26,7 +29,8 @@ Environment: QARGI_REMOTE_TIMEOUT seconds for a fetch or push (default 10); QARG
 Command line (marshal.sh and the tests; python3 -I, standard library only):
   push-check REF               exit 0 when marshal_push may push REF, 2 otherwise; runs no git
   member-check VERB            exit 2 (and say so) inside a member run, else 0
-  switch-write --state S --project P --remote R --words W   write $S/marshal/P.enabled
+  switch-write --state S --project P --remote R --words W [--integrity off|advisory|strict]   write $S/marshal/P.enabled;
+                               without --integrity the mode the switch already has is kept
   switch-remove --state S --project P                       remove it"""
 import argparse, json, os, re, signal, subprocess, sys, time
 
@@ -181,9 +185,28 @@ def read_one(repo, oid, name):
     return rec, ""
 
 
-def read(repo, check=None):
+def commit_info(repo, oid):
+    """The parents and the message of a commit -> ([parent oid, ...], message text) or None when it cannot be read."""
+    rc, out, _, _ = run_git(repo, ["cat-file", "commit", oid], 30)
+    if rc != 0:
+        return None
+    head, _, body = out.partition(b"\n\n")
+    parents = [ln[7:].decode("ascii", "replace") for ln in head.split(b"\n") if ln.startswith(b"parent ")]
+    return parents, body.decode("utf-8", "replace")
+
+
+def is_ancestor(repo, old, new):
+    """True when commit `old` is `new` or one of its ancestors."""
+    if not (OID_RE.fullmatch(old or "") and OID_RE.fullmatch(new or "")):
+        return False
+    return run_git(repo, ["merge-base", '--is-ancestor', old, new], 30)[0] == 0
+
+
+def read(repo, check=None, verify=None, heads=None):
     """The valid records of the cache -> (features {name: (oid, rec)}, done {name: (oid, rec)}, ignored [(ref, why)]).
-    check(rec) -> a reason or None adds the caller's own rules (status values, the shape of the lead)."""
+    check(rec) -> a reason or None adds the caller's own rules (status values, the shape of the lead).
+    verify(kind, name, oid, rec, parents, message) -> a reason or None adds the signature rules (kind is features or done).
+    heads, when given, is filled with {ref: oid} for every ref of the cache, valid or not."""
     feats, done, ignored = {}, {}, []
     rc, out, _, _ = run_git(repo, ["for-each-ref", "--format=%(objectname) %(objecttype) %(refname)", "refs/qargi/features", "refs/qargi/done"], 30)
     if rc != 0:
@@ -196,6 +219,8 @@ def read(repo, check=None):
         kind, _, name = ref[len("refs/qargi/"):].partition("/")
         if kind not in ("features", "done"):
             continue
+        if heads is not None:
+            heads[ref] = oid
         why = None
         if not name_ok(name):
             why = "not a feature name"
@@ -205,6 +230,9 @@ def read(repo, check=None):
             rec, why = read_one(repo, oid, name)
             if rec is not None and check is not None:
                 why = check(rec)
+            if rec is not None and not why and verify is not None:
+                info = commit_info(repo, oid)
+                why = verify(kind, name, oid, rec, info[0], info[1]) if info else "its commit cannot be read"
             if rec is not None and not why:
                 (feats if kind == "features" else done)[name] = (oid, rec)
         if why:
@@ -214,8 +242,65 @@ def read(repo, check=None):
 
 # ---- writing -------------------------------------------------------------------------------------------------------
 
-def write(repo, rec, parent, message):
-    """A commit whose tree holds rec as record.json, child of parent (an oid or None) -> its oid, or raises OSError."""
+def sign_mod():
+    """lib/marshal_sign.py, loaded by path (python -I does not put this directory on sys.path)."""
+    global SIGN_MOD
+    if SIGN_MOD is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("marshal_sign", os.path.join(os.path.dirname(os.path.realpath(__file__)), "marshal_sign.py"))
+        SIGN_MOD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(SIGN_MOD)
+    return SIGN_MOD
+
+
+SIGN_MOD = None
+
+
+def key_path(conf):
+    """Where the private signing key of this machine is (its public half is beside it)."""
+    return os.path.join(conf, "credentials", "marshal_ed25519")
+
+
+class Signer:
+    """Signs a record on its way into a commit: sign(rec, parent, kind) -> (rec with sig_v and signer, armored signature)."""
+
+    def __init__(self, project, keyfile, principal):
+        self.project, self.keyfile, self.principal = project, keyfile, principal
+
+    def __call__(self, rec, parent, kind):
+        S = sign_mod()
+        rec = dict(rec, sig_v=1, signer=self.principal)
+        lead = rec.get("lead")
+        try:
+            payload = S.signed_payload(self.project, rec.get("feature"), kind, rec.get("rev"), parent, lead.get("id") if isinstance(lead, dict) else None, rec)
+            return rec, S.sign(payload, self.keyfile)
+        except (S.SignError, ValueError) as e:
+            raise OSError("cannot sign the record: %s" % first_line(str(e)))
+
+
+def signer_for(conf, project):
+    """The Signer of this machine, or None when it has no key (a record is then written unsigned). The principal is the comment of the
+    public key beside the private one (key init puts it there), else user@host."""
+    keyfile = key_path(conf) if conf else ""
+    if not keyfile or not os.path.lexists(keyfile):
+        return None
+    S = sign_mod()
+    principal = None
+    try:
+        parts = S._read_regular(keyfile + ".pub", 4096).decode("ascii", "replace").split()
+        if len(parts) >= 3 and S.principal_ok(parts[2]):
+            principal = parts[2]
+    except S.SignError:
+        pass
+    return Signer(project, keyfile, principal or S.default_principal())
+
+
+def write(repo, rec, parent, message, sign=None, kind="features"):
+    """A commit whose tree holds rec as record.json, child of parent (an oid or None) -> its oid, or raises OSError. With sign (a
+    Signer) the record gets sig_v and signer and the signature of its payload, which names parent and kind, goes below the message."""
+    if sign is not None:
+        rec, armor = sign(rec, parent, kind)
+        message = "%s\n\n%s" % (message, armor)
     data = (json.dumps(rec, indent=1) + "\n").encode()
     rc, out, err, _ = run_git(repo, ["hash-object", "-w", '--stdin'], 30, data)
     if rc != 0:
@@ -256,10 +341,11 @@ def marshal_push(repo, remote, updates, atomic=False):
     return "unreachable", first_line(err) or "git push failed (status %d)" % rc
 
 
-def finish(repo, remote, name, rec, features_oid, done_oid):
-    """Move a feature to done: one commit (child of the last feature commit), pushed with ONE atomic push that creates
-    done/<name> and deletes features/<name>, each under its own lease. -> (status, why, new oid)."""
-    commit = write(repo, rec, features_oid, "marshal: finish %s" % name)
+def finish(repo, remote, name, rec, features_oid, done_oid, sign=None, parent=None):
+    """Move a feature to done: one commit (child of the last feature commit, or of `parent` when that is not the ref's head), pushed with
+    ONE atomic push that creates done/<name> and deletes features/<name>, each under its own lease. -> (status, why, new oid).
+    A signed done commit is a root: the commits below it were signed as kind features, and a done record is checked on its own."""
+    commit = write(repo, rec, None if sign is not None else (parent or features_oid), "marshal: finish %s" % name, sign, "done")
     ups = [(commit, "refs/qargi/done/" + name, done_oid or ZERO)]
     if features_oid:
         ups.append(("", "refs/qargi/features/" + name, features_oid))
@@ -352,12 +438,32 @@ def switch_path(state, project):
     return os.path.join(state, "marshal", "%s.enabled" % project)
 
 
-def switch_write(state, project, remote, words):
+MODES = ("off", "advisory", "strict")
+
+
+def switch_load(state, project):
+    """The switch file as a dict, {} when there is none or it is unusable."""
+    try:
+        with open(switch_path(state, project)) as f:
+            sw = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return sw if isinstance(sw, dict) else {}
+
+
+def switch_write(state, project, remote, words, integrity=None):
+    """integrity None keeps the mode a switch already has (enabling again never lowers it); the mode is never kept in refs."""
     p = switch_path(state, project)
+    old = switch_load(state, project)
+    sw = {"backend": "refs", "remote": remote, "enabled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "words": words}
+    if integrity is None and old.get("integrity") in MODES:
+        integrity = old["integrity"]
+    if integrity is not None:
+        sw["integrity"] = integrity
     os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
     tmp = "%s.tmp.%d" % (p, os.getpid())
     with open(tmp, "w") as f:
-        json.dump({"backend": "refs", "remote": remote, "enabled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "words": words}, f, indent=1)
+        json.dump(sw, f, indent=1)
         f.write("\n")
     os.chmod(tmp, 0o600)
     os.replace(tmp, p)
@@ -373,6 +479,7 @@ def main(argv):
     p.add_argument('--project', default="")
     p.add_argument('--remote', default="origin")
     p.add_argument('--words', default="")
+    p.add_argument('--integrity', choices=MODES)
     a = p.parse_args(argv)
     if a.cmd == "member-check":
         if in_member_run():
@@ -386,7 +493,7 @@ def main(argv):
         if not remote_ok(a.remote) or not a.words.strip():
             print("qargi: switch-write needs a remote name and the words", file=sys.stderr)
             return 2
-        switch_write(a.state, a.project, a.remote, a.words)
+        switch_write(a.state, a.project, a.remote, a.words, a.integrity)
         return 0
     try:
         os.unlink(switch_path(a.state, a.project))
