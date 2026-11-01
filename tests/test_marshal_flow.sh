@@ -97,24 +97,25 @@ grep -q 'feature/m3: .*\[lead none\]' "$T/o" && ok "list: a feature without a le
 
 # --- verify: the lease is renewed while the suite runs, the renewer is gone afterwards
 ttl 1; export QARGI_MARSHAL_RENEW_SEC=1
-mkfeat v1 alice; commit_on feature/v1 v1.txt
+V1=v1p$$ V2=v2p$$   # unique per test process: the pgrep below must not match a parallel run
+mkfeat $V1 alice; commit_on feature/$V1 $V1.txt
 tc "sleep 3"
-r0=$(j v1 .renewed_at)
-run $F verify v1; rc=$?
-r1=$(j v1 .renewed_at)
+r0=$(j $V1 .renewed_at)
+run $F verify $V1; rc=$?
+r1=$(j $V1 .renewed_at)
 [ $rc = 0 ] && ok "verify: the suite passes" || no "verify rc=$rc $(out)"
 [ "$r0" != "$r1" ] && [ "$r1" != null ] && ok "verify: renewed_at advanced while the 3 s suite ran" || no "SPEC verify renews: renewed_at stayed $r0"
-pgrep -f "feature verify v1" >/dev/null && no "SPEC verify: a renewer of the run is still alive: $(pgrep -af 'feature verify v1')" || ok "verify: no renewer of the run remains"
-run $F status v1
+pgrep -f "feature verify $V1" >/dev/null && no "SPEC verify: a renewer of the run is still alive: $(pgrep -af "feature verify $V1")" || ok "verify: no renewer of the run remains"
+run $F status $V1
 grep -q "full suite: pass at this head" "$T/o" && ok "verify: the verified record exists (status reports it)" || no "verify record: $(out)"
-mkfeat v2 alice; commit_on feature/v2 v2.txt
+mkfeat $V2 alice; commit_on feature/$V2 $V2.txt
 tc "sleep 2; false"
-r0=$(j v2 .renewed_at)
-run $F verify v2; rc=$?
-r1=$(j v2 .renewed_at)
+r0=$(j $V2 .renewed_at)
+run $F verify $V2; rc=$?
+r1=$(j $V2 .renewed_at)
 [ $rc = 1 ] && ok "verify: a failing suite fails the verb" || no "verify failing rc=$rc"
 [ "$r0" != "$r1" ] && ok "verify: the lease was renewed during a suite that failed" || no "SPEC verify (failing) renews: renewed_at stayed $r0"
-pgrep -f "feature verify v2" >/dev/null && no "SPEC verify: a renewer remains after a failing suite: $(pgrep -af 'feature verify v2')" || ok "verify: a failing suite stops the renewer"
+pgrep -f "feature verify $V2" >/dev/null && no "SPEC verify: a renewer remains after a failing suite: $(pgrep -af "feature verify $V2")" || ok "verify: a failing suite stops the renewer"
 # refused: another LIVE lead holds the feature, the suite does not run
 mkfeat v3 alice; commit_on feature/v3 v3.txt
 tc "touch '$T/suite-ran'"
