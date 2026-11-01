@@ -176,5 +176,5 @@
       "output-style-setup"
     ]
   },
-  "adapter": null
+  "adapter": "lib/providers/claude/adapter"
 }

@@ -72,7 +72,7 @@
         "reserved_names": {"type": "array", "items": {"type": "string"}, "description": "names the provider's local agent runtime already uses; a member may not take them"}
       }
     },
-    "adapter": {"type": ["string", "null"], "description": "the module that serves the provider when it is not the default; null for none"}
+    "adapter": {"type": ["string", "null"], "description": "the executable that serves the provider, as a path under the tool root (lib/providers/NAME/adapter); it is called as adapter VERB with a JSON request on stdin. null for none: the provider has no adapter, and what needs one is refused"}
   },
   "$defs": {
     "date": {"type": ["string", "null"], "format": "date", "description": "YYYY-MM-DD, or null when not verified"},
