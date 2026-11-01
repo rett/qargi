@@ -644,6 +644,29 @@ XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
 XE wb marshal status f5; rc=$?
 { [ -z "$(markof wb f5)" ] && ! grep -qi 'warn' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
 
+# ------------------------------------------------------------ (16d) a record is what its signature covers, not the oid of the commit that carries it
+XE wa marshal claim f6 --as alice --goal g6 >/dev/null 2>&1; XE wb marshal status f6 >/dev/null 2>&1
+XE wa marshal set f6 --as alice --goal g6b >/dev/null 2>&1; R6=$(oref $F/f6)
+R6P=$(OG rev-parse "$R6^"); R6M=$(OG show -s --format=%B "$R6"); R6T=$(OG rev-parse "$R6^{tree}")
+R6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$R6P" -m "$R6M" "$R6T")      # the same tree, parent and message, another committer date
+{ [ "$R6B" != "$R6" ] && vok "$R6B" features "$(SIG wb)"; } && ok "setup: a re-committed head with another oid still carries a valid signature" || no "setup: the re-committed head does not verify: $(cat "$T/ste" 2>/dev/null)"
+OG update-ref $F/f6 "$R6B"
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the re-committed head (same rev, record and signed parent) is the same record, not a rollback" || no "SPEC the same signed record under another commit oid is not a rollback (json ${j:0:200}): $(cat "$T/e")"
+OG update-ref $F/f6 "$R6"
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the original commit of that record, seen after the re-committed one, is the same record too" || no "SPEC the original oid after a re-committed one is not a rollback (json ${j:0:200}): $(cat "$T/e")"
+XE wa marshal set f6 --as alice --goal g6c >/dev/null 2>&1
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6c"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the real chain after it is accepted, the descent check follows the chain by record identity" || no "SPEC the real chain must not be flagged as rollback after a re-committed head (json ${j:0:200}): $(cat "$T/e")"
+# a re-committed head does not renew the lease timer
+XE wa marshal claim f6t --as alice >/dev/null 2>&1; XE wa marshal renew f6t --as alice >/dev/null 2>&1; T6=$(oref $F/f6t)
+XE wb QARGI_MARSHAL_MONO=0 marshal status f6t --as sam >/dev/null 2>&1
+T6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$(OG rev-parse "$T6^")" -m "$(OG show -s --format=%B "$T6")" "$(OG rev-parse "$T6^{tree}")"); OG update-ref $F/f6t "$T6B"
+XE wb QARGI_MARSHAL_MONO=600 marshal status f6t --as sam >/dev/null 2>&1
+XE wb QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f6t --as sam --approved "$WORDS"; rc=$?
+{ [ $rc = 0 ] && [ "$(jsf $F/f6t .lead.id)" = sam ]; } && ok "identity: re-committing a head does not restart the lease timer (takeover at ttl+1 s from the first sight works)" || no "SPEC a re-committed head must not renew a lease (rc=$rc, lead $(jsf $F/f6t .lead.id)): $(out)"
+
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
 exit $fail
