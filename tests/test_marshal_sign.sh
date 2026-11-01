@@ -667,6 +667,34 @@ XE wb QARGI_MARSHAL_MONO=600 marshal status f6t --as sam >/dev/null 2>&1
 XE wb QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f6t --as sam --approved "$WORDS"; rc=$?
 { [ $rc = 0 ] && [ "$(jsf $F/f6t .lead.id)" = sam ]; } && ok "identity: re-committing a head does not restart the lease timer (takeover at ttl+1 s from the first sight works)" || no "SPEC a re-committed head must not renew a lease (rc=$rc, lead $(jsf $F/f6t .lead.id)): $(out)"
 
+# ------------------------------------------------------------ (16e) resign signs what the owner was shown, never a stranger's record over an accepted one
+# Assumed interface (review fix): `marshal resign NAME` without options prints the lead and the goal of the record it would sign and a
+# plan token that covers them and the head; it applies with `--plan TOK --approved WORDS`, and is refused when this machine has an accepted
+# record of NAME with another lead. The apply is for the head the plan showed.
+PWA=wa@ms; PWB=wb@ms
+XE wa marshal claim w1 --as alice --goal w-legit >/dev/null 2>&1; XE wa marshal status w1 >/dev/null 2>&1
+junk $F/w1 '.lead.id = "mallory" | .goal = "evil"'; WJ=$JUNK
+OWN wa resign w1; r1=$?; cp "$T/e" "$T/e.w1"; cp "$T/o" "$T/o.w1"
+XE wa marshal resign w1 --approved "$WORDS"; r2=$?
+XE wa marshal resign w1 --plan 000000000000 --approved "$WORDS"; r3=$?
+{ [ $r1 != 0 ] && [ $r2 != 0 ] && [ $r3 != 0 ] && [ "$(oref $F/w1)" = "$WJ" ] && [ "$(jsf $F/w1 .lead.id)" = mallory ]; } \
+  && ok "resign: an unsigned head with another lead than the accepted record is refused (in the plan, with the token, and without it); nothing is signed" || no "SPEC resign must refuse a lead that is not the accepted lead (rc $r1 $r2 $r3, head signer '$(jsf $F/w1 .signer)', lead $(jsf $F/w1 .lead.id)): $(cat "$T/o.w1" "$T/e.w1")"
+grep -q 'mallory' "$T/o.w1" "$T/e.w1" && ok "resign: the refusal names the lead it found" || no "SPEC resign names the lead it refuses: $(cat "$T/o.w1" "$T/e.w1")"
+# a machine with no mark: the plan shows the lead and the goal, the token covers them, and the apply is for exactly that head
+XE wb marshal resign w1; tk1=$(tokof); cp "$T/o" "$T/o.w1b"
+{ [ -n "$tk1" ] && grep -q 'mallory' "$T/o.w1b" && grep -q 'evil' "$T/o.w1b" && [ "$(oref $F/w1)" = "$WJ" ]; } && ok "resign: with no mark the plan prints the lead (mallory) and the goal (evil) of the record and a token; nothing is signed yet" || no "SPEC resign plan prints lead and goal (token '$tk1'): $(cat "$T/o.w1b" "$T/e")"
+junk $F/w1 '.goal = "evil2"'; WJ2=$JUNK
+XE wb marshal resign w1; tk2=$(tokof)
+{ [ -n "$tk2" ] && [ "$tk1" != "$tk2" ]; } && ok "resign: the plan token changes when the head changes" || no "SPEC the token must cover the head (tokens '$tk1' '$tk2')"
+XE wb marshal resign w1 --plan "$tk1" --approved "$WORDS"; r1=$?
+{ [ $r1 != 0 ] && [ "$(oref $F/w1)" = "$WJ2" ]; } && ok "resign: the token of the earlier plan is refused for the changed head, nothing signed" || no "SPEC an old plan token must not sign a changed head (rc=$r1)"
+XE wb marshal resign w1 --plan "$tk2" --approved "$WORDS"; r1=$?
+{ [ $r1 = 0 ] && [ "$(OG rev-parse "$(oref $F/w1)^")" = "$WJ2" ] && [ "$(jsf $F/w1 .signer)" = "$PWB" ] && vok "$(oref $F/w1)" features "$(SIG wb)"; } && ok "resign: with the token of the plan that was shown the head is signed, rev+1 on top of it" || no "SPEC resign with the matching token (rc=$r1): $(cat "$T/e" "$T/o")"
+# the owner's own case still works: the unsigned head has the lead of the accepted record
+XE wa marshal claim w2 --as alice --goal w2g >/dev/null 2>&1; mode wa off; XE wa marshal set w2 --as alice --note unsignedwrite >/dev/null 2>&1; mode wa strict
+OWN wa resign w2; r1=$?
+{ [ $r1 = 0 ] && [ "$(jsf $F/w2 .signer)" = "$PWA" ]; } && ok "resign: an unsigned head with the lead of the accepted record is signed" || no "SPEC resign of the accepted lead's unsigned record (rc=$r1): $(out)"
+
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
 exit $fail
