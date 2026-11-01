@@ -43,11 +43,50 @@ Every name follows from the project, so resources are identifiable at a glance.
 | branch (in the agent's clone) | `agent/<task-slug>`, the same slug | `agent/dots-in-usernames` |
 
 Memory belongs to the project, not the instance: every instance of a project
-mounts the same recipes store (read-write) and reference store (read-only), so
-what one agent learns serves the next. Provisioning attaches existing stores of
+mounts the same recipes store and reference store (read-only), so what one agent
+learns serves the next. Agents write to the recipes store only under their own
+`roles/<role>/` folder; `shared/` is curated and a note reaches it by promotion
+(`qargi canon promote --approved`) or by the person. Provisioning attaches existing stores of
 that name and creates them only for a new project. `qargi instances normalize
 NAME` renames an existing instance's resources to match, and `instances show`
 lists the deviations. The role list can be extended with `QARGI_ROLES`.
+
+### Memory tiers
+
+A tier is one memory store of the standard layout at a fixed rank. From the highest:
+`repo` (a directory in the repository, default `qargi/memory`), `cloud` (the project's
+recipes store, `<project>-memory`), `project` (`~/.qargi/memory/projects/NAME`), `shared`
+(`~/.qargi/memory/shared`) and `system` (`~/.qargi/memory/system`). The reference store
+is not a tier. The directory tiers can be moved with the project's answers
+`memory.tiers.repo.path` (relative to the repository), `memory.tiers.project.path`,
+`memory.tiers.shared.path` and `memory.tiers.system.path`, set with `qargi project set`;
+a key left out takes its default.
+
+A note lives in exactly one tier. The files that every tier needs (`CANON.md`,
+`README.md`, `_template.md`, every `INDEX.md`, the role `tools/` folders, `_archive/`
+and `_conflicts/`) repeat per tier and are exempt.
+
+- `qargi memory tiers [--project P] [--json]` lists the tiers in rank order with their
+  location, whether each is missing, empty or present, and the number of notes; it only reads.
+- `qargi memory check [--project P]` runs the canon check on each tier that exists, then fails
+  for a note path found in two or more tiers. A tier that is missing or unreachable is
+  information, not a failure. Exit 1 on any FAIL.
+
+```
+$ qargi memory tiers --project acme
+repo     dir    /home/u/src/acme/qargi/memory          present   12 notes
+cloud    cloud  memstore_01ABC (acme-memory)           present   40 notes
+project  dir    ~/.qargi/memory/projects/acme          missing   (not initialised)
+shared   dir    ~/.qargi/memory/shared                 empty
+system   dir    ~/.qargi/memory/system                 missing
+reference: memstore_01DEF (optional, read-only, not composed)
+```
+
+Two rules for agents: members and cloud agents write only under `roles/<their role>/` of
+the memory store, and `shared/` is curated, so an agent proposes a shared note in its report
+and the lead or the person promotes it. This first slice is read-only: nothing writes a
+tier, there is no `memory init` or `memory move`, the session-start hook does not compose
+the tiers yet, and there are no remote shares.
 
 ## Roles, abilities and members
 
