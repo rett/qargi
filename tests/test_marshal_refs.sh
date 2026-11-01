@@ -392,7 +392,7 @@ XE b marshal status --all --brief; rc=$?
 [ $rc = 0 ] && grep -q '^hgood ' "$T/o" && ! grep -q mallory "$T/o" && ! grep -qE '^(hnorec|hlink|hdir|hbig|hjson|harr|hctl|hmis|hextra|Bad|a--b|-dash|x/y)' "$T/o" && ! LC_ALL=C grep -q '[[:cntrl:]]' <(tr -d '\n\t' < "$T/o") \
   && ok "hostile: --brief lists none of them and prints no control character" || no "SPEC hostile --brief (rc=$rc): $(out)"
 miss=''
-for r in $HOSTILE; do grep -qi "warn" "$T/e" && grep -q "${r##*/}" "$T/e" || miss="$miss ${r##*/}"; done
+for r in $HOSTILE; do grep -qi "warn" "$T/e" && grep -qF -e "${r##*/}" "$T/e" || miss="$miss ${r##*/}"; done
 [ -z "$miss" ] && ok "hostile: every ignored ref is named in a stderr warning" || no "SPEC hostile: ignored with a warning; no warning names:$miss (stderr: $(head -c 800 "$T/e"))"
 XE b marshal status hnorec; [ $? != 0 ] && ! grep -q Traceback "$T/e" && ok "hostile: asking for an ignored feature by name is a plain refusal, no crash" || no "SPEC hostile status NAME: $(out)"
 XE b marshal check hjson --as bob; [ $? != 70 ] && ! grep -q Traceback "$T/e" && ok "hostile: check on an ignored feature does not crash" || no "SPEC hostile check: $(out)"

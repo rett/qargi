@@ -122,7 +122,7 @@ def refresh(repo, remote):
     -> (True, "") or (False, why): the remote was not checked."""
     if not remote_ok(remote):
         return False, "%r is not a remote name" % remote
-    rc, _, err, _ = run_git(repo, ["fetch", "--prune", "--no-tags", "--quiet", "--no-recurse-submodules", remote, FETCH_SPEC], timeout_secs())
+    rc, _, err, _ = run_git(repo, ["fetch", '--prune', '--no-tags', '--quiet', '--no-recurse-submodules', remote, FETCH_SPEC], timeout_secs())
     return (True, "") if rc == 0 else (False, first_line(err) or "git fetch failed (status %d)" % rc)
 
 
@@ -216,7 +216,7 @@ def read(repo, check=None):
 def write(repo, rec, parent, message):
     """A commit whose tree holds rec as record.json, child of parent (an oid or None) -> its oid, or raises OSError."""
     data = (json.dumps(rec, indent=1) + "\n").encode()
-    rc, out, err, _ = run_git(repo, ["hash-object", "-w", "--stdin"], 30, data)
+    rc, out, err, _ = run_git(repo, ["hash-object", "-w", '--stdin'], 30, data)
     if rc != 0:
         raise OSError("git hash-object failed: " + first_line(err))
     blob = out.decode().strip()
@@ -243,7 +243,7 @@ def marshal_push(repo, remote, updates, atomic=False):
             return "unreachable", "refused to push %r" % clean(str(ref))
         leases.append("--force-with-lease=%s:%s" % (ref, expect))
         specs.append("%s:%s" % (new, ref))
-    args = ["push", "--porcelain", "--no-verify"] + (["--atomic"] if atomic else []) + leases + [remote] + specs
+    args = ["push", '--porcelain', '--no-verify'] + (['--atomic'] if atomic else []) + leases + [remote] + specs
     rc, out, err, timed_out = run_git(repo, args, timeout_secs())
     if rc == 0:
         return "ok", ""

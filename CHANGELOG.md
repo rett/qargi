@@ -7,6 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Shared marshal. `qargi marshal enable|disable` switch a project between the local records and a shared backend that keeps each
+  feature record as a commit on `refs/qargi/features/NAME` of the remote origin: create-only claims, leased updates, an atomic move
+  to `refs/qargi/done/NAME` on finish, a fetch that never brings other refs, and takeover judged on the taker's own monotonic clock.
+  It is off by default, needs the plan token and your typed words, is audited, cannot be used from a member run, and `project set`
+  refuses `marshal.*` except `marshal.ttl`. Offline verbs use the cache and say `remote not checked`; an offline claim is
+  `provisional`. `local verify` ignores `refs/qargi/`; `marshal status|check` take `--no-fetch` (the session hook uses it).
 - Cloud profiles. A project can provision two cloud base agents, `<project>-worker` (write class) and `<project>-reviewer` (read-only),
   and start a session of a role and profile on one: `qargi start|send <project>-worker --role build --profile build`. The model and
   effort are overridden per session with a full model object and the role's prompt is rendered fresh, so the base needs no prompt
