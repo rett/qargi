@@ -126,7 +126,12 @@ The local agent gets no way to push, and you check afterwards that it did not.
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
    runs with no credentials (no home, no global config, no ssh, no prompts). It prints
    `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then, after a blank line, a `TASK-BLOCK PATHS` block
-   to paste into the task block exactly as printed. It records every ref of the real
+   to paste into the task block exactly as printed, then (inside a registered project) a `TASK-BLOCK MEMORY` block
+   to paste in the same way: it lists the memory tiers (the repo tier as the clone's committed copy), the role's
+   always-load notes, and the rule that the executor writes no tier and proposes notes in its report
+   for the lead to file. When the repo tier has uncommitted changes in your checkout it adds a warning (also on
+   stderr): the executor sees only the committed copy, so commit them first if it needs them. Nothing is stored; a
+   failure prints nothing and does not change `prepare`'s result. It records every ref of the real
    repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
 2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
