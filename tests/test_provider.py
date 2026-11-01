@@ -228,8 +228,8 @@ class Cap(Tree):
 
     def test_an_unverified_yes_counts_as_no(self):
         self.put("claude", CLAUDE)
-        self.assertEqual(P.cap("claude", "cloud", "per_dispatch_model_override", self.root), "unverified")
-        self.assertEqual(P.effective("claude", "cloud", "per_dispatch_model_override", self.root), "no")
+        self.assertEqual(P.cap("claude", "local", "per_dispatch_effort_override", self.root), "unverified")
+        self.assertEqual(P.effective("claude", "local", "per_dispatch_effort_override", self.root), "no")
 
     def test_an_unverified_partial_counts_as_no(self):
         d = descriptor()
@@ -413,7 +413,7 @@ class Cli(Tree):
         self.assertRegex(out, r"xhigh\s+xhigh")
         self.assertIn("per_dispatch_model_override", out)
         self.assertRegex(out, r"local\s+yes\s+verified 2026-10-31\s+Agent tool model parameter overrides the definition")
-        self.assertRegex(out, r"cloud\s+yes\s+not verified, counts as no")
+        self.assertRegex(out, r"cloud\s+yes\s+verified 2026-11-01\s+a session created with a model override")
         self.assertRegex(out, r"read_only_barrier\s*\n\s+local\s+partial")
         self.assertRegex(out, r"cloud\s+no\s+verified 2026-10-31")
 
@@ -445,7 +445,7 @@ class Cli(Tree):
     def test_check_says_what_degrades_on_each_surface(self):
         out = self.run_cli("check", "claude")[1]
         self.assertRegex(out, r"local: per_dispatch_effort_override\s+unverified \(counts as no\)")
-        self.assertRegex(out, r"cloud: per_dispatch_model_override\s+unverified \(counts as no\)")
+        self.assertNotRegex(out, r"cloud: per_dispatch_model_override")
         self.assertRegex(out, r"local: session_budget_ceiling\s+no")
         self.assertRegex(out, r"cloud: read_only_barrier\s+no")
         self.assertNotRegex(out, r"local: per_dispatch_model_override")

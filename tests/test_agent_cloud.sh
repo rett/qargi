@@ -18,15 +18,20 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 # the tool, copied: the verified descriptors live in the copy only. claude: both overrides verified. effunver: the model override
-# verified, the effort override not. The shipped tool (SHIP) has neither verified, as in the checkout.
+# verified, the effort override not. SHIP is a copy with neither verified.
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
-SHIP=$SRC/bin/qargi; YES=$TOOL/bin/qargi
+SHIPT=$T/ship; mkdir -p "$SHIPT"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
+# the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
+jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = null)
+  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$SHIPT/lib/providers/claude.json"
+SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
 jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = "2026-10-31")
   | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = "2026-10-31")' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$TOOL/lib/providers/claude.json"
 jq '.provider = "effunver" | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$TOOL/lib/providers/claude.json" > "$TOOL/lib/providers/effunver.json"
 python3 -I "$TOOL/lib/provider.py" check claude >/dev/null && python3 -I "$TOOL/lib/provider.py" check effunver >/dev/null && ok "the verified descriptors are valid" || no "descriptors"
-[ "$(python3 -I "$SRC/lib/provider.py" effective claude cloud per_dispatch_model_override)" = no ] && ok "shipped: the cloud model override counts as no (unverified)" || no "shipped capability"
+[ "$(python3 -I "$SHIPT/lib/provider.py" effective claude cloud per_dispatch_model_override)" = no ] && ok "shipped (unverified copy): the cloud model override counts as no (unverified)" || no "shipped capability"
 [ "$(python3 -I "$TOOL/lib/provider.py" effective claude cloud per_dispatch_model_override)" = yes ] && [ "$(python3 -I "$TOOL/lib/provider.py" effective effunver cloud per_dispatch_effort_override)" = no ] && ok "the copy: model yes, and effort no for effunver" || no "copy capability"
 
 # the projects: alpha has a base pair and the legacy instances, beta only the legacy ones, gamma only a worker, delta nothing
