@@ -68,6 +68,7 @@ case $verb in
       g branch -D "$BRANCH" >/dev/null 2>&1 || true
       die "$(basename "$fail") does not apply on $sha; the worktree and $BRANCH were removed, nothing else changed"
     fi
+    journal_ref "$REPO" "refs/heads/$BRANCH" "" "$tip" review:apply
     echo "applied $(echo "$patches" | wc -l) patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
     g log --reverse --format='  %h %s' "$sha..$tip"
     printf '%s %s %s\n' "$BRANCH" "$tip" "$(now)" > "$RUN/applied"
@@ -91,7 +92,7 @@ case $verb in
       for t in $targets; do g merge-base --is-ancestor "$sha" "$t" && { into=$t; break; }; done
       [ -n "$into" ] || continue
       n=$((n + 1))
-      if [ -n "$YES" ]; then g branch -D "$b" >/dev/null && echo "deleted $b (was ${sha:0:12}, merged into $into)"
+      if [ -n "$YES" ]; then g branch -D "$b" >/dev/null && journal_ref "$REPO" "refs/heads/$b" "$sha" "" review:prune && echo "deleted $b (was ${sha:0:12}, merged into $into)"
       else echo "$b (${sha:0:12}) is merged into $into"; fi
     done < <(g for-each-ref --format='%(refname:short)' 'refs/heads/agent/*')
     if [ "$n" = 0 ]; then echo "no merged agent/* branches"; elif [ -z "$YES" ]; then echo "$n branch(es) would be deleted: qargi review prune --yes"; fi;;

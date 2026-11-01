@@ -114,6 +114,7 @@ PY
     fi
     wcommit --allow-empty -m "Bumped version number to $VER"
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
+    journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" "$KIND:start"
     echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
     echo "other files that carry the version (a manifest) are yours to bump on this branch"
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
@@ -200,8 +201,10 @@ PY
       fi
     fi
     g update-ref refs/heads/master "$nm" "$m0" && g update-ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
+    journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
+    journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
     merge_forget "$k1" "$k2"
-    [ -n "$KEEP" ] || g update-ref -d "refs/heads/$BR" "$h"
+    if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
     audit_log "release:finish" "$PROJ $VER"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     if g remote get-url origin >/dev/null 2>&1; then
