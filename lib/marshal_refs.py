@@ -202,6 +202,22 @@ def is_ancestor(repo, old, new):
     return run_git(repo, ["merge-base", '--is-ancestor', old, new], 30)[0] == 0
 
 
+def chain(repo, oid, limit):
+    """The first-parent chain from commit `oid` down: [(oid, first parent oid or None), ...], at most `limit` commits, [] when the commit
+    cannot be walked. A commit's history is what its oid commits to, so what lies under a commit that is trusted is as trustworthy as it."""
+    if not OID_RE.fullmatch(oid or "") or limit < 1:
+        return []
+    rc, out, _, _ = run_git(repo, ["rev-list", "--first-parent", "--parents", "-n", str(int(limit)), oid], 60)
+    if rc != 0:
+        return []
+    res = []
+    for ln in out.decode("ascii", "replace").splitlines():
+        parts = ln.split()
+        if parts and OID_RE.fullmatch(parts[0]):
+            res.append((parts[0], parts[1] if len(parts) > 1 and OID_RE.fullmatch(parts[1]) else None))
+    return res
+
+
 def read(repo, check=None, verify=None, heads=None):
     """The valid records of the cache -> (features {name: (oid, rec)}, done {name: (oid, rec)}, ignored [(ref, why)]).
     check(rec) -> a reason or None adds the caller's own rules (status values, the shape of the lead).
