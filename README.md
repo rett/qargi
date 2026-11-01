@@ -156,6 +156,9 @@ prints one, and `check [NAME]` validates one or all. These verbs only read.
   project on the methodology's branches with its generic files.
 - `qargi project attach [DIR]` reads an existing repository, shows the answers it would store and the
   gaps against the methodology, and changes nothing in the repository.
+- `qargi project adopt PROJECT` closes the safe gaps of an attached repository: it creates the missing long-lived
+  branches locally and writes the missing methodology files as one commit on `agent/adopt-<methodology>` for you to review.
+  It never overwrites a file or pushes; changelog format, tag format and CI content stay yours.
 
 Both print a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
 words>"` (`qargi help approvals`).
