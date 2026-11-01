@@ -311,6 +311,12 @@ COMMANDS = {
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
                                 "concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token "
                                 "approved; the token also covers the file modes, which the manifest records.")),
+            "seed": verb("Add or update the baseline packs shipped with qargi in your library", [],
+                         [opt("--install", "only add the packs the library lacks, without a token (install.sh --user runs this)"), PLAN, APPROVED],
+                         desc=("qargi ships a few packs (packs/ in its tree). Seeding stores them in your library. Without --approved it prints one line per pack "
+                               "(add, update, current or kept) and a plan token. A pack you edited and sealed, or one of your own with the same name, is kept and "
+                               "never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing "
+                               "reaches a project or an agent until you link it.")),
             "check": verb("Check a Claude Code render for drift (read only)", [("PROJECT", "project")], [TARGET],
                           desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "

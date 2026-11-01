@@ -57,7 +57,7 @@ case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <ver
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
   skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply) unset QARGI_NESTED;;
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
@@ -237,6 +237,8 @@ if [ "$KIND" = packs ]; then
           jq -c 'map(if .name == "github" then del(.tools.merge_pull_request) else . end)' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"
         fi
       fi;;
+    seed)
+      die "packs seed is not implemented yet";;   # stub: the builder replaces this
     load)
       # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
       # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
