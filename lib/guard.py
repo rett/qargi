@@ -16,7 +16,7 @@ changes or removes files there, or a git command that changes the work tree or t
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi discover
-    install, qargi packs apply and qargi import (it restores the pack library). Read-only verbs (list, show, check,
+    install, qargi packs apply, qargi packs seed and qargi import (it restores the pack library). Read-only verbs (list, show, check,
     effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
@@ -472,7 +472,7 @@ def skill_verb(prog, rest):
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"
