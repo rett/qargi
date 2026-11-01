@@ -134,6 +134,20 @@ class Render(unittest.TestCase):
         self.assertIn("unknown command", r.stderr)
         self.assertEqual(run("version").returncode, 0)
 
+    def test_no_help_text_names_a_retired_ability_skill(self):
+        # The abilities are role text that comes with the task block (roles/<role>/ROLE.md); no skill of the same
+        # name exists to load. The changelog keeps the history and is not read here.
+        texts = {"man page": H.man().replace("\\-", "-").replace("\\e", "\\")}
+        for t in C.TOPICS:
+            texts["topic " + t] = H.show_topic(t)
+        for cmd in C.COMMANDS:
+            texts[cmd] = H.show_command(cmd)
+            for v in verbs(cmd):
+                texts["%s %s" % (cmd, v)] = H.show_command(cmd, v)
+        for where, txt in texts.items():
+            for name in ("qargi-build", "qargi-write", "qargi-review", "qargi-test"):
+                self.assertNotIn(name, txt, "%s still names the skill %s" % (where, name))
+
     def test_man_page_is_current_and_lints(self):
         page = H.man()
         self.assertEqual(slurp(os.path.join(ROOT, "man", "qargi.1")), page, "regenerate: python3 lib/help.py man > man/qargi.1")

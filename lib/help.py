@@ -282,8 +282,7 @@ def man():
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
     w("The skills qargi\\-task, qargi\\-team, qargi\\-project, qargi\\-instances, qargi\\-provision, qargi\\-memory, qargi\\-packs "
-      "and qargi\\-verify in Claude Code, and the ability skills qargi\\-build, qargi\\-write, qargi\\-review and qargi\\-test "
-      "(qargi help roles).")
+      "and qargi\\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).")
     return "\n".join(x for x in o if x != "") + "\n"
 
 
