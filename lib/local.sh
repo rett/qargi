@@ -272,6 +272,11 @@ WRAP
     fi;;
   verify)
     RUN=${1:-}; [ -f "$RUN/refs.before" ] || die "verify needs a RUN dir made by prepare"
+    # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
+    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+      echo "qargi: $RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $RUN/out/report.md, and do not apply or accept the patches." >&2
+      exit 2
+    fi
     if check_run "$RUN"; then
       if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
       else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi

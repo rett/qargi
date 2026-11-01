@@ -66,6 +66,11 @@ role_class() { # name -> write | read-only (lead: coordinator)
   local d; d=$(role_dir "$1") || return 1
   jq -r '.class // "write"' "$d/role.json"
 }
+run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
+  local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
+  c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
+  echo "$c"
+}
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
