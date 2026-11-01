@@ -25,6 +25,7 @@
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
 #   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
 #   packs.sh packs check --target claude-code PROJECT                                  drift of that render (read only)
+#   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
 # hashed and approved before it is stored, and any later change fails `check` and provisioning
@@ -33,7 +34,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+INSTALL='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -46,6 +47,7 @@ while [ $# -gt 0 ]; do
     --plan) PLAN_ARG=$2; shift 2;;
     --asked) ASKED=$2; shift 2;;
     --target) TARGET=$2; shift 2;;
+    --install) INSTALL=1; shift;;
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
@@ -57,7 +59,7 @@ case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <ver
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
   skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply) unset QARGI_NESTED;;
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
@@ -237,6 +239,98 @@ if [ "$KIND" = packs ]; then
           jq -c 'map(if .name == "github" then del(.tools.merge_pull_request) else . end)' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"
         fi
       fi;;
+    seed)
+      # The baseline packs shipped in packs/ (manifest packs/baseline.json, one directory per skill under packs/skills/).
+      # A pack is stored with source "qargi-baseline VERSION" and the hash it shipped with ("shipped"), so a later run can tell
+      # a copy nobody edited (replaced when a newer version ships) from one the user edited (never overwritten).
+      # Links are never touched. --install only adds what is missing, needs no token and never updates.
+      ROOT=$(dirname "$(dirname "$(readlink -f "$0")")"); SHIP=$ROOT/packs
+      [ -f "$SHIP/baseline.json" ] || die "no baseline packs shipped at $SHIP"
+      jq -e '.schema == 1 and (.packs | type == "array")' "$SHIP/baseline.json" >/dev/null 2>&1 || die "$SHIP/baseline.json is not a baseline manifest"
+      SRC="qargi-baseline $(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
+      ST=() PL=() NOTE=''   # ST: "name|status|hs|old" in manifest order; PL: add/update plan lines
+      while IFS=$'\t' read -r k n; do
+        [ "$k" = skill ] || die "the baseline manifest names a $k pack ($n); only skills are shipped"
+        valid_slug "$n" || die "the baseline manifest names '$n', not a pack name"
+        D=$SHIP/skills/$n; [ -f "$D/SKILL.md" ] || die "the shipped pack $n is missing at $D"
+        review skill "$D" >/dev/null 2>&1 || die "the shipped pack $n fails its review (qargi skill show cannot reach it; run it through review by hand)"
+        hs=$(content_hash "$D"); P=$PACKS/skills/$n; old=''
+        if [ -e "$PACKS/tools/$n.json" ]; then
+          st=belongs
+        elif [ ! -e "$P" ]; then st=add
+        else
+          rec=$P/.pack.json; src=$(jq -r '.source // ""' "$rec" 2>/dev/null); old=$(content_hash "$P")
+          case $src in
+            qargi-baseline*)
+              if [ "$(jq -r '.shipped // ""' "$rec")" != "$old" ] || [ "$(jq -r '.sha256 // ""' "$rec")" != "$old" ]; then st=edited
+              elif [ "$old" = "$hs" ]; then st=current
+              else st=update; fi;;
+            *) st=belongs;;
+          esac
+        fi
+        ST+=("$n|$st|$hs|$old")
+      done < <(jq -r '.packs[] | [.kind, .name] | @tsv' "$SHIP/baseline.json")
+      for e in "${ST[@]}"; do
+        IFS='|' read -r n st hs old <<<"$e"
+        case $st in
+          add) PL+=("$(printf '%-8s skill %s (content %s)' add "$n" "$hs")");;
+          update)
+            lk=$(jq -r --arg k "skill:$n" '[.links[] | select(.pack==$k) | .scope + (if .project then ":"+.project else "" end) + (if .role then "/"+.role else "" end)] | join(", ")' "$LINKS")
+            PL+=("$(printf '%-8s skill %s (content %s -> %s; links: %s)' update "$n" "$old" "$hs" "${lk:-none}")");;
+        esac
+        # lines shown whatever the mode: what stays as it is
+        case $st in
+          current) [ -n "$INSTALL" ] || printf '%-8s skill %s\n' current "$n";;
+          edited) [ -n "$INSTALL" ] || printf '%-8s skill %s: edited in your library (content %s; shipped %s)\n' kept "$n" "$old" "$hs"; NOTE=1;;
+          belongs) [ -n "$INSTALL" ] || printf '%-8s skill %s: the name belongs to a pack you created or imported\n' kept "$n"; NOTE=1;;
+        esac
+      done
+      seed_one() { # name hs: stage, swap in, write the record
+        local n=$1 hs=$2 stage=$PACKS/skills/.seed-$1
+        rm -rf "$stage"; cp -r "$SHIP/skills/$n" "$stage"; rm -f "$stage/.pack.json"
+        rm -rf "${PACKS:?}/skills/$n"; mv "$stage" "$PACKS/skills/$n"
+        write_record "$PACKS/skills/$n" skill "$SRC"
+        jq --arg s "$hs" '. + {shipped:$s}' "$PACKS/skills/$n/.pack.json" > "$PACKS/skills/$n/.pack.json.tmp" && mv "$PACKS/skills/$n/.pack.json.tmp" "$PACKS/skills/$n/.pack.json"
+      }
+      if [ -n "$INSTALL" ]; then
+        names=''
+        for e in "${ST[@]}"; do
+          IFS='|' read -r n st hs old <<<"$e"
+          [ "$st" = add ] || continue
+          printf '%-8s skill %s (content %s)\n' add "$n" "$hs"; seed_one "$n" "$hs"; names="$names $n"
+          echo "seeded skill $n (content $hs)"
+        done
+        [ -z "$names" ] || audit_log packs-seed "install$names"
+        for e in "${ST[@]}"; do
+          case $e in *"|update|"*) NOTE=1;; esac
+        done
+        if [ -n "$NOTE" ]; then echo "note: newer shipped versions: run qargi packs seed"; fi
+        [ -n "$names" ] || [ -n "$NOTE" ] || echo "nothing to seed"
+        exit 0
+      fi
+      if [ ${#PL[@]} -eq 0 ]; then echo "nothing to seed"; exit 0; fi
+      printf '%s\n' "${PL[@]}"
+      tok=$(printf '%s\n' "${PL[@]}" | sort | plan_token)
+      if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
+      need_token "$tok"
+      names=''; for e in "${ST[@]}"; do IFS='|' read -r n st hs old <<<"$e"; case $st in add|update) names="$names $n";; esac; done
+      audit_log packs-seed "$tok$names"
+      reached=''
+      for e in "${ST[@]}"; do
+        IFS='|' read -r n st hs old <<<"$e"
+        case $st in add|update) ;; *) continue;; esac
+        if [ "$st" = update ]; then
+          reached="$reached $(jq -r --arg k "skill:$n" --arg all "$(ls "$DA_CONF/projects" 2>/dev/null | sed -n 's/\.json$//p' | paste -sd' ')" \
+            '.links[] | select(.pack==$k) | if .scope=="project" or .scope=="project-role" then .project else ($all | split(" ")[]) end' "$LINKS" | paste -sd' ')"
+        fi
+        seed_one "$n" "$hs"; echo "seeded skill $n (content $hs)"
+      done
+      for prj in $(printf '%s\n' $reached | sort -u); do
+        echo "next: qargi packs apply --target claude-code $prj"
+        [ ! -f "$REG" ] || jq -r --arg p "$prj" 'to_entries[] | select(.value.location=="cloud" and (.key | startswith($p + "-"))) | .key' "$REG" \
+          | while read -r inst; do echo "next: qargi packs apply $inst"; done
+      done
+      exit 0;;
     load)
       # Read-only and evaluated from the links when called: the index of what the role has enabled, or one pack's text and
       # the library path of its files. Refuses what render refuses (a pack that fails its review or changed since approved).
