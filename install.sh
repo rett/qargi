@@ -103,7 +103,7 @@ done
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mkdir -p "$data"
-  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/roles" "$here/methodologies" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
+  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/roles" "$here/methodologies" "$here/packs" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
   echo "copied the tool to $data"
 fi
 
@@ -135,6 +135,8 @@ if [ "$mode" = user ]; then
     jq -n --arg r "$(cd "$src" && pwd -P)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg v "$(cat "$src/VERSION")" '{tool_root:$r, installed_at:$t, version:$v}' > "$liveconf/install.json"
     chmod 600 "$liveconf/install.json"
     echo "recorded the install in $liveconf/install.json (a checkout run from elsewhere keeps its data in its own .qargi)"
+    # the baseline packs go into the library (only the missing ones, unlinked: an unlinked pack reaches nobody)
+    "$src/bin/qargi" packs seed --install || echo "note: the baseline packs were not seeded; run: qargi packs seed" >&2
   else
     echo "note: jq is not installed, so the install was not recorded in $liveconf/install.json" >&2
   fi
