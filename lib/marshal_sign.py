@@ -26,8 +26,9 @@ Command line (the shell and the tests; python3 -I, standard library only):
   sign --key F [--ns NS]                                 payload on stdin, armored signature on stdout
   verify --signers F --principal P --sig FILE [--ns NS]  payload on stdin; exit 0 ok, 1 not verified (why on stderr)
   signers add --file F --line L | remove --file F --principal P | list --file F
+  payload --project P --feature F --kind features|done --rev N [--parent OID] [--lead ID] --record FILE   the bytes to sign
 Exit status 2: the call itself is wrong (message on stderr)."""
-import getpass, hashlib, json, os, re, shutil, signal, socket, stat, subprocess, tempfile
+import argparse, getpass, hashlib, json, os, re, shutil, signal, socket, stat, subprocess, sys, tempfile
 
 NS = 'qargi-marshal'
 PAYLOAD_V = 1
@@ -513,3 +514,81 @@ def hw_check(marks, name, rev, oid, is_ancestor):
     if not ok:
         return False, 'rollback detected: %s rev %d does not descend from the accepted rev %d' % (name, rev, arev)
     return True, ''
+
+
+# ---- command line ----------------------------------------------------------------------------------------------------
+
+def _no_float(x):
+    raise ValueError('a float has no canonical form here')
+
+
+def _cli(argv):
+    ap = argparse.ArgumentParser(prog='marshal_sign.py', description='Signed marshal records (see the module text).')
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    k = sub.add_parser('keygen')
+    k.add_argument('--key', required=True)
+    k.add_argument('--principal')
+    sg = sub.add_parser('sign')
+    sg.add_argument('--key', required=True)
+    sg.add_argument('--ns', default=NS)
+    v = sub.add_parser('verify')
+    v.add_argument('--signers', required=True)
+    v.add_argument('--principal', required=True)
+    v.add_argument('--sig', required=True)
+    v.add_argument('--ns', default=NS)
+    sn = sub.add_parser('signers')
+    sn.add_argument('op', choices=('add', 'remove', 'list'))
+    sn.add_argument('--file', required=True)
+    sn.add_argument('--line')
+    sn.add_argument('--principal')
+    pl = sub.add_parser('payload')
+    pl.add_argument('--project', required=True)
+    pl.add_argument('--feature', required=True)
+    pl.add_argument('--kind', required=True)
+    pl.add_argument('--rev', required=True, type=int)
+    pl.add_argument('--parent')
+    pl.add_argument('--lead')
+    pl.add_argument('--record', required=True)
+    a = ap.parse_args(argv)
+    out = sys.stdout.buffer
+    if a.cmd == 'keygen':
+        out.write((keygen(a.key, a.principal) + '\n').encode('ascii'))
+    elif a.cmd == 'sign':
+        out.write(sign(sys.stdin.buffer.read(MAX_MESSAGE + 1), a.key, a.ns).encode('ascii'))
+    elif a.cmd == 'verify':
+        ok, why = verify(sys.stdin.buffer.read(MAX_MESSAGE + 1), _read_regular(a.sig, MAX_MESSAGE), a.signers, a.principal, a.ns)
+        if not ok:
+            sys.stderr.write('marshal_sign: %s\n' % why)
+            return 1
+    elif a.cmd == 'signers':
+        if a.op == 'add':
+            if a.line is None:
+                raise SignError('signers add needs a line')
+            signers_add(a.file, a.line)
+        elif a.op == 'remove':
+            if a.principal is None:
+                raise SignError('signers remove needs a principal')
+            if not signers_remove(a.file, a.principal):
+                sys.stderr.write('marshal_sign: %s is not listed\n' % a.principal)
+        else:
+            for p, t, key in signers_list(a.file):
+                out.write(('%s %s %s\n' % (p, t, key)).encode('ascii'))
+    else:
+        try:
+            rec = json.loads(_read_regular(a.record).decode('utf-8'), parse_float=_no_float)
+        except (ValueError, UnicodeDecodeError) as e:
+            raise SignError('the record is not usable JSON: %s' % e)
+        try:
+            out.write(signed_payload(a.project, a.feature, a.kind, a.rev, a.parent, a.lead, rec))
+        except ValueError as e:
+            raise SignError(str(e))
+    out.flush()
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(_cli(sys.argv[1:]))
+    except SignError as e:
+        sys.stderr.write('marshal_sign: %s\n' % e)
+        sys.exit(2)
