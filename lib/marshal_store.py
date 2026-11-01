@@ -42,9 +42,10 @@ uses every record and shows the tag; strict ignores what is not signed, with a w
 of the feature. The last accepted record of each feature is kept in $STATE/features/.accepted-<project>.json {name: [rev, oid]}
 (a high-water mark): a record with a lower rev, the same rev and another oid, or that does not descend from the accepted one is a
 rollback, warned about as such and never used. When the head of a ref is not an accepted record (strict: not signed or not valid; or a
-rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
+signed rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
 the last accepted one, and a write builds on that: a record that was valid is never dropped by a write, junk or replayed pushes can neither
-renew a lease (the timer counts the accepted oid only) nor block the lead. A ref
+renew a lease (the timer counts the accepted oid only) nor block the lead. Advisory uses an unsigned or INVALID head as it is (a write
+builds on it, the timer counts it): only a signed rollback falls back. A ref
 that vanishes without a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
@@ -443,8 +444,7 @@ class Integrity:
                 else:
                     bad.add(name)
                 continue
-            view[name] = cur
-            base[name] = self.fallback(name, marks, oid) or cur
+            view[name] = base[name] = cur       # advisory uses what is there: a write builds on the head that was read, and the timer follows it
             if tag in self.BAD:
                 self.notes.append((name, "refs/qargi/features/%s is %s%s (integrity advisory: the record is still used)" % (name, tag, (": " + why) if why else "")))
         for ref, _ in ignored:
