@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi project adopt PROJECT`: closes the safe gaps of an attached repository. With a plan token and your words it creates the missing
+  long-lived branches locally (at the default branch tip; none is moved) and writes the methodology files that do not exist as one commit
+  on `agent/adopt-<methodology>` cut from develop, for you to review. It never overwrites a file, never pushes, leaves the working tree
+  alone, refuses a dirty tree, a detached HEAD and a member run, and lists the changelog format, tag format and CI content as left for you.
 - Signed marshal records. With the shared marshal, each lead machine can have its own ssh key (`marshal key init`), a per-project
   signers file lists the trusted keys (`marshal signers add|remove|list`, never in the repository or the refs), and
   `marshal enable --integrity off|advisory|strict` sets the mode. Records are signed with `ssh-keygen -Y` (namespace `qargi-marshal`) over
@@ -150,7 +154,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi project attach [DIR]` attaches qargi to an existing repository without changing it. It reads the remote, branches, tags,
   version and changelog files, test command and CI, prints the answers it would store, the gaps against the methodology and
   what it could not determine, and a plan token; with `--plan` and `--approved` it stores the answers outside the repository.
-  Closing the gaps is a separate, reviewed change.
+  The safe gaps are closed by `qargi project adopt`, the rest by hand.
 
 - `qargi project new NAME` starts a project from a methodology: it prints a plan (directory, branches, files, deployment
   options with instructions) and a token; with `--plan` and `--approved` it creates the directory, runs `git init`, writes the
