@@ -549,8 +549,20 @@ COMMANDS = {
                                 "The reference store is not a tier. Reads only; nothing is created or changed.")),
             "check": verb("Check every existing memory tier against the canon, and that no note lives in two tiers", [], [PROJECT_OPT],
                           desc=("Runs the canon check on each tier that exists, then reports a note path present in two or more tiers (structural files such as "
-                                "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist or cannot be reached is information, not a failure. "
+                                "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. "
                                 "Exit 1 when anything failed.")),
+            "init": verb("Create a memory tier (repo, project, shared or system) as an empty store of the standard layout", [("TIER", "none")],
+                         [PROJECT_OPT, PLAN, APPROVED],
+                         desc=("Without --approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not "
+                               "a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). "
+                               "The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. "
+                               "A tier that is already set up says so and exits 0.")),
+            "move": verb("Move notes from one tier to another, with the original archived in the first", [("PATH", "none")],
+                         [PROJECT_OPT, opt("--from", "the tier the notes are in", "TIER", ("repo", "cloud", "project", "shared", "system")),
+                          opt("--to", "the tier they go to", "TIER", ("repo", "cloud", "project", "shared", "system")), PLAN, APPROVED],
+                         desc=("PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, "
+                               "so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy "
+                               "records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.")),
             "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
                           [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
                           desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",

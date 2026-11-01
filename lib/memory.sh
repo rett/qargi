@@ -63,6 +63,7 @@ store_verbs() {
 }
 
 case ${1:-} in split|merge|copy) store_verbs "$@"; exit;; esac
+case ${1:-} in init|move) exec "$here/tierwrite.sh" "$@";; esac   # writing a tier: lib/tierwrite.sh (init, move)
 case ${1:-} in tiers|check) exec python3 -I "$here/tiers.py" "$@";; esac   # the memory tiers: lib/tiers.py (tiers, check; --project, --json)
 
 verb=${1:-}; store=${2:-}; shift 2 || true
