@@ -28,13 +28,13 @@ class Guard(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(guard("").returncode, 0)
 
-    def test_the_member_definition_guards_bash_and_edits(self):
+    def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
         self.assertEqual(sorted(os.listdir(d)), ["member.md"], "qargi ships one member definition")
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
-        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit"', text)
+        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
             self.assertIn(t, tools)
@@ -689,6 +689,198 @@ class Marshal(unittest.TestCase):
         for c in ("export QARGI_LEADER=me", "QARGI_LEAD_X=1 ls", "export MY_QARGI_LEAD=1", "unset QARGI_STATE_X", "echo QARGI_LEAD=1"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    # --- signed marshal records: the lead's signing key, the allowed signers and the acceptance marks
+
+    KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
+
+    def make_key(self, base=None):
+        """A credentials directory with the lead's signing key (private and public), another credential and a look-alike."""
+        cred = os.path.join(base or self.conf, "credentials")
+        os.makedirs(cred, exist_ok=True)
+        for n in ("marshal_ed25519", "marshal_ed25519.pub", "tok", "marshalled", "marshal-notes"):
+            with open(os.path.join(cred, n), "w") as f:
+                f.write("x\n")
+        return cred
+
+    def key_refused(self, cmds, env=None):
+        for c in cmds:
+            res = self.bash(c, **(env or {}))
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("the marshal's signing key", res.stderr, c)
+            self.assertIn(self.KEY_NOTE, res.stderr, c)
+
+    def test_the_signing_key_cannot_be_read_by_any_construct(self):
+        """New behaviour: a read of a credential stays allowed in general, but not of credentials/marshal_*."""
+        cred = self.make_key()
+        k, out = os.path.join(cred, "marshal_ed25519"), os.path.join(self.t, "run/out")
+        os.symlink(k, os.path.join(self.clone, "to-key"))
+        os.symlink(cred, os.path.join(self.clone, "to-creds"))
+        cmds = ["cat %s" % k, "cat %s.pub" % k, "head -c 40 %s" % k, "tail %s" % k, "less %s" % k, "more %s" % k, "base64 %s" % k, "strings %s" % k,
+                "grep -n . %s" % k, "grep BEGIN %s" % k, "xxd %s" % k, "od -c %s" % k, "sed -n 1p %s" % k, "awk 1 %s" % k, "ssh-keygen -y -f %s" % k,
+                "cp %s %s/k" % (k, out), "dd if=%s of=%s/k" % (k, out), "tar cf %s/k.tar %s" % (out, k), "rsync %s %s/" % (k, out),
+                "cat < %s" % k, "cat <%s" % k, "xargs cat < %s" % k, "cat %s > %s/k" % (k, out), "cat %s | base64" % k, "wc -c %s" % k,
+                "cat $QARGI_CONF/credentials/marshal_ed25519", "cat ${QARGI_CONF}/credentials/marshal_ed25519", "cat to-key", "cat to-creds/marshal_ed25519",
+                "cat ../../conf/credentials/marshal_ed25519", "cat %s/../credentials/marshal_ed25519" % cred, "cat --file=%s" % k,
+                "cd %s && cat marshal_ed25519" % cred, "cd %s; head marshal_ed25519" % cred, "cd %s && cat *" % cred, "cd %s && cat marshal_*" % cred,
+                "cat %s/marshal_*" % cred, "cat %s/m*" % cred, "cat %s/marshal_ed2551?" % cred, "cat %s/marshal_ed2551[0-9]" % cred, "cat %s/cred*/marshal_ed25519" % self.conf,
+                "cat %s/marshal_{ed25519,x}" % cred, "cat %s/*" % cred,
+                "bash -c 'cat %s'" % k, "sh -c \"cat %s\"" % k, "bash -lc 'cd %s && cat marshal_ed25519'" % cred, "eval 'cat %s'" % k, "echo $(cat %s)" % k,
+                "echo `cat %s`" % k, "true && cat %s" % k, "ls; cat %s" % k, "sudo cat %s" % k, "env FOO=1 cat %s" % k, "nohup cat %s" % k, "timeout 5 cat %s" % k,
+                "FOO=1 cat %s" % k, "(cat %s)" % k, "python3 -c 'print(open(\"%s\").read())'" % k, "python3 -I -c \"import sys; sys.stdout.write(open('%s').read())\"" % k]
+        self.key_refused(cmds)
+        self.assertEqual(self.bash("cp -t %s/run/out %s" % (self.t, k)).returncode, 2)     # the destination rule of cp reads the key as one (its text differs)
+
+    def test_the_signing_key_cannot_be_read_by_the_read_tools(self):
+        cred = self.make_key()
+        os.symlink(cred, os.path.join(self.clone, "to-creds"))
+        for tool, inp in (("Read", {"file_path": os.path.join(cred, "marshal_ed25519")}), ("Read", {"file_path": os.path.join(cred, "marshal_ed25519.pub")}),
+                          ("Read", {"file_path": "to-creds/marshal_ed25519"}), ("NotebookRead", {"notebook_path": os.path.join(cred, "marshal_ed25519")}),
+                          ("Grep", {"pattern": "BEGIN", "path": os.path.join(cred, "marshal_ed25519")}), ("Grep", {"pattern": "BEGIN", "path": cred}),
+                          ("Grep", {"pattern": "BEGIN", "path": self.conf}), ("Grep", {"pattern": "BEGIN", "path": "to-creds"})):
+            res = self.call(tool, inp)
+            self.assertEqual(res.returncode, 2, (tool, inp, res.stderr))
+            self.assertIn("the marshal's signing key", res.stderr)
+            self.assertIn(self.KEY_NOTE, res.stderr)
+        for tool, inp in (("Read", {"file_path": os.path.join(cred, "tok")}), ("Read", {"file_path": os.path.join(cred, "marshalled")}),
+                          ("Read", {"file_path": os.path.join(self.conf, "marshal_ed25519")}), ("Grep", {"pattern": "x", "path": os.path.join(cred, "tok")}),
+                          ("Grep", {"pattern": "x", "path": "src"}), ("Glob", {"pattern": "*", "path": cred}), ("Read", {"file_path": "skills/qargi-build"})):
+            res = self.call(tool, inp)
+            self.assertEqual(res.returncode, 0, (tool, inp, res.stderr))
+
+    def test_a_directory_that_holds_the_signing_key_cannot_be_read_whole(self):
+        """New behaviour: a recursive reader named on the credentials directory (or above it) would carry the key along."""
+        cred = self.make_key()
+        out = os.path.join(self.t, "run/out")
+        self.key_refused(["cp -r %s %s/" % (cred, out), "cp -r %s %s/" % (self.conf, out), "cp -a %s %s/c" % (cred, out), "tar cf %s/c.tar %s" % (out, cred),
+                          "tar czf %s/c.tgz %s" % (out, self.conf), "rsync -a %s/ %s/c/" % (cred, out), "grep -r BEGIN %s" % cred, "grep -rn x %s" % self.conf,
+                          "rg BEGIN %s" % cred,
+                          "zip -r %s/z.zip %s" % (out, self.conf), "cd %s && tar cf %s/c.tar ." % (cred, out), "cd %s && cp -r . %s/c" % (cred, out),
+                          "cd %s && grep -r BEGIN ." % cred, "bash -c 'cp -r %s %s/c'" % (cred, out)])
+        for c in ("find %s -type f -exec cat {} +" % cred, "find %s -type f -execdir cat {} ;" % self.conf):     # find's actions already count as writes
+            self.assertEqual(self.bash(c).returncode, 2, c)
+        for c in ("ls %s" % cred, "ls -la %s" % self.conf, "cat %s/tok" % cred, "cp %s/tok %s/t" % (cred, out), "grep -n x %s/tok" % cred,
+                  "find %s -type f" % cred, "grep -r x %s/instances.json" % self.conf, "cp -r %s %s/c" % (self.clone, out), "cp -r src %s/c" % out):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_signing_key_is_found_like_the_other_qargi_paths(self):
+        qh, xdgc = os.path.join(self.t, "qh"), os.path.join(self.t, "xdgc")
+        for base, env in ((qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)), (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
+                          (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None)), (xdgc + "/qargi", dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc))):
+            k = os.path.join(self.make_key(base), "marshal_ed25519")
+            self.key_refused(["cat %s" % k, "base64 %s" % k, "bash -c 'cat %s'" % k], env)
+            res = self.call("Read", {"file_path": k}, **env)
+            self.assertEqual(res.returncode, 2, (base, res.stderr))
+
+    def test_metadata_and_look_alikes_of_the_signing_key_stay_allowed(self):
+        """Pin (passes before and after): the other credentials, names that only look like the key's and its metadata stay open."""
+        cred = self.make_key()
+        k = os.path.join(cred, "marshal_ed25519")
+        for c in ("ls %s" % k, "ls -la %s" % cred, "stat %s" % k, "test -f %s" % k, "[ -f %s ]" % k, "[[ -s %s ]]" % k,
+                  "cat %s/tok" % cred, "cat %s/marshalled" % cred, "cat %s/marshal-notes" % cred, "cat %s/marshal_ed25519" % self.conf,
+                  "cat lib/marshal_store.py", "cat marshal_ed25519", "echo marshal_ed25519", "grep -rn marshal_ lib/marshal.sh", "cp lib/marshal_refs.py %s/run/out/" % self.t,
+                  "qargi marshal status", "qargi marshal check proj f", "echo credentials/marshal_ed25519 is the key", "git log --grep marshal_ed25519"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        for tool in ("Write", "Edit"):                                    # writing it stays refused by the credentials root, as before
+            res = self.call(tool, {"file_path": k})
+            self.assertEqual(res.returncode, 2, (tool, res.stderr))
+            self.assertIn("protected location", res.stderr)
+        self.assertEqual(self.bash("echo x > %s" % k).returncode, 2)
+        self.assertEqual(self.bash("rm -f %s" % k).returncode, 2)
+        self.assertEqual(self.bash("cp /dev/null %s.pub" % k).returncode, 2)
+        os.makedirs(os.path.join(self.clone, "credentials"))               # a credentials directory inside the clone is work product
+        self.assertEqual(self.bash("cat credentials/marshal_ed25519").returncode, 0)
+
+    def test_pushd_and_popd_are_followed_like_cd_when_the_signing_key_is_looked_for(self):
+        """Review fix: `pushd DIR; cat marshal_ed25519` reads the key like `cd DIR; cat ...` does; popd goes back where the command was."""
+        cred = self.make_key()
+        self.key_refused(["pushd %s && cat marshal_ed25519" % cred, "pushd %s; head marshal_ed25519" % cred, "pushd %s >/dev/null && cat marshal_*" % cred,
+                          "pushd -n %s; cat %s/marshal_ed25519" % (cred, cred), "cd /tmp && pushd %s && base64 marshal_ed25519" % cred,
+                          "bash -c 'pushd %s && cat marshal_ed25519'" % cred, "pushd %s && pushd /tmp && popd && cat marshal_ed25519" % cred,
+                          "pushd %s && cp -r . /tmp/c" % cred])
+        for c in ("pushd %s >/dev/null && popd >/dev/null && cat marshal_ed25519" % cred, "pushd /tmp && cat marshal_ed25519", "popd && cat marshal_ed25519",
+                  "pushd %s && cat tok" % cred, "pushd src && popd && cat lib/marshal_store.py"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_a_link_a_symbolic_copy_or_a_move_aimed_at_the_credentials_or_the_key_is_refused(self):
+        """Review fix: a symbolic link to the credentials directory (or to the key) made in the same command as the read that goes through it
+        is invisible to the guard, so making one is refused like a read; a move of the key is a write to a protected location."""
+        cred = self.make_key()
+        k, out = os.path.join(cred, "marshal_ed25519"), os.path.join(self.t, "run/out")
+        self.key_refused(["ln -s %s %s/l" % (cred, out), "ln -sf %s/ %s/l" % (cred, out), "ln -s %s %s/l" % (self.conf, out), "ln -s %s %s/l" % (k, out),
+                          "ln %s %s/l" % (k, out), "ln -s %s %s/l && cat %s/l/marshal_ed25519" % (cred, out, out), "bash -c 'ln -s %s %s/l'" % (cred, out),
+                          "cp -s %s %s/l" % (k, out), "cp -rs %s %s/l" % (cred, out), "cp -sr %s %s/l" % (self.conf, out), "cp --symbolic-link -r %s %s/l" % (cred, out),
+                          "cp -l %s %s/l" % (k, out), "cd %s && ln -s . %s/l" % (cred, out)])
+        for c in ("mv %s %s/l" % (k, out), "mv %s %s/l" % (cred, out), "mv %s %s/l" % (self.conf, out), "cd %s && mv marshal_ed25519 %s/l" % (cred, out)):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+        for c in ("ln -s %s/tok %s/l" % (cred, out), "ln -s lib/marshal_store.py %s/l" % out, "cp -s lib/marshal.sh %s/l" % out, "mv a b",
+                  "cp %s/tok %s/t" % (cred, out), "ln -s %s %s/l" % (self.clone, out)):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_text_of_a_program_names_the_signing_key_through_slash_dot_and_double_slash(self):
+        """Review fix: the scan of a -c string for the key's path reads `dir//marshal_ed25519` and `dir/./marshal_ed25519` as the path."""
+        cred = self.make_key()
+        self.key_refused(["python3 -c 'print(open(\"%s//marshal_ed25519\").read())'" % cred, "python3 -c 'print(open(\"%s/./marshal_ed25519\").read())'" % cred,
+                          "python3 -c 'print(open(\"%s/.//marshal_ed25519\").read())'" % cred, "python3 -c 'print(open(\"%s///marshal_ed25519.pub\").read())'" % cred,
+                          "perl -e 'open F, \"%s/././marshal_ed25519\"; print <F>'" % cred, "node -e 'require(\"fs\").readFileSync(\"%s//./marshal_ed25519\")'" % cred])
+
+    def test_the_allowed_signers_and_the_acceptance_marks_are_protected(self):
+        """Pin: $STATE/marshal/<project>.signers lies under marshal/ and $STATE/features/.accepted-<project>.json under
+        features/, both protected roots. New: the refusal says what the file is."""
+        m, f = os.path.join(self.state, "marshal"), self.feat
+        os.makedirs(m)
+        for p in (m + "/proj.signers", f + "/.accepted-proj.json"):
+            open(p, "a").close()
+        os.symlink(m, os.path.join(self.clone, "to-marshal"))
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p, text in ((m + "/proj.signers", "allowed signers"), (m + "/new.signers", "allowed signers"), ("to-marshal/proj.signers", "allowed signers"),
+                            ("../../state/marshal/x.signers", "allowed signers"), (f + "/.accepted-proj.json", "acceptance marks"),
+                            (f + "/.accepted-new.json", "acceptance marks"), ("to-features/.accepted-proj.json", "acceptance marks")):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+                    self.assertIn(text, res.stderr, (tool, p))
+        s, a = m + "/proj.signers", f + "/.accepted-proj.json"
+        for target, text in ((s, "allowed signers"), (a, "acceptance marks")):
+            for c in ("echo x > %s" % target, "echo x >> %s" % target, "echo x | tee %s" % target, "cp a %s" % target, "mv a %s" % target, "rm -f %s" % target,
+                      "sed -i s/a/b/ %s" % target, "truncate -s 0 %s" % target, "ln -sf /x %s" % target, "cd %s && echo x > %s" % (os.path.dirname(target), os.path.basename(target)),
+                      "bash -c 'echo x > %s'" % target, "dd if=/dev/null of=%s" % target):
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 2, (c, res.stderr))
+                self.assertIn(text, res.stderr, c)
+        self.refused(["echo x > $QARGI_STATE/marshal/other.signers", "echo '{}' > to-features/.accepted-p.json", "rm -rf %s" % m])
+        for c in ("cat %s" % s, "cat %s" % a, "ls -a %s" % f, "cp %s %s/run/out/" % (s, self.t), "grep -n ssh-ed25519 %s" % s,
+                  "echo x > %s/proj.signers.txt" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_signing_verbs_are_refused_with_their_own_reason(self):
+        """Pin the refusal (the verbs are not in MARSHAL_READ); new: the message says what the verb does."""
+        text = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers", "resign": "signs a marshal record"}
+        for v, why in text.items():
+            for form in ("qargi marshal %s init", "qargi marshal %s add --line x", "qargi marshal %s list", "qargi marshal %s proj f --approved go",
+                         "/opt/q/bin/qargi marshal %s x", "env FOO=1 qargi marshal %s", "sudo qargi marshal %s x", "bash -c 'qargi marshal %s x'",
+                         "eval 'qargi marshal %s x'", "echo $(qargi marshal %s x)", "true && qargi marshal %s x", "bash lib/marshal.sh %s x",
+                         "python3 bin/qargi marshal %s x", "nohup qargi marshal %s x", "qargi 'marshal' '%s'", "v=%s; qargi marshal $v"):
+                res = self.bash(form % v)
+                self.assertEqual(res.returncode, 2, (form % v, res.stderr))
+                self.assertIn("qargi guard:", res.stderr)
+                self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+                if "$v" not in form:
+                    self.assertIn(why, res.stderr, form % v)
+        for c in ("qargi marshal enable --integrity strict", "qargi marshal enable proj --integrity advisory"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+        for c in ("qargi marshal status", "qargi marshal check proj f", "echo qargi marshal key init", "grep -n 'marshal resign' lib/commands.py"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
 
 
 class RefJournal(unittest.TestCase):
