@@ -106,16 +106,18 @@ them to a member. There are no remote shares.
 
 ## Roles, abilities and members
 
-A role is named by its activity. Each of the four abilities is defined by a skill,
-which a member loads when the task block names the ability (`ABILITY: build — load
-skill qargi-build`) and a cloud agent of that role carries in its prompt:
+A role is named by its activity. Each of the four abilities is defined by the text
+of its role, `roles/<role>/ROLE.md`, the single source: a member gets that text with the
+task block (`qargi local prepare` writes it, as `qargi role prompt ROLE` prints it) and a
+cloud agent of that role carries it in its prompt. A member keeps the Skill tool for the
+packs attached to it, not for its ability:
 
-| Role | Ability | Skill | What it does |
+| Role | Ability | Defined by | What it does |
 |---|---|---|---|
-| `build` | build | `qargi-build` | changes the code with its tests, manual page, help and changelog |
-| `write` | write | `qargi-write` | writes the operational documentation on its own branch |
-| `review` | review | `qargi-review` | reads a change, runs its checks and reports a verdict; changes no file |
-| `test` | test | `qargi-test` | writes and repairs tests, proves them failing first and stable |
+| `build` | build | `roles/build/ROLE.md` | changes the code with its tests, manual page, help and changelog |
+| `write` | write | `roles/write/ROLE.md` | writes the operational documentation on its own branch |
+| `review` | review | `roles/review/ROLE.md` | reads a change, runs its checks and reports a verdict; changes no file |
+| `test` | test | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
 | `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
 
 The members are yours to name: `qargi agent add forge --abilities build,test` renders
@@ -314,7 +316,7 @@ the member's clone stay writable, since they are the work product. The guard fai
 internal error, and the member definition sets `onFailure: "block"` on the hook (Claude
 Code 2.1.295 or later) so that a hook that cannot run blocks the call; frontmatter
 hooks of a project-level agent run only once you trust the workspace. So one definition
-serves every ability; what an ability does comes from its skill and the contract, not
+serves every ability; what an ability does comes from its role text and the contract, not
 from the definition. The guard is a second barrier beside the credential-free git
 wrapper; `qargi local verify` remains the proof. A new member is available in Claude
 Code sessions started after it is added.
