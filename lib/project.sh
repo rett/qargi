@@ -153,7 +153,8 @@ EOF
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
-    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" '$d[0].roles as $t | {
+    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" --slurpfile p "$(dirname "$(readlink -f "$0")")/providers/claude.json" \
+    '$p[0].tiers as $m | ($d[0].roles | map_values(. + {model: $m[.tier]})) as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
