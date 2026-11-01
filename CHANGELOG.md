@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Memory tiers (read-only, first slice). A project's memory is five ranked tiers, highest first: repo, cloud, project, shared,
+  system. A tier is a memory store of the standard layout in a directory (defaults under the qargi root; `memory.tiers` in the
+  project answers moves any of them) or, for cloud, the project's memory store. `qargi memory tiers [--json]` lists them with
+  their state and note counts; `qargi memory check` runs the canon check on each tier that exists and fails when a note path
+  is present in two tiers (README, INDEX and the like repeat per tier by design). The reference store is not a tier. Nothing is
+  written to a tier; creating and moving notes between tiers, and the session hook composing them, come later.
+- Agents write verified facts only under their own role folder of the memory store; `shared/` is curated and reached by
+  promotion (`qargi canon promote --approved`) or by the person, and an agent proposes a shared note in its report. The cloud
+  preamble, the store README, the lead contract, the build role and skill and the canon say so. `canon audit` still reports
+  only cross-role writes, so an agent writing under `shared/` is not yet detected. The cloud prompts change: refresh them.
 - A lead-only ref journal (`ref-journal.jsonl` in the state directory) records every local branch that qargi's own verbs create,
   move or delete (`feature start|merge|sync|finish`, `release`, `review apply|prune`). `local verify` now accepts a branch
   change since the run was prepared when the journal leads from the snapshot to the branch's current value, so several runs

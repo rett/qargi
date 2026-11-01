@@ -821,7 +821,7 @@ TOPICS = {
         "The lead is <project>-lead, and so is its agent.",
         "qargi instances normalize renames existing resources to match."]),
     "memory": ("The two memory stores", [
-        "<project>-memory is read-write for agents: verified how-to facts they learn. <project>-reference is read-only: rules, workflow and "
+        "<project>-memory is where agents write verified how-to facts they learn, under their own role folder (shared/ is curated and reached by promotion). <project>-reference is read-only: rules, workflow and "
         "conventions you and the coordinator curate. Both have shared/ for every role and roles/<role>/ for one.",
         "An agent reads each store's README.md, then shared/INDEX.md and its role's index, then only the notes its task needs. "
         "The canon (qargi canon) fixes the layout and the note format. Read one note with qargi memory get.",
