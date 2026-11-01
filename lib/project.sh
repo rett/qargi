@@ -33,9 +33,10 @@ PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
 
 validate() { # file -> prints problems, exit 1 if any
-  python3 -I - "$1" "$DA_ROLES" <<'EOF'
+  python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" <<'EOF'
 import json, re, sys
 path, roles = sys.argv[1], sys.argv[2].split()
+sys.path.insert(0, sys.argv[3])
 try:
     c = json.load(open(path))
 except Exception as e:
@@ -93,6 +94,9 @@ m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
     v = m.get(k)
     need(v in (None, "") or re.fullmatch(r"memstore_[A-Za-z0-9]+", v), "memory.%s: a memstore id or empty (created on provisioning)" % k)
+if isinstance(m, dict) and m.get("tiers") is not None:
+    import tiers   # lib/tiers.py is the one place that knows the tiers and where each may be placed
+    bad.extend(tiers.problems(m["tiers"]))
 teams = c.get("teams", {})
 need(isinstance(teams, dict), "teams: an object of named teams")
 if isinstance(teams, dict) and teams:
@@ -156,7 +160,7 @@ case $verb in
         build: {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
         write: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}
       },
-      memory: {memory_store: "", reference_store: ""},
+      memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
   init)
     n=${1:-}; shift || true; valid_project "$n" || die "init needs a project name"
