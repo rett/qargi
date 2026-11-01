@@ -309,6 +309,13 @@ class Canon(unittest.TestCase):
         after["/roles/ghost/INDEX.md"] = "x"
         self.assertEqual(run("check", "memory", after).returncode, 1)
 
+    def test_seed_readme_keeps_shared_curated(self):
+        text = slurp(os.path.join(SEED, "README.memory.md"))
+        self.assertIn("Write only under roles/<your role>/", text)
+        self.assertIn("shared/ is curated", text)
+        self.assertNotIn("Write only under `shared/`", text)
+        self.assertLess(len(text), 3000)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
