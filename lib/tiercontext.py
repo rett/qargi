@@ -427,6 +427,9 @@ def compose(c, cap=CAP, per_file=PER_FILE):
 
 
 def packet(c, role, cap=PACKET_CAP):
+    """The text of the dispatch packet; empty when no tier exists at all (every row is missing): there is nothing to tell."""
+    if all(r["status"] == "missing" for r in c["rows"]):
+        return ""
     lines = ["Memory tiers of project %s, highest first (a note lives in one tier; the repo tier is your clone's committed copy):" % c["project"]]
     lines += row_lines(c)
     ref = c["reference"]
@@ -514,7 +517,9 @@ def main(argv):
     c = collect(answers, prj, role, ant, time.time() + 6, repo_tier=a.get("--repo-tier"), checkout=a.get("--checkout"), light=True)
     if not a.get("--checkout"):
         c["repo_dirty"] = 0
-    print(packet(c, role))
+    text = packet(c, role)
+    if text:
+        print(text)
     w = _dirty_line(c, packet=True)
     if w:
         print(w, file=sys.stderr)
