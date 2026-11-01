@@ -20,7 +20,13 @@
 them, `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test`, define the
 abilities); `agents/member.md` is the one member definition `qargi agent add`
 renders under the names users choose; `provision/` the resource and memory
-templates; `examples/` sample repository profiles.
+templates; `examples/` sample repository profiles; `packs/` the baseline packs shipped
+with qargi (`baseline.json` and `skills/<name>/SKILL.md`).
+
+To add a baseline pack, write `packs/skills/<name>/SKILL.md` with front matter of
+two keys, `name` (the directory name) and `description`, and portable text that names
+no qargi verb, then list it in `packs/baseline.json`. The packs test checks both: every
+directory is listed and the reverse, and each pack passes the library's review.
 
 ## Tests
 
