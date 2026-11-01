@@ -69,4 +69,11 @@ echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
+# marshal.ttl is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
+$DA project set demo marshal.ttl 20 >/dev/null 2>&1 && [ "$(jq .marshal.ttl $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.ttl" || { echo "FAIL set marshal.ttl"; fail=1; }
+cp $T/c/projects/demo.json $T/before.json
+for k in marshal.backend marshal.ttl.x marshal; do
+  v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
+  msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
+done
 exit $fail
