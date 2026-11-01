@@ -45,6 +45,7 @@ run bash tests/test_review.sh
 run bash tests/test_marshal.sh
 run bash tests/test_marshal_flow.sh
 run bash tests/test_marshal_hook.sh
+run bash tests/test_journal.sh
 run bash tests/test_team.sh
 run bash tests/test_leadcred.sh
 run bash tests/test_lead.sh
