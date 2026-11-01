@@ -28,13 +28,13 @@ class Guard(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(guard("").returncode, 0)
 
-    def test_the_member_definition_guards_bash_and_edits(self):
+    def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
         self.assertEqual(sorted(os.listdir(d)), ["member.md"], "qargi ships one member definition")
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
-        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit"', text)
+        self.assertIn('matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"', text)
         tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
         for t in ("Edit", "Write", "Monitor", "ToolSearch", "Skill"):
             self.assertIn(t, tools)

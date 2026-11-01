@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""qargi __guard: a PreToolUse hook for the local members' Bash, Edit, Write and NotebookEdit tools. Reads the hook's
+"""qargi __guard: a PreToolUse hook for the local members' Bash, Edit, Write, NotebookEdit, Read and Grep tools. Reads the hook's
 JSON on stdin and refuses (exit 2, reason on stderr) what would publish, reach out or change a skill. A barrier, not
 proof: a second barrier beside the git wrapper (which has no credentials) and `qargi local verify`; an agent that goes
 out of its way can still get around it, which is why verify exists.

@@ -227,6 +227,12 @@ cannot enable, disable or push it, `project set` refuses the `marshal.*` keys ex
 back to the local records (the refs on the remote stay). Whether your Git host accepts the `refs/qargi/*` namespace is yours to check
 on a scratch repository before enabling it on a real one.
 
+Records can also be signed so a forged or rewound record is detected: `qargi marshal key init` makes this machine's ssh key and prints its
+signers line, `qargi marshal signers add --line ...` trusts a key (on every lead machine; the list lives in your state directory, never in the
+repository), and `qargi marshal enable --integrity advisory|strict` chooses how readers treat records that are unsigned or not signed by a
+trusted key (advisory tags them, strict ignores them). Move from advisory to strict with `qargi marshal resign NAME` for each open record.
+Signing cannot stop someone with push access from deleting a ref; it makes forged and altered records visible and attributable to a key.
+
 
 ## Skills and command
 
