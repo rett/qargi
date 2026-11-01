@@ -77,7 +77,7 @@ M $t0 status f1 --json; jq -e . "$T/o" >/dev/null 2>&1 && grep -q alice "$T/o" &
 M $t0 status --all --json; jq -e . "$T/o" >/dev/null 2>&1 && grep -q '"f2"\|f2' "$T/o" && ok "status --all --json is valid JSON" || no "SPEC --all --json: $(out)"
 # derived: tasks (local runs on base feature/NAME), unmerged agent branches, overlap with another open feature
 printf '%s\n' '{"run":"r1","slug":"derivedtask","base":"feature/f1","branch":"agent/derivedtask"}' '{"run":"r2","slug":"othertask","base":"feature/f2","branch":"agent/othertask"}' > "$S/local-runs.jsonl"
-git -C "$R" branch agent/derivedtask feature/f1
+git -C "$R" update-ref refs/heads/agent/derivedtask "$(git -C "$R" commit-tree -p feature/f1 -m "task work" "feature/f1^{tree}")"   # one commit the feature lacks: unmerged
 M $t0 status f1 --as alice
 grep -q derivedtask "$T/o" && ! grep -q othertask "$T/o" && ok "status: derived tasks are the local runs whose base is feature/NAME" || no "SPEC derived tasks: $(out)"
 grep -q "agent/derivedtask" "$T/o" && ok "status: lists unmerged agent/* branches" || no "SPEC agent branches: $(out)"
@@ -181,10 +181,10 @@ M $t0 status f7 --as bob --json >/dev/null; jq -e . "$T/o" >/dev/null 2>&1 && ok
 M $t0 status --all >/dev/null; M $t0 check >/dev/null
 [ ! -e "$T/PWNED" ] && [ ! -e "$T/PWNED2" ] && ok "hostile text: nothing was executed" || no "SPEC hostile text was executed: $(ls "$T")"
 # a long note is capped when printed
-LONG=$(head -c 5000 /dev/zero | tr '\0' N)
+LONG=$(head -c 5000 /dev/zero | tr '\0' Q)
 M $t0 set f7 --as mallory --note "$LONG"
 [ "$(j f7 .note | wc -c)" -ge 5000 ] && ok "long note: the record keeps the text" || no "long note stored short: $(j f7 .note | wc -c)"
-M $t0 status f7 --as bob; c=$(grep -o N "$T/o" | wc -l)
+M $t0 status f7 --as bob; c=$(grep -o Q "$T/o" | wc -l)
 [ "$c" -le 2000 ] && [ "$c" -ge 1990 ] && ok "long note: status prints at most 2000 characters of it" || no "SPEC cap: status printed $c of 5000 characters (want about 2000)"
 
 # --- the shell API and the renewer (real time; ttl 1 minute; renews every second)
