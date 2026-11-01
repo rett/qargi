@@ -9,7 +9,7 @@ Publishing: git push, gh, ssh, scp, sftp, and changing a remote.
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
 under the protected ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
 and falls back on `qargi local prepare`, which writes the task's ability to RUN/ability; the guard refuses any write to
-that file and to refs.before, so a member cannot change the ability it is judged by. When the class says read-only, or
+that file and to refs.before and profile, so a member cannot change the ability it is judged by. When the class says read-only, or
 the nearest run directory above the call's cwd or file path says review, the guard also refuses an edit outside RUN/out (the report
 and the manifest) and a Bash command that writes into the clone: a redirection into it, a command that creates,
 changes or removes files there, or a git command that changes the work tree or the history.
@@ -154,8 +154,8 @@ def is_review(run):
 
 
 def control_refusal(full):
-    """The reason a write to a run directory's control file (ability, class, refs.before) is refused, or None."""
-    if os.path.basename(full) in ("ability", "class", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
+    """The reason a write to a run directory's control file (ability, class, profile, refs.before) is refused, or None."""
+    if os.path.basename(full) in ("ability", "class", "profile", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
         return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
     return None
 
