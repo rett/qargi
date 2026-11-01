@@ -464,6 +464,16 @@ done
 [ -z "$miss" ] && ok "wrong types: a status that is not a known one and a purpose, renewed_at or finished_at that is not text are ignored with a warning naming the ref" || no "SPEC wrong-typed records must be ignored with a warning; not ignored/named:$miss (stderr: $(head -c 800 "$T/e.all"))"
 for n in tnull tnum tlist pnum rnum fnum wgood; do OG update-ref -d "refs/qargi/features/$n"; done
 
+# ============================================================ (21) a provisional claim cannot be taken over
+fb pv1
+slow a "fetch push"
+XE a QARGI_REMOTE_TIMEOUT=1 marshal claim pv1 --as alice >/dev/null 2>&1
+XE a QARGI_REMOTE_TIMEOUT=1 marshal takeover pv1 --as alice --approved "$WORDS"; rc=$?
+unslow a
+[ $rc = 1 ] && ! grep -q Traceback "$T/e" && grep -qi "provisional" <(out) && [ "$(jq -r '.state // ""' "$(S a)/features/app-pv1.json" 2>/dev/null)" = provisional ] && [ "$(oref refs/qargi/features/pv1)" = none ] \
+  && ok "takeover: a provisional record has no age; it is refused with a clear message (exit 1, no traceback), the claim is left as it was" \
+  || no "SPEC takeover of a provisional claim must be a refusal, not exit 70 (rc=$rc): $(out)"
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
