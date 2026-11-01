@@ -171,6 +171,13 @@ class Skills(unittest.TestCase):
         for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
+    def test_refuses_packs_seed_to_a_member(self):
+        for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("changes a skill and is not available to an agent", r.stderr)
+        self.assertEqual(self.bash("./lib/packs.sh packs seed").returncode, 2)
+
     def test_lets_the_read_only_verbs_through(self):
         for c in ("qargi skill list", "qargi skill show x", "qargi tool check p build", "qargi skill effective p build", "qargi discover search pdf",
                   "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi export a.tgz", "qargi help skill",
