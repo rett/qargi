@@ -5,7 +5,7 @@
 #
 #   marshal.sh claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] ...
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
-#   marshal.sh disable [--project P]                                 switch back to the local records
+#   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
 #   marshal.sh enable --integrity off|advisory|strict [--project P] [--plan TOKEN --approved WORDS]   set how records are signed
 #   marshal.sh key init [--principal P] [--plan TOKEN --approved WORDS]   make this machine's signing key
 #   marshal.sh signers add --line L | remove P | list [--project P] [--plan TOKEN --approved WORDS]   who is trusted to sign
@@ -104,7 +104,7 @@ marshal_main() {
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
   local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
-       qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P]
+       qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
        qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]"
@@ -123,7 +123,7 @@ marshal_main() {
     key) want=' --principal --plan --approved ';;
     signers) want=' --project --line --plan --approved ';;
     resign) want=' --project --plan --approved ';;
-    disable) want=' --project ';;
+    disable) want=' --project --plan --approved ';;
     claim) want=' --project --as --goal ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
     set) want=' --project --as --goal --plan --note --status ';;
@@ -148,7 +148,7 @@ marshal_main() {
           --line) line=$2;;
           --principal) principal=$2;;
           --integrity) integ=$2;;
-          --plan) case $verb in enable|key|signers|resign) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
+          --plan) case $verb in enable|key|signers|resign|disable) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
           *) opt+=("$1" "$2");;
         esac
         shift 2;;
@@ -209,7 +209,11 @@ marshal_main() {
     need_plan "$tok"
     python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-write --state "$DA_STATE" --project "$PROJ" --remote "$remote" --words "$APPROVED" ${integ:+--integrity "$integ"} || exit $?
     audit_log "marshal:enable" "$PROJ $remote${integ:+ integrity=$integ}"
-    echo "marshal of $PROJ: shared refs backend enabled (remote $remote)${integ:+, integrity $integ}"
+    # the mode in effect, not only the one asked for: an enable after a disable starts with integrity off and says so
+    local eff
+    eff=$(jq -r '.integrity // "off"' "$DA_STATE/marshal/$PROJ.enabled" 2>/dev/null) || eff=off
+    echo "marshal of $PROJ: shared refs backend enabled (remote $remote), integrity $eff"
+    [ "$eff" != off ] || echo "note: integrity is off: nothing is signed or checked (qargi marshal enable --integrity advisory|strict)"
     case $integ in
       advisory|strict)
         [ -e "$DA_CONF/credentials/marshal_ed25519" ] || echo "note: this machine has no signing key yet (qargi marshal key init); its records stay unsigned$([ "$integ" != strict ] || echo ' and strict refuses to write them')"
@@ -270,6 +274,20 @@ marshal_main() {
     exit "$rrc"
   fi
   if [ "$verb" = disable ]; then
+    # disable removes the switch file, and the integrity setting with it: while that is advisory or strict it is an approved step
+    local cur dtok
+    cur=$(jq -r '.integrity // "off"' "$DA_STATE/marshal/$PROJ.enabled" 2>/dev/null) || cur=off
+    [ -n "$cur" ] || cur=off
+    if [ "$cur" != off ]; then
+      dtok=$(printf 'marshal disable %s integrity=%s' "$PROJ" "$cur" | plan_token)
+      if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
+        echo "would switch the marshal of $PROJ on this machine back to the local records AND drop its integrity setting ($cur): records are no longer signed or checked here, and a later enable starts with integrity off; the signing key, the allowed signers and the accepted marks stay as they are, and the refs on the remote are left as they are"
+        echo "plan token: $dtok   (apply with: qargi marshal disable --project $PROJ --plan $dtok --approved \"...\")"
+        exit 0
+      fi
+      [ -n "${APPROVED:-}" ] || die "disable needs --approved WORDS (the owner's words) while integrity is $cur; run it without options for the plan"
+      need_plan "$dtok"
+    fi
     python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-remove --state "$DA_STATE" --project "$PROJ" || exit $?
     audit_log "marshal:disable" "$PROJ"
     echo "marshal of $PROJ: local records (the refs on the remote are left as they are)"
