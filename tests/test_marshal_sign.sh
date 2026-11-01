@@ -457,9 +457,11 @@ XE rs QARGI_MARSHAL_MONO=$((TTL - 100)) marshal status tmj --as sam >/dev/null 2
 XE rs QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover tmj --as sam --approved "$WORDS"; rc=$?
 { [ $rc = 0 ] && [ "$(jsf refs/qargi/features/tmj .lead.id)" = sam ] && [ "$(jsf refs/qargi/features/tmj .signer)" = "$PS" ] && vok "$(oref refs/qargi/features/tmj)" features "$(SIG rs)"; } \
   && ok "junk: a junk push on top of A's record did not restart the lease timer (takeover after the ttl from the first sight works, signed)" || no "SPEC junk pushes must not renew a lease (rc=$rc, lead $(jsf refs/qargi/features/tmj .lead.id)): $(out)"
+mode a strict                       # advisory uses the head as it is (a stranger's unsigned record leads), so the junk cases are strict ones
 XE a marshal renew tmj2 --as alice; rc=$?
+mode a advisory
 { [ $rc = 0 ] && [ "$(jsf refs/qargi/features/tmj2 .lead.id)" = alice ] && [ "$(jsf refs/qargi/features/tmj2 .signer)" = "$PA" ] && vok "$(oref refs/qargi/features/tmj2)" features "$(SIG a)"; } \
-  && ok "junk: the lead can still renew the feature after a junk push (signed again); the feature is not blocked" || no "SPEC junk pushes must not block the lead (rc=$rc): $(out)"
+  && ok "junk: in strict the lead can still renew the feature after a junk push (signed again); the feature is not blocked" || no "SPEC junk pushes must not block the lead (rc=$rc): $(out)"
 XE rs marshal status tmj2 --as sam; [ "$(jsf refs/qargi/features/tmj2 .lead.id)" = alice ] && grep -q alice <(out) && ok "junk: a strict reader sees the lead's renewal" || no "strict reader after junk and renewal: $(out)"
 XE a marshal claim tmr --as alice >/dev/null 2>&1; M1=$(oref refs/qargi/features/tmr)
 XE a marshal renew tmr --as alice >/dev/null 2>&1; M2=$(oref refs/qargi/features/tmr)
