@@ -311,7 +311,7 @@ agent_prompt() { # role [project]
 
 # The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
 # rendered prompt (what refresh-prompt would push); skill is the hash of the two files that change most, the agent
-# contract and the role's skill. Prints {sha, skill}.
+# contract and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
 prompt_stamp() { # role project
   local sk sha; sk=$(prompt_root)/skills
   sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
