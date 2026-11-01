@@ -10,7 +10,8 @@
 # Interfaces beyond the spec's wording that this test ASSUMES (the commit message of this file lists them as well):
 #   - the owner verbs `marshal key init`, `marshal signers add|remove` and `marshal enable --integrity MODE` work like `marshal enable`:
 #     without --plan/--approved they print `plan token: TOK` and change nothing; they apply with `--plan TOK --approved WORDS`; any of
-#     the two missing, or a wrong token, is refused (exit nonzero). `marshal resign NAME` takes only `--approved WORDS` (as the spec says).
+#     the two missing, or a wrong token, is refused (exit nonzero). `marshal resign NAME` (review fix, the spec said only `--approved WORDS`) is the same:
+#     a plan with the record's lead and goal and a token, applied with `--plan TOK --approved WORDS`.
 #   - `marshal key init [--principal P]` names the key's principal P (default: person@machine); it prints the signers line
 #     `P namespaces="qargi-marshal" ssh-ed25519 AAAA...` (the test takes the line from the output) and does not add it to the signers
 #     file; a second `key init` while the key exists is refused and leaves the key as it was. Its audit line has a verb containing
@@ -490,9 +491,11 @@ j=$(js ro st1); XE ro marshal status st1
 XE a marshal claim rsg1 --as alice >/dev/null 2>&1; mode a off; XE a marshal set rsg1 --as alice --note unsignedwrite >/dev/null 2>&1
 mode a advisory
 G0=$(oref refs/qargi/features/rsg1); REV0=$(jsf refs/qargi/features/rsg1 .rev)
-XE a marshal resign rsg1; r1=$?; [ "$(oref refs/qargi/features/rsg1)" = "$G0" ] && ok "resign: refused without --approved, nothing changed" || no "SPEC resign needs --approved W (rc=$r1)"
+XE a marshal resign rsg1; r1=$?; tk=$(tokof)
+XE a marshal resign rsg1 --approved "$WORDS"; r3=$?
+[ "$(oref refs/qargi/features/rsg1)" = "$G0" ] && [ -n "$tk" ] && [ $r3 != 0 ] && ok "resign: without options it prints a plan and a token, with the words alone (no token) it is refused, nothing changed" || no "SPEC resign needs the plan token and --approved W (rc=$r1 / $r3, token '$tk')"
 XE a marshal resign nosuchfeature --approved "$WORDS"; r2=$?; [ $r2 != 0 ] && ok "resign: a feature that is not open is refused" || no "SPEC resign of a missing feature must fail"
-XE a marshal resign rsg1 --approved "$WORDS"; rc=$?
+OWN a resign rsg1; rc=$?
 if [ $rc = 0 ] && [ "$(OG rev-parse "$(oref refs/qargi/features/rsg1)^")" = "$G0" ] && [ "$(jsf refs/qargi/features/rsg1 .rev)" = $((REV0 + 1)) ] && vok "$(oref refs/qargi/features/rsg1)" features "$(SIG a)"; then
   ok "resign: a signed commit, rev+1, on top of the unsigned open record"
 else no "SPEC resign (rc=$rc): $(orec refs/qargi/features/rsg1; out; cat "$T/ste" 2>&1)"; fi

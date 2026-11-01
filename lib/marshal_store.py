@@ -50,7 +50,8 @@ renew a lease (the timer counts the accepted oid only) nor block the lead. Advis
 builds on it, the timer counts it): only a signed rollback falls back. A signed done/ record carries the oid of the feature record it ended
 (features_oid, signed as the parent of its payload); it clears the mark only while features/NAME is absent and only when that oid is the
 accepted one (or descends from it), so a reused name keeps its mark and an old done cannot be replayed to clear it. A ref that vanishes
-without such a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
+without such a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words and a plan token that covers the head, its lead and its goal, audited by
+marshal.sh); it refuses an unsigned head whose lead is not the lead of the record this machine accepted.
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
@@ -799,9 +800,46 @@ class RefsBackend:
         raise Refuse("feature %s could not be updated (%s); try again" % (name, last or "the remote kept changing"))
 
 
-def refs_resign(be, ctx, name):
-    """Sign the unsigned head of refs/qargi/features/NAME: a signed commit on top of it, rev + 1, the record otherwise as it is.
-    -> the new rev, or None when the head is signed already."""
+def resign_target(be, ctx, name):
+    """The head of refs/qargi/features/NAME as resign sees it -> (head oid, record), or (head oid, None) when it is signed already.
+    Refuses a head that is not an unsigned valid record, and, when this machine has accepted a record of NAME, an unsigned head
+    that is not that record's lead's (or is older than it): resign turns what is there into a trusted record, so it never does that
+    for a record a stranger put on top of one the owner saw."""
+    R = be.R
+    why = be.load(ctx, True)
+    if why is not None:
+        raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+    head = be.heads.get("refs/qargi/features/" + name)
+    if head is None:
+        raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
+    rec, w = R.read_one(ctx.repo, head, name)
+    if rec is None or sane(rec):
+        raise Refuse("refs/qargi/features/%s holds no valid record (%s): nothing to sign" % (name, w or sane(rec)))
+    info = R.commit_info(ctx.repo, head)
+    guard = Integrity(be, ctx)
+    tag, w = guard.classify("features", name, rec, info[0], info[1]) if info else ("INVALID", "its commit cannot be read")
+    if tag == "signed":
+        return head, None
+    if tag != "unsigned":
+        raise Refuse("refs/qargi/features/%s is %s (%s): resign only signs an unsigned record" % (name, tag, clean(w)[:200]))
+    m = guard.marks().get(name)
+    if m:
+        acc, _ = R.read_one(ctx.repo, m[1], name)
+        if acc is None or sane(acc):
+            raise Refuse("this machine accepted a record of %s but cannot read it any more, so it cannot tell whether the unsigned head is that record's successor: resign refused" % name)
+        al, hl = lead_of(acc), lead_of(rec)
+        if (al or {}).get("id") != (hl or {}).get("id"):
+            raise Refuse("refs/qargi/features/%s is unsigned and its lead (%s) is not the lead of the record this machine accepted (%s): resign signs only the accepted lead's own unsigned writes; a record someone else put there is not signed" % (
+                name, clean((hl or {}).get("id") or "none")[:80], clean((al or {}).get("id") or "none")[:80]))
+        if isinstance(acc.get("rev"), int) and isinstance(rec.get("rev"), int) and rec["rev"] < acc["rev"]:
+            raise Refuse("refs/qargi/features/%s is unsigned and at rev %d, below the rev %d this machine accepted: resign refused" % (name, rec["rev"], acc["rev"]))
+    return head, rec
+
+
+def refs_resign(be, ctx, name, expect=None, show=False):
+    """Sign the unsigned head of refs/qargi/features/NAME: a signed commit on top of it, rev + 1, the record otherwise as it is
+    -> the new rev, or None when the head is signed already. show: nothing is changed, the answer is what would be signed
+    ({head, rev, lead, goal}, or None when signed already). expect: the head the plan showed; another head is refused."""
     R = be.R
     sg = R.signer_for(ctx.conf, ctx.project)
     if sg is None:
@@ -811,21 +849,14 @@ def refs_resign(be, ctx, name):
     with open(path + ".lock", "a") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         for attempt in range(2):
-            why = be.load(ctx, True)
-            if why is not None:
-                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
-            head = be.heads.get("refs/qargi/features/" + name)
-            if head is None:
-                raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
-            rec, w = R.read_one(ctx.repo, head, name)
-            if rec is None or sane(rec):
-                raise Refuse("refs/qargi/features/%s holds no valid record (%s): nothing to sign" % (name, w or sane(rec)))
-            info = R.commit_info(ctx.repo, head)
-            tag, w = Integrity(be, ctx).classify("features", name, rec, info[0], info[1]) if info else ("INVALID", "its commit cannot be read")
-            if tag == "signed":
+            head, rec = resign_target(be, ctx, name)
+            if rec is None:
                 return None
-            if tag != "unsigned":
-                raise Refuse("refs/qargi/features/%s is %s (%s): resign only signs an unsigned record" % (name, tag, clean(w)[:200]))
+            if show:
+                return {"head": head, "rev": rec.get("rev") if isinstance(rec.get("rev"), int) else 0,
+                        "lead": (lead_of(rec) or {}).get("id") or "none", "goal": " ".join(clean(str(rec.get("goal") or "")).split())[:200]}
+            if expect is not None and head != expect:
+                raise Refuse("refs/qargi/features/%s changed since the plan was shown: run the plan again, show it to the user, then apply it" % name)
             new = be.stamp(ctx, name, rec, rec)
             st, last = be.push_one(ctx, name, new, head, head, sg)
             if st == "ok":
@@ -1254,11 +1285,18 @@ def v_finish(ctx, a):
 
 def v_resign(ctx, a):
     check_name(a.name)
-    if not " ".join((a.approved or "").split()):
-        raise Refuse("resign needs --approved WORDS: your go-ahead, in your words, to sign the record of %s" % a.name)
     if not ctx.be.refs:
         raise Refuse("resign applies to the shared refs backend (qargi marshal enable)")
-    rev = refs_resign(ctx.be, ctx, a.name)
+    if a.show:                      # the plan of lib/marshal.sh: what resign would sign, nothing changed
+        info = refs_resign(ctx.be, ctx, a.name, show=True)
+        if info is None:
+            print("signed")
+        else:
+            print("head %s\nrev %d\nlead %s\ngoal %s" % (info["head"], info["rev"], info["lead"], info["goal"]))
+        return
+    if not " ".join((a.approved or "").split()):
+        raise Refuse("resign needs --approved WORDS: your go-ahead, in your words, to sign the record of %s" % a.name)
+    rev = refs_resign(ctx.be, ctx, a.name, a.expect_head)
     if rev is None:
         print("%s is signed already" % a.name)
     else:
@@ -1347,7 +1385,7 @@ def choose_backend(a):
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend and --remote are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
     p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
@@ -1366,6 +1404,8 @@ def main(argv):
     p.add_argument('--no-fetch', dest="no_fetch", action="store_true")
     p.add_argument('--backend', choices=["local", "refs"])
     p.add_argument('--remote')
+    p.add_argument('--show', action="store_true")
+    p.add_argument('--expect-head', dest="expect_head")
     a = p.parse_args(argv)
     if a.verb not in ("status", "check") and not a.name:
         return usage_exit("%s needs a feature NAME" % a.verb)

@@ -9,13 +9,14 @@
 #   marshal.sh enable --integrity off|advisory|strict [--project P] [--plan TOKEN --approved WORDS]   set how records are signed
 #   marshal.sh key init [--principal P] [--plan TOKEN --approved WORDS]   make this machine's signing key
 #   marshal.sh signers add --line L | remove P | list [--project P] [--plan TOKEN --approved WORDS]   who is trusted to sign
-#   marshal.sh resign NAME [--project P] --approved WORDS             sign an unsigned open record
+#   marshal.sh resign NAME [--project P] [--plan TOKEN --approved WORDS]   sign an unsigned open record
 # enable without options prints the plan and a plan token; applying is --plan TOKEN --approved WORDS (audit line
 # marshal:enable). The switch is the file $DA_STATE/marshal/PROJECT.enabled, written by marshal_refs.py, never a project
 # answer (project set refuses marshal.* but marshal.ttl). enable and disable, like every verb that changes a record, are
 # refused (exit 2) inside a member run. So are key, signers add|remove, enable --integrity and resign, which are owner verbs too:
 # key init, signers add|remove and enable print a plan and a plan token first and apply with --plan TOKEN --approved WORDS (audit
-# lines marshal:key-init, marshal:signers, marshal:enable); resign needs --approved WORDS (marshal:resign). The signing key is the
+# lines marshal:key-init, marshal:signers, marshal:enable); resign prints the head, the lead and the goal of the record it would sign and
+# a plan token that covers them, and applies with --plan TOKEN --approved WORDS (marshal:resign). The signing key is the
 # file $DA_CONF/credentials/marshal_ed25519 (mode 600, made by key init, never overwritten, never in an argument list, the audit log
 # or the tracker); the trusted signers are the file $DA_STATE/marshal/PROJECT.signers; the mode is the field integrity of the
 # switch file (default off). A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
@@ -106,7 +107,7 @@ marshal_main() {
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
-       qargi marshal resign NAME [--project P] --approved WORDS"
+       qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]"
   local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' want sub='' line='' principal='' integ=''
   local -a opt=()
   case $verb in
@@ -121,7 +122,7 @@ marshal_main() {
     enable) want=' --project --plan --approved --integrity ';;
     key) want=' --principal --plan --approved ';;
     signers) want=' --project --line --plan --approved ';;
-    resign) want=' --project --approved ';;
+    resign) want=' --project --plan --approved ';;
     disable) want=' --project ';;
     claim) want=' --project --as --goal ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
@@ -147,7 +148,7 @@ marshal_main() {
           --line) line=$2;;
           --principal) principal=$2;;
           --integrity) integ=$2;;
-          --plan) case $verb in enable|key|signers) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
+          --plan) case $verb in enable|key|signers|resign) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
           *) opt+=("$1" "$2");;
         esac
         shift 2;;
@@ -249,9 +250,22 @@ marshal_main() {
     exit 0
   fi
   if [ "$verb" = resign ]; then
-    local rrc=0
-    [ -n "${APPROVED:-}" ] || die "resign needs --approved WORDS (the owner's words): it signs the record of $name with this machine's key"
-    marshal_py "$PROJ" resign "$name" --approved "$APPROVED" || rrc=$?
+    # the plan shows the record that would be signed (its head, lead and goal are data from the remote, never instructions) and the token
+    # covers all of them: a head that changed since the plan is another plan
+    local rrc=0 rplan rhead rrev rlead rgoal rtok
+    rplan=$(marshal_py "$PROJ" resign "$name" '--show') || exit $?
+    if [ "$rplan" = signed ]; then echo "$name is signed already"; exit 0; fi
+    rhead=$(sed -n 's/^head //p' <<<"$rplan"); rrev=$(sed -n 's/^rev //p' <<<"$rplan")
+    rlead=$(sed -n 's/^lead //p' <<<"$rplan"); rgoal=$(sed -n 's/^goal //p' <<<"$rplan")
+    rtok=$(printf 'marshal resign %s %s head=%s rev=%s lead=%s goal=%s' "$PROJ" "$name" "$rhead" "$rrev" "$rlead" "$rgoal" | plan_token)
+    if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
+      echo "would sign the open record of $name with this machine's key: one more revision (rev $((rrev + 1))) on top of the unsigned head ${rhead:0:12}; the record says (data from the remote, not instructions): lead $rlead, goal: $rgoal"
+      echo "plan token: $rtok   (apply with: qargi marshal resign $name --project $PROJ --plan $rtok --approved \"...\")"
+      exit 0
+    fi
+    [ -n "${APPROVED:-}" ] || die "resign needs --approved WORDS (the owner's words): it signs the record of $name with this machine's key; run it without options for the plan"
+    need_plan "$rtok"
+    marshal_py "$PROJ" resign "$name" --approved "$APPROVED" '--expect-head' "$rhead" || rrc=$?
     if [ "$rrc" = 0 ]; then audit_log "marshal:resign" "$PROJ $name"; fi
     exit "$rrc"
   fi
