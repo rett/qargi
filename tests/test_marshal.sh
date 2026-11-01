@@ -88,13 +88,25 @@ git -C "$R" worktree add -q "$T/wt-f1" feature/f1; M $t0 status f1 --as alice; g
 git -C "$R" worktree remove --force "$T/wt-f1"
 # ghost: a record whose branch is gone, and an old record without the new keys
 jq -n '{feature:"ghost", project:"app", status:"active", rev:1, lead:null}' > "$(rec ghost)"
-M $t0 status --all; grep -q ghost "$T/o" && grep -q "branch gone" "$T/o" && grep -q abandoned "$T/o" && ok "status --all: a record without a branch is a ghost (abandoned, 'branch gone')" || no "SPEC ghost: $(out)"
+jq -n '{feature:"donefeat", project:"app", status:"finished", rev:3, lead:null}' > "$(rec donefeat)"
+M $t0 status --all; ! grep -q ghost "$T/o" && ! grep -q donefeat "$T/o" && ! grep -q "branch gone" "$T/o" && grep -q "^feature f1 of" "$T/o" && ok "status --all: by default neither a ghost nor a finished record is listed" || no "SPEC ghost hidden: $(out)"
+[ "$(j ghost .status)" = abandoned ] && ok "the ghost reconciliation still records the record as abandoned" || no "SPEC ghost recorded: $(cat "$(rec ghost)")"
+M $t0 status --all --brief; ! grep -Eq "^(ghost|donefeat) " "$T/o" && ok "status --all --brief: open features only" || no "SPEC brief hides history: $(out)"
+M $t0 status --all --json; jq -e '[.features[].feature] | (index("ghost") == null) and (index("donefeat") == null) and (index("f1") != null)' "$T/o" >/dev/null 2>&1 && ok "status --all --json: open features only" || no "SPEC json hides history: $(out)"
+M $t0 status --all --history; grep -q ghost "$T/o" && grep -q "branch gone" "$T/o" && grep -q abandoned "$T/o" && grep -q donefeat "$T/o" && grep -q finished "$T/o" && ok "status --all --history: the ghost (abandoned, 'branch gone') and the finished record are listed" || no "SPEC history: $(out)"
+M $t0 status --all --history --brief
+l1=$(grep -n '^f1 ' "$T/o" | cut -d: -f1); l2=$(grep -n '^ghost ' "$T/o" | cut -d: -f1); l3=$(grep -n '^donefeat ' "$T/o" | cut -d: -f1); l4=$(grep -n '^ov2 ' "$T/o" | cut -d: -f1)
+[ -n "$l1" ] && [ -n "$l2" ] && [ -n "$l3" ] && [ "$l4" -lt "$l2" ] && [ "$l4" -lt "$l3" ] && ok "status --all --history --brief: the open features come first, then the finished and abandoned" || no "SPEC history order: $(out)"
+grep -Eq "^donefeat +.*finished" "$T/o" && grep -Eq "^ghost +.*abandoned \(branch gone\)" "$T/o" && ok "status --history --brief: finished and abandoned are marked" || no "SPEC history marks: $(out)"
+M $t0 status --all --history --json; jq -e '[.features[].feature] as $n | ($n | index("ov2")) < ($n | index("ghost")) and ($n | index("donefeat")) != null' "$T/o" >/dev/null 2>&1 && ok "status --all --history --json: history after the open features" || no "SPEC json history: $(out)"
+M $t0 status donefeat --brief; grep -Eq "^donefeat +.*finished" "$T/o" && ok "status NAME of a finished feature still shows it" || no "SPEC status NAME finished: $(out)"
+M $t0 status --history; [ $? = 2 ] && ok "status --history without --all is a usage error" || no "SPEC history needs --all: $(out)"
+M $t0 check; ! grep -Eq "^(ghost|donefeat) " "$T/o" && ok "check without NAME lists open features only" || no "SPEC check lists open: $(out)"
 # check of a name that is neither a branch nor a record
 M $t0 check nosuchfeat --as bob; rc=$?
 [ $rc = 1 ] && grep -q "qargi: no feature nosuchfeat in app (no branch feature/nosuchfeat and no record)" "$T/e" && ! grep -qi free "$T/o" && ok "check: an unknown name exits 1 with the 'no feature' message" || no "SPEC check unknown: rc=$rc $(out)"
 M $t0 check old --as bob; rc=$?
 [ $rc = 0 ] && grep -qi free "$T/o" && ok "check: a branch without a record stays free" || no "SPEC check branch only: rc=$rc $(out)"
-jq -n '{purpose:"legacy", started:"2026-01-01T00:00:00Z"}' > "$(rec old)"
 jq -n '{purpose:"legacy", started:"2026-01-01T00:00:00Z"}' > "$(rec old)"
 M $t0 status old --brief; grep -Eq "^old +lead=none" "$T/o" && ok "an old record without the new keys reads as unled" || no "SPEC old record: $(out)"
 M $t0 claim old --as alice && [ "$(j old .lead.id)" = alice ] && [ "$(j old .purpose)" = legacy ] && ok "an old record can be claimed and keeps its purpose" || no "SPEC old record claim: $(out) $(cat "$(rec old)")"
