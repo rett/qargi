@@ -61,9 +61,9 @@
       },
       "cloud": {
         "value": "yes",
-        "verified_on": null,
-        "source": "ant sessions create --agent agent_with_overrides",
-        "note": "read from the CLI help; not yet exercised"
+        "verified_on": "2026-11-01",
+        "source": "scratch session: agent_with_overrides model_config",
+        "note": "a session created with a model override ran that model; the session record shows it"
       }
     },
     "per_dispatch_effort_override": {
@@ -75,9 +75,9 @@
       },
       "cloud": {
         "value": "yes",
-        "verified_on": null,
-        "source": "model_config effort",
-        "note": "not exercised"
+        "verified_on": "2026-11-01",
+        "source": "scratch session: agent_with_overrides model_config",
+        "note": "the session record shows the overridden effort; send a full model object, a plain model string resets effort to the default"
       }
     },
     "fixed_tool_allowlist_per_agent": {
