@@ -508,7 +508,7 @@ def main(argv):
         c = collect(answers, prj, role, ant, time.time() + 10)
         c["grant"] = _grant(prj, role)
         text, n = compose(c)
-        used = {f[0] for f in c["files"][:n]}      # the files that fit are the first n
+        used = {f[0] for f in c["files"][:n]} - {"reference"}      # the files that fit are the first n; the reference store is not a tier
         print(json.dumps({"context": text, "files": n, "tiers": len(used), "cloud_why": c["cloud_why"]}))
         return 0
     c = collect(answers, prj, role, ant, time.time() + 6, repo_tier=a.get("--repo-tier"), checkout=a.get("--checkout"), light=True)
