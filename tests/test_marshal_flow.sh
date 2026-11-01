@@ -148,6 +148,12 @@ prep bob feature/p2 pt3; rc=$?
 prep bob develop pt4; rc=$?
 [ $rc = 0 ] && ! grep -qi "lead" "$T/e" && ok "prepare: --base develop is unaffected" || no "prepare develop: rc=$rc $(out)"
 
+# --- need_free says how to free a branch
+mkfeat held1 alice; git -C "$R" worktree add -q "$T/held-wt" feature/held1
+run $F merge held1 agent/t3; rc=$?
+[ $rc != 0 ] && grep -q "checked out in $T/held-wt" "$T/e" && grep -q "checkout --detach" "$T/e" && ok "need_free: the message says how to free the branch (checkout --detach)" || no "SPEC need_free message: rc=$rc $(out)"
+git -C "$R" worktree remove --force "$T/held-wt"
+
 # --- a marshal that is missing or fails is never a reason to stop a verb
 cp_tree() { rm -rf "$1"; mkdir -p "$1"; cp -r "$TOOL/bin" "$TOOL/lib" "$TOOL/VERSION" "$1/"; for d in canon roles methodologies; do [ ! -d "$TOOL/$d" ] || cp -r "$TOOL/$d" "$1/"; done; }
 for kind in absent exit2; do
