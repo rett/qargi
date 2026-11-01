@@ -381,6 +381,27 @@ class HighWater(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn('rollback detected', why)
 
+    def test_same_rev_other_oid_but_the_same_record_is_not_a_rollback(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+        marks = M.hw_load(self.path)
+        self.assertEqual(M.hw_check(marks, 'feat', 2, OID3, self.anc, lambda a, b: (a, b) == (OID2, OID3)), (True, ''))
+        ok, why = M.hw_check(marks, 'feat', 2, OID3, self.anc, lambda a, b: False)
+        self.assertFalse(ok)
+        self.assertIn('rollback detected', why)
+
+        def boom(a, b):
+            raise OSError('git is gone')
+        self.assertFalse(M.hw_check(marks, 'feat', 2, OID3, self.anc, boom)[0])
+
+    def test_identity_of_a_record_is_what_the_signature_covers(self):
+        rec = {'rev': 3, 'feature': 'feat', 'goal': 'g'}
+        self.assertEqual(M.record_ident(rec, OID1), M.record_ident(dict(reversed(list(rec.items()))), OID1))
+        self.assertNotEqual(M.record_ident(rec, OID1), M.record_ident(rec, OID2))
+        self.assertNotEqual(M.record_ident(rec, OID1), M.record_ident(dict(rec, goal='h'), OID1))
+        self.assertEqual(M.record_ident(rec, None)[0], 3)
+        for bad in ({'goal': 'g'}, {'rev': -1}, {'rev': True}, {'rev': 1, 'x': 0.5}, None):
+            self.assertIsNone(M.record_ident(bad, None))
+
     def test_non_ancestor_is_a_rollback(self):
         M.hw_record(self.path, 'feat', 2, OID2)
         ok, why = M.hw_check(M.hw_load(self.path), 'feat', 3, OID3, lambda a, b: False)
