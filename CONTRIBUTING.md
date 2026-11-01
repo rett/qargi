@@ -63,3 +63,12 @@ Every user-visible change adds a line under `## [Unreleased]` in
 `shellcheck -S warning`. Commit messages state what changed and why; no
 private hostnames, addresses, usernames, home paths or credentials appear in
 the repository or its history.
+
+## Adding a provider
+
+1. Write `lib/providers/NAME.json` to the schema (`qargi provider show claude` is the example). Give every model id the `verified_on` date and `source` from the vendor's own current model list; never write an id from memory. Set each capability per surface and leave `verified_on` null where you have not tested it.
+2. Write the adapter, `lib/providers/NAME/adapter` (or set `"adapter": null` for a descriptor that is data only). Implement only the verbs the descriptor supports; the others exit 3.
+3. Add a stub transport and fixtures under `tests/providers/NAME/` and run `bash tests/conformance.sh NAME` until it is clean.
+4. Run `qargi provider check NAME` until it is clean, and read what it says degrades.
+5. If the read-only barrier is not supported on a surface, say so in the descriptor. A person accepts it per project with `qargi provider accept`; do not default it on.
+6. Add a CHANGELOG entry, and run one scratch session on the real provider with the owner's approval before relying on any unverified capability.

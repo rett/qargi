@@ -43,6 +43,9 @@ class ProviderError(Exception):
     pass
 
 
+NON_PROVIDERS = ("schema", "adapter-schema")   # JSON files in lib/providers/ that describe descriptors and adapters; they are not providers
+
+
 def schema():
     with open(os.path.join(PROVIDERS, "schema.json")) as f:
         return json.load(f)
@@ -59,12 +62,12 @@ def names(root=None):
         files = os.listdir(root)
     except OSError:
         return []
-    return sorted(f[:-5] for f in files if f.endswith(".json") and f != "schema.json" and NAME_RE.match(f[:-5]))
+    return sorted(f[:-5] for f in files if f.endswith(".json") and f[:-5] not in NON_PROVIDERS and NAME_RE.match(f[:-5]))
 
 
 def load(name, root=None):
     root = root or PROVIDERS
-    if not isinstance(name, str) or not NAME_RE.match(name) or name == "schema":
+    if not isinstance(name, str) or not NAME_RE.match(name) or name in NON_PROVIDERS:
         raise ProviderError("unknown provider '%s'" % name)
     path = os.path.join(root, name + ".json")
     if not os.path.isfile(path):

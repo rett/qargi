@@ -18,7 +18,22 @@ INTRO = (
 
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by the skill qargi-<ability>
-MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
+def _provider_models():
+    """The model ids and aliases of the provider descriptors (lib/providers/NAME.json), for completion."""
+    import glob, json, os
+    out = []
+    for f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers", "*.json"))):
+        if os.path.basename(f) in ("schema.json", "adapter-schema.json"):
+            continue
+        try:
+            d = json.load(open(f))
+            out += [m for m in list((d.get("tiers") or {}).values()) + list((d.get("aliases") or {}).values()) if isinstance(m, str)]
+        except (OSError, ValueError, AttributeError):
+            pass
+    return tuple(dict.fromkeys(out))
+
+
+MODELS = _provider_models()
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 

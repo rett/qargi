@@ -82,8 +82,8 @@ project_answer() { # project ability field(model|effort) -> the project's valid 
 provider_for() { # project-or-empty -> the active provider (the project's models.provider, default claude); dies when it has no file
   local f=$DA_CONF/projects/$1.json p=claude
   [ -z "$1" ] || [ ! -f "$f" ] || p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude
-  if ! printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || [ "$p" = schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
-    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -maxdepth 1 -name '*.json' ! -name schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
+  if ! printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || [ "$p" = schema ] || [ "$p" = adapter-schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
+    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -maxdepth 1 -name '*.json' ! -name schema.json ! -name adapter-schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
   fi
   echo "$p"
 }
