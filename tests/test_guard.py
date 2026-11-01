@@ -492,6 +492,113 @@ class ClaudeRender(unittest.TestCase):
         self.assertEqual(self.bash("qargi packs render p build /tmp/o").returncode, 0)
 
 
+class Marshal(unittest.TestCase):
+    """The feature marshal is changed only by the lead: its records under $DA_STATE/features are protected, the verbs that
+    change it and the lead identity (QARGI_LEAD) are not available to a member. Reading and status/check stay allowed."""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def setUp(self):
+        self.setUp_skills()
+        self.state = os.path.join(self.t, "state")
+        self.feat = os.path.join(self.state, "features")
+        os.makedirs(self.feat)
+        open(os.path.join(self.feat, "proj-f.json"), "w").close()
+        os.symlink(self.feat, os.path.join(self.clone, "to-features"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_STATE", self.state)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def test_edit_tools_refuse_every_path_under_features(self):
+        f = self.feat
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p in (f + "/proj-f.json", f + "/proj-new.json", f, "to-features/proj-f.json", "../../state/features/x.json"):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+
+    def env(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+        return e
+
+    def refused(self, cmds):
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+
+    def test_bash_writes_into_features_are_refused(self):
+        f = self.feat
+        self.refused(["echo x > %s/proj-f.json" % f, "echo x>>%s/proj-f.json" % f, "echo x | tee %s/proj-f.json" % f, "cp a.json %s/" % f,
+                      "cp -t %s a.json" % f, "mv a.json %s/proj-f.json" % f, "mv %s /tmp/gone" % f, "rm %s/proj-f.json" % f, "rm -rf %s" % f,
+                      "sed -i s/a/b/ %s/proj-f.json" % f, "perl -pi -e s/a/b/ %s/proj-f.json" % f, "ln -sf /x %s/proj-f.json" % f,
+                      "truncate -s 0 %s/proj-f.json" % f, "dd if=/dev/zero of=%s/proj-f.json" % f, "cd %s && echo y > proj-f.json" % f,
+                      "cd %s && rm proj-f.json" % f, "echo y > to-features/proj-f.json", "bash -c 'echo y > %s/proj-f.json'" % f,
+                      "eval 'rm %s/proj-f.json'" % f, "echo $(echo y > %s/proj-f.json)" % f, "echo y > $QARGI_STATE/features/proj-f.json",
+                      "echo y \\\n> %s/proj-f.json" % f, "env FOO=1 tee %s/proj-f.json" % f, "sudo rm %s/proj-f.json" % f,
+                      "find %s -name '*.json' -delete" % f, "install -m 644 a %s/x.json" % f, "touch %s/new.json" % f])
+
+    def test_features_is_found_like_the_other_qargi_paths(self):
+        home_state = os.path.join(self.home, ".qargi/state/features")
+        qh = os.path.join(self.t, "qh/state/features")
+        alt = os.path.join(self.t, "alt/features")
+        for target, env in ((home_state, dict(QARGI_STATE=None)), (qh, dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                            (alt, dict(QARGI_STATE=os.path.join(self.t, "alt")))):
+            os.makedirs(target, exist_ok=True)
+            self.assertEqual(self.call("Write", {"file_path": target + "/p-f.json"}, **env).returncode, 2, (target, env))
+            self.assertEqual(self.bash("echo x > %s/p-f.json" % target, **env).returncode, 2, (target, env))
+        self.assertEqual(self.call("Write", {"file_path": home_state + "/p-f.json"}).returncode, 2)
+
+    def test_reads_and_look_alikes_stay_allowed(self):
+        f = self.feat
+        for c in ("cat %s/proj-f.json" % f, "ls %s" % f, "grep -rn owner %s" % f, "cp %s/proj-f.json %s/run/out/" % (f, self.t),
+                  "cat %s/proj-f.json > %s/run/out/c.json" % (f, self.t), "find %s -name '*.json'" % f, "cd %s && ls" % f,
+                  "qargi marshal status", "qargi marshal check proj f", "qargi marshal status --json", "/opt/q/bin/qargi marshal status",
+                  "bash -c 'qargi marshal check'", "echo $QARGI_LEAD", "env | grep QARGI_LEAD", "echo x > %s/features-notes.md" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        os.makedirs(os.path.join(self.t, "elsewhere/features"))
+        p = os.path.join(self.t, "elsewhere/features/x.json")
+        self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s" % p).returncode, 0)
+
+    def test_mutating_marshal_verbs_are_refused_however_they_are_run(self):
+        cmds = []
+        for v in ("claim", "set", "renew", "release", "take", "takeover", "finish"):
+            cmds += ["qargi marshal %s proj f" % v, "qargi marshal %s --owner x" % v, "/opt/q/bin/qargi marshal %s" % v, "bin/qargi marshal %s" % v,
+                     "env FOO=1 qargi marshal %s" % v, "FOO=1 qargi marshal %s" % v, "command qargi marshal %s" % v, "sudo qargi marshal %s" % v,
+                     "bash -c 'qargi marshal %s p f'" % v, "sh -c \"qargi marshal %s\"" % v, "eval 'qargi marshal %s'" % v,
+                     "echo $(qargi marshal %s)" % v, "echo `qargi marshal %s`" % v, "true && qargi marshal %s" % v, "ls; qargi marshal %s" % v,
+                     "qargi 'marshal' '%s'" % v, "qargi mar\"\"shal %s" % v, "qargi marshal \\\n%s" % v, "python3 bin/qargi marshal %s" % v,
+                     "bash lib/marshal.sh %s" % v, "lib/marshal.sh marshal %s" % v, "nohup qargi marshal %s" % v, "timeout 5 qargi marshal %s" % v,
+                     "bash -c 'x=1; qargi marshal %s'" % v, "v=%s; qargi marshal $v" % v, "qargi marshal ${V:-%s}" % v]
+        cmds += ["qargi marshal", "qargi marshal frobnicate", "qargi marshal $v", "qargi marshal \"$v\"", "v=claim; qargi marshal $v proj f",
+                 "qargi marshal Claim", "qargi marshal CLAIM", "qargi marshal STATUS", "qargi marshal Status", "qargi marshal statuss", "qargi marshal check2"]
+        self.refused(cmds)
+
+    def test_a_marshal_word_is_not_a_verb_of_another_command(self):
+        for c in ("echo marshal claim", "git log --grep 'marshal claim'", "grep -n 'marshal claim' lib/commands.py", "cat marshal.sh", "ls lib/marshal.sh"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_setting_the_lead_identity_is_refused(self):
+        self.refused(["export QARGI_LEAD=me", "export QARGI_LEAD", "QARGI_LEAD=me qargi marshal status", "QARGI_LEAD=me", "env QARGI_LEAD=me qargi marshal status",
+                      "env -u QARGI_LEAD qargi marshal status", "env --unset=QARGI_LEAD ls", "unset QARGI_LEAD", "unset -v QARGI_LEAD",
+                      "declare -x QARGI_LEAD=me", "readonly QARGI_LEAD=me", "FOO=1 QARGI_LEAD=me ls", "ls; export QARGI_LEAD=me", "true && QARGI_LEAD=me ls",
+                      "bash -c 'export QARGI_LEAD=me'", "sh -c 'QARGI_LEAD=me qargi marshal status'", "eval 'QARGI_LEAD=me ls'", "echo $(QARGI_LEAD=me ls)",
+                      "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
+                      "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
+
+    def test_other_variables_are_not_the_lead(self):
+        for c in ("export QARGI_LEADER=me", "QARGI_LEAD_X=1 ls", "export MY_QARGI_LEAD=1", "unset QARGI_STATE_X", "echo QARGI_LEAD=1"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+
 class FailsClosed(unittest.TestCase):
     """An exception inside the guard is a refusal (exit 2 with the reason), never a silent pass or a bare crash (exit 1)."""
     def run_main(self, payload, patch=None):
