@@ -28,6 +28,29 @@ chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
 chk "bad memory.tiers key"          1 '.memory.tiers={bogus:{path:"/x"}}'
 chk "absolute repo tier path"       1 '.memory.tiers={repo:{path:"/abs/mem"}}'
+# profiles: each bad shape is refused with its own message
+chkm() { # name jq-filter expected-message-prefix
+  local f=$T/a.json out; jq "$2" <<<"$base" > "$f"
+  out=$($DA project validate "$f" 2>&1); local rc=$?
+  if [ "$rc" != 0 ] && grep -qF -- "$3" <<<"$out"; then echo "ok   $1"; else echo "FAIL $1 (exit $rc, wanted message $3; got: $out)"; fail=1; fi
+}
+chk  "valid project profile"        0 '.profiles.tiny={base:"reviewer",tier:"fast",model:"haiku",effort:"low",purpose:"small checks",abilities:["review"]}'
+chk  "shipped profile, only tier"   0 '.profiles.build={tier:"deep"}'
+chk  "profiles absent is fine"      0 'del(.profiles)'
+chk  "full model id accepted"       0 '.profiles.tiny={base:"worker",model:"claude-sonnet-5-5"}'
+chkm "profile name"                 '.profiles.Bad_Name={base:"worker"}' 'profiles.Bad_Name: '
+chkm "profile not an object"        '.profiles.tiny="x"' 'profiles.tiny: '
+chkm "project-only needs base"      '.profiles.tiny={tier:"fast"}' 'profiles.tiny.base: '
+chkm "unknown base"                 '.profiles.tiny={base:"boss"}' 'profiles.tiny.base: '
+chkm "bad tier"                     '.profiles.tiny={base:"worker",tier:"huge"}' 'profiles.tiny.tier: '
+chkm "bad model alias"              '.profiles.tiny={base:"worker",model:"gpt"}' 'profiles.tiny.model: '
+chkm "bad effort (profile)"         '.profiles.tiny={base:"worker",effort:"turbo"}' 'profiles.tiny.effort: '
+chkm "purpose not a string"         '.profiles.tiny={base:"worker",purpose:5}' 'profiles.tiny.purpose: '
+chkm "purpose too long"             '.profiles.tiny={base:"worker",purpose:("x"*301)}' 'profiles.tiny.purpose: '
+chkm "abilities not a list"         '.profiles.tiny={base:"worker",abilities:"build"}' 'profiles.tiny.abilities: '
+chkm "abilities unknown role"       '.profiles.tiny={base:"worker",abilities:["nosuch"]}' 'profiles.tiny.abilities: '
+chkm "abilities class conflict"     '.profiles.tiny={base:"worker",abilities:["review"]}' 'profiles.tiny.abilities: review is read-only, but base worker is write'
+chkm "unknown profile key"          '.profiles.tiny={base:"worker",colour:"red"}' 'profiles.tiny.colour: '
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
