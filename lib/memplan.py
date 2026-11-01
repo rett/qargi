@@ -265,6 +265,28 @@ def copy(store, target, selector=None, policy="conflicts", today=None, label="so
     return plan
 
 
+def archive_ops(store, sel, today, src_fits=None):
+    """The steps that archive the notes at the paths sel in store: each goes to /_archive/<date>/<path> (.N when taken)
+    with the origin recorded in Sources:. src_fits is the store's own limits for the archive paths, which are longer than
+    the originals; a path it refuses makes PlanRefused name them all. -> the archive steps, in the order of sel
+    (the digests they expect are in each step's "sha", and a path not yet taken in each step's "to")"""
+    ops, taken, refused = [], set(store), []
+    for p in sel:
+        base, dest, n = "/_archive/%s%s" % (today, p), None, 1
+        while dest is None:
+            cand = base if n == 1 else "%s.%d" % (base, n)
+            if cand not in taken:
+                dest = cand
+            n += 1
+        taken.add(dest)
+        out = add_origin(store[p]["content"], "archived from %s@%s on %s" % (q(p), d(store[p])[:12], today))
+        _refuse(refused, src_fits, dest, out)
+        ops.append({"op": "archive", "from": p, "to": dest, "sha": d(store[p]), "content": out})
+    if refused:
+        raise PlanRefused("refused, the source cannot hold the archive paths: " + "; ".join(refused))
+    return ops
+
+
 def split(store, selector, target, move=False, today=None, label="source", fits=None, src_fits=None):
     """Copy what a selector picks into target and, with move, archive the originals in store
     (/_archive/<date>/<path>, origin recorded in Sources:). A split is copy with a required selector.
@@ -273,21 +295,9 @@ def split(store, selector, target, move=False, today=None, label="source", fits=
     sel = select(store, selector, require=True)
     plan = copy(store, target, selector, "conflicts", today, label, fits)
     if move:
-        ops, taken, refused = [], set(store), []
-        for p in sel:
-            base, dest, n = "/_archive/%s%s" % (today, p), None, 1
-            while dest is None:
-                cand = base if n == 1 else "%s.%d" % (base, n)
-                if cand not in taken:
-                    dest = cand
-                n += 1
-            taken.add(dest)
-            plan["source"]["expect"][dest] = None
-            out = add_origin(store[p]["content"], "archived from %s@%s on %s" % (q(p), d(store[p])[:12], today))
-            _refuse(refused, src_fits, dest, out)
-            ops.append({"op": "archive", "from": p, "to": dest, "sha": d(store[p]), "content": out})
-        if refused:
-            raise PlanRefused("refused, the source cannot hold the archive paths: " + "; ".join(refused))
+        ops = archive_ops(store, sel, today, src_fits)
+        for op in ops:
+            plan["source"]["expect"][op["to"]] = None
         plan["source"]["ops"] = ops
     return plan
 
