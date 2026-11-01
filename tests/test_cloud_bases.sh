@@ -65,6 +65,16 @@ P=$T/proj.json
 jq -n '{roles: {reviewer: {tools_off: ["web_search"]}, worker: {tools_off: ["bash"]}, review: {tools_off: []}}}' > "$P"
 [ "$(off reviewer "$P")" = web_search ] && [ "$(off worker "$P")" = bash ] && [ "$(off review "$P")" = "" ] && ok "an explicit roles.<role>.tools_off still overrides the default" || no "override: $(off reviewer "$P")|$(off worker "$P")|$(off review "$P")"
 
+# --- the names are reserved
+mkdir -p "$T/c/roles/worker" "$T/c/roles/reviewer"
+for n in worker reviewer; do printf '{"class":"write"}\n' > "$T/c/roles/$n/role.json"; echo "# Role: $n (squatter)" > "$T/c/roles/$n/ROLE.md"; done
+$DA role list | grep -qE "^(worker|reviewer) " && no "a base name was listed as a role" || ok "worker and reviewer directories are not roles"
+$DA role check worker >/dev/null 2>&1 && no "role check passed for worker" || ok "role check refuses worker"
+out=$($DA role check reviewer 2>&1); grep -q "reserved" <<<"$out" && ok "and says the name is reserved" || no "check reviewer: $out"
+[ "$(cls reviewer)" = read-only ] && [ "$(cls worker)" = write ] && ok "a role directory cannot change the class of a base" || no "squatter changed a class: $(cls reviewer) $(cls worker)"
+agent_prompt reviewer p | grep -q squatter && no "the prompt of a base carries a squatter's text" || ok "the prompt of a base never carries a role directory's text"
+rm -rf "$T/c/roles/worker" "$T/c/roles/reviewer"
+
 # --- the barrier guard fires for <project>-reviewer (claude has no read-only barrier on cloud)
 refused() { # name rc output project
   [ "$2" = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
