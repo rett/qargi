@@ -121,9 +121,12 @@ skill qargi-build`) and a cloud agent of that role carries in its prompt:
 The members are yours to name: `qargi agent add forge --abilities build,test` renders
 the one member definition qargi ships into `~/.claude/agents/forge.md` (`--project
 NAME` puts it in that repository, hidden from git), with the abilities it serves (all
-four by default). `qargi agent for build` prints the member that serves an ability,
-and dispatch spawns that one; `qargi agent list`, `rename`, `refresh` (re-render from the current definition) and `remove` manage them.
-One member may serve every ability, or each ability may have its own.
+four by default; `worker` and `reviewer`, the two base names, default to their base's abilities). Two base members cover
+the two guard classes: `worker` (build, write and test; write class) and `reviewer` (review; read-only). Models and efforts
+come from profiles, not from more members (see Choosing models). `qargi agent for build` prints one line,
+`MEMBER MODEL EFFORT PROFILE`, and dispatch spawns that member with that model and effort; `qargi agent list`, `rename`,
+`refresh` (re-render from the current definition) and `remove` manage the members. A member named otherwise (builder, writer,
+tester, or any one-per-ability member) still resolves when no base exists and is flagged by `qargi agent models`.
 
 A role is a directory with `role.json` (its class, write or read-only, and a description) and
 `ROLE.md` (its instructions). The four above ship with qargi; `review` is read-only. Add your own
@@ -300,16 +303,30 @@ Code sessions started after it is added.
 
 ## Choosing models
 
-qargi ships one table of default models and efforts (`lib/model-defaults.json`): `claude-sonnet-5-5` for lead (medium), build (high), write (medium) and test (low), and `claude-opus-5-5` (high) for review. `qargi agent add` uses it when `--model` and `--effort` are not given, and writes the effort into the member definition; with `--project`, the project's `roles.<ability>.model` and `effort` win over the table. `qargi agent models [--project P] [--json]` shows the table, the project's overrides, the suggested members and each member's model; an alias (`sonnet`, `opus`, `haiku`) is marked "alias (unpinned)".
+qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per guard class, and a set of **profiles**. The bases are members: `worker` (abilities build, write and test; write class) and `reviewer` (review; read-only). A profile is not a member; it is `{base, tier, effort, purpose}`, resolved at dispatch:
 
-Two review-only (so read-only) members are suggested: `auditor` (`claude-haiku-5-5`, low), which checks a diff or a feature in a clone of its own, and `advisor` (`claude-opus-5-5`, high), which reviews the lead's synthesized diff before sign-off.
+| Profile | Base | Tier | Effort | Purpose |
+|---|---|---|---|---|
+| `build` | worker | balanced | high | changes the code |
+| `write` | worker | balanced | medium | writes the documentation |
+| `test` | worker | balanced | low | writes and repairs tests |
+| `review` | reviewer | deep | high | judges a change, read-only |
+| `auditor` | reviewer | fast | low | checks a diff or a feature in a clone of its own |
+| `advisor` | reviewer | deep | high | reviews the lead's synthesized diff before sign-off |
+| `researcher` | reviewer | frontier | high | research and design judgment on a hard question; opt-in only |
+| `lead` | none | balanced | medium | the lead's own session; never dispatched |
 
-    qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low
-    qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high
+A **tier** (`fast`, `balanced`, `deep`, `frontier`) is mapped by `lib/providers/claude.json` to a full model id for cloud and for the template (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`) and to an alias for local dispatch (`haiku`, `sonnet`, `opus`, `fable`). A project picks the provider with `models.provider` in its answers (default `claude`); a name without a file under `lib/providers/` is refused. Another provider needs its own file there, and until a backend for it exists the file is reference data only. The `frontier` tier is an opt-in escalation: no default profile except `researcher` uses it, and `researcher` is used only when you or the lead name it for the task.
 
-Dispatch them by name (the Agent tool, that name as `subagent_type`), because `qargi agent for review` returns the first registered review member. Search is not a role: mapping the repository and finding call sites is done by a read-only exploration subagent on a small model inside the lead's context. The lead's own session model is chosen in Claude Code (`/model` or settings), not by qargi; its table row is the recommendation and the cloud lead's default `lead.model`.
+A project adds or overrides profiles in its answers as `profiles.<name>` (`base`, `tier`, `model`, `effort`, `purpose`, `abilities`). A profile whose base class conflicts with its abilities, or with the role being dispatched, is refused.
 
-The table names a **tier** for each role, not a model id: `fast`, `balanced`, `deep` and `frontier`, and `lib/providers/claude.json` maps the tiers to models (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`). A project picks the provider with `models.provider` in its answers (default `claude`); a name without a file under `lib/providers/` is refused. Another provider needs its own file there, and until a backend for it exists the file is reference data only. The `frontier` tier is an opt-in escalation: no default row uses it. `researcher` is a suggested review-only member on it, for research and design judgment on a hard question, used only when you or the lead name it for the task (`qargi agent add researcher --abilities review --model claude-fable-5-1 --effort high`); `qargi agent models` flags a member on the frontier model as `frontier (opt-in)`.
+`qargi agent for ROLE [--profile NAME] [--project P] [--json]` prints one line, `MEMBER MODEL EFFORT PROFILE`; MODEL is the alias, or `-` when there is none. The lead spawns the Agent tool with `subagent_type` MEMBER, `model` MODEL (omitted when `-`) and `effort` EFFORT: the call's model and effort override the member definition. `qargi local prepare ... --role R [--profile P]` resolves the profile before it clones anything, records it in `RUN/profile` and prints `PROFILE=`, `MEMBER=`, `MODEL=` and `EFFORT=` (`PROFILE=<role>` without `--profile`). Advisor sign-off uses `--profile advisor` on review, a per-task diff check `--profile auditor`, and `researcher` only when the owner or the lead names it. `qargi agent models [--project P] [--json]` shows the bases, the profiles (the project's merged over the shipped ones) and the members; members that predate the bases are flagged as legacy.
+
+Search is not a role: mapping the repository and finding call sites is done by a read-only exploration subagent on a small model inside the lead's context. The lead's own session model is chosen in Claude Code (`/model` or settings), not by qargi; the `lead` profile is the recommendation and the cloud lead's default `lead.model`.
+
+Moving from one-per-ability members: `qargi agent add worker` and `qargi agent add reviewer` (each defaults to its base's abilities), `qargi agent models` to see the legacy members flagged, then retire builder, writer and tester with `qargi agent remove`. The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
+
+Cloud is unchanged for now: four role agents, with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`).
 
 ## Splitting, merging and moving memory
 
@@ -352,7 +369,8 @@ Both ask what to include (or take `--only`/`--project`). Export asks for an opti
 ```sh
 ./install.sh --user                    # skills in ~/.claude, command in ~/.local/bin
 ./install.sh --project /path/to/repo   # skills for one repository only
-qargi agent add builder --abilities build    # then name your members, for example
+qargi agent add worker                       # then the read-only base:
+qargi agent add reviewer
 ```
 
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
