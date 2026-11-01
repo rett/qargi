@@ -136,6 +136,19 @@ if prof is not None:
                 cl2 = role_class(x) if x != "lead" else None
                 if cl2 is None: bad.append("%s.abilities: %s is not a known role (%s)" % (p, x, ", ".join(roles)))
                 elif want and cl2 != want: bad.append("%s.abilities: %s is %s, but base %s is %s" % (p, x, cl2, b, want))
+# models.accept_no_barrier.<surface> = {by, at, reason}: the owner's acceptance of a provider surface with no read-only barrier
+# (written only by `qargi provider accept`; nothing else in models is checked here)
+anb = c.get("models", {}).get("accept_no_barrier") if isinstance(c.get("models"), dict) else None
+if anb is not None:
+    if not isinstance(anb, dict): bad.append("models.accept_no_barrier: an object of surfaces (%s), each {by, at, reason}" % ", ".join(provider.SURFACES))
+    else:
+        for sf, rec in anb.items():
+            p = "models.accept_no_barrier.%s" % sf
+            if sf not in provider.SURFACES: bad.append("%s: not a surface (%s)" % (p, ", ".join(provider.SURFACES))); continue
+            if not isinstance(rec, dict) or set(rec) != {"by", "at", "reason"}: bad.append("%s: exactly {by, at, reason}" % p); continue
+            for k in ("by", "reason"):
+                need(isinstance(rec[k], str) and rec[k].strip(), "%s.%s: a non-empty string" % (p, k))
+            need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
