@@ -13,6 +13,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   It is off by default, needs the plan token and your typed words, is audited, cannot be used from a member run, and `project set`
   refuses `marshal.*` except `marshal.ttl`. Offline verbs use the cache and say `remote not checked`; an offline claim is
   `provisional`. `local verify` ignores `refs/qargi/`; `marshal status|check` take `--no-fetch` (the session hook uses it).
+  Hardening from review: an offline claim is dropped, not pushed, when another machine finished the feature meanwhile; remote records with
+  wrong field types are ignored instead of crashing readers; `takeover` of a provisional claim is refused; the lease renewer survives an
+  unreachable remote (exit status 3, `remote not checked`) and stops only on a lost lease; the fetch leaves `FETCH_HEAD` alone (git 2.29+);
+  `marshal` ignores `APPROVED` and `PLAN_ARG` from the environment; and `qargi feature start|finish|verify` are refused to a member.
 - Cloud profiles. A project can provision two cloud base agents, `<project>-worker` (write class) and `<project>-reviewer` (read-only),
   and start a session of a role and profile on one: `qargi start|send <project>-worker --role build --profile build`. The model and
   effort are overridden per session with a full model object and the role's prompt is rendered fresh, so the base needs no prompt
