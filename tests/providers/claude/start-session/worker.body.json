@@ -1,0 +1,18 @@
+{
+  "agent": {
+    "id": "agent_01demo",
+    "type": "agent_with_overrides",
+    "version": 3,
+    "model": {"id": "claude-sonnet-5-5", "effort": "high"},
+    "system": "You are the build member of project demo. Work in your own clone and return patches.\n"
+  },
+  "environment_id": "env_01demo",
+  "resources": [
+    {"type": "memory_store", "memory_store_id": "memstore_01recipes", "access": "read_write"},
+    {"type": "github_repository", "url": "https://example.invalid/demo/demo.git", "authorization_token": "REDACTED-TEST-TOKEN"}
+  ],
+  "vault_ids": ["vlt_01demo"],
+  "initial_events": [{"type": "user.message", "content": [{"type": "text", "text": "Wait for the task."}]}],
+  "metadata": {"deployment_id": "dep_01demo"},
+  "budget": {"type": "limit", "max_list_cost": {"amount": "500", "currency": "USD"}}
+}
