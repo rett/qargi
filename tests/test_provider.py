@@ -69,11 +69,9 @@ class Valid(unittest.TestCase):
         self.assertEqual(CLAUDE["aliases"], {"fast": "haiku", "balanced": "sonnet", "deep": "opus", "frontier": "fable"})
         self.assertEqual({t: v["model"] for t, v in CLAUDE["tier_detail"].items()}, CLAUDE["tiers"])
 
-    def test_reserved_names_are_the_ones_lib_agent_sh_has(self):
-        with open(os.path.join(LIB, "agent.sh")) as f:
-            src = f.read()
-        line = [ln for ln in src.splitlines() if ln.startswith("BUILTIN=")][0]
-        self.assertEqual(sorted(CLAUDE["local"]["reserved_names"]), sorted(line.split('"')[1].split()))
+    def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
+        self.assertEqual(sorted(CLAUDE["local"]["reserved_names"]),
+                         sorted("general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup".split()))
 
 
 class Violations(unittest.TestCase):
