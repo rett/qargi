@@ -124,7 +124,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "attach " "[DIR]"
 Attach to an existing repository: read it, show the answers and the gaps, store on approval.
 .br
-Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The gaps are closed, if you want that, by a separate reviewed change. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget).
+Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget).
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -154,6 +154,28 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .TP
 .B \-\-force
 replace the detected answers, keep the rest.
+.RE
+.RE
+.RS
+.TP
+.BI "adopt " "[NAME]"
+Adopt an attached repository: create the missing long\-lived branches and the missing methodology files on a branch to review.
+.br
+Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the methodology that do not exist, written as one commit on agent/adopt\-NAME cut from develop. With \-\-plan and \-\-approved it creates exactly that. Existing branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run.
+.RS
+.TP
+.BI "\-\-methodology " "NAME"
+the methodology (default: the project's, else gitflow).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .RS
