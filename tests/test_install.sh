@@ -85,4 +85,8 @@ bad=''; for s in $RETIRED $CURRENT; do ! grep -qx -F "/.claude/skills/$s" "$X" |
 [ -z "$bad" ] && grep -qx "build/" "$X" && ok "project uninstall removes the skill lines and keeps the owner's" || no "uninstall exclude: $(cat "$X")"
 [ -L "$P/.claude/skills/qargi-write" ] && [ ! -e "$P/.claude/skills/qargi-task" ] && ok "project uninstall keeps the foreign link and removes the current skills" || no "project uninstall links"
 
+# --- the retired skills are not shipped ---
+shipped=''; for s in $RETIRED; do [ ! -e "$ROOT/skills/$s" ] || shipped="$shipped $s"; done
+[ -z "$shipped" ] && ok "the retired skill directories are gone from the checkout" || no "still shipped:$shipped"
+
 [ "$fail" = 0 ] && echo "test_install: all passed" || { echo "test_install: FAILED"; exit 1; }
