@@ -508,6 +508,15 @@ XE b marshal status --all --brief >/dev/null 2>&1
 [ "$(cat "$T/m/b/app/.git/FETCH_HEAD" 2>/dev/null)" = sentinel ] && grep -q "^fetch.*--no-write-fetch-head" "$LOG" \
   && ok "fetch: the refresh does not write FETCH_HEAD of the lead's repository" || no "SPEC the refresh must fetch with --no-write-fetch-head; FETCH_HEAD is now: $(head -c 100 "$T/m/b/app/.git/FETCH_HEAD" 2>&1)"
 
+# ============================================================ (24) inherited APPROVED and PLAN_ARG never apply a marshal verb
+mk e6
+XE e6 APPROVED=leaked PLAN_ARG=leaked marshal enable; rc=$?
+[ $rc = 0 ] && grep -q "^plan token: " "$T/o" && [ ! -e "$(S e6)/marshal/app.enabled" ] && ! grep -q "marshal:enable" "$(S e6)/audit.log" 2>/dev/null \
+  && ok "enable: APPROVED and PLAN_ARG from the environment are not options; without options it only prints the plan" || no "SPEC inherited APPROVED/PLAN_ARG must not apply enable (rc=$rc, file: $(ls "$(S e6)/marshal" 2>&1)): $(out)"
+XE e6 APPROVED=leaked marshal disable >/dev/null 2>&1
+[ "$(jq -r 'select(.verb == "marshal:disable") | .approved' "$(S e6)/audit.log" 2>/dev/null)" = "" ] && grep -q marshal:disable "$(S e6)/audit.log" \
+  && ok "disable: an inherited APPROVED is not written into the audit line" || no "SPEC inherited APPROVED leaked into the audit line: $(cat "$(S e6)/audit.log" 2>&1)"
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
