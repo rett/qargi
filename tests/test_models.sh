@@ -13,18 +13,21 @@ A=$HOME/.claude/agents
 
 PROV=$PWD/lib/providers
 TIERS='["fast","balanced","deep","frontier"]'
-jq -e --argjson tiers "$TIERS" '([.lead, .roles[], .suggested[]] | all(.tier | IN($tiers[])) and all(.effort | IN("low","medium","high","xhigh","max")))
-  and ([.lead, .roles[], .suggested[]] | all(has("model") | not))
-  and (.roles | has("build") and has("write") and has("test") and has("review"))
-  and (.suggested | has("auditor") and has("advisor") and has("researcher"))
-  and ([.suggested[]] | all(.abilities | length > 0) and all(.purpose | length > 0))' "$TABLE" >/dev/null \
-  && ok "the table is valid and complete (tiers and efforts, no model ids)" || no "table"
-jq -e '.suggested | to_entries | map(select(.value.tier == "frontier") | .key) == ["researcher"]' "$TABLE" >/dev/null && ok "only the researcher is suggested on frontier" || no "frontier suggested"
+jq -e --argjson tiers "$TIERS" '.profiles as $p | ($p | to_entries | all(.value.tier | IN($tiers[])) and all(.value.effort | IN("low","medium","high","xhigh","max")) and all(.value | has("model") | not) and all(.value.purpose | length > 0))
+  and ($p | has("lead") and has("build") and has("write") and has("test") and has("review") and has("auditor") and has("advisor") and has("researcher"))
+  and (has("roles") | not) and (has("suggested") | not)' "$TABLE" >/dev/null \
+  && ok "the table is valid and complete (tiers and efforts, purposes, no model ids, no roles or suggested)" || no "table"
+jq -e '.bases == {worker:{abilities:["build","write","test"],class:"write"},reviewer:{abilities:["review"],class:"read-only"}}
+  and (.profiles | to_entries | all(.key == "lead" or (.value.base as $b | $b == "worker" or $b == "reviewer")))
+  and .profiles.lead.base == null' "$TABLE" >/dev/null && ok "two bases, one per guard class; every profile but the lead names one" || no "bases"
+jq -e '.profiles.build.base == "worker" and .profiles.write.base == "worker" and .profiles.test.base == "worker" and ([.profiles.review, .profiles.auditor, .profiles.advisor, .profiles.researcher] | all(.base == "reviewer"))' "$TABLE" >/dev/null && ok "build, write and test use the worker; the review profiles the reviewer" || no "profile bases"
+jq -e '[.profiles | to_entries[] | select(.value.opt_in == true) | .key] == ["researcher"] and .profiles.researcher.tier == "frontier" and ([.profiles | to_entries[] | select(.value.tier == "frontier") | .key] == ["researcher"])' "$TABLE" >/dev/null && ok "only the researcher is opt-in and on frontier" || no "opt-in"
 jq -e '.escalate == {build:"frontier",write:"frontier",test:"frontier",review:"frontier"}' "$TABLE" >/dev/null && ok "escalate names the tier to offer per role" || no "escalate"
 jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.provider == "claude" and (.tiers | keys | sort) == ($tiers | sort) and (.tiers | all(test("^claude-")))
-  and ([$d[0].lead, $d[0].roles[], $d[0].suggested[]] | map(.tier) | unique - ($tiers) == [])
-  and ([$d[0].lead, $d[0].roles[], $d[0].suggested[]] | map(.tier) | all(. as $t | $tiers | index($t)))' "$PROV/claude.json" >/dev/null \
-  && ok "the claude provider file is valid and maps every tier the table uses" || no "provider file"
+  and (.aliases == {fast:"haiku",balanced:"sonnet",deep:"opus",frontier:"fable"})
+  and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/claude.json" >/dev/null \
+  && ok "the claude provider file maps every tier the table uses to an id and to an alias" || no "provider file"
+jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t] != null and $c.aliases[$t] != null)' "$PROV/claude.json" >/dev/null && ok "every profile's tier is in both tiers and aliases" || no "tier coverage"
 [ "$(ls "$PROV")" = claude.json ] && ok "claude is the only provider file" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
@@ -68,22 +71,34 @@ $DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: so
 # agent models
 $DA agent add rs --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1
 out=$($DA agent models 2>&1)
-grep -E '^ *review ' <<<"$out" | grep -q 'deep -> claude-opus-5-5' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> claude-sonnet-5-5' && ok "models: tier and resolved model per row" || no "tier text: $out"
+grep -E '^ *review ' <<<"$out" | grep -q 'deep -> opus -> claude-opus-5-5/high' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> sonnet -> claude-sonnet-5-5/high' && ok "models: tier, alias, id and effort per profile" || no "tier text: $out"
 grep -q 'provider: claude' <<<"$out" && ok "models: the active provider" || no "provider line"
+grep -E '^ *(worker|reviewer) ' <<<"$out" | grep -q 'write' && grep -E '^ *reviewer ' <<<"$out" | grep -q 'read-only' && ok "models: the bases come first, with their class" || no "bases text: $out"
+[ "$(grep -n -E '^bases' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" ] && [ "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^members' <<<"$out" | cut -d: -f1)" ] && ok "models: bases, profiles, then members" || no "section order"
 grep -q 'offer frontier (claude-fable-5-1) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
-grep -q 'qargi agent add researcher --abilities review --model claude-fable-5-1 --effort high' <<<"$out" && ok "models: the researcher is suggested with its add command" || no "researcher line"
+grep -E '^ *researcher ' <<<"$out" | grep -q 'opt-in' && ! grep -E '^ *(auditor|advisor|review) ' <<<"$out" | grep -q 'opt-in' && ok "models: only the researcher is marked opt-in" || no "opt-in text"
+grep -E '^ *lead ' <<<"$out" | grep -q 'never dispatched' && ok "models: the lead is shown, never dispatched" || no "lead row"
 grep -E '^ *rs ' <<<"$out" | grep -q 'frontier (opt-in)' && ! grep -E '^ *b1 ' <<<"$out" | grep -q frontier && ok "models: a member on the frontier model is flagged" || no "frontier flag: $out"
-{ grep -q 'lead.*claude-sonnet-5-5.*medium' <<<"$out" && grep -q 'review.*claude-opus-5-5.*high' <<<"$out" && grep -q 'test.*claude-sonnet-5-5.*low' <<<"$out"; } && ok "models: the lead and role rows" || no "models text: $out"
-grep -q 'qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low' <<<"$out" && grep -q 'qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high' <<<"$out" && ok "models: the suggested commands" || no "suggested"
-grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && grep -E '^ *old ' <<<"$out" | grep -q 'alias (unpinned)' && ! grep -E '^ *b1 ' <<<"$out" | grep -q unpinned && ok "models: members, alias marked unpinned" || no "members: $out"
-! grep -q override <<<"$out" && ok "models: no override without a project" || no "override shown"
+{ grep -q 'lead.*claude-sonnet-5-5/medium' <<<"$out" && grep -q 'auditor.*fast -> haiku -> claude-haiku-5-5/low' <<<"$out" && grep -q 'test.*claude-sonnet-5-5/low' <<<"$out"; } && ok "models: the lead and profile rows" || no "models text: $out"
+grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && ok "models: members with model and effort" || no "members: $out"
+! grep -q 'override\|project' <<<"$out" && ok "models: no project source without a project" || no "override shown"
+j=$($DA agent models --json 2>&1)
+jq -e 'keys == ["aliases","bases","escalate","members","profiles","provider"] and .profiles.lead.base == null and .profiles.researcher.opt_in == true and .profiles.auditor.model == "haiku" and .profiles.auditor.model_id == "claude-haiku-5-5"
+  and .bases.worker.registered == false and .escalate.build.tier == "frontier" and (.members | length > 0)' <<<"$j" >/dev/null && ok "models --json: bases, profiles, aliases, escalate, members" || no "json keys: $j"
+
+# a project's profiles and its old role answers
+jq '.profiles = {build:{model:"claude-opus-5-5",effort:"xhigh"}, scout:{base:"reviewer",tier:"fast"}, auditor:{tier:"deep"}, "Bad Name":{base:"worker"}, broken:"x", worse:{base:7,tier:[],model:{},effort:"turbo"}}' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 out=$($DA agent models --project alpha 2>&1)
-grep -E '^ *build ' <<<"$out" | grep -q 'override.*claude-opus-5-5.*xhigh' && grep -E '^ *lead ' <<<"$out" | grep -q 'override.*claude-opus-5-5.*high' && grep -E '^ *test ' <<<"$out" | grep -vq override && ok "models --project: overrides marked" || no "override: $out"
 j=$($DA agent models --project alpha --json 2>&1)
-jq -e '(.lead.model) and .roles.build.model and (.suggested.auditor.model == "claude-haiku-5-5") and .provider == "claude" and .roles.review.tier == "deep" and .roles.review.model == "claude-opus-5-5" and .escalate.build.tier == "frontier" and .escalate.build.model == "claude-fable-5-1" and (.members | length > 0) and (.members | map(select(.name == "old"))[0].pinned == false)' <<<"$j" >/dev/null && ok "models --json is one object with lead, roles, suggested, members" || no "json: $j"
-jq -e '.roles.build.override.model == "claude-opus-5-5" and .roles.build.model == "claude-sonnet-5-5"' <<<"$j" >/dev/null && ok "json carries the default and the project value" || no "json shape"
-$DA agent models --json | jq -e 'keys == ["escalate","lead","members","provider","roles","suggested"]' >/dev/null && ok "json without a project" || no "json keys"
+jq -e '.profiles.build | .model == "opus" and .model_id == "claude-opus-5-5" and .effort == "xhigh" and .tier == "deep" and .source == "project" and .base == "worker"' <<<"$j" >/dev/null && ok "a project entry merges key by key over the shipped profile; a full id maps to its alias" || no "merge: $j"
+jq -e '.profiles.scout | .base == "reviewer" and .model == "haiku" and .source == "project" and .opt_in == false' <<<"$j" >/dev/null && ok "a project-only profile with a tier" || no "scout: $j"
+jq -e '.profiles.auditor | .model == "opus" and .effort == "low" and .purpose != ""' <<<"$j" >/dev/null && ok "a tier in the entry replaces the shipped tier, the rest stays" || no "auditor merge"
+jq -e '(.profiles | has("Bad Name") | not) and (.profiles | has("broken") | not) and (.profiles.worse.refused != null)' <<<"$j" >/dev/null && ok "malformed entries are ignored and never crash" || no "malformed: $j"
+jq -e '.profiles.review.model == "haiku" and .profiles.review.effort == "low" and .profiles.review.source == "project" and .profiles.review.via_roles == true and .profiles.lead.model == "opus" and .profiles.lead.effort == "high" and .profiles.test.source == "shipped"' <<<"$j" >/dev/null && ok "a role answer (roles.<R>.model/effort, lead) still sets the profile named after the role" || no "legacy roles: $j"
+grep -E '^ *build ' <<<"$out" | grep -q 'project' && grep -E '^ *test ' <<<"$out" | grep -q 'shipped' && ok "models --project: the source of each row" || no "source text: $out"
 [ -z "$(git -C "$T/repo" status --porcelain)" ] && ok "models is read-only" || no "models wrote"
+jq '.profiles = "nonsense"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
+$DA agent models --project alpha --json | jq -e '.profiles.build.source == "project"' >/dev/null && ok "profiles of the wrong type are ignored" || no "profiles type"
 # the researcher is read-only when added
 $DA agent add res2 --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
 
@@ -98,7 +113,8 @@ e=$($DA agent models --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude' <<<"$e"; } && ok "an unknown models.provider is an error listing the providers (models)" || no "unknown provider models: $e"
 jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
-$DA project template alpha | jq -e '.roles.build.model == "claude-sonnet-5-5" and .roles.write.model == "claude-sonnet-5-5" and .roles.build.effort == "high"' >/dev/null && ok "project template writes the resolved claude ids" || no "template"
+[ "$($DA project template alpha | sha256sum | cut -d' ' -f1)" = 8efee3c2ababf5b293c2f7ea9b9a4e3afdbbb6f1706a55a08eb826002e91d293 ] && ok "project template output is byte-identical to before the profiles" || no "template"
+$DA project template alpha | jq -e '.roles.build.model == "claude-sonnet-5-5" and .roles.write.model == "claude-sonnet-5-5" and .roles.build.effort == "high"' >/dev/null && ok "project template writes the resolved claude ids" || no "template ids"
 
 shellcheck -x -S warning lib/agent.sh lib/project.sh tests/test_models.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"
