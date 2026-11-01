@@ -1557,11 +1557,16 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "resign " "NAME"
 Sign an unsigned open record (writes one more revision on top of it).
 .br
-Used when moving from advisory to strict. Audited as marshal:resign. Not available in a member run.
+Used when moving from advisory to strict. The plan shows the head, its lead and goal and its token covers exactly that head; it is refused for a lead other than the accepted one. Audited as marshal:resign. Not available in a member run.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the first run.
 .RE
 .RS
 .TP
@@ -1574,11 +1579,21 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B disable
 Switch back to the local records; the refs already on the remote stay (audited as marshal:disable).
 .br
-Not available in a member run.
+While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the first run.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP

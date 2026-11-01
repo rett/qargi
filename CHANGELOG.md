@@ -15,6 +15,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accepted record. A local high-water mark detects a rewound ref (`rollback detected`), and junk or replayed pushes neither renew a lease
   nor block a feature. `marshal resign NAME` signs an existing record when moving from advisory to strict. Keys, signers and the mode
   are yours to set; nothing is signed until you choose a mode. Members cannot read the signing key or change the signers.
+  Review hardening: a lagging machine builds on the newest signed record rather than overwriting it; advisory builds on an unsigned head
+  instead of dropping it; a signed finish records the last features commit so a reused name keeps its rollback mark; records are
+  identified by what the signature covers, so a re-committed head is the same record; `resign` shows the head, lead and goal in a plan
+  whose token covers that head and refuses a lead other than the accepted one; `disable` needs the plan token and your words while
+  integrity is on; the guard follows `pushd`/`popd`, refuses links and moves of the key, and normalises `/./` in scanned text.
   Member definitions now also hook the guard on the Read and Grep tools (to keep the key unread); members created earlier keep the old
   matcher until they are re-added (`qargi agent add`).
 - Shared marshal. `qargi marshal enable|disable` switch a project between the local records and a shared backend that keeps each

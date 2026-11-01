@@ -246,10 +246,11 @@ COMMANDS = {
             "signers": verb("List, add or remove the keys trusted to sign this project's marshal records (add | remove | list)", [("SUBCOMMAND", "none"), ("[PRINCIPAL]", "none")],
                             [PROJECT_OPT, opt("--line", "the signers line printed by key init (add)", "LINE"), opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc=("Edits $STATE/marshal/PROJECT.signers, which never goes into the repository or the refs. add and remove are audited as marshal:signers and refused in a member run; list is open to members.")),
-            "resign": verb("Sign an unsigned open record (writes one more revision on top of it)", [("NAME", "none")], [PROJECT_OPT, APPROVED],
-                           desc="Used when moving from advisory to strict. Audited as marshal:resign. Not available in a member run."),
-            "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT],
-                            desc="Not available in a member run."),
+            "resign": verb("Sign an unsigned open record (writes one more revision on top of it)", [("NAME", "none")], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
+                           desc=("Used when moving from advisory to strict. The plan shows the head, its lead and goal and its token covers exactly that head; it is refused for a lead other than the accepted one. "
+                                 "Audited as marshal:resign. Not available in a member run.")),
+            "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
+                            desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
         },
     },
     "release": {
