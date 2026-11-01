@@ -119,10 +119,11 @@ def first_line(s):
 
 def refresh(repo, remote):
     """Fetch the remote's refs/qargi/ into the repository's own (and drop the ones the remote no longer has).
-    -> (True, "") or (False, why): the remote was not checked."""
+    -> (True, "") or (False, why): the remote was not checked. FETCH_HEAD of the repository is left alone (a lead's own pull or merge
+    reads it)."""
     if not remote_ok(remote):
         return False, "%r is not a remote name" % remote
-    rc, _, err, _ = run_git(repo, ["fetch", '--prune', '--no-tags', '--quiet', '--no-recurse-submodules', remote, FETCH_SPEC], timeout_secs())
+    rc, _, err, _ = run_git(repo, ["fetch", '--prune', '--no-tags', '--quiet', '--no-write-fetch-head', '--no-recurse-submodules', remote, FETCH_SPEC], timeout_secs())
     return (True, "") if rc == 0 else (False, first_line(err) or "git fetch failed (status %d)" % rc)
 
 
