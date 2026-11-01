@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""A deliberately broken provider adapter: the fixture that proves tests/conformance.sh catches what it claims to catch.
+It is correct unless $CONFORMANCE_BROKEN names a fault, one of
+  push         barrier-check allows git push                                  (case 8)
+  failopen     barrier-check answers allow to a request it cannot decide      (case 8, fail closed)
+  argv         start-session puts the credential in the transport's argv      (case 5)
+  unsupported  barrier-check on the cloud surface answers instead of exit 3   (case 3)
+  planmut      provision in plan mode makes a mutating transport call         (case 4)
+  stoptwice    the second stop of a session fails                             (case 6)
+  costunit     cost answers in dollars                                        (cases 1 and 7)
+  badshape     resolve leaves the notes out                                   (case 1)
+  badmodel     resolve answers the wrong model for the deep tier              (case 2)
+  nonote       an effort with no control gives null and no note               (case 2)
+  nodef        the read-only definition carries no barrier                    (case 9)
+Unset or anything else: no fault. It serves resolve itself from its own descriptor, hands dispatch-local and barrier-check
+to the real claude adapter of the checkout, and serves the cloud verbs through $QARGI_TRANSPORT. Never ship it."""
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+NAME = os.path.basename(HERE)
+FAULT = os.environ.get("CONFORMANCE_BROKEN", "")
+TIERS = ("fast", "balanced", "deep", "frontier")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+class Reply(Exception):
+    def __init__(self, code, msg):
+        self.code, self.msg = code, msg
+
+
+def descriptor():
+    with open(os.path.join(os.path.dirname(HERE), NAME + ".json")) as f:
+        return json.load(f)
+
+
+def real_adapter():
+    tool = os.environ.get("CONFORMANCE_TOOL") or os.path.join(HERE, "..", "..", "..")   # tests/providers/broken
+    return os.path.realpath(os.path.join(tool, "..", "..", "..", "lib", "providers", "claude", "adapter"))
+
+
+def real(verb, raw):
+    r = subprocess.run([real_adapter(), verb], input=raw, capture_output=True, text=True)
+    return r.returncode, r.stdout
+
+
+def transport(args, body=""):
+    t = os.environ.get("QARGI_TRANSPORT")
+    if not t:
+        raise Reply(4, "no transport")
+    r = subprocess.run([t] + args, input=body, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise Reply(4, "the transport failed: %s" % r.stderr.strip())
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        raise Reply(4, "the transport did not answer JSON")
+
+
+def need(req, key):
+    if not isinstance(req.get(key), str) or not req[key]:
+        raise Reply(1, "%s: a non-empty string" % key)
+    return req[key]
+
+
+def cloud(req):
+    if req.get("surface") != "cloud":
+        raise Reply(3, "served for the cloud surface only")
+    if "cloud" not in descriptor()["surfaces"]:
+        raise Reply(3, "the provider does not list the surface cloud")
+
+
+def resolve(req):
+    d = descriptor()
+    if req.get("surface") not in ("local", "cloud"):
+        raise Reply(1, "surface: local or cloud")
+    if req["surface"] not in d["surfaces"]:
+        raise Reply(3, "%s does not list the surface '%s'" % (NAME, req["surface"]))
+    if req.get("tier") not in TIERS:
+        raise Reply(1, "tier: one of %s" % ", ".join(TIERS))
+    effort = req.get("effort") or None
+    if effort is not None and effort not in EFFORTS:
+        raise Reply(1, "effort: one of %s" % ", ".join(EFFORTS))
+    row = d["tier_detail"][req["tier"]]
+    notes, native = [], None
+    if effort:
+        native = d["effort"][effort]
+        if native is None and FAULT != "nonote":
+            notes.append("%s has no effort control; effort '%s' is not applied" % (NAME, effort))
+    model = "claude-wrong-0" if FAULT == "badmodel" and req["tier"] == "deep" else row["model"]
+    out = {"model": model, "alias": row["alias"], "effort_native": native, "notes": notes}
+    if FAULT == "badshape":
+        del out["notes"]
+    return out
+
+
+def delegate(verb, raw):
+    code, out = real(verb, raw)
+    body = json.loads(out)
+    if code != 0:
+        if verb == "barrier-check" and FAULT == "failopen" and code == 1:
+            return {"decision": "allow", "reason": ""}
+        raise Reply(code, body.get("error", "failed"))
+    if verb == "barrier-check":
+        call = json.loads(raw).get("tool_call", {})
+        if FAULT == "push" and "git push" in str(call.get("command", "")):
+            return {"decision": "allow", "reason": ""}
+    if verb == "dispatch-local" and FAULT == "nodef":
+        body["definition"]["text"] = body["definition"]["text"].replace(" --class read-only", "")
+    return body
+
+
+def session_id(req):
+    return need(req, "session_id")
+
+
+def run(verb, raw):
+    try:
+        req = json.loads(raw)
+    except ValueError:
+        raise Reply(1, "the request is not JSON")
+    if not isinstance(req, dict):
+        raise Reply(1, "the request is not a JSON object")
+    if verb == "resolve":
+        return resolve(req)
+    if verb == "barrier-check" and FAULT == "unsupported" and req.get("surface") == "cloud":
+        return {"decision": "allow", "reason": ""}
+    if verb in ("dispatch-local", "barrier-check"):
+        return delegate(verb, raw)
+    if verb == "cost" and req.get("surface") == "local":
+        raise Reply(3, "local runs have no cost")
+    cloud(req)
+    if verb == "provision":
+        mode = req.get("mode")
+        if mode not in ("plan", "apply"):
+            raise Reply(1, "mode: plan or apply")
+        need(req, "project")
+        need(req, "role")
+        transport(["GET", "/agents"])
+        if mode == "apply" or FAULT == "planmut":
+            transport(["POST", "/agents"], json.dumps({"project": req["project"], "role": req["role"], "credentials": req.get("credentials", {})}))
+        return {"mode": mode, "plan": [{"action": "create", "resource": "agent", "name": "%s-%s" % (req["project"], req["role"])}], "applied": mode == "apply"}
+    if verb == "start-session":
+        need(req, "agent")
+        need(req, "task")
+        creds = req.get("credentials") or {}
+        argv = ["POST", "/sessions"]
+        if FAULT == "argv" and creds:
+            argv += ["--api-key", next(iter(creds.values()))]
+        r = transport(argv, json.dumps({"agent": req["agent"], "task": req["task"], "credentials": creds}))
+        return {"session_id": r["session_id"], "state": r["state"]}
+    sid = session_id(req)
+    if verb == "status":
+        r = transport(["GET", "/sessions/" + sid])
+        return {"session_id": sid, "state": r["state"], "cost_cents": r.get("cost_cents")}
+    if verb == "collect":
+        r = transport(["GET", "/sessions/%s/events" % sid])
+        return {"session_id": sid, "state": "completed", "artifacts": r.get("artifacts", []), "output": r.get("output")}
+    if verb == "stop":
+        log = os.environ.get("QARGI_STUB_LOG")
+        if FAULT == "stoptwice" and log and os.path.isfile(log):
+            with open(log) as f:
+                if any(("/sessions/%s/stop" % sid) in line for line in f):
+                    raise Reply(1, "session %s is already stopped" % sid)
+        r = transport(["POST", "/sessions/%s/stop" % sid])
+        return {"session_id": sid, "stopped": True, "state": r["state"]}
+    if verb == "cost":
+        r = transport(["GET", "/sessions/" + sid])
+        if FAULT == "costunit":
+            return {"unit": "dollars", "amount": r["cost_cents"] / 100.0}
+        return {"unit": "cents", "amount": r["cost_cents"]} if r.get("cost_cents") is not None else {"unit": None, "amount": None}
+    raise Reply(1, "unknown verb '%s'" % verb)
+
+
+def main(argv):
+    try:
+        body, code = run(argv[0] if argv else "", sys.stdin.read()), 0
+    except Reply as r:
+        body, code = {"error": r.msg}, r.code
+    sys.stdout.write(json.dumps(body) + "\n")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
