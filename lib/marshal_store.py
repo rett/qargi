@@ -892,7 +892,11 @@ def v_takeover(ctx, a):
             raise Refuse("no record for feature %s (claim it: qargi marshal claim %s)" % (a.name, a.name))
         st, mins = lease(ctx, rec)
         if st == "live":
-            left = max(1, -(-(ctx.ttl * 60 - ctx.be.age(ctx, rec)) // 60))
+            age = ctx.be.age(ctx, rec)
+            if age is None:       # a provisional claim has not been seen on the remote: no age, and nobody else leads it there
+                raise Refuse("feature %s is a provisional claim of yours that has not reached the remote yet; there is nothing to take over: "
+                             "run a marshal verb on it when the remote is reachable" % a.name)
+            left = max(1, -(-(ctx.ttl * 60 - age) // 60))
             raise Refuse("feature %s is led by %s and live for another %d min (ttl %d); wait, or ask the lead to release it" % (a.name, clean(lead_of(rec)["id"]), left, ctx.ttl))
         if rec.get("status") in ("finished", "abandoned"):
             raise Refuse("feature %s is %s" % (a.name, rec["status"]))
