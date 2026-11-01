@@ -6,7 +6,7 @@ argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lin
 
 # /qargi-memory
 
-**Memory store** (`<project>-memory`, agents read-write): verified how-to facts and role
+**Memory store** (`<project>-memory`; agents write under their role folder, `shared/` by promotion): verified how-to facts and role
 history. **Reference store** (`<project>-reference`, agents read-only): curated rules,
 workflow, conventions and architecture in folders named for their scope (no numbered
 prefixes). Agents propose reference changes in their report; the coordinator applies them
@@ -53,5 +53,31 @@ A store at an older version gets a plan that only adds what a note lacks (`Kind`
 A new canon version means a new migration; see `canon/CANON.md` § Changing the canon.
 
 `qargi memory split|copy|merge FROM TO` move notes between two stores (directories, `.jsonl` dumps or `memstore_` ids): `split` takes what `--prefix`, `--role` or `--note-kind` picks (`--archive` moves the originals to `/_archive/<date>/`), `copy` leaves the source alone, `merge` adds what `TO` lacks and moves a split's archived originals back. A collision goes to `/_conflicts/<date>/`, nothing is deleted, each note written records its origin in `Sources:`. Run without `--approved` to get the plan and its token, show it, and apply exactly that with `--plan TOKEN --approved "..."`; a store that changed since the plan is refused.
+
+## Memory tiers
+
+A tier is one memory store of the standard layout at a fixed rank, highest first: `repo` (a
+directory in the repository, default `qargi/memory`) > `cloud` (the project's recipes store)
+> `project` (`~/.qargi/memory/projects/NAME`) > `shared` (`~/.qargi/memory/shared`) >
+`system` (`~/.qargi/memory/system`). The directory tiers are moved with the project's answers
+`memory.tiers.<tier>.path` (`qargi project set PROJECT memory.tiers.repo.path ...`; `repo`
+is relative to the repository, the others absolute or `~`-prefixed; a key left out takes its
+default). The reference store is not a tier.
+
+A note lives in exactly one tier. `CANON.md`, `README.md`, `_template.md`, every `INDEX.md`,
+`roles/<role>/tools/`, `_archive/` and `_conflicts/` repeat per tier and are exempt.
+
+- `qargi memory tiers [--project P] [--json]` lists each tier with its location, state
+  (missing, empty, present, unreachable) and note count. Reads only.
+- `qargi memory check [--project P]` runs the canon check on each existing tier and reports a
+  note path present in two or more tiers as a FAIL. A missing, empty or unreachable tier is
+  an INFO line. Exit 1 on any FAIL; the last line is `N fail, M warn, K tiers checked`.
+
+Rules for agents: write only under `roles/<your role>/` of the memory store. `shared/` is
+curated, written by promotion (`qargi canon promote --approved`) or by the person; propose a
+shared note in your report, never write it.
+
+Slice 1 is read-only: no tier is written, there is no `memory init` or `memory move`, the
+SessionStart hook does not compose the tiers yet, and there are no remote shares.
 
 `qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the lead role's READMEs and indexes from both stores (about 4K characters) and nothing else; notes are read on demand.

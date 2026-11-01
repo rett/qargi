@@ -209,7 +209,7 @@ case $verb in
     if [ -n "$refstore" ] && [ -n "$store" ]; then
       # ant apply attaches a referenced store read-write; the reference store must be read-only.
       arr=$(jq -nc --arg r "$store" --arg f "$refstore" '[
-        {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs."},
+        {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs. Write only under roles/<role>/."},
         {type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]')
       ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
         || die "could not set the stores' access on the deployment; fix it before running a session"
