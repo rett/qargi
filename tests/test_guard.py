@@ -599,6 +599,80 @@ class Marshal(unittest.TestCase):
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
 
+class RefJournal(unittest.TestCase):
+    """The lead's ref journal ($QARGI_STATE/ref-journal.jsonl) is changed only by the lead's own verbs: a write, move, delete
+    or redirect of it, its lock or a rotated file beside it is refused to a member; reading stays allowed. (The journal is
+    trusted only as far as the state directory is: an executor running as the same OS user could still edit it by code the guard
+    cannot see; HMAC-signed records are a later feature.)"""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    NOTE = "the lead changes the marshal; report it in your task output"
+
+    def setUp(self):
+        self.setUp_skills()
+        self.state = os.path.join(self.t, "state")
+        self.jn = os.path.join(self.state, "ref-journal.jsonl")
+        os.makedirs(self.state)
+        with open(self.jn, "w") as f:
+            f.write("{}\n")
+        os.symlink(self.jn, os.path.join(self.clone, "to-journal"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_STATE", self.state)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def env(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+        return e
+
+    def refused(self, cmds):
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("ref journal", res.stderr)
+            self.assertIn(self.NOTE, res.stderr)
+
+    def test_edit_tools_refuse_the_journal_its_lock_and_rotated_files(self):
+        j = self.jn
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p in (j, j + ".lock", j + ".1", j + ".tmp", j + ".2024.gz", "to-journal", "../../state/ref-journal.jsonl"):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn(self.NOTE, res.stderr)
+
+    def test_bash_writes_to_the_journal_are_refused(self):
+        j = self.jn
+        self.refused(["echo x >> %s" % j, "echo x > %s" % j, "echo x>>%s" % j, "echo x | tee -a %s" % j, "cp a.jsonl %s" % j,
+                      "mv a.jsonl %s" % j, "mv %s /tmp/gone" % j, "rm %s" % j, "rm -f %s.lock" % j,
+                      "sed -i s/a/b/ %s" % j, "truncate -s 0 %s" % j, "ln -sf /x %s" % j, "echo x > %s.1" % j, "mv %s %s.1" % (j, j),
+                      "cd %s && echo y >> ref-journal.jsonl" % self.state, "echo y >> to-journal", "bash -c 'echo y >> %s'" % j,
+                      "echo y >> $QARGI_STATE/ref-journal.jsonl", "sudo rm %s" % j, "touch %s.lock" % j, "dd if=/dev/zero of=%s" % j])
+
+    def test_reads_and_look_alikes_stay_allowed(self):
+        j = self.jn
+        for c in ("cat %s" % j, "grep -n agent %s" % j, "jq -c . %s" % j, "tail -n 5 %s" % j, "cp %s %s/run/out/j.jsonl" % (j, self.t),
+                  "cat %s > %s/run/out/c.jsonl" % (j, self.t), "echo x > %s/ref-journals.md" % self.state, "echo x > %s/other.jsonl" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        os.makedirs(os.path.join(self.t, "elsewhere"))
+        p = os.path.join(self.t, "elsewhere/ref-journal.jsonl")
+        self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0)
+
+    def test_the_journal_is_found_like_the_other_qargi_paths(self):
+        home_state = os.path.join(self.home, ".qargi/state")
+        qh = os.path.join(self.t, "qh/state")
+        alt = os.path.join(self.t, "alt")
+        for st, env in ((home_state, dict(QARGI_STATE=None)), (qh, dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                        (alt, dict(QARGI_STATE=os.path.join(self.t, "alt")))):
+            os.makedirs(st, exist_ok=True)
+            p = st + "/ref-journal.jsonl"
+            self.assertEqual(self.call("Write", {"file_path": p}, **env).returncode, 2, (p, env))
+            self.assertEqual(self.bash("echo x >> %s" % p, **env).returncode, 2, (p, env))
+
+
 class FailsClosed(unittest.TestCase):
     """An exception inside the guard is a refusal (exit 2 with the reason), never a silent pass or a bare crash (exit 1)."""
     def run_main(self, payload, patch=None):

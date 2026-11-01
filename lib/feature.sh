@@ -50,6 +50,7 @@ case $verb in
         g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null && die "origin/$BR was seen at the last fetch and origin cannot be asked now: fetch it or choose another name";;
     esac
     g branch "$BR" develop
+    journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" feature:start
     # the marshal keeps the record (purpose, started) and makes this identity the lead; the feature exists either way
     marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
@@ -63,6 +64,7 @@ case $verb in
     need_free "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:merge
     merge_forget "feature-$NAME_ARG-merge-${EXTRA//\//_}"
     echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   sync)
@@ -72,6 +74,7 @@ case $verb in
     need_free "$BR"
     merge_step "$h" refs/heads/develop "feature-$NAME_ARG-sync" "Merge branch 'develop' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:sync
     merge_forget "feature-$NAME_ARG-sync"
     echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   list)
@@ -136,9 +139,10 @@ case $verb in
       g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
     fi
     g update-ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
+    journal_ref "$REPO" refs/heads/develop "$d0" "$MERGED" feature:finish
     merge_forget "$k"
     jq -c --arg s "$MERGED" '.sha = $s' "$(rec "$BR")" > "$(rec develop)"
-    [ -n "$KEEP" ] || g update-ref -d "refs/heads/$BR" "$h"
+    if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish; fi
     audit_log "feature:finish" "$PROJ $NAME_ARG"
     hold_end
     marshal_finish "$PROJ" "$NAME_ARG" || echo "qargi: warning: the marshal record of $NAME_ARG was not marked finished (see above); the merge is done" >&2

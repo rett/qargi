@@ -19,6 +19,23 @@ rec() { echo "$RDIR/$PROJ-${1//\//_}.json"; }   # branch -> the file that record
 sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
 # "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command
 verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'select(.command == $c) | .sha + " " + .result' "$f" 2>/dev/null; }
+
+# journal_ref REPO REF OLD NEW VERB -> appends one line to the lead's ref journal ($DA_STATE/ref-journal.jsonl) after a local
+# branch was created (OLD empty), moved or deleted (NEW empty) by one of qargi's own verbs. `qargi local verify` accepts a branch
+# change in a run's strict phase only when this journal names it, so the changes the lead made while a run was out are not blamed
+# on the executor. Append only, under flock; the guard (lib/guard.py) keeps an agent from writing it. A failure here is a warning,
+# never a failure of the verb: the work is done, only a later `local verify` would then want the lead's changes explained.
+journal_ref() {
+  local repo ref old new verb zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
+  ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
+  repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
+  [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*) ;; *) false;; esac \
+    && ( umask 077; flock 9 && jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+           --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
+           '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}' >> "$f" ) 9> "$f.lock" \
+    || echo "qargi: warning: the ref journal could not be written for $ref ($verb); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+  return 0
+}
 branch_exists() { [ -n "$(sha_of "$1")" ]; }
 
 # remote_tip BRANCH -> RSTATE and RTIP, RWHY: asks the live remote (git ls-remote, bounded by QARGI_REMOTE_TIMEOUT, 10s) what
