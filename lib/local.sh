@@ -16,6 +16,8 @@
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time; never a repository path or a token), so `qargi report` can list the local runs.
+# After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
+# indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/marshal.sh"
 
@@ -239,7 +241,20 @@ WRAP
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
-    echo "BASE_SHA=$BSHA";;
+    echo "BASE_SHA=$BSHA"
+    # the memory context packet: the tier summary and the always rows, for a repository that belongs to a stored project.
+    # It never changes prepare's result: a failure or a timeout prints nothing.
+    PPROJ=$(project_of "$REPO" "$URL")
+    if [ -n "$PPROJ" ]; then
+      tc=$(dirname "$(readlink -f "$0")")/tiercontext.py
+      prel=$(timeout 3 python3 -I "$tc" repo-rel --project "$PPROJ" 2>/dev/null </dev/null) || prel=''
+      pargs=(--project "$PPROJ" --role "$ABILITY")
+      [ -z "$prel" ] || pargs+=(--repo-tier "$RUN/clone/$prel")
+      [ -z "$REPO" ] || [ -z "$prel" ] || pargs+=(--checkout "$REPO")
+      if pkt=$(timeout 8 python3 -I "$tc" packet "${pargs[@]}" </dev/null) && [ -n "$pkt" ]; then
+        printf '\nTASK-BLOCK MEMORY\n%s\n' "$pkt"
+      fi
+    fi;;
   verify)
     RUN=${1:-}; [ -f "$RUN/refs.before" ] || die "verify needs a RUN dir made by prepare"
     if check_run "$RUN"; then

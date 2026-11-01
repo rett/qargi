@@ -7,7 +7,7 @@ Subcommands (all read JSON lines of {"id","path","content"} from --store and pri
   import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.
 """
-import argparse, datetime, json, re, sys
+import argparse, datetime, json, os, re, sys
 
 LATEST = 2
 KINDS = ("memory", "reference")
@@ -571,6 +571,7 @@ def cmd_check(a):
             elif parts[0] == "shared":
                 pass
             elif parts[0] == "_archive":   # optional: notes qargi memory split moved aside; each says where from in Sources:
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # run as python3 -I: the lib directory is not on the path
                 import memplan             # here, not at the top: memplan imports this module
                 if memplan.origin(mems[p]["content"])[0] != "archived":
                     W(p, "an archived note without the `archived from` segment qargi puts on its Sources: line; where did it come from?")

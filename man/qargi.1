@@ -1972,11 +1972,65 @@ machine\-readable.
 .B check
 Check every existing memory tier against the canon, and that no note lives in two tiers.
 .br
-Runs the canon check on each tier that exists, then reports a note path present in two or more tiers (structural files such as README.md and INDEX.md repeat per tier and are fine). A tier that does not exist or cannot be reached is information, not a failure. Exit 1 when anything failed.
+Runs the canon check on each tier that exists, then reports a note path present in two or more tiers (structural files such as README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. Exit 1 when anything failed.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RE
+.RS
+.TP
+.BI "init " "TIER"
+Create a memory tier (repo, project, shared or system) as an empty store of the standard layout.
+.br
+Without \-\-approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. A tier that is already set up says so and exits 0.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "move " "PATH"
+Move notes from one tier to another, with the original archived in the first.
+.br
+PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/<date>/ of the first tier and each copy records its origin. Without \-\-approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-from " "TIER"
+the tier the notes are in.
+.RE
+.RS
+.TP
+.BI "\-\-to " "TIER"
+the tier they go to.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .RS
