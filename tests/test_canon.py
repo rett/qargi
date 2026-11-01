@@ -311,9 +311,10 @@ class Canon(unittest.TestCase):
 
     def test_seed_readme_keeps_shared_curated(self):
         text = slurp(os.path.join(SEED, "README.memory.md"))
-        self.assertIn("Write only under roles/<your role>/", text)
-        self.assertIn("shared/ is curated", text)
-        self.assertNotIn("Write only under `shared/`", text)
+        plain = text.replace("`", "")                  # the seed writes paths in code spans
+        self.assertIn("Write only under roles/<your role>/", plain)
+        self.assertIn("shared/ is curated", plain)
+        self.assertNotIn("Write only under shared/", plain)
         self.assertLess(len(text), 3000)
 
 

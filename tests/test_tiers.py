@@ -142,7 +142,7 @@ class Resolve(Base):
             loc = os.path.realpath(os.path.expanduser(by[name]["location"]))
             self.assertEqual(loc, os.path.realpath(e.d(name)), name)
             self.assertFalse(loc.startswith(os.path.realpath(os.path.expanduser("~")) + os.sep + ".qargi"), name)
-        self.assertEqual(by["repo"]["kind"], "repo")
+        self.assertEqual(by["repo"]["kind"], "dir")
         self.assertEqual(by["cloud"]["kind"], "cloud")
         for name in ("project", "shared", "system"):
             self.assertEqual(by[name]["kind"], "dir")
@@ -296,7 +296,7 @@ class CheckArgs(Base):
         self.environ(e)
         by = {t["tier"]: t for t in T.resolve(e.answers, P)}
         for name in ("shared", "system"):
-            proj, roles = T.check_args(by[name], P, ["build", "test"], ["build", "write"])
+            proj, roles = T.check_args(by[name], P, ["build", "test"], "# Canon\n\ncanon: 2\nkind: memory\nproject: %s\nroles: build write\n" % name)
             self.assertEqual(proj, name)
             self.assertEqual(set(roles.split(",")), {"build", "test", "write"})
             self.assertNotIn(" ", roles)
@@ -358,7 +358,7 @@ class Cli(Base):
         names = [l.split()[0] for l in lines]
         self.assertEqual(names, ["repo", "cloud", "project", "shared", "system", "reference:"], r.stdout)
         by = {l.split()[0]: l for l in lines}
-        self.assertRegex(by["repo"], r"^repo\s+repo\s+\S*qargi/memory\s+present\s+\d+ notes")
+        self.assertRegex(by["repo"], r"^repo\s+dir\s+\S*qargi/memory\s+present\s+\d+ notes?")
         self.assertRegex(by["cloud"], r"^cloud\s+cloud\s+%s .*present" % STORE)
         self.assertRegex(by["project"], r"^project\s+dir\s+\S+\s+missing")
         self.assertRegex(by["shared"], r"^shared\s+dir\s+\S+\s+present")
@@ -418,7 +418,7 @@ class Cli(Base):
         e = self.populated()
         r = e.qargi("memory", "check", "--project", P)
         out = r.stdout
-        self.assertIn("== tier repo (repo %s)" % e.d("repo"), out)
+        self.assertIn("== tier repo (dir %s)" % e.d("repo"), out)
         self.assertIn("== tier cloud (cloud %s" % STORE, out)
         self.assertIn("== tier shared (dir %s)" % e.d("shared"), out)
         self.assertNotIn("== tier project", out)                         # missing: not checked
