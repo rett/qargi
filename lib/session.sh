@@ -85,10 +85,14 @@ start_with_repo() { # name [credential-file] -> session id (the lead always star
 }
 
 start() {
-  need_asked; ant_ok
+  need_asked
   local name=$1 i run sid cf
   i=$(cloud_inst "$name") || exit 1
-  split_instance "$name"; cf=$(cred_file "$PROJECT")
+  split_instance "$name"
+  # an instance of a read-only role needs a read-only barrier on the cloud surface, or the project's recorded acceptance that there is none
+  [ "$(role_class "$ROLE" 2>/dev/null)" != read-only ] || barrier_guard cloud "$PROJECT"
+  ant_ok
+  cf=$(cred_file "$PROJECT")
   if [ -n "$cf" ] || [ "$ROLE" = lead ]; then
     sid=$(start_with_repo "$name" "$cf") || exit 1
     [ -n "${QARGI_DRY_RUN:-}" ] && exit 0

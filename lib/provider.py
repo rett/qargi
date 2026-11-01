@@ -8,12 +8,23 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        verified_on date)
   effective(name, surface, capability) what enforcement may rely on: "yes", "partial" or "no". Unverified counts as no, and so
                                        does a surface the provider does not list.
+  accepted(project, surface)           the project's recorded acceptance of a surface with no read-only barrier, or None
+  require_barrier(provider, surface, project)
+                                       ("yes"|"partial"|"accepted"|"refused", text): may a read-only role run on this surface?
 Every function that reads a descriptor takes root= (the providers directory) for tests; the default is beside this file.
 
 Usage: provider.py list
        provider.py show NAME [--json]
        provider.py check NAME            exit 1 on a failure, 0 otherwise (warnings do not fail); the adapter, when the
-                                         descriptor names one, must exist and be executable"""
+                                         descriptor names one, must exist and be executable
+       provider.py accept NAME --surface S --no-barrier [--project P] --asked W [--approved W] [--plan T]
+                                         lib/provider.sh does it: plan first, then the token and the approval
+       provider.py require-barrier PROVIDER SURFACE [--project P]
+                                         exit 0 when a read-only role may run there (a partial barrier prints its note to
+                                         stderr), 2 with the qargi provider accept command when it may not
+       provider.py effective PROVIDER SURFACE CAPABILITY
+                                         prints yes, partial or no (what enforcement may rely on); exit 1 when the provider
+                                         does not list the surface"""
 import json
 import os
 import re
@@ -230,6 +241,79 @@ def effective(name, surface, capability, root=None):
     return "no" if v == "unverified" else v
 
 
+# ---- the read-only barrier ----------------------------------------------------------------------------------------------
+
+def _conf():
+    sys.path.insert(0, HERE)
+    import paths
+    return paths.conf()
+
+
+def project_answers(project, conf=None):
+    """The project's stored answers as a dict, or None when there are none (or they cannot be read)."""
+    if not project or not NAME_RE.match(project):
+        return None
+    try:
+        with open(os.path.join(conf or _conf(), "projects", project + ".json")) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def accepted(project, surface, conf=None):
+    """The project's models.accept_no_barrier.<surface> record {by, at, reason}, or None. A record that is not exactly that
+    (a hand edit) is no acceptance."""
+    models = (project_answers(project, conf) or {}).get("models")
+    rec = ((models or {}).get("accept_no_barrier") or {}).get(surface) if isinstance(models, dict) and isinstance(models.get("accept_no_barrier"), dict) else None
+    if isinstance(rec, dict) and set(rec) == {"by", "at", "reason"} and all(isinstance(v, str) and v.strip() for v in rec.values()):
+        return rec
+    return None
+
+
+def accept_command(provider, surface, project=None):
+    return 'qargi provider accept %s --surface %s --no-barrier --project %s --asked "<your words>"' % (provider, surface, project or "PROJECT")
+
+
+def require_barrier(provider, surface, project=None, root=None, conf=None):
+    """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
+    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command)."""
+    v = effective(provider, surface, "read_only_barrier", root)
+    if v == "yes":
+        return "yes", ""
+    d = load(provider, root)
+    cell = (((d.get("capabilities") or {}).get("read_only_barrier") or {}).get(surface)) or {}
+    if v == "partial":
+        return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
+    if accepted(project, surface, conf):
+        return "accepted", ""
+    why = "not supported" if cell.get("value") == "no" or surface not in (d.get("surfaces") or []) else "not verified, so it counts as not supported"
+    return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
+                       "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
+                       % (provider, surface, why, accept_command(provider, surface, project)))
+
+
+def cmd_require_barrier(provider, surface, project):
+    if surface not in SURFACES:
+        raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
+    state, text = require_barrier(provider, surface, project)
+    if state == "refused":
+        print("qargi: " + text, file=sys.stderr)
+        return 2
+    if state == "partial":
+        print("qargi: note: " + text, file=sys.stderr)
+    return 0
+
+
+def cmd_effective(provider, surface, capability):
+    if surface not in SURFACES:
+        raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
+    if surface not in (load(provider).get("surfaces") or []):
+        raise ProviderError("the provider %s does not list the surface %s" % (provider, surface))
+    print(effective(provider, surface, capability))
+    return 0
+
+
 # ---- the verbs --------------------------------------------------------------------------------------------------------
 
 def _count(n, word):
@@ -340,11 +424,16 @@ def cmd_check(name):
 
 
 def main(argv):
-    usage = "usage: qargi provider list | show NAME [--json] | check NAME"
+    usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
+             "[--approved WORDS] [--plan TOKEN]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
     verb, rest = argv[0], argv[1:]
+    if verb == "accept":                          # plan, token, audit line and the write to the answers are shell (lib.sh)
+        sh = os.path.join(HERE, "provider.sh")
+        sys.stdout.flush()
+        os.execv(sh, [sh, "accept"] + rest)
     try:
         if verb == "list" and not rest:
             return cmd_list()
@@ -353,6 +442,10 @@ def main(argv):
             return cmd_show(pos[0], "--json" in rest)
         if verb == "check" and len(rest) == 1:
             return cmd_check(rest[0])
+        if verb == "effective" and len(rest) == 3:
+            return cmd_effective(rest[0], rest[1], rest[2])
+        if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
+            return cmd_require_barrier(rest[0], rest[1], rest[3] if len(rest) == 4 else None)
     except ProviderError as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
