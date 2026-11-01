@@ -56,9 +56,19 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
     directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
     records are a later feature);
+  - the verbs of the signed records: qargi marshal key|signers|resign (the lead's signing key, the allowed signers, a record signed
+    with the key), refused with their own reason; and a write to the allowed signers ($QARGI_STATE/marshal/<project>.signers, under
+    the marshal/ root above) or to the acceptance marks ($QARGI_STATE/features/.accepted-<project>.json, under features/), which the
+    refusal names;
   - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
-Not covered: code that writes a file itself (python -c, perl -e, node -e, a script written earlier and run), a glob
-that expands to a protected path, a path built from a variable the guard cannot see. A heredoc line that starts with a
+Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
+  credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
+  the Read, NotebookRead and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
+  globs and symbolic links are resolved, in a `<` redirection, an `--opt=path` and in the text of a `-c` program. A directory that holds the key
+  is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
+  look at it and stay allowed; the other credentials stay readable.
+Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
+names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see. A heredoc line that starts with a
 refused verb is refused even as text (use the Write tool for documents).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
@@ -69,7 +79,7 @@ hook with `onFailure` set to \"block\""), so agents/member.md sets `onFailure: "
 "Requires Claude Code v2.1.295 or later"; an older version does not enforce it). Frontmatter hooks of a project-level
 agent file run only after the workspace trust dialog is accepted (https://code.claude.com/docs/en/sub-agents): until
 then the subagent runs without this guard."""
-import json, os, re, shlex, sys
+import glob, json, os, re, shlex, sys
 
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
@@ -91,9 +101,15 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check")
+MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
+                   "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
+KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
+KEY_PREFIX = "marshal_"                                      # the lead's signing key and everything named like it in a credentials directory
+KEY_METADATA = {"ls", "stat", "test", "[", "[["}            # these only look at a file's existence and size, never at its content
+KEY_RECURSIVE = {"cp", "rsync", "tar", "grep", "egrep", "fgrep", "rg", "ag", "find", "zip", "7z", "7za", "7zr"}   # a directory named to these is read whole
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
@@ -282,6 +298,11 @@ class MemoryReason(MarshalReason):
     """A refusal about a memory tier: decide() prints it as it is (it carries its own advice)."""
 
 
+def conf_dirs(P, home):
+    """The configuration directories a qargi installation may keep its packs, credentials and install record in."""
+    return (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(), os.path.join(home, ".config", "qargi"))
+
+
 def protected_roots():
     """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -293,8 +314,7 @@ def protected_roots():
     # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     roots = {os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
-    for conf in (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(),
-                 os.path.join(home, ".config", "qargi")):
+    for conf in conf_dirs(P, home):
         roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
     roots.add(os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config"), "anthropic"))   # the ant profiles and logins
     # the installed copy of the tool: ~/.claude/skills/qargi-* are links into it, and a write through such a link resolves
@@ -380,8 +400,15 @@ def refusal_text(what, dest, root):
     """The sentence for a refused write: the generic one, or for the claude render and the marshal's records the reason."""
     if root in journal_roots() or journal_sibling(root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
+    name = os.path.basename(dest.rstrip("/"))
+    if root in feature_roots() and name.startswith(".accepted-"):
+        return MarshalReason("%s on %s would change %s, the marshal's acceptance marks (the newest signed record this machine has accepted, "
+                             "which a rollback is measured against); %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in switch_roots() and name.endswith(".signers"):
+        return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
+                             % (what, dest, root, MARSHAL_NOTE))
     if root in switch_roots():
         return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in memory_roots():
@@ -390,6 +417,79 @@ def refusal_text(what, dest, root):
         return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
                 "`qargi packs apply` and changed only by the lead" % (what, dest, root))
     return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (what, dest, root)
+
+
+# --- the signing key: a read of it is refused (a read of the other credentials stays allowed)
+
+_KEY_DIRS = []
+
+
+def key_dirs():
+    """The credentials directories (real paths) that may hold the lead's signing key, found like the protected roots (once per call of the hook)."""
+    if not _KEY_DIRS:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+        _KEY_DIRS.append({os.path.realpath(os.path.join(c, "credentials")) for c in conf_dirs(P, os.path.expanduser("~"))})
+    return _KEY_DIRS[0]
+
+
+def is_key(full):
+    return os.path.basename(full).startswith(KEY_PREFIX) and os.path.dirname(full) in key_dirs()
+
+
+def holds_key(full):
+    """True when the real path full is a credentials directory with a signing key in it, or a directory above one."""
+    return any(inside(d, full) and glob.glob(os.path.join(glob.escape(d), KEY_PREFIX + "*")) for d in key_dirs())
+
+
+def brace_expand(word, limit=64):
+    """The words a simple shell brace expression stands for (a{b,c}d -> abd, acd); one level per pass, at most limit words."""
+    words, out = [word], []
+    while words and len(out) < limit:
+        w = words.pop()
+        m = re.search(r"\{([^{}]*,[^{}]*)\}", w)
+        if not m:
+            out.append(w)
+        else:
+            words += [w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(",")]
+    return out
+
+
+def key_named(word, here, recursive):
+    """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
+    is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
+    `<path` redirection are read as their path too."""
+    cands = {word, word.lstrip("<"), word.split("=", 1)[-1]}
+    if word.startswith("-") and not word.startswith("--"):
+        cands.add(word[2:])
+    for c in cands:
+        if not c or c.startswith("-"):
+            continue
+        for b in brace_expand(os.path.expandvars(os.path.expanduser(c))):
+            if any(d + os.sep + KEY_PREFIX in b for d in key_dirs()):         # a path inside text, e.g. python -c "open('...')"
+                return b
+            paths = glob.glob(os.path.join(here, b))[:200] if re.search(r"[*?\[]", b) else []
+            for full in [os.path.realpath(os.path.join(here, b))] + [os.path.realpath(x) for x in paths]:
+                if is_key(full) or (recursive and holds_key(full)):
+                    return b
+    return None
+
+
+def key_refusal_text(prog, word, tool=None):
+    return MarshalReason("%s on %s would read the marshal's signing key (credentials/%s*); %s" % (tool or prog, word, KEY_PREFIX, KEY_NOTE))
+
+
+def key_read(toks, i, here):
+    """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program."""
+    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
+    if prog in KEY_METADATA:
+        return None
+    recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
+    for t in [toks[i]] + rest if any(d + os.sep + KEY_PREFIX in toks[i] for d in key_dirs()) else rest:    # a `;` in quoted code split it: its tail is a "program"
+        named = key_named(t, here, recursive)
+        if named:
+            return key_refusal_text(prog, named)
+    return None
 
 
 def in_clone(full):
@@ -428,6 +528,10 @@ def skill_refusal(tool, inp, cwd):
         fp = inp.get("file_path") or inp.get("notebook_path") or ""
         root = protected(resolve(cwd, fp)) if fp else None
         return refusal_text(tool, fp, root) if root else None
+    if tool in ("Read", "NotebookRead", "Grep"):         # the read tools: the signing key, alone or in a directory the search reaches
+        fp = inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
+        full = resolve(cwd, fp) if fp else ""
+        return key_refusal_text(tool, fp) if full and (is_key(full) or (tool == "Grep" and holds_key(full))) else None
     if tool != "Bash":
         return None
     return bash_skill_refusal(inp.get("command") or "", cwd, 0)
@@ -477,7 +581,7 @@ def bash_skill_refusal(command, here, depth):
             why = bash_skill_refusal(inner, here, depth + 1)
             if why:
                 return why
-        why = protected_write(toks, i, here)
+        why = protected_write(toks, i, here) or key_read(toks, i, here)
         if why:
             return why
     return None
@@ -530,6 +634,8 @@ def skill_verb(prog, rest):
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
+    if area == "marshal" and verb in MARSHAL_SIGNING:
+        return MarshalReason("qargi marshal %s %s and is not available to an agent (only status and check are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
