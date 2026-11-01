@@ -3,11 +3,12 @@
 Hermetic: every changed descriptor is a copy in a temporary directory, never the user's data.
 Run: python3 tests/test_provider.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import copy, json, os, shutil, sys, tempfile, unittest
+import copy, json, os, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 LIB = os.path.join(ROOT, "lib")
+BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import provider as P  # noqa: E402
 
@@ -249,6 +250,187 @@ class Cap(Tree):
 
     def test_the_default_root_is_beside_provider_py(self):
         self.assertEqual(P.cap("claude", "local", "skills"), "yes")
+
+
+class Cli(Tree):
+    """The verbs, run from a copy of provider.py with its own providers/ (so a changed descriptor never touches lib/)."""
+
+    def setUp(self):
+        super().setUp()
+        self.copy = os.path.join(self.tmp, "lib")
+        os.makedirs(self.copy)
+        shutil.copy(os.path.join(LIB, "provider.py"), self.copy)
+        os.rename(self.root, os.path.join(self.copy, "providers"))
+        self.root = os.path.join(self.copy, "providers")
+        self.put("claude", CLAUDE)
+
+    def run_cli(self, *args):
+        r = subprocess.run([sys.executable, "-I", os.path.join(self.copy, "provider.py")] + list(args), capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+
+    def other(self, mutate, name="other"):
+        d = descriptor()
+        d["provider"] = name
+        mutate(d)
+        self.put(name, d)
+
+    def test_list_has_one_line_per_provider_with_surfaces_and_state(self):
+        rc, out, _ = self.run_cli("list")
+        self.assertEqual(rc, 0)
+        lines = out.strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        n = len(warns(CLAUDE))
+        self.assertEqual(lines[0].split(), ["claude", "local,cloud", "%d" % n, "warnings"])
+
+    def test_list_says_clean_for_a_clean_descriptor_and_counts_failures(self):
+        def verify(d):
+            for t in d["tier_detail"].values():
+                t["verified_on"] = "2026-10-31"
+            for cap in d["capabilities"].values():
+                for c in cap.values():
+                    c["verified_on"] = "2026-10-31"
+        self.other(verify, "tidy")
+        self.other(lambda d: d.update(extra=1, surfaces=["local"]), "broken")
+        rc, out, _ = self.run_cli("list")
+        rows = {ln.split()[0]: ln.split()[1:] for ln in out.strip().splitlines()}
+        self.assertEqual(rc, 0)
+        self.assertEqual(list(rows), ["broken", "claude", "tidy"])
+        self.assertEqual(rows["tidy"], ["local,cloud", "clean"])
+        self.assertEqual(rows["broken"][0], "local")
+        self.assertEqual(rows["broken"][-1], "failures")
+
+    def test_list_does_not_show_schema_json(self):
+        self.assertNotIn("schema", self.run_cli("list")[1])
+
+    def test_list_with_an_argument_is_a_usage_error(self):
+        self.assertEqual(self.run_cli("list", "x")[0], 2)
+
+    def test_show_prints_tiers_effort_and_the_matrix(self):
+        rc, out, _ = self.run_cli("show", "claude")
+        self.assertEqual(rc, 0)
+        self.assertRegex(out, r"fast\s+claude-haiku-5-5\s+alias haiku\s+verified: no")
+        self.assertRegex(out, r"frontier\s+claude-fable-5-1\s+alias fable")
+        self.assertRegex(out, r"xhigh\s+xhigh")
+        self.assertIn("per_dispatch_model_override", out)
+        self.assertRegex(out, r"local\s+yes\s+verified 2026-10-31\s+Agent tool model parameter overrides the definition")
+        self.assertRegex(out, r"cloud\s+yes\s+not verified, counts as no")
+        self.assertRegex(out, r"read_only_barrier\s*\n\s+local\s+partial")
+        self.assertRegex(out, r"cloud\s+no\s+verified 2026-10-31")
+
+    def test_show_json_is_the_descriptor(self):
+        rc, out, _ = self.run_cli("show", "claude", "--json")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out), CLAUDE)
+
+    def test_show_an_unknown_name_exits_1(self):
+        for a in (["show", "nope"], ["check", "nope"], ["show", "../claude"], ["check", "schema"]):
+            rc, out, err = self.run_cli(*a)
+            self.assertEqual(rc, 1, a)
+            self.assertIn("unknown provider", err)
+            self.assertEqual(out, "")
+
+    def test_show_and_check_without_a_name_is_a_usage_error(self):
+        self.assertEqual(self.run_cli("show")[0], 2)
+        self.assertEqual(self.run_cli("check")[0], 2)
+        self.assertEqual(self.run_cli()[0], 2)
+        self.assertEqual(self.run_cli("nonsense")[0], 2)
+
+    def test_check_of_a_valid_descriptor_exits_0_and_warns(self):
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.count("warn: "), len(warns(CLAUDE)))
+        self.assertIn("0 failures", out)
+        self.assertIn("warn: tier_detail.fast.verified_on: not verified", out)
+
+    def test_check_says_what_degrades_on_each_surface(self):
+        out = self.run_cli("check", "claude")[1]
+        self.assertRegex(out, r"local: per_dispatch_effort_override\s+unverified \(counts as no\)")
+        self.assertRegex(out, r"cloud: per_dispatch_model_override\s+unverified \(counts as no\)")
+        self.assertRegex(out, r"local: session_budget_ceiling\s+no")
+        self.assertRegex(out, r"cloud: read_only_barrier\s+no")
+        self.assertNotRegex(out, r"local: per_dispatch_model_override")
+        self.assertNotRegex(out, r"local: read_only_barrier")
+
+    def test_a_cloud_read_only_barrier_of_no_means_review_cannot_be_served_there(self):
+        out = self.run_cli("check", "claude")[1]
+        self.assertIn("the review role cannot be served on cloud", out)
+        self.assertNotIn("cannot be served on local", out)
+
+    def test_an_unverified_read_only_barrier_cannot_serve_review_either(self):
+        def mutate(d):
+            d["capabilities"]["read_only_barrier"]["cloud"].update(value="yes", verified_on=None)
+        self.other(mutate)
+        out = self.run_cli("check", "other")[1]
+        self.assertRegex(out, r"cloud: read_only_barrier\s+unverified \(counts as no\)")
+        self.assertIn("the review role cannot be served on cloud", out)
+
+    def test_a_verified_read_only_barrier_on_both_surfaces_serves_review(self):
+        def mutate(d):
+            d["capabilities"]["read_only_barrier"]["cloud"].update(value="yes")
+        self.other(mutate)
+        out = self.run_cli("check", "other")[1]
+        self.assertNotIn("cannot be served", out)
+
+    def test_both_surfaces_without_a_barrier_print_both_lines(self):
+        def mutate(d):
+            d["capabilities"]["read_only_barrier"]["local"].update(value="no")
+        self.other(mutate)
+        out = self.run_cli("check", "other")[1]
+        self.assertIn("the review role cannot be served on local", out)
+        self.assertIn("the review role cannot be served on cloud", out)
+
+    def test_a_provider_that_lists_only_local_is_not_judged_on_cloud(self):
+        def mutate(d):
+            d["surfaces"] = ["local"]
+            for cap in d["capabilities"].values():
+                cap.pop("cloud", None)
+        self.other(mutate)
+        rc, out, _ = self.run_cli("check", "other")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("cloud", out)
+
+    def test_check_fails_with_exit_1_on_each_kind_of_violation(self):
+        cases = {
+            "additional": lambda d: d.update(extra=1),
+            "name": lambda d: d.update(provider="elsewhere"),
+            "tier": lambda d: d["tier_detail"].pop("deep"),
+            "capability": lambda d: d["capabilities"].update(teleport={}),
+            "pattern": lambda d: d.update(model_pattern="^zzz"),
+            "tiers": lambda d: d["tiers"].update(fast="claude-other"),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label):
+                self.other(mutate, "other")
+                rc, out, _ = self.run_cli("check", "other")
+                self.assertEqual(rc, 1)
+                self.assertRegex(out, r"fail: ")
+                self.assertNotRegex(out, r"\b0 failures")
+
+    def test_check_of_broken_json_exits_1(self):
+        with open(os.path.join(self.root, "bad.json"), "w") as f:
+            f.write("{")
+        rc, _, err = self.run_cli("check", "bad")
+        self.assertEqual(rc, 1)
+        self.assertIn("not readable JSON", err)
+
+    def test_through_qargi_itself(self):
+        env = dict(os.environ, QARGI_CONF=os.path.join(self.tmp, "conf"), QARGI_STATE=os.path.join(self.tmp, "state"), HOME=os.path.join(self.tmp, "home"))
+        os.makedirs(env["HOME"])
+
+        def q(*a):
+            r = subprocess.run([BIN, "provider"] + list(a), capture_output=True, text=True, env=env)
+            return r.returncode, r.stdout, r.stderr
+        rc, out, _ = q("list")
+        self.assertEqual(rc, 0)
+        self.assertRegex(out, r"^claude\s+local,cloud\s+\d+ warnings")
+        rc, out, _ = q("show", "claude")
+        self.assertEqual(rc, 0)
+        self.assertIn("claude-haiku-5-5", out)
+        rc, out, _ = q("check", "claude")
+        self.assertEqual(rc, 0)
+        self.assertIn("the review role cannot be served on cloud", out)
+        self.assertEqual(q("check", "nope")[0], 1)
+        self.assertEqual(json.loads(q("show", "claude", "--json")[1]), CLAUDE)
 
 
 if __name__ == "__main__":
