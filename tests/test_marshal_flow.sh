@@ -148,12 +148,11 @@ prep bob feature/p2 pt3; rc=$?
 prep bob develop pt4; rc=$?
 [ $rc = 0 ] && ! grep -qi "lead" "$T/e" && ok "prepare: --base develop is unaffected" || no "prepare develop: rc=$rc $(out)"
 
-# --- a feature that does not exist is refused by the gate; start still makes a brand-new one
+# --- a feature that does not exist is refused by the gate; start still makes a brand-new one; need_free says how to free a branch
 run $F merge nosuch-$$ agent/t3; rc=$?
 [ $rc = 1 ] && grep -q "qargi: no feature nosuch-$$ in app (no branch feature/nosuch-$$ and no record)" "$T/e" && ok "gate: a feature without branch and record is refused (exit 1, message shown)" || no "SPEC gate unknown feature: rc=$rc $(out)"
 run $F start brandnew-$$; rc=$?
 [ $rc = 0 ] && git -C "$R" rev-parse -q --verify "feature/brandnew-$$" >/dev/null && ok "start: a brand-new name still works" || no "SPEC start new name: rc=$rc $(out)"
-
 mkfeat held1 alice; git -C "$R" worktree add -q "$T/held-wt" feature/held1
 run $F merge held1 agent/t3; rc=$?
 [ $rc != 0 ] && grep -q "checked out in $T/held-wt" "$T/e" && grep -q "checkout --detach" "$T/e" && ok "need_free: the message says how to free the branch (checkout --detach)" || no "SPEC need_free message: rc=$rc $(out)"
