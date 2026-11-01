@@ -443,6 +443,27 @@ XE a marshal finish dn1 --as alice; rc=$?
   || no "finish with an invalid done/dn1 must refuse clearly (rc=$rc): $(out)"
 OG update-ref -d refs/qargi/done/dn1
 
+# ============================================================ (20) wrong types in a remote record never crash a reader
+for spec in 'tnull|.status = null' 'tnum|.status = 5' 'tlist|.status = ["a"]' 'pnum|.purpose = 5' 'rnum|.renewed_at = 5' 'fnum|.finished_at = [1]'; do
+  plant "refs/qargi/features/${spec%%|*}" "$(tree 100644 blob "$(blob "$(VALID "${spec%%|*}" | jq -c "${spec#*|}")")" record.json)"
+done
+plant refs/qargi/features/wgood "$(tree 100644 blob "$(blob "$(VALID wgood | jq -c '.lead.id = "dora"')")" record.json)"
+XE b marshal status --all --brief; rc1=$?; cp "$T/o" "$T/o.brief"; cp "$T/e" "$T/e.brief"
+XE b marshal status --all --json; rc2=$?; jq -e . "$T/o" >/dev/null 2>&1; js=$?
+XE b marshal check --as bob; rc3=$?
+cat "$T/e.brief" "$T/e" > "$T/e.all"
+hk=$(printf '{"session_id":"s3"}' | env HOME="$T/m/b/home" QARGI_CONF="$T/m/b/c" QARGI_STATE="$T/m/b/s" bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+if [ $rc1 = 0 ] && [ $rc2 = 0 ] && [ $js = 0 ] && [ $rc3 = 0 ] && ! grep -q Traceback "$T/e.all" && grep -q '^wgood ' "$T/o.brief" && ! grep -q mallory "$T/o.brief" \
+   && printf '%s' "$hk" | jq -e '.hookSpecificOutput.additionalContext | strings' >/dev/null 2>&1; then
+  ok "wrong types: status --brief/--json, check and the session hook still work (exit 0, no traceback), the valid record is listed"
+else no "SPEC no read verb may exit 70 on remote data: brief rc=$rc1, json rc=$rc2 (valid json: $js), check rc=$rc3, hook: ${hk:0:120}: $(head -c 600 "$T/e.all")"; fi
+miss=''
+for n in tnull tnum tlist pnum rnum fnum; do
+  grep -qi warn "$T/e.all" && grep -qF -e "refs/qargi/features/$n" "$T/e.all" && ! grep -q "^$n " "$T/o.brief" || miss="$miss $n"
+done
+[ -z "$miss" ] && ok "wrong types: a status that is not a known one and a purpose, renewed_at or finished_at that is not text are ignored with a warning naming the ref" || no "SPEC wrong-typed records must be ignored with a warning; not ignored/named:$miss (stderr: $(head -c 800 "$T/e.all"))"
+for n in tnull tnum tlist pnum rnum fnum wgood; do OG update-ref -d "refs/qargi/features/$n"; done
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
