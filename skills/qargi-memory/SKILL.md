@@ -77,7 +77,42 @@ Rules for agents: write only under `roles/<your role>/` of the memory store. `sh
 curated, written by promotion (`qargi canon promote --approved`) or by the person; propose a
 shared note in your report, never write it.
 
-Slice 1 is read-only: no tier is written, there is no `memory init` or `memory move`, the
-SessionStart hook does not compose the tiers yet, and there are no remote shares.
+- `qargi memory init TIER [--project P] [--plan TOKEN --approved "..."]` creates the tier
+  `repo`, `project`, `shared` or `system` as an empty store of the standard layout (the
+  `shared` and `system` tiers carry `project: shared` and `project: system` in their marker).
+  Without `--approved` it prints the plan, a plan token and, for `repo`, a warning, and
+  changes nothing; apply exactly that plan with `--plan TOKEN --approved "..."`. It refuses
+  (exit 1, nothing changed): `cloud` (`qargi provision` creates that one), invalid answers,
+  a `repo` tier without a repository or outside its checkout, a location that is or nests
+  with another tier's, and a non-empty directory that is not a canon-2 store. A tier that
+  is already set up says so and exits 0.
+- `qargi memory move PATH --from TIER --to TIER [--project P] [--plan TOKEN --approved "..."]`
+  moves notes between two tiers that both exist with the current marker. PATH is one note
+  (ending in `.md`) or a prefix under `/shared/` or `/roles/<role>/` that selects notes only,
+  never indexes, tools, `_archive/` or `_conflicts/`. Nothing is deleted: each copy records
+  `copied from tier-FROM:PATH@hash` in `Sources:`, the original goes to `/_archive/<date>/`
+  of the first tier, and the index row moves with the note. The plan is shown and
+  tokened as for `init`, and a tier whose notes changed since the plan is refused (plan
+  again). It refuses a path that is also held by a third tier (resolve it with
+  `qargi memory check`), a note that already differs in the target, and a missing tier.
+  An unreachable third tier only warns that collisions with it were not checked. A move
+  to or from the cloud tier writes the target first and is not atomic across stores: if it
+  stops half way, plan again.
 
-`qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the lead role's READMEs and indexes from both stores (about 4K characters) and nothing else; notes are read on demand.
+qargi never commits the repo tier. `init` and `move` write into the repository checkout and
+leave the files uncommitted: the lead reviews and commits them, or ignores them in git.
+Dispatched agents see only the committed copy.
+
+The SessionStart hook composes the tiers. Its text lists the tiers, highest first, with
+location and state; then the README from the highest tier that has one; then for each tier
+its indexes and the notes its indexes mark `always` for the role; then the reference store's.
+Each file is capped (4000 characters), the whole is capped (16000), and what did not fit,
+was not UTF-8 or could not be reached is listed as `not loaded`; read it with `qargi memory
+get` or from the tier's directory. Cloud reads have short timeouts, a missing `ant` marks
+the cloud tier unreachable and the directory tiers still load, and a repo tier with
+uncommitted changes adds a warning.
+
+Agents never run `init` or `move` (the guard refuses them) and still write only under
+`roles/<their role>/`; they propose changes in their report and the lead files them.
+
+`qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the memory tiers and the reference store as described above (a README, the indexes and the `always` notes, capped); other notes are read on demand.
