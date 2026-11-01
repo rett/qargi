@@ -2,14 +2,23 @@
 """Attach qargi to an existing repository without changing it.
 
   attach.py detect DIR [--name N] [--methodology M]    print JSON: what was found, the draft answers, the gaps, the questions
+  attach.py adopt-plan PROJECT ANSWERS [--methodology M]   print JSON: the safe gaps `qargi project adopt` would close (reads only)
+  attach.py adopt-apply PROJECT ANSWERS < PLAN          create what that plan lists (stdin is the plan adopt-plan printed)
 
-It only reads DIR (files and `git` queries). The draft answers are what `qargi project init` would store; the gaps are what
-the chosen methodology has that the repository lacks (adopting them is a separate, reviewed change); the questions are the
-facts it could not determine. Nothing is written here, and nothing about the project goes into its repository.
+detect only reads DIR (files and `git` queries). The draft answers are what `qargi project init` would store; the gaps are what
+the chosen methodology has that the repository lacks (`qargi project adopt` closes the safe ones, as a branch to review); the
+questions are the facts it could not determine. Nothing is written by detect or adopt-plan, and nothing about the project goes
+into its repository.
+
+adopt-apply writes exactly two kinds of thing: local branches that did not exist (git branch, never -f), and one commit of
+files that did not exist, made with git plumbing in a temporary index on a new branch, so the checked-out branch, the index
+and the working tree are never touched. It refuses (exit 2) a member run, an unattached project, a repository with no commit,
+a detached HEAD and a dirty working tree.
 """
-import json, os, re, subprocess, sys
+import hashlib, json, os, re, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import marshal_refs as MR  # noqa: E402  (in_member_run)
 import methodology as M  # noqa: E402
 import provider as PV  # noqa: E402
 
@@ -222,7 +231,174 @@ def detect(d, name=None, methodology="gitflow"):
     return {"found": found, "answers": answers, "gaps": gaps, "questions": questions, "methodology": methodology}
 
 
+class Refuse(Exception):
+    """A precondition of adopt that does not hold: exit 2 with the message."""
+
+
+def adopt_checks(answers_file, project):
+    """(answers, repository directory): the stored answers of the project and the repository they name, after every refusal."""
+    if MR.in_member_run():
+        raise Refuse("project adopt is not available in a member run: a member never changes the branches of a repository outside its clone; the lead does")
+    try:
+        answers = json.load(open(answers_file))
+    except (OSError, ValueError):
+        raise Refuse("project %s is not attached: nothing is stored for it (qargi project attach DIR first)" % project)
+    path = (answers.get("repo") or {}).get("path") or ""
+    top = git(path, "rev-parse", "--show-toplevel") if path and os.path.isdir(path) else ""
+    if not top:
+        raise Refuse("project %s: repo.path %r is not a git repository (qargi project attach DIR --force)" % (project, path))
+    top = os.path.realpath(top)
+    if not git(top, "rev-parse", "--verify", "-q", "HEAD^{commit}"):
+        raise Refuse("%s has no commit yet: there is no tip to create branches from" % top)
+    if not git(top, "symbolic-ref", "-q", "HEAD"):
+        raise Refuse("%s has a detached HEAD: check out a branch first" % top)
+    if git(top, "status", "--porcelain"):
+        raise Refuse("%s has uncommitted changes (or untracked files): commit, stash or remove them first" % top)
+    return answers, top
+
+
+def ref_sha(d, name):
+    """(full ref, sha) of branch NAME: the local one, else origin's, else ('', '')."""
+    for full in ("refs/heads/" + name, "refs/remotes/origin/" + name):
+        sha = git(d, "rev-parse", "--verify", "-q", full + "^{commit}")
+        if sha:
+            return full, sha
+    return "", ""
+
+
+def default_branch_tip(d):
+    """(name, sha) of the repository's default branch: origin's HEAD, else master, main, trunk; else the checked-out branch."""
+    dflt = git(d, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD").replace("origin/", "", 1)
+    for b in ([dflt] if dflt else []) + ["master", "main", "trunk"]:
+        full, sha = ref_sha(d, b)
+        if sha:
+            return b, sha
+    cur = git(d, "symbolic-ref", "--short", "-q", "HEAD")
+    return cur, git(d, "rev-parse", "HEAD^{commit}")
+
+
+def adopt_plan(project, answers_file, methodology=None):
+    answers, d = adopt_checks(answers_file, project)
+    methodology = methodology or answers.get("methodology") or "gitflow"
+    where, md, m = M.load(methodology)
+    long_lived = (m.get("branches") or {}).get("long_lived", [])
+    det = detect(d, project, methodology)
+    found = det["found"]
+    base_name, base_sha = default_branch_tip(d)
+    heads = git(d, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").splitlines()
+
+    def sha_of(b):   # the commit of a long-lived branch (local, else origin's; main stands for master), or ""
+        return ref_sha(d, b)[1] or (ref_sha(d, "main")[1] if b == "master" else "")
+
+    # a branch that exists only as origin's is present: it is never created or moved here
+    branches = [{"name": b, "from": base_name, "sha": base_sha} for b in long_lived if not sha_of(b)]
+    integ = long_lived[-1] if long_lived else base_name
+    integ_sha = sha_of(integ) or base_sha
+    adopt_branch = "agent/adopt-" + methodology
+    adopt_exists = bool(git(d, "rev-parse", "--verify", "-q", "refs/heads/" + adopt_branch) or git(d, "rev-parse", "--verify", "-q", "refs/remotes/origin/" + adopt_branch))
+    tree = Tree(d, integ_sha)
+    lower = {p.lower() for p in tree.files | tree.dirs}
+    params = {"project": project}
+    if answers.get("test_command") and "test_command" in (m.get("params") or {}) and "\n" not in answers["test_command"]:
+        params["test_command"] = answers["test_command"]
+    versioning, ci = m.get("versioning") or {}, m.get("ci") or {}
+    files, skipped = [], []
+    for item in M.render(methodology, params):
+        dest = item["dest"]
+        parts = dest.split("/")
+        prefixes = ["/".join(parts[:i]) for i in range(1, len(parts))]
+        why = ""
+        if tree.exists(dest):
+            continue
+        if any(p in tree.files for p in prefixes):
+            why = "a file is in the way of its directory"
+        elif dest.lower() in lower:
+            why = "a path that differs only in letter case exists"
+        elif dest == versioning.get("file") and found["version"]:
+            why = "the version is kept in %s" % found["version"]["file"]
+        elif dest == versioning.get("changelog") and found["changelog"]:
+            why = "the changelog is %s" % found["changelog"]["file"]
+        elif dest == ci.get("file") and found["ci_workflows"]:
+            why = "CI workflows exist (%s)" % ", ".join(found["ci_workflows"])
+        elif os.path.splitext(dest)[0].lower() in ("readme", "changelog", "license") and any(
+                os.path.splitext(p)[0].lower() == os.path.splitext(dest)[0].lower() for p in tree.files if "/" not in p):
+            why = "the same document exists under another name"
+        if why:
+            skipped.append({"what": dest, "why": why})
+        else:
+            files.append(item)
+    if adopt_exists:
+        files = []
+    left = [g for g in det["gaps"] if g["kind"] in ("format", "tags", "ci")]
+    left += [{"kind": "file", "what": x["what"], "why": "not written: " + x["why"]} for x in skipped]
+    if any(f["dest"] == ci.get("file") for f in files):   # the template replaces the "no CI" gap; its content is still the owner's to judge
+        left = [g for g in left if g["kind"] != "ci"] + [{"kind": "ci", "what": ci["file"], "why": "written from the template: check that its steps fit this project"}]
+    basis = {
+        "project": project, "methodology": methodology, "repo": d, "base": {"name": base_name, "sha": base_sha},
+        "heads": sorted(heads), "integration": {"name": integ, "sha": integ_sha},
+        "branches": [{"name": x["name"], "sha": x["sha"]} for x in branches], "adopt_branch": adopt_branch, "adopt_exists": adopt_exists,
+        "files": [{"dest": f["dest"], "sha256": hashlib.sha256(f["content"].encode()).hexdigest()} for f in files],
+    }
+    return {"project": project, "methodology": methodology, "path": d, "base": basis["base"], "integration": basis["integration"],
+            "branches": branches, "adopt_branch": adopt_branch, "adopt_exists": adopt_exists, "files": files, "skipped": skipped, "left": left,
+            "nothing_to_do": not branches and not files, "basis": basis}
+
+
+def gitw(d, *args, env=None, data=None):
+    e = dict(os.environ)
+    e.update(env or {})
+    r = subprocess.run(["git", "-C", d] + list(args), capture_output=True, input=data, env=e)
+    if r.returncode != 0:
+        hint = " (is a git user.name and user.email set? nothing was created)" if args[0] == "commit-tree" else ""
+        raise SystemExit("qargi: git %s failed: %s%s" % (args[0], r.stderr.decode("utf-8", "replace").strip().splitlines()[0] if r.stderr.strip() else "", hint))
+    return r.stdout.decode("utf-8", "replace").strip()
+
+
+def adopt_apply(project, answers_file, plan):
+    answers, d = adopt_checks(answers_file, project)
+    if os.path.realpath(plan["path"]) != d:
+        raise SystemExit("qargi: the plan is for %s, not %s" % (plan["path"], d))
+    commit = ""
+    if plan["files"]:
+        # the commit first (objects only): if it cannot be made (no git identity) no branch has been created yet
+        idx = tempfile.mkdtemp(prefix="qargi-adopt-")
+        env = {"GIT_INDEX_FILE": os.path.join(idx, "index")}
+        try:
+            gitw(d, "read-tree", plan["integration"]["sha"], env=env)
+            for f in plan["files"]:
+                blob = gitw(d, "hash-object", "-w", "--stdin", data=f["content"].encode())
+                gitw(d, "update-index", "--add", "--cacheinfo", "100644,%s,%s" % (blob, f["dest"]), env=env)
+            tree = gitw(d, "write-tree", env=env)
+            msg = "Add the %s scaffold files that this project lacks\n\nWritten by qargi project adopt on a branch of its own, for review. Only files that\n" \
+                  "did not exist were added; no existing file was changed:\n\n%s\n" % (plan["methodology"], "\n".join("  " + f["dest"] for f in plan["files"]))
+            commit = gitw(d, "commit-tree", tree, "-p", plan["integration"]["sha"], "-m", msg)
+        finally:
+            subprocess.run(["rm", "-rf", idx])
+    for b in plan["branches"]:
+        gitw(d, "branch", "--no-track", b["name"], b["sha"])   # no -f: an existing branch makes this fail
+    if commit:
+        gitw(d, "branch", "--no-track", plan["adopt_branch"], commit)
+    return {"commit": commit, "branches": [b["name"] for b in plan["branches"]]}
+
+
 def main(argv):
+    if argv and argv[0] in ("adopt-plan", "adopt-apply"):
+        if len(argv) < 3:
+            raise SystemExit("usage: attach.py %s PROJECT ANSWERS [--methodology M]" % argv[0])
+        meth = None
+        if len(argv) == 5 and argv[3] == "--methodology":
+            meth = argv[4]
+        elif len(argv) != 3:
+            raise SystemExit("qargi: unknown option %s" % argv[3])
+        try:
+            if argv[0] == "adopt-plan":
+                print(json.dumps(adopt_plan(argv[1], argv[2], meth), indent=2, sort_keys=True))
+            else:
+                print(json.dumps(adopt_apply(argv[1], argv[2], json.load(sys.stdin)), sort_keys=True))
+        except Refuse as e:
+            print("qargi: %s" % e, file=sys.stderr)
+            sys.exit(2)
+        return
     if len(argv) < 2 or argv[0] != "detect":
         raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M]")
     d, name, meth, i = argv[1], None, "gitflow", 2
