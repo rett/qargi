@@ -344,5 +344,147 @@ class AgentAdd(Tree):
         self.assertEqual(pinned, {"forge": False, "judge": False})
 
 
+class Derived(Tree):
+    """What was hardcoded for claude now follows the descriptor of the project's provider (models.provider, default claude)."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = dict(os.environ, HOME=os.path.join(self.tmp, "home"), QARGI_CONF=os.path.join(self.tmp, "c"), QARGI_STATE=os.path.join(self.tmp, "s"))
+        os.makedirs(os.path.join(self.env["HOME"]))
+        os.makedirs(os.path.join(self.env["QARGI_CONF"], "projects"))
+        os.makedirs(os.path.join(self.tmp, "bin"))
+        with open(os.path.join(self.tmp, "bin", "ant"), "w") as f:         # a fake ant: logged in, empty lists
+            f.write('#!/usr/bin/env bash\ncase "$1" in auth) exit 0;; *) echo "{}";; esac\n')
+        os.chmod(os.path.join(self.tmp, "bin", "ant"), 0o755)
+        self.env["PATH"] = os.path.join(self.tmp, "bin") + os.pathsep + self.env["PATH"]
+
+    def other(self):
+        """A provider whose ids look nothing like the claude ones."""
+        def mutate(d):
+            d["provider"] = "zeta"
+            d["adapter"] = None
+            d["model_pattern"] = "^zeta-[0-9]+$"
+            d["aliases"] = {"fast": "z1", "balanced": "z2", "deep": "z3", "frontier": "z4"}
+            for i, t in enumerate(("fast", "balanced", "deep", "frontier"), 1):
+                d["tier_detail"][t].update(model="zeta-%d" % i, alias="z%d" % i)
+                d["tiers"][t] = "zeta-%d" % i
+        self.descriptor(mutate, name="zeta")
+
+    def qargi(self, *args):
+        r = subprocess.run([os.path.join(self.tool, "bin", "qargi")] + list(args), capture_output=True, text=True, env=self.env)
+        return r.returncode, r.stdout + r.stderr
+
+    def answers(self, provider=None):
+        rc, out = self.qargi("project", "template", "demo")
+        self.assertEqual(rc, 0, out)
+        a = json.loads(out)
+        a["repo"]["url"] = "https://github.com/example/demo"
+        if provider:
+            a["models"] = {"provider": provider}
+        path = os.path.join(self.tmp, "answers.json")
+        with open(path, "w") as f:
+            json.dump(a, f)
+        return a, path
+
+    def validate(self, a):
+        path = os.path.join(self.tmp, "check.json")
+        with open(path, "w") as f:
+            json.dump(a, f)
+        return self.qargi("project", "validate", path)
+
+    def test_validate_names_the_balanced_model_of_the_default_provider_in_its_messages(self):
+        a, _ = self.answers()
+        self.assertEqual(self.validate(a)[0], 0)
+        a["roles"]["build"]["model"] = "gpt"
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 1)
+        self.assertIn("roles.build.model: a model id like claude-sonnet-5-5", out)
+        a["roles"]["build"]["model"] = "claude-sonnet-5-5"
+        a["profiles"] = {"tiny": {"base": "worker", "model": "gpt"}}
+        self.assertIn("profiles.tiny.model: haiku, sonnet, opus, fable or a model id like claude-sonnet-5-5", self.validate(a)[1])
+        a["profiles"] = {"tiny": {"base": "worker", "model": "fable"}}
+        self.assertEqual(self.validate(a)[0], 0)
+        a["profiles"] = {"tiny": {"base": "worker", "tier": "ultra"}}
+        self.assertIn("profiles.tiny.tier: one of fast, balanced, deep, frontier", self.validate(a)[1])
+        a.pop("profiles")
+        a["teams"] = {"duo": {"members": ["build", "write"]}}
+        self.assertIn("lead.model: a model id like claude-opus-5-5", self.validate(a)[1])
+
+    def test_validate_follows_the_model_pattern_and_aliases_of_the_projects_provider(self):
+        self.other()
+        a, _ = self.answers("zeta")
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 1)
+        self.assertIn("roles.build.model: a model id like zeta-2", out)
+        for r in a["roles"].values():
+            r["model"] = "zeta-7"
+        self.assertEqual(self.validate(a)[0], 0, self.validate(a)[1])
+        a["profiles"] = {"tiny": {"base": "worker", "model": "z3"}, "big": {"base": "worker", "model": "zeta-1"}}
+        self.assertEqual(self.validate(a)[0], 0, self.validate(a)[1])
+        a["profiles"] = {"tiny": {"base": "worker", "model": "sonnet"}}
+        self.assertIn("profiles.tiny.model: z1, z2, z3, z4 or a model id like zeta-2", self.validate(a)[1])
+
+    def test_an_unknown_provider_in_the_answers_validates_as_the_default_one(self):
+        a, _ = self.answers("nope")
+        self.assertEqual(self.validate(a)[0], 0)
+
+    def test_attach_proposes_the_balanced_model_of_the_descriptor(self):
+        repo = os.path.join(self.tmp, "widget")
+        subprocess.run(["git", "init", "-q", repo], check=True)
+        def detect():
+            r = subprocess.run([sys.executable, "-I", os.path.join(self.tool, "lib", "attach.py"), "detect", repo, "--name", "widget", "--methodology", "gitflow"],
+                               capture_output=True, text=True, env=self.env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return json.loads(r.stdout)
+        models = {r["model"] for r in detect()["answers"]["roles"].values()}
+        self.assertEqual(models, {"claude-sonnet-5-5"})
+        def mutate(d):
+            d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
+            d["tiers"]["balanced"] = "claude-sonnet-9-9"
+        self.descriptor(mutate)
+        self.assertEqual({r["model"] for r in detect()["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
+
+    def test_provision_defaults_to_the_balanced_model_of_the_projects_provider(self):
+        def agent_model(name):
+            rc, out = self.qargi("provision", "plan", name)
+            self.assertEqual(rc, 0, out)
+            with open(os.path.join(self.env["QARGI_STATE"], "provision", name, "agents", name, "agent.md")) as f:
+                return re.search(r"^  id: .*$", f.read(), re.M).group(0)
+        self.assertIn("claude-sonnet-5-5", agent_model("zed-build"))
+        def mutate(d):
+            d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
+            d["tiers"]["balanced"] = "claude-sonnet-9-9"
+        self.descriptor(mutate)
+        self.assertIn("claude-sonnet-9-9", agent_model("zed-build"))
+
+    def test_provision_names_a_project_provider_that_has_no_descriptor(self):
+        a, _ = self.answers("nope")
+        a["project"] = "zed"
+        for r in a["roles"].values():
+            r["model"] = ""
+        with open(os.path.join(self.env["QARGI_CONF"], "projects", "zed.json"), "w") as f:
+            json.dump(a, f)
+        rc, out = self.qargi("provision", "plan", "--project", "zed", "--role", "build")
+        self.assertEqual(rc, 1)
+        self.assertIn("models.provider 'nope' has no descriptor", out)
+
+
+class Hardcodes(unittest.TestCase):
+    def test_no_model_id_outside_the_descriptors_and_the_command_table(self):
+        pat = re.compile(r"claude-(haiku|sonnet|opus|fable)")
+        found = []
+        for top in ("lib", "bin"):
+            for dp, dn, fn in os.walk(os.path.join(ROOT, top)):
+                dn[:] = [d for d in dn if d != "__pycache__"]
+                for f in fn:
+                    p = os.path.join(dp, f)
+                    rel = os.path.relpath(p, ROOT)
+                    if rel.startswith("lib/providers/") or rel == "lib/commands.py":
+                        continue
+                    with open(p, errors="replace") as fh:
+                        found += ["%s:%d" % (rel, i) for i, ln in enumerate(fh, 1) if pat.search(ln)]
+        self.assertEqual(found, [])
+
+
 if __name__ == "__main__":
     unittest.main()

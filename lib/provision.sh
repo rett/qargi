@@ -82,7 +82,12 @@ TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
   ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
 fi
-MODEL=${MODEL:-claude-sonnet-5-5}; EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
+if [ -z "$MODEL" ]; then   # the balanced model of the project's provider (models.provider, default claude)
+  _prov=claude; [ ! -f "$PCFG" ] || _prov=$(jq -r '.models.provider // "claude" | tostring' "$PCFG" 2>/dev/null) || _prov=claude
+  printf '%s' "$_prov" | grep -Eq '^[a-z][a-z0-9-]*$' && [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
+  MODEL=$(jq -r '.tiers.balanced' "$here/providers/$_prov.json")
+fi
+EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
 ant_ok
