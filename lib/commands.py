@@ -467,6 +467,15 @@ COMMANDS = {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
             "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
                          [opt("--json", "machine-readable")]),
+            "accept": verb("Record that you accept a provider surface that has no read-only barrier", [("NAME", "none")],
+                           [opt("--surface", "the surface the acceptance covers", "SURFACE", ("local", "cloud")),
+                            opt("--no-barrier", "accept running the review role without a read-only barrier on that surface"),
+                            opt("--project", "the project whose answers record it (default: the project of the current directory)", "PROJECT", "project"),
+                            opt("--asked", "your words asking for it", "WORDS"), opt("--approved", "your words approving the plan", "WORDS"),
+                            opt("--plan", "the plan token printed without it", "TOKEN")],
+                           desc="Without --plan and --approved it prints what would be recorded and a plan token. Applied, it writes models.accept_no_barrier.SURFACE "
+                                "(who, when, why) to the project's answers and the audit log. It is the only way a provider surface whose read-only barrier "
+                                "is not supported can serve the review role."),
             "check": verb("Validate a descriptor and say what degrades", [("NAME", "none")],
                           desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
