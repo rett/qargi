@@ -34,5 +34,6 @@ Also STANDARDS (store paths the review judges against), MAX_ROUNDS and PROFILE.
   against its own base. The coordinator who dispatched you verifies and applies them.
 - Never decide what only the user can: a disputed or unresolved finding goes into the summary.
 - Members never push, and you never tell one to. You push only if your prompt has a Push section that grants it, and then only what it names; without that section you push nothing. Never read or plan from a backlog.
-- Memory: you may write verified how-to facts to the memory store under shared/ or roles/lead/;
-  members write under the folders of their abilities.
+- Memory: you may write verified how-to facts under roles/lead/ of the memory store and promote a
+  member's note to shared/ with qargi canon promote --approved; members write only under
+  roles/<their ability>/.

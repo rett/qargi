@@ -17,7 +17,7 @@ the role adds.
 - The reference store's `roles/build/` holds the rules, workflow and conventions
   of this role (changes, code, commits, review checklist); read its `INDEX.md`
   and load what the task needs. Durable how-to facts go to the memory store under
-  `roles/build/` or `shared/`.
+  `roles/build/`; a fact every role needs is proposed for `shared/` in your report.
 - Return numbered patches, one per commit, with `series.md` and the manifest. You
   never push.
 - Before DONE, follow "Before you report DONE" in the contract: lint, change-specific commits with bodies,
