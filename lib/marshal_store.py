@@ -256,9 +256,11 @@ def refs_mod():
 
 def sane(rec):
     """The store's own rules for a record read from the remote -> a reason to ignore it, or None."""
-    st = rec.get("status")
-    if st is not None and st not in STATUSES:
-        return "its status %r is unknown" % clean(str(st))[:40]
+    if "status" in rec and rec["status"] not in STATUSES:            # a null or a number is as unknown as a word
+        return "its status %r is unknown" % clean(str(rec["status"]))[:40]
+    for k in ("purpose", "renewed_at", "finished_at"):
+        if rec.get(k) is not None and not isinstance(rec[k], str):
+            return "its %s is not text" % k
     ld = rec.get("lead")
     if ld is not None and not (isinstance(ld, dict) and isinstance(ld.get("id"), str) and ID_RE.fullmatch(ld["id"])):
         return "its lead is not valid"
