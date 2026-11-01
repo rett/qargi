@@ -37,18 +37,19 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
 }
 
 # journaled REPO NAME OLD NEW -> 0 when the lead's ref journal ($DA_STATE/ref-journal.jsonl) explains the change of the local branch
-# NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch): there is at least one entry for this
-# repository and ref with epoch >= JSTART, the chain is unbroken (the first entry starts at OLD, each starts where the one before
-# ended) and its last entry ends at NEW. An unjournaled hand anywhere in the chain, or a value the journal does not name, is not
-# explained. Trusted only as far as the state directory is (the guard keeps an agent from writing it; same-user code could).
+# NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch): NEW is reachable from OLD by
+# following entries of this repository and ref with epoch >= JSTART, each from its old value to its new one. Entries that start
+# elsewhere (an earlier creation made in the same second as the run) are not on the path, and an unjournaled hand anywhere
+# breaks it, because no entry starts where the hand left the ref. Trusted only as far as the state directory is (the guard keeps
+# an agent from writing it; same-user code could).
 journaled() {
   local f=$DA_STATE/ref-journal.jsonl rp
   [ -n "$1" ] && [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
   rp=$(readlink -f "$1" 2>/dev/null) || rp=$1
   jq -sre --arg r "$rp" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
     [ .[] | select(type == "object" and .repo == $r and .ref == $n and ((.epoch // 0) >= $s)) ] as $e
-    | ($e | length) > 0 and $e[0].old == $o and $e[-1].new == $w
-      and ([range(1; $e | length) | select($e[.].old != $e[. - 1].new)] | length) == 0' "$f" >/dev/null 2>&1
+    | reduce range(0; ($e | length) + 1) as $i ([$o]; . as $seen | . + [ $e[] | select(.old as $x | $seen | index($x)) | .new ] | unique)
+    | ($w != $o) and (index($w) != null)' "$f" >/dev/null 2>&1
 }
 
 # compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
