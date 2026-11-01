@@ -942,6 +942,28 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RS
 .TP
+.B seed
+Add or update the baseline packs shipped with qargi in your library.
+.br
+qargi ships a few packs (packs/ in its tree). Seeding stores them in your library. Without \-\-approved it prints one line per pack (add, update, current or kept) and a plan token. A pack you edited and sealed, or one of your own with the same name, is kept and never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing reaches a project or an agent until you link it.
+.RS
+.TP
+.B \-\-install
+only add the packs the library lacks, without a token (install.sh \-\-user runs this).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
 .BI "check " "[PROJECT]"
 Check a Claude Code render for drift (read only).
 .br

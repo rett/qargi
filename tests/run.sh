@@ -40,6 +40,7 @@ run bash tests/test_project.sh
 run bash tests/test_local.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
+run bash tests/test_packs_seed.sh
 run bash tests/test_packs_claude.sh
 run bash tests/test_packs_claude_hostile.sh
 run bash tests/test_review.sh

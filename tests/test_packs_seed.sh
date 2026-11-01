@@ -52,7 +52,7 @@ empty_lib && ok "planning stores nothing" || no "planning stored: $(ls -A "$LIB/
 OUT=$($DA packs seed --plan 000000000000 --approved x 2>&1); RC=$?
 { [ "$RC" != 0 ] && empty_lib; } && ok "a wrong token is refused and stores nothing" || no "wrong token (rc=$RC)"
 OUT=$($DA packs seed --plan "$TOK" 2>&1); RC=$?
-{ [ "$RC" != 0 ] && empty_lib; } && ok "the right token without --approved is refused" || no "token without approval (rc=$RC)"
+empty_lib && ok "the right token without --approved stores nothing (it only shows the plan)" || no "token without approval stored something (rc=$RC)"
 
 # --- 3. apply: the library copy is the shipped one and records where it came from
 apply
@@ -145,8 +145,9 @@ OUT=$($DA packs seed --install 2>&1); RC=$?; [ "$RC" = 0 ] && ok "--install is r
 
 # --- 11. seeding creates no links
 fresh
-before=$(cat "$LIB/links.json"); apply
-{ [ "$(cat "$LIB/links.json")" = "$before" ] && [ "$(jq '.links|length' "$LIB/links.json")" = 0 ]; } && ok "seed leaves the links alone" || no "links changed: $(cat "$LIB/links.json")"
+nlinks() { jq '.links|length' "$LIB/links.json" 2>/dev/null || echo 0; }   # a fresh library may have no links file or an empty one
+before=$(nlinks); apply
+{ [ "$before" = 0 ] && [ "$(nlinks)" = 0 ]; } && ok "seed leaves the links alone" || no "links changed: $before -> $(nlinks)"
 $DA packs seed --install >/dev/null 2>&1; [ "$(jq '.links|length' "$LIB/links.json")" = 0 ] && ok "and so does --install" || no "install made links"
 
 # --- 12. an updated pack that is linked prints what to run next
