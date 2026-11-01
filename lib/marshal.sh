@@ -89,6 +89,9 @@ marshal_hold_start() { # PROJ NAME
 
 marshal_main() {
   set -eu
+  # the options of this call are the only source of the approval and the plan token; a value inherited from the environment is not
+  # (feature.sh and cred.sh do the same)
+  APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
   local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
        qargi marshal enable [--project P] [--plan TOKEN --approved WORDS] | disable [--project P]"
@@ -169,7 +172,7 @@ marshal_main() {
   if [ "$verb" = takeover ]; then
     local af rc=0
     af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
-    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED+--approved "$APPROVED"} || rc=$?
+    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED:+--approved "$APPROVED"} || rc=$?
     if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:takeover" "$(cat "$af")"; fi
     rm -f "$af"
     exit "$rc"
