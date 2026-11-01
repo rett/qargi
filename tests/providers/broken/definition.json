@@ -1,0 +1,4 @@
+{
+  "read-only": {"contains": ["qargi __guard --class read-only", "onFailure: \"block\""]},
+  "write": {"absent": ["--class read-only"]}
+}
