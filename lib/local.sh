@@ -12,9 +12,12 @@
 # (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
 # The run directory records the task's ability (RUN/ability, default build); under review the guard
 # (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
+# A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
+# is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time; never a repository path or a token), so `qargi report` can list the local runs.
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/marshal.sh"
 
 snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
   ( [ -z "${2:-}" ] || git_auth_env "$2"
@@ -99,6 +102,19 @@ render_warning() {
   return 0
 }
 
+# project_of REPO URL -> the stored project whose repo.path (or repo.url) is the one given; nothing when there is none
+project_of() {
+  local f rp ru
+  for f in "$DA_CONF"/projects/*.json; do
+    [ -f "$f" ] || continue
+    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
+    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
+    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
+    basename "$f" .json; return 0
+  done
+  return 0
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -117,7 +133,23 @@ case $verb in
     CLASS=$(role_class "$ABILITY")
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
-    case $BASE in master|develop) ;; esac
+    LEAD=''
+    case $BASE in
+      feature/?*)
+        MPROJ=$(project_of "$REPO" "$URL")
+        if [ -n "$MPROJ" ]; then
+          mrc=0; merr=$(mktemp "$DA_STATE/.marshal-gate.XXXXXX" 2>/dev/null) || merr=/dev/null
+          marshal_check "$MPROJ" "${BASE#feature/}" 2>"$merr" || mrc=$?
+          if [ "$merr" != /dev/null ]; then
+            cat "$merr" >&2
+            if [ "$mrc" = 1 ] && grep -q '^Traceback' "$merr"; then mrc=70; fi   # an exception also exits 1, but it is not a refusal
+            rm -f "$merr"
+          fi
+          [ "$mrc" -ne 1 ] || exit 1   # another live lead holds the feature: the message is printed, no run is made
+          [ "$mrc" -eq 0 ] || echo "qargi: warning: the marshal could not be asked (status $mrc); the run goes on" >&2
+          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.lead.id // empty' 2>/dev/null) || LEAD=''
+        fi;;
+    esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
@@ -155,8 +187,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" \
-      '{run:$r, slug:$s, ability:$a, base:$b, started:$t}' >> "$DA_STATE/local-runs.jsonl"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" \
+      '{run:$r, slug:$s, ability:$a, base:$b, started:$t, lead:(if $l == "" then null else $l end)}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
