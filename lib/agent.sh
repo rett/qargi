@@ -274,24 +274,29 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   fi
 }
 
-# the dispatch resolver, in jq (with $PJQ): one role, one profile -> the base member, model and effort, or an error with its exit code
-RESOLVEJQ='
-  def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
-  def serves($a): any((.abilities // [])[]; . == $a);
+# the dispatch resolver, in jq (with $PJQ): one role, one profile -> the base member, model and effort, or an error with its exit code.
+# RESOLVE_HEAD picks the profile and defines `refusal` (null, or the error of a profile that cannot run for this role); the local
+# resolver (RESOLVEJQ) and the cloud one (CLOUDJQ) both start from it, so they refuse the same profiles in the same words.
+RESOLVE_HEAD='
   [profiles | {key: .name, value: .}] | from_entries as $P
   | $d[0].bases as $bases
   | (if $rclass == "read-only" then "review" else "build" end) as $row
   | (if $prof != "" then $prof elif $P[$role] != null then $role else null end) as $want
   | (if $want != null then $want else $row end) as $pn
   | $P[$pn] as $p
-  | ($m[0] | to_entries | map(select((.value.project // null) == null or .value.project == $proj))
+  | def refusal:
+      if $p == null then {code: 1, err: "no profile named \($pn) (qargi agent models lists them)"}
+      elif $p.base == null then {code: 2, err: "the \($pn) profile has no base and is never dispatched"}
+      elif $p.refused != null then {code: 2, err: "the \($pn) profile is refused: \($p.refused)"}
+      elif $p.class != $rclass then {code: 2, err: "the \($role) role is \($rclass) but the \($pn) profile has base \($p.base), which is \($p.class); use a profile of a \($rclass) base"}
+      else null end;'
+RESOLVEJQ="$RESOLVE_HEAD"'
+  def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
+  def serves($a): any((.abilities // [])[]; . == $a);
+  ($m[0] | to_entries | map(select((.value.project // null) == null or .value.project == $proj))
       | sort_by((if (.value.project // "") == $proj and $proj != "" then 0 else 1 end), (.value.seq // 0))) as $E
   | def cands($a): [$E[] | select(.value | serves($a) and mclass == $rclass)];
-    if $p == null then {code: 1, err: "no profile named \($pn) (qargi agent models lists them)"}
-    elif $p.base == null then {code: 2, err: "the \($pn) profile has no base and is never dispatched"}
-    elif $p.refused != null then {code: 2, err: "the \($pn) profile is refused: \($p.refused)"}
-    elif $p.class != $rclass then {code: 2, err: "the \($role) role is \($rclass) but the \($pn) profile has base \($p.base), which is \($p.class); use a profile of a \($rclass) base"}
-    else
+    refusal // (
       ([$E[] | select(.key == $p.base and (.value | (any((.abilities // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $b
       | (if $b != null then {m: $b, legacy: false}
          else (cands($role)[0] // (if $row != $role then cands($row)[0] else null end)) as $l | if $l != null then {m: $l, legacy: true} else null end end) as $sel
@@ -300,7 +305,7 @@ RESOLVEJQ='
           profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
           base: $p.base, member: $sel.m.key, member_scope: (if $sel.m.value.project != null then "project" else "user" end), legacy: $sel.legacy,
           tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
-    end'
+    )'
 
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
   local role=$1 prof=$2 proj=$3 pf prov res code noeff=false mem mm want ov
