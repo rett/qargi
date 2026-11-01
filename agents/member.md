@@ -2,6 +2,7 @@
 name: {{NAME}}
 description: A qargi member for one task at a time (roles: {{ABILITIES}}). Works in its own clone and returns patches or a report. Dispatched only by /qargi-task or /qargi-team; never pushes.
 model: {{MODEL}}
+{{EFFORT_LINE}}
 tools: Bash, Read, Edit, Write, Grep, Glob, Monitor, TaskStop, ToolSearch, Skill
 hooks:
   PreToolUse:

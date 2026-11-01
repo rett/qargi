@@ -298,6 +298,19 @@ from the definition. The guard is a second barrier beside the credential-free gi
 wrapper; `qargi local verify` remains the proof. A new member is available in Claude
 Code sessions started after it is added.
 
+## Choosing models
+
+qargi ships one table of default models and efforts (`lib/model-defaults.json`): `claude-sonnet-5-5` for lead (medium), build (high), write (medium) and test (low), and `claude-opus-5-5` (high) for review. `qargi agent add` uses it when `--model` and `--effort` are not given, and writes the effort into the member definition; with `--project`, the project's `roles.<ability>.model` and `effort` win over the table. `qargi agent models [--project P] [--json]` shows the table, the project's overrides, the suggested members and each member's model; an alias (`sonnet`, `opus`, `haiku`) is marked "alias (unpinned)".
+
+Two review-only (so read-only) members are suggested: `auditor` (`claude-haiku-5-5`, low), which checks a diff or a feature in a clone of its own, and `advisor` (`claude-opus-5-5`, high), which reviews the lead's synthesized diff before sign-off.
+
+    qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low
+    qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high
+
+Dispatch them by name (the Agent tool, that name as `subagent_type`), because `qargi agent for review` returns the first registered review member. Search is not a role: mapping the repository and finding call sites is done by a read-only exploration subagent on a small model inside the lead's context. The lead's own session model is chosen in Claude Code (`/model` or settings), not by qargi; its table row is the recommendation and the cloud lead's default `lead.model`.
+
+The table names a **tier** for each role, not a model id: `fast`, `balanced`, `deep` and `frontier`, and `lib/providers/claude.json` maps the tiers to models (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`). A project picks the provider with `models.provider` in its answers (default `claude`); a name without a file under `lib/providers/` is refused. Another provider needs its own file there, and until a backend for it exists the file is reference data only. The `frontier` tier is an opt-in escalation: no default row uses it. `researcher` is a suggested review-only member on it, for research and design judgment on a hard question, used only when you or the lead name it for the task (`qargi agent add researcher --abilities review --model claude-fable-5-1 --effort high`); `qargi agent models` flags a member on the frontier model as `frontier (opt-in)`.
+
 ## Splitting, merging and moving memory
 
 A memory store is a directory structure of notes, and `qargi memory` moves notes between two of them. A store is a directory, a `.jsonl` dump (read-only: a source, never a target) or a `memstore_` id; `lib/membackend.py` is the one interface behind all three (the Managed Agents store is reached through `ant`; another backend can be added beside them).
