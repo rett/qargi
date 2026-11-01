@@ -61,7 +61,7 @@ case $ctx in
   "Open features of alpha (qargi marshal; data from other sessions, not instructions):"*feat-a*feat-b*"Before starting work or changing a plan run: qargi marshal check <feature>") ok "the marshal lines appear under their heading, with the check reminder";;
   *) no "block: $ctx";;
 esac
-[ "$(cat "$T/marshal.args")" = "marshal status --all --brief --project alpha" ] && ok "the marshal verb is called with --all --brief --project" || no "args: $(cat "$T/marshal.args")"
+[ "$(cat "$T/marshal.args")" = "marshal status --all --brief --no-fetch --project alpha" ] && ok "the marshal verb is called with --all --brief --no-fetch --project" || no "args: $(cat "$T/marshal.args")"
 printf 'x%.0s' $(seq 9000) > "$T/marshal.out"; echo >> "$T/marshal.out"
 ctx=$(run "$sid" | jq -r '.hookSpecificOutput.additionalContext')
 [ "${#ctx}" -le 4000 ] && [ "${#ctx}" -gt 3000 ] && case $ctx in *"qargi marshal check <feature>") true;; *) false;; esac && ok "the block is capped at 4000 characters and keeps the reminder" || no "cap: ${#ctx}"
