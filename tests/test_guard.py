@@ -726,5 +726,108 @@ class FailsClosed(unittest.TestCase):
         self.assertIn("never change a skill", text.replace("\n", " "))
 
 
+class MemoryTiers(unittest.TestCase):
+    """The memory tiers are changed only by the lead: a member is refused `qargi memory init|move|split|merge|copy` however it is run,
+    and writes under $QARGI_HOME/memory and ~/.qargi/memory. Reading and tiers|check|get|lint stay allowed."""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    REASON = "changes a memory tier and is not available to an agent; propose it in your report"
+
+    def setUp(self):
+        self.setUp_skills()
+        self.qh = os.path.join(self.t, "qh")                              # QARGI_HOME
+        self.mem = os.path.join(self.qh, "memory")
+        self.home_mem = os.path.join(self.home, ".qargi", "memory")        # the default root
+        for d in (self.mem + "/shared", self.mem + "/projects/demo", self.home_mem + "/shared", os.path.join(self.t, "elsewhere/memory")):
+            os.makedirs(d)
+        os.symlink(self.mem, os.path.join(self.clone, "to-memory"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_HOME", self.qh)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def refused(self, cmds, reason=None, **env):
+        for c in cmds:
+            res = self.bash(c, **env)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn(reason or self.REASON, res.stderr)
+
+    def test_the_five_verbs_are_refused_however_they_are_run(self):
+        forms = ("qargi %s", "/opt/q/bin/qargi %s", "bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "echo ok; qargi %s --approved go",
+                 "bash -c 'qargi %s'", "sh -c \"cd /x && qargi %s\"", "eval 'qargi %s'", "echo $(qargi %s)", "echo `qargi %s`", "timeout 5 qargi %s",
+                 "env FOO=1 qargi %s", "FOO=1 qargi %s", "(qargi %s)", "bash -lc 'qargi %s'", "nohup qargi %s", "command qargi %s", "true && qargi %s")
+        cmds = []
+        for v in ("init shared", "init repo --project demo", "move /roles/build/r.md --from project --to shared", "split A B --prefix /x", "merge A B", "copy A B --prefix /x",
+                  "init shared --plan 0123456789ab --approved go"):
+            cmds += [f % ("memory " + v) for f in forms]
+        cmds += ["qargi 'memory' 'init' shared", "qargi mem\"\"ory move x", "qargi memory \\\ninit shared", "python3 bin/qargi memory init shared"]
+        self.refused(cmds)
+
+    def test_the_scripts_behind_the_verbs_are_refused_too(self):
+        self.refused(["bash lib/memory.sh init shared", "lib/memory.sh split A B --prefix /x", "bash lib/memory.sh move /shared/a.md --from project --to shared",
+                      "bash lib/tierwrite.sh init shared", "lib/tierwrite.sh move /shared/a.md --from project --to shared",
+                      "python3 -I lib/tierplan.py plan-init shared --out /tmp/x", "python3 lib/tierplan.py apply /tmp/p.json",
+                      "python3 -I lib/memplan.py apply /tmp/p.json", "python3 lib/memplan.py plan split --source a --target b --prefix /x --out f",
+                      "bash -c 'python3 lib/tierplan.py apply p'", "sudo bash lib/tierwrite.sh init system"])
+
+    def test_the_reading_verbs_and_look_alikes_stay_allowed(self):
+        for c in ("qargi memory tiers", "qargi memory tiers --json --project demo", "qargi memory check", "qargi memory check --project demo", "qargi memory get memstore_X /a.md",
+                  "qargi memory lint memstore_X", "/opt/q/bin/qargi memory check", "bash -c 'qargi memory tiers'", "env FOO=1 qargi memory check", "timeout 5 qargi memory check",
+                  "python3 -I lib/tiers.py check --project demo", "bash lib/memory.sh get memstore_X /a.md", "bash lib/memory.sh lint memstore_X", "lib/memory.sh tiers",
+                  "echo qargi memory init shared", "git log --grep 'memory init'", "grep -n 'memory move' README.md", "cat lib/tierwrite.sh", "ls lib/tierplan.py",
+                  "qargi memories init", "qargi canon check memory init"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_edit_tools_refuse_every_path_under_the_memory_root(self):
+        for root in (self.mem, "to-memory"):
+            for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+                for p in (root + "/shared/README.md", root + "/projects/demo/CANON.md", root + "/new.md", root, "../../qh/memory/shared/x.md"):
+                    for cls in ((), ("--class", "read-only")):
+                        res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                             capture_output=True, text=True, env=dict(self.env_for(), QARGI_HOME=self.qh))
+                        self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                        self.assertIn("qargi guard:", res.stderr)
+                        self.assertIn("memory", res.stderr)
+
+    def env_for(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf})
+        return e
+
+    def test_bash_writes_under_the_memory_root_are_refused(self):
+        m = self.mem
+        cmds = ["echo x > %s/shared/a.md" % m, "echo x>>%s/shared/a.md" % m, "echo x | tee %s/shared/a.md" % m, "cp a.md %s/shared/" % m, "cp -t %s/shared a.md" % m,
+                "mv a.md %s/projects/demo/a.md" % m, "mv %s /tmp/gone" % m, "rm %s/shared/a.md" % m, "rm -rf %s" % m, "sed -i s/a/b/ %s/shared/a.md" % m,
+                "touch %s/shared/new.md" % m, "mkdir %s/system" % m, "cd %s/shared && echo y > a.md" % m, "echo y > to-memory/shared/a.md",
+                "bash -c 'echo y > %s/shared/a.md'" % m, "echo y > $QARGI_HOME/memory/shared/a.md", "install -m 644 a %s/shared/a.md" % m, "ln -sf /x %s/shared/a.md" % m,
+                "find %s -name '*.md' -delete" % m]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+
+    def test_the_default_root_is_protected_too(self):
+        d = self.home_mem
+        for c in ("echo x > %s/shared/a.md" % d, "rm -rf %s" % d, "cp a %s/shared/" % d, "echo x > ~/.qargi/memory/shared/a.md", "echo x > $HOME/.qargi/memory/shared/a.md"):
+            res = self.bash(c, QARGI_HOME=None)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+        self.assertEqual(self.call("Write", {"file_path": d + "/shared/a.md"}, QARGI_HOME=None).returncode, 2)
+        self.assertEqual(self.call("Write", {"file_path": d + "/shared/a.md"}).returncode, 2)        # protected whatever QARGI_HOME says
+
+    def test_reads_stay_allowed(self):
+        m = self.mem
+        for c in ("cat %s/shared/a.md" % m, "ls %s" % m, "grep -rn x %s" % m, "cp %s/shared/a.md %s/run/out/" % (m, self.t), "cat %s/shared/a.md > %s/run/out/c.md" % (m, self.t),
+                  "find %s -name '*.md'" % m, "cd %s && ls" % m, "cat to-memory/shared/a.md", "echo x > %s/memory-notes.md" % self.qh, "cat %s/shared/a.md" % self.home_mem):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_a_memory_folder_elsewhere_is_not_protected(self):
+        p = os.path.join(self.t, "elsewhere/memory/x.md")
+        self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s" % p).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s/run/out/memory-r.md" % self.t).returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
