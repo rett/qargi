@@ -239,6 +239,7 @@ def write_local(path, rec):
     os.replace(tmp, path)
 
 
+NOTE_KEYS = ("state", "done_seen")           # keys of the local note of a claim that was not pushed; never part of a pushed record
 REFS_MOD = None
 
 
@@ -286,8 +287,8 @@ def soft_rec(path):
 
 
 class Snap:
-    def __init__(self, feats, done, bad, why):
-        self.feats, self.done, self.bad, self.why = feats, done, bad, why
+    def __init__(self, feats, done, bad, why, bad_done=frozenset()):
+        self.feats, self.done, self.bad, self.why, self.bad_done = feats, done, bad, why, bad_done
 
 
 class RefsBackend:
@@ -334,8 +335,9 @@ class RefsBackend:
                 self.warned.add((ref, w))
                 print("qargi: warning: ignoring %s on the remote: %s" % (ref, w), file=sys.stderr)
         bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
+        bad_done = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/done/") and R.name_ok(r.rsplit("/", 1)[1])}
         self.snap = Snap({n: dict(rec, _oid=o, _age=ages.get(n, 0)) for n, (o, rec) in feats.items()},
-                         {n: dict(rec, _oid=o) for n, (o, rec) in done.items()}, bad, why)
+                         {n: dict(rec, _oid=o) for n, (o, rec) in done.items()}, bad, why, bad_done)
         return why
 
     def snapshot(self, ctx):
@@ -377,7 +379,7 @@ class RefsBackend:
     # -- writing
     def stamp(self, ctx, name, new, base):
         """The record to write: no private key, rev + 1, no control character, not over the size a reader accepts."""
-        new = {k: v for k, v in new.items() if not k.startswith("_") and k != "state"}
+        new = {k: v for k, v in new.items() if not k.startswith("_") and k not in NOTE_KEYS}
         rev0 = (base or {}).get("rev", 0)
         new["rev"] = (rev0 if isinstance(rev0, int) and not isinstance(rev0, bool) else 0) + 1
         new["updated_at"] = iso(ctx.t)
@@ -387,10 +389,18 @@ class RefsBackend:
             raise Refuse("the record of %s would be over 64 KiB, which no reader accepts: shorten the goal, plan or note" % name)
         return new
 
+    def done_oid(self, name):
+        """The oid of refs/qargi/done/<name> in the cache just read, or None."""
+        return (self.snap.done.get(name) or {}).get("_oid")
+
     def mirror(self, ctx, name, rec, state=None):
-        rec = {k: v for k, v in rec.items() if not k.startswith("_") and k != "state"}
+        """Write the local file. A provisional note also keeps the done/<name> oid the cache showed when the claim was made: a
+        claim is dropped on settling only when another machine finished the feature since."""
+        rec = {k: v for k, v in rec.items() if not k.startswith("_") and k not in NOTE_KEYS}
         if state:
             rec["state"] = state
+            if state == "provisional":
+                rec["done_seen"] = self.done_oid(name)
         write_local(ctx.path(name), rec)
 
     def push_one(self, ctx, name, new, remote_oid):
@@ -433,9 +443,14 @@ class RefsBackend:
             prov = self.provisional(ctx, name)
             if prov is not None and why is None:
                 # settle a claim that was not pushed: complete it when the remote still has no such feature, adopt the remote's record when
-                # it is ours already (the answer of the push was lost), drop it when someone else won meanwhile
-                if remote is None:
-                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k != "state"}, None)
+                # it is ours already (the answer of the push was lost), drop it when someone else won meanwhile or has finished the
+                # feature meanwhile (pushing it would bring a finished feature back to life next to its done/ ref)
+                if remote is None and self.done_oid(name) not in (None, prov.get("done_seen")):
+                    os.unlink(path)
+                    print("qargi: the provisional claim of %s was dropped, not pushed: the feature was finished on the remote meanwhile (refs/qargi/done/%s exists)" % (name, name), file=sys.stderr)
+                    prov = None
+                elif remote is None:
+                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k not in NOTE_KEYS}, None)
                     if st == "ok":
                         self.mirror(ctx, name, prov)
                     if st in ("ok", "rejected"):
@@ -465,6 +480,8 @@ class RefsBackend:
             remote_oid = remote["_oid"] if remote else None
             finishing = new.get("status") == "finished"
             wrote_prov = False
+            if finishing and name in snap.bad_done:
+                raise Refuse("refs/qargi/done/%s exists on the remote but holds no valid record (see the warning above): ask whoever owns the remote to remove it, then finish again" % name)
             if finishing:
                 try:
                     st, last, _ = R.finish(ctx.repo, self.remote, name, new, remote_oid, (snap.done.get(name) or {}).get("_oid"))
