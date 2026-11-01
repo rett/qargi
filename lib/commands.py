@@ -131,8 +131,8 @@ COMMANDS = {
             "models": verb("Show the default model and effort of each role, the project's own choices and each member's",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
-                           desc="The shipped defaults are one table (lib/model-defaults.json): Sonnet 5.5 for the lead, build, write and test, Opus 5.5 for review, "
-                                "and the suggested members auditor (review on Haiku 5.5) and advisor (review on Opus 5.5). A member whose model is an alias "
+                           desc="The shipped defaults are one table of tiers (lib/model-defaults.json) that a provider file (lib/providers/claude.json; the project's models.provider) maps to models: Sonnet 5.5 for the lead, build, write and test, Opus 5.5 for review, "
+                                "and the suggested members auditor (review on Haiku 5.5), advisor (review on Opus 5.5) and researcher (review on the opt-in frontier tier, Fable 5.1). A member whose model is an alias "
                                 "(sonnet, opus, haiku) is listed as unpinned. Read-only; it changes nothing."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print the member that serves a role", [("ROLE", "workrole")],

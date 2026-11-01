@@ -7,6 +7,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Model selection. One table (`lib/model-defaults.json`) names a tier and an effort for the lead and each role (Sonnet 5.5 for the
+  lead, build, write and test, Opus 5.5 for review), and `lib/providers/claude.json` maps the tiers (fast, balanced, deep,
+  frontier) to models; a project chooses the provider with `models.provider`. `qargi agent add` takes its model and effort from
+  the project's answers, else the table, and writes the effort into the member definition (so does `agent refresh`); the project
+  template does the same, and its write role is now Sonnet rather than Opus. `qargi agent models [--project P] [--json]` shows
+  the table, the project's overrides, the suggested members (`auditor` on Haiku, `advisor` on Opus, `researcher` on the opt-in
+  frontier tier, Fable 5.1) and each member, marking an alias as unpinned and a frontier member as opt-in. The flow skill has an
+  advisor sign-off before `feature finish` and says search is a read-only exploration on a small model, not a role.
 - `qargi marshal status --all` (and `--brief`, `--json`, and the session-start hook that uses them) lists only the open features;
   `--history` adds the finished and abandoned records after them. `qargi marshal check NAME` for a name that has no branch and no
   record now exits 1 with `no feature NAME`, and so do the flow verbs and `local prepare --base feature/NAME` for such a name.
