@@ -343,8 +343,9 @@ def marshal_push(repo, remote, updates, atomic=False):
 
 def finish(repo, remote, name, rec, features_oid, done_oid, sign=None, parent=None):
     """Move a feature to done: one commit (child of the last feature commit, or of `parent` when that is not the ref's head), pushed with
-    ONE atomic push that creates done/<name> and deletes features/<name>, each under its own lease. -> (status, why, new oid)."""
-    commit = write(repo, rec, parent or features_oid, "marshal: finish %s" % name, sign, "done")
+    ONE atomic push that creates done/<name> and deletes features/<name>, each under its own lease. -> (status, why, new oid).
+    A signed done commit is a root: the commits below it were signed as kind features, and a done record is checked on its own."""
+    commit = write(repo, rec, None if sign is not None else (parent or features_oid), "marshal: finish %s" % name, sign, "done")
     ups = [(commit, "refs/qargi/done/" + name, done_oid or ZERO)]
     if features_oid:
         ups.append(("", "refs/qargi/features/" + name, features_oid))
