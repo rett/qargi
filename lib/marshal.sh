@@ -14,7 +14,8 @@
 # no project_load, and uses the identity above):
 #   marshal_start PROJ NAME PURPOSE   create or refresh the record when a feature starts, the current identity leads it;
 #                                     returns 1 and prints the refusal when another lead holds it
-#   marshal_check PROJ NAME           returns 1 and prints the refusal when another LIVE lead holds NAME; warnings
+#   marshal_check PROJ NAME           returns 1 and prints the refusal when another LIVE lead holds NAME or when
+#                                     NAME has neither a branch feature/NAME nor a record; warnings
 #                                     (stale lead, anonymous identity, overlapping files, no lead) go to stderr; stdout stays empty
 #   marshal_finish PROJ NAME          mark NAME finished (no record: nothing to do); returns 1 when another lead holds it
 #   marshal_hold_start PROJ NAME      start a background renewer for a long verb: it renews the lease every ttl/3 minutes

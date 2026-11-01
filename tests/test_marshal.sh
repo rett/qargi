@@ -89,6 +89,12 @@ git -C "$R" worktree remove --force "$T/wt-f1"
 # ghost: a record whose branch is gone, and an old record without the new keys
 jq -n '{feature:"ghost", project:"app", status:"active", rev:1, lead:null}' > "$(rec ghost)"
 M $t0 status --all; grep -q ghost "$T/o" && grep -q "branch gone" "$T/o" && grep -q abandoned "$T/o" && ok "status --all: a record without a branch is a ghost (abandoned, 'branch gone')" || no "SPEC ghost: $(out)"
+# check of a name that is neither a branch nor a record
+M $t0 check nosuchfeat --as bob; rc=$?
+[ $rc = 1 ] && grep -q "qargi: no feature nosuchfeat in app (no branch feature/nosuchfeat and no record)" "$T/e" && ! grep -qi free "$T/o" && ok "check: an unknown name exits 1 with the 'no feature' message" || no "SPEC check unknown: rc=$rc $(out)"
+M $t0 check old --as bob; rc=$?
+[ $rc = 0 ] && grep -qi free "$T/o" && ok "check: a branch without a record stays free" || no "SPEC check branch only: rc=$rc $(out)"
+jq -n '{purpose:"legacy", started:"2026-01-01T00:00:00Z"}' > "$(rec old)"
 jq -n '{purpose:"legacy", started:"2026-01-01T00:00:00Z"}' > "$(rec old)"
 M $t0 status old --brief; grep -Eq "^old +lead=none" "$T/o" && ok "an old record without the new keys reads as unled" || no "SPEC old record: $(out)"
 M $t0 claim old --as alice && [ "$(j old .lead.id)" = alice ] && [ "$(j old .purpose)" = legacy ] && ok "an old record can be claimed and keeps its purpose" || no "SPEC old record claim: $(out) $(cat "$(rec old)")"
@@ -199,6 +205,7 @@ api() { bash -c ". '$T/api.sh'; $*"; }
 api 'marshal_start app f8 "api purpose"' >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && [ "$(j f8 .lead.id)" = holder ] && ok "api: marshal_start claims the feature as the lead" || no "SPEC marshal_start: rc=$rc $(out)"
 api 'marshal_check app f8' >/dev/null 2>&1 && ok "api: marshal_check passes for the lead" || no "SPEC marshal_check for the lead"
+api 'marshal_check app nosuchfeat' >/dev/null 2>&1; [ $? = 1 ] && ok "api: marshal_check of an unknown name returns 1" || no "SPEC marshal_check unknown"
 QARGI_LEAD=other api 'marshal_check app f8' >/dev/null 2>&1 && no "SPEC marshal_check: another LIVE lead must fail" || ok "api: marshal_check refuses when another LIVE lead holds it"
 api 'marshal_finish app f8' >/dev/null 2>&1; [ "$(j f8 .status)" = finished ] && ok "api: marshal_finish finishes the feature" || no "SPEC marshal_finish: $(cat "$(rec f8)")"
 # a holder: keeps the lease while running, prints nothing, stops with marshal_hold_stop
