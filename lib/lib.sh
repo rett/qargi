@@ -80,6 +80,11 @@ instance_class() { # name -> write | read-only | coordinator; never fails, and a
   if is_base "$1"; then c=$(base_class "$1"); else c=$(role_class "$1" 2>/dev/null) || c=''; fi
   case $c in write|read-only) echo "$c";; *) echo read-only;; esac
 }
+class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a base, and those of the project's own profiles that use it
+  local f=${2:-}; [ -f "$f" ] && jq -e . "$f" >/dev/null 2>&1 || f=''
+  jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
+    '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
+}
 run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
   local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
   c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
