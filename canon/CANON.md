@@ -141,9 +141,8 @@ runs it, and so does `qargi memory lint`.
 
 Per role, `canon/layout.json` lists the Anthropic skills the agent carries (`pdf`
 for write) and the custom skills the tool ships for that role. The ability itself
-is defined by the skill `qargi-<role>` (qargi-build, qargi-write, qargi-review,
-qargi-test): a member loads it when the task block names the ability, and a cloud
-agent carries its text in the prompt. The project's stored
+is defined by the role text, `roles/<role>/ROLE.md`, not by a skill: a member gets it
+with its task block, and a cloud agent carries it in the prompt. The project's stored
 answers choose among them and `qargi provision` attaches them to the agent.
 Checking an existing agent's skills against its role is not done by the
 reconciler yet; the layout manifest is where that will read from.
