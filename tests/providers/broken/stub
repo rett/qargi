@@ -1,0 +1,4 @@
+#!/bin/sh
+# The stub transport of the broken fixture (see tests/providers/lib/stub.py).
+here=$(dirname "$0")
+exec python3 -I "$here/../lib/stub.py" "$here" "$@"
