@@ -266,15 +266,15 @@ def cmd_check(project, a, ant):
             fails += f
             warns += w
         elif st == "missing":
-            infos.append("INFO tier %s: missing (qargi memory init %s, later slice)" % (name, name) if t["kind"] == "dir"
+            infos.append("INFO tier %s: missing (qargi memory init %s)" % (name, name) if t["kind"] == "dir"
                          else "INFO tier %s: missing (%s)" % (name, why))
         elif st == "empty":
-            infos.append("INFO tier %s: empty (qargi memory init %s, later slice)" % (name, name))
+            infos.append("INFO tier %s: empty (qargi memory init %s)" % (name, name))
         else:
             infos.append("INFO tier %s: unreachable, collisions computed without it (%s)" % (name, why))
     print("== tiers")
     for p, ts in collisions(lists):
-        print("FAIL %s: in tiers %s (a note lives in one tier; qargi memory move comes later)" % (p, ", ".join(ts)))
+        print("FAIL %s: in tiers %s (a note lives in one tier; qargi memory move PATH --from T --to T)" % (p, ", ".join(ts)))
         fails += 1
     for i in infos:
         print(i)
