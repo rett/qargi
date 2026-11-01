@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Signed marshal records. With the shared marshal, each lead machine can have its own ssh key (`marshal key init`), a per-project
+  signers file lists the trusted keys (`marshal signers add|remove|list`, never in the repository or the refs), and
+  `marshal enable --integrity off|advisory|strict` sets the mode. Records are signed with `ssh-keygen -Y` (namespace `qargi-marshal`) over
+  a canonical payload that names project, feature, kind, revision, parent and lead, so a record cannot be altered or moved to another
+  feature. Advisory tags records signed, unsigned or INVALID; strict ignores unsigned and invalid ones and falls back to the last
+  accepted record. A local high-water mark detects a rewound ref (`rollback detected`), and junk or replayed pushes neither renew a lease
+  nor block a feature. `marshal resign NAME` signs an existing record when moving from advisory to strict. Keys, signers and the mode
+  are yours to set; nothing is signed until you choose a mode. Members cannot read the signing key or change the signers.
+  Member definitions now also hook the guard on the Read and Grep tools (to keep the key unread); members created earlier keep the old
+  matcher until they are re-added (`qargi agent add`).
 - Shared marshal. `qargi marshal enable|disable` switch a project between the local records and a shared backend that keeps each
   feature record as a commit on `refs/qargi/features/NAME` of the remote origin: create-only claims, leased updates, an atomic move
   to `refs/qargi/done/NAME` on finish, a fetch that never brings other refs, and takeover judged on the taker's own monotonic clock.
