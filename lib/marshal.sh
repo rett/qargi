@@ -14,7 +14,8 @@
 # no project_load, and uses the identity above):
 #   marshal_start PROJ NAME PURPOSE   create or refresh the record when a feature starts, the current identity leads it;
 #                                     returns 1 and prints the refusal when another lead holds it
-#   marshal_check PROJ NAME           returns 1 and prints the refusal when another LIVE lead holds NAME; warnings
+#   marshal_check PROJ NAME           returns 1 and prints the refusal when another LIVE lead holds NAME or when
+#                                     NAME has neither a branch feature/NAME nor a record; warnings
 #                                     (stale lead, anonymous identity, overlapping files, no lead) go to stderr; stdout stays empty
 #   marshal_finish PROJ NAME          mark NAME finished (no record: nothing to do); returns 1 when another lead holds it
 #   marshal_hold_start PROJ NAME      start a background renewer for a long verb: it renews the lease every ttl/3 minutes
@@ -78,12 +79,12 @@ marshal_hold_start() { # PROJ NAME
 marshal_main() {
   set -eu
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--brief] [--json]"
-  local name='' PROJ='' as='' all='' brief='' json='' want
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json]"
+  local name='' PROJ='' as='' all='' brief='' json='' history='' want
   local -a opt=()
   case $verb in
     claim) want=' --project --as --goal ';;
-    status) want=' --project --as --all --brief --json ';;
+    status) want=' --project --as --all --history --brief --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
     check|renew|take|finish) want=' --project --as ';;
     release) want=' --project --as --note ';;
@@ -92,9 +93,9 @@ marshal_main() {
   esac
   while [ $# -gt 0 ]; do
     case $1 in
-      --all|--brief|--json)
+      --all|--history|--brief|--json)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
-        case $1 in --all) all=1;; --brief) brief=1;; --json) json=1;; esac; shift;;
+        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; esac; shift;;
       --*)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
         [ $# -ge 2 ] || { echo "qargi: $1 needs a value; $usage" >&2; exit 2; }
@@ -113,6 +114,7 @@ marshal_main() {
     status|check) ;;
     *) [ -n "$name" ] || { echo "qargi: marshal $verb needs a feature NAME; $usage" >&2; exit 2; };;
   esac
+  [ -z "$history" ] || [ -n "$all" ] || { echo "qargi: marshal status --history goes with --all" >&2; exit 2; }
   [ "$verb" != status ] || [ -z "$all" ] || [ -z "$name" ] || { echo "qargi: marshal status takes NAME or --all, not both" >&2; exit 2; }
   . "$MARSHAL_LIB/gitflow.sh"
   # shellcheck disable=SC2154  # REPO comes from project_load
@@ -121,6 +123,7 @@ marshal_main() {
   [ -z "$name" ] || opt=("$name" "${opt[@]}")
   [ -z "$brief" ] || opt+=(--brief)
   [ -z "$json" ] || opt+=(--json)
+  [ -z "$history" ] || opt+=(--history)
   if [ "$verb" = takeover ]; then
     local af rc=0
     af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
