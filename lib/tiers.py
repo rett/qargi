@@ -229,7 +229,7 @@ def _canon_check(name, t, lst, project, roles):
             for p in sorted(lst):
                 f.write(json.dumps({"type": "memory", "id": lst[p].get("id", ""), "path": p, "content": lst[p]["content"]}) + "\n")
         r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "canon.py"), "check", "--kind", "memory", "--project", pa,
-                            "--roles", rcsv, "--store", dump], capture_output=True, text=True)
+                            '--roles', rcsv, '--store', dump], capture_output=True, text=True)
     finally:
         try:
             os.unlink(dump)
@@ -266,15 +266,15 @@ def cmd_check(project, a, ant):
             fails += f
             warns += w
         elif st == "missing":
-            infos.append("INFO tier %s: missing (qargi memory init %s, later slice)" % (name, name) if t["kind"] == "dir"
+            infos.append("INFO tier %s: missing (qargi memory init %s)" % (name, name) if t["kind"] == "dir"
                          else "INFO tier %s: missing (%s)" % (name, why))
         elif st == "empty":
-            infos.append("INFO tier %s: empty (qargi memory init %s, later slice)" % (name, name))
+            infos.append("INFO tier %s: empty (qargi memory init %s)" % (name, name))
         else:
             infos.append("INFO tier %s: unreachable, collisions computed without it (%s)" % (name, why))
     print("== tiers")
     for p, ts in collisions(lists):
-        print("FAIL %s: in tiers %s (a note lives in one tier; qargi memory move comes later)" % (p, ", ".join(ts)))
+        print("FAIL %s: in tiers %s (a note lives in one tier; qargi memory move PATH --from T --to T)" % (p, ", ".join(ts)))
         fails += 1
     for i in infos:
         print(i)
@@ -292,7 +292,7 @@ def main(argv):
         o = argv[i]
         if o == "--project" and i + 1 < len(argv):
             project, i = argv[i + 1], i + 2
-        elif o == "--ant" and i + 1 < len(argv):
+        elif o == '--ant' and i + 1 < len(argv):
             ant, i = argv[i + 1], i + 2
         elif o == "--json" and verb == "tiers":
             as_json, i = True, i + 1

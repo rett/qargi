@@ -75,7 +75,11 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh")              # the command and the scripts behind the refused verbs
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh",
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
+MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
+MEMORY_READ = ("tiers", "check", "get", "lint")
+MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish")
 MARSHAL_READ = ("status", "check")
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
@@ -264,6 +268,10 @@ class MarshalReason(str):
     """A refusal about the marshal: decide() ends it with the marshal's advice instead of the skills'."""
 
 
+class MemoryReason(MarshalReason):
+    """A refusal about a memory tier: decide() prints it as it is (it carries its own advice)."""
+
+
 def protected_roots():
     """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -287,6 +295,7 @@ def protected_roots():
     roots.update(claude_render_roots(P, home))
     roots.update(feature_roots(P, home))
     roots.update(journal_roots(P, home))
+    roots.update(memory_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -309,6 +318,16 @@ def feature_roots(P=None, home=None):
         import paths as P
     home = home or os.path.expanduser("~")
     return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def memory_roots(P=None, home=None):
+    """The memory tiers qargi keeps by default: <root>/memory (project, shared and system) and ~/.qargi/memory. Reading stays
+    allowed; a tier placed elsewhere by the project's answers is not guarded."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(r, "memory")) for r in (P.root(), os.path.join(home, ".qargi"))}
 
 
 JOURNAL = "ref-journal.jsonl"
@@ -342,6 +361,8 @@ def refusal_text(what, dest, root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in memory_roots():
+        return MemoryReason("%s on %s would change %s, a memory tier; %s" % (what, dest, root, MEMORY_NOTE))
     if root in claude_render_roots():
         return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
                 "`qargi packs apply` and changed only by the lead" % (what, dest, root))
@@ -468,7 +489,15 @@ def skill_verb(prog, rest):
         words = ["upgrade"] + words
     if name == "marshal.sh":
         words = ["marshal"] + words
+    if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
+        return MemoryReason("%s %s changes a memory tier and is not available to an agent; %s" % (name, words[0], MEMORY_NOTE)) \
+            if words[:1] in (["apply"], ["plan-init"], ["plan-move"], ["plan"]) else None
+    if name in ("memory.sh", "tierwrite.sh"):
+        words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
+        which = verb if verb in MEMORY_VERBS else next(w for w in words[1:4] if w in MEMORY_VERBS)
+        return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
