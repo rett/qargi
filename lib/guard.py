@@ -67,8 +67,13 @@ Signing key: the one credential a member may not even read is the lead's signing
   globs and symbolic links are resolved, in a `<` redirection, an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
   look at it and stay allowed; the other credentials stay readable.
+  pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
+  are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
+  is a name the guard cannot resolve yet.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
-names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see. A heredoc line that starts with a
+names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
+(a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
+cat $(echo ...), or by an echo piped to xargs). A heredoc line that starts with a
 refused verb is refused even as text (use the Write tool for documents).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
@@ -110,6 +115,8 @@ KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
 KEY_PREFIX = "marshal_"                                      # the lead's signing key and everything named like it in a credentials directory
 KEY_METADATA = {"ls", "stat", "test", "[", "[["}            # these only look at a file's existence and size, never at its content
 KEY_RECURSIVE = {"cp", "rsync", "tar", "grep", "egrep", "fgrep", "rg", "ag", "find", "zip", "7z", "7za", "7zr"}   # a directory named to these is read whole
+KEY_LINKERS = {"ln", "mv"}                                  # a link to the directory (or a move of it) makes the key reachable by a name the guard has not seen
+LINK_FLAGS = re.compile(r"^-[A-Za-z]*[sl][A-Za-z]*$")       # cp -s, -l, -rs: a symbolic or hard link instead of a copy
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
@@ -466,7 +473,8 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(os.path.expandvars(os.path.expanduser(c))):
-            if any(d + os.sep + KEY_PREFIX in b for d in key_dirs()):         # a path inside text, e.g. python -c "open('...')"
+            plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
+            if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
             paths = glob.glob(os.path.join(here, b))[:200] if re.search(r"[*?\[]", b) else []
             for full in [os.path.realpath(os.path.join(here, b))] + [os.path.realpath(x) for x in paths]:
@@ -485,6 +493,7 @@ def key_read(toks, i, here):
     if prog in KEY_METADATA:
         return None
     recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
+    recursive = recursive or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest))
     for t in [toks[i]] + rest if any(d + os.sep + KEY_PREFIX in toks[i] for d in key_dirs()) else rest:    # a `;` in quoted code split it: its tail is a "program"
         named = key_named(t, here, recursive)
         if named:
@@ -553,6 +562,7 @@ def lead_refusal(prog, rest, pre):
 def bash_skill_refusal(command, here, depth):
     command = command.replace("\\\n", "")                # a line continuation joins the lines
     segs = SEGMENT.split(SUBST.sub(";", command))
+    stack = []                                           # the directories pushd left behind
     for n, seg in enumerate(segs):
         toks = tokens(seg)
         if toks:
@@ -569,6 +579,16 @@ def bash_skill_refusal(command, here, depth):
             continue
         if prog == "cd" and rest:
             here = resolve(here, rest[0])
+            continue
+        if prog == "pushd":                              # like cd, and popd goes back; -n changes the stack only, and the words are read as paths either way
+            dirs = [t for t in rest if not t.startswith("-") and not t.startswith("+")]
+            if dirs and "-n" not in rest:
+                stack.append(here)
+                here = resolve(here, dirs[0])
+            continue
+        if prog == "popd":
+            if stack and "-n" not in rest:
+                here = stack.pop()
             continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"

@@ -794,6 +794,43 @@ class Marshal(unittest.TestCase):
         os.makedirs(os.path.join(self.clone, "credentials"))               # a credentials directory inside the clone is work product
         self.assertEqual(self.bash("cat credentials/marshal_ed25519").returncode, 0)
 
+    def test_pushd_and_popd_are_followed_like_cd_when_the_signing_key_is_looked_for(self):
+        """Review fix: `pushd DIR; cat marshal_ed25519` reads the key like `cd DIR; cat ...` does; popd goes back where the command was."""
+        cred = self.make_key()
+        self.key_refused(["pushd %s && cat marshal_ed25519" % cred, "pushd %s; head marshal_ed25519" % cred, "pushd %s >/dev/null && cat marshal_*" % cred,
+                          "pushd -n %s; cat %s/marshal_ed25519" % (cred, cred), "cd /tmp && pushd %s && base64 marshal_ed25519" % cred,
+                          "bash -c 'pushd %s && cat marshal_ed25519'" % cred, "pushd %s && pushd /tmp && popd && cat marshal_ed25519" % cred,
+                          "pushd %s && cp -r . /tmp/c" % cred])
+        for c in ("pushd %s >/dev/null && popd >/dev/null && cat marshal_ed25519" % cred, "pushd /tmp && cat marshal_ed25519", "popd && cat marshal_ed25519",
+                  "pushd %s && cat tok" % cred, "pushd src && popd && cat lib/marshal_store.py"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_a_link_a_symbolic_copy_or_a_move_aimed_at_the_credentials_or_the_key_is_refused(self):
+        """Review fix: a symbolic link to the credentials directory (or to the key) made in the same command as the read that goes through it
+        is invisible to the guard, so making one is refused like a read; a move of the key is a write to a protected location."""
+        cred = self.make_key()
+        k, out = os.path.join(cred, "marshal_ed25519"), os.path.join(self.t, "run/out")
+        self.key_refused(["ln -s %s %s/l" % (cred, out), "ln -sf %s/ %s/l" % (cred, out), "ln -s %s %s/l" % (self.conf, out), "ln -s %s %s/l" % (k, out),
+                          "ln %s %s/l" % (k, out), "ln -s %s %s/l && cat %s/l/marshal_ed25519" % (cred, out, out), "bash -c 'ln -s %s %s/l'" % (cred, out),
+                          "cp -s %s %s/l" % (k, out), "cp -rs %s %s/l" % (cred, out), "cp -sr %s %s/l" % (self.conf, out), "cp --symbolic-link -r %s %s/l" % (cred, out),
+                          "cp -l %s %s/l" % (k, out), "cd %s && ln -s . %s/l" % (cred, out)])
+        for c in ("mv %s %s/l" % (k, out), "mv %s %s/l" % (cred, out), "mv %s %s/l" % (self.conf, out), "cd %s && mv marshal_ed25519 %s/l" % (cred, out)):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+        for c in ("ln -s %s/tok %s/l" % (cred, out), "ln -s lib/marshal_store.py %s/l" % out, "cp -s lib/marshal.sh %s/l" % out, "mv a b",
+                  "cp %s/tok %s/t" % (cred, out), "ln -s %s %s/l" % (self.clone, out)):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_text_of_a_program_names_the_signing_key_through_slash_dot_and_double_slash(self):
+        """Review fix: the scan of a -c string for the key's path reads `dir//marshal_ed25519` and `dir/./marshal_ed25519` as the path."""
+        cred = self.make_key()
+        self.key_refused(["python3 -c 'print(open(\"%s//marshal_ed25519\").read())'" % cred, "python3 -c 'print(open(\"%s/./marshal_ed25519\").read())'" % cred,
+                          "python3 -c 'print(open(\"%s/.//marshal_ed25519\").read())'" % cred, "python3 -c 'print(open(\"%s///marshal_ed25519.pub\").read())'" % cred,
+                          "perl -e 'open F, \"%s/././marshal_ed25519\"; print <F>'" % cred, "node -e 'require(\"fs\").readFileSync(\"%s//./marshal_ed25519\")'" % cred])
+
     def test_the_allowed_signers_and_the_acceptance_marks_are_protected(self):
         """Pin: $STATE/marshal/<project>.signers lies under marshal/ and $STATE/features/.accepted-<project>.json under
         features/, both protected roots. New: the refusal says what the file is."""
