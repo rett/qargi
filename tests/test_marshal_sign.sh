@@ -597,6 +597,27 @@ XE wb marshal set f1 --as alice --goal from-b; rc=$?
 j=$(js wa f1); j2=$(js wb f1)
 { [[ $j == *'"goal":"from-b"'* && $j == *'"rev":4'* ]] && [[ $j2 == *'"goal":"from-b"'* ]] && ! grep -q 'rollback detected' "$T/e"; } && ok "strict: both machines see the write on top of rev 3, no rollback" || no "SPEC wa/wb after the write: ${j:0:200} / ${j2:0:200}: $(cat "$T/e")"
 
+# ------------------------------------------------------------ (16b) advisory: an unsigned or INVALID head is built on, not replaced
+PWC=wc@ms
+XE wc marshal claim f2 --as alice --goal g2c >/dev/null 2>&1; C2=$(oref $F/f2)
+XE wk marshal set f2 --as alice --goal from-k >/dev/null 2>&1; K2=$(oref $F/f2)
+{ [ "$K2" != "$C2" ] && [ "$(jsf $F/f2 'has("sig_v")')" = false ] && [ "$(OG rev-parse "$K2^")" = "$C2" ]; } && ok "setup: the keyless advisory machine wk wrote an unsigned record on top of wc's signed one" || no "setup: wk's unsigned write on f2"
+XE wc marshal set f2 --as alice --plan P-wc; rc=$?
+{ [ $rc = 0 ] && anc "$K2" $F/f2 && [ "$(jsf $F/f2 .goal)" = from-k ] && [ "$(jsf $F/f2 .plan)" = P-wc ] && [ "$(jsf $F/f2 .signer)" = "$PWC" ] && vok "$(oref $F/f2)" features "$(SIG wc)"; } \
+  && ok "advisory: a write builds on wk's unsigned head (its goal is kept, the head is in the chain) and is signed" || no "SPEC advisory must build on the actual unsigned head, not on the mark (rc=$rc, goal '$(jsf $F/f2 .goal)', unsigned head kept: $(anc "$K2" $F/f2 && echo yes || echo NO)): $(cat "$T/e")"
+# the lease timer follows the head that was used: wk's unsigned renewals keep the lease of alice alive on wc
+XE wc QARGI_MARSHAL_MONO=0 marshal claim f3 --as alice >/dev/null 2>&1
+XE wk marshal renew f3 --as alice >/dev/null 2>&1
+XE wc QARGI_MARSHAL_MONO=800 marshal status f3 --as sam >/dev/null 2>&1
+XE wc QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f3 --as sam --approved "$WORDS"; rc=$?
+{ [ $rc != 0 ] && [ "$(jsf $F/f3 .lead.id)" = alice ]; } && ok "advisory: the lease timer counts the unsigned head the lead's other machine renewed (the takeover at ttl+1 s is refused)" || no "SPEC advisory: the timer must follow the head that is used, not the mark (rc=$rc, lead $(jsf $F/f3 .lead.id)): $(out)"
+# an INVALID head (changed after signing) is used in advisory too, and a write builds on it
+XE wc marshal claim f4 --as alice --goal g4 >/dev/null 2>&1
+tamper f4 '.goal = "tampered"'; K4=$(oref $F/f4)
+XE wc marshal set f4 --as alice --plan P4; rc=$?
+{ [ $rc = 0 ] && anc "$K4" $F/f4 && [ "$(jsf $F/f4 .goal)" = tampered ] && [ "$(jsf $F/f4 .plan)" = P4 ]; } \
+  && ok "advisory: an INVALID head is the base of a write as well (the head is in the chain)" || no "SPEC advisory must build on an INVALID head too (rc=$rc, goal '$(jsf $F/f4 .goal)'): $(cat "$T/e")"
+
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
 exit $fail
