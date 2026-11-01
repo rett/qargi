@@ -90,7 +90,7 @@ start() {
   i=$(cloud_inst "$name") || exit 1
   split_instance "$name"
   # an instance of a read-only role needs a read-only barrier on the cloud surface, or the project's recorded acceptance that there is none
-  [ "$(role_class "$ROLE" 2>/dev/null)" != read-only ] || barrier_guard cloud "$PROJECT"
+  [ "$(instance_class "$ROLE")" != read-only ] || barrier_guard cloud "$PROJECT"
   ant_ok
   cf=$(cred_file "$PROJECT")
   if [ -n "$cf" ] || [ "$ROLE" = lead ]; then
