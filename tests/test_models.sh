@@ -83,7 +83,7 @@ grep -E '^ *rs ' <<<"$out" | grep -q 'frontier model outside the researcher' && 
 grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && ok "models: members with model and effort" || no "members: $out"
 ! grep -q 'override\|project' <<<"$out" && ok "models: no project source without a project" || no "override shown"
 j=$($DA agent models --json 2>&1)
-jq -e 'keys == ["aliases","bases","escalate","members","profiles","provider","warnings"] and .warnings == (.warnings | arrays) and .profiles.lead.base == null and .profiles.researcher.opt_in == true and .profiles.auditor.model == "haiku" and .profiles.auditor.model_id == "claude-haiku-5-5"
+jq -e 'keys == ["aliases","bases","effort_control","escalate","members","profiles","provider","warnings"] and .warnings == (.warnings | arrays) and .profiles.lead.base == null and .profiles.researcher.opt_in == true and .profiles.auditor.model == "haiku" and .profiles.auditor.model_id == "claude-haiku-5-5"
   and .bases.worker.registered == false and .escalate.build.tier == "frontier" and (.members | length > 0)' <<<"$j" >/dev/null && ok "models --json: bases, profiles, aliases, escalate, members" || no "json keys: $j"
 
 # a project's profiles and its old role answers

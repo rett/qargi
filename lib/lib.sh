@@ -66,6 +66,11 @@ role_class() { # name -> write | read-only (lead: coordinator)
   local d; d=$(role_dir "$1") || return 1
   jq -r '.class // "write"' "$d/role.json"
 }
+run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
+  local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
+  c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
+  echo "$c"
+}
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
@@ -77,6 +82,22 @@ split_instance() {
   if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
     die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
   fi
+}
+
+# The provider a project uses (models.provider in its answers, default claude); no project, or no answers, is claude.
+project_provider() { # project-or-empty
+  local f=$DA_CONF/projects/${1:-}.json p=claude
+  if [ -n "${1:-}" ] && [ -f "$f" ]; then p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude; fi
+  printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || p=claude
+  echo "$p"
+}
+# barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
+# `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
+# that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
+barrier_guard() {
+  local rc=0
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$(project_provider "${2:-}")" "$1" ${2:+--project "$2"} || rc=$?
+  [ "$rc" = 0 ] || exit "$rc"
 }
 
 # mem_index STORE: JSON lines {path,id} of every memory of a store (metadata only).

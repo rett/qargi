@@ -26,6 +26,8 @@ case $verb in
   apply)
     RUN=${RUN_ARG%/}; [ -n "$RUN" ] || die "usage: qargi review apply RUN_DIR [--branch BRANCH] [--project P]"
     [ -f "$RUN/refs.before" ] && [ -d "$RUN/out" ] || die "apply needs a RUN dir made by qargi local prepare"
+    [ "$(run_class "$RUN")" != read-only ] \
+      || die "$RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $RUN/out/report.md; nothing was applied"
     [ ! -f "$RUN/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$RUN/applied")): qargi feature merge, then qargi local clean $RUN"
     lib=$(dirname "$0")
     python3 -I "$lib/review_check.py" "$RUN/out" || die "review check refuses $RUN/out: nothing was applied"

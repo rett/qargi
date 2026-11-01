@@ -90,6 +90,8 @@ fi
 EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
+# a read-only role needs a read-only barrier on the cloud surface, or the project's recorded acceptance that there is none
+[ "$(role_class "$ROLE" 2>/dev/null)" != read-only ] || barrier_guard cloud "$PROJECT"
 ant_ok
 
 # Project-level stores: attach the ones that exist, create the others.
