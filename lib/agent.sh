@@ -20,13 +20,14 @@ PROVIDERS=$root/lib/providers            # one data file per provider: its model
 BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON=''
+POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE=''
 while [ $# -gt 0 ]; do
   case $1 in
     --abilities) ABIL=$2; shift 2;;
     --model) MODEL=$2; shift 2;;
     --effort) EFFORT=$2; shift 2;;
     --project) PROJ=$2; shift 2;;
+    --profile) PROFILE=$2; shift 2;;
     --json) JSON=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
@@ -174,7 +175,7 @@ def profiles:
        then "abilities \(($m.abilities // []) | join(",")) do not fit base \($base) (\($bases[$base].class))"
      else null end) as $refused
   | {name: $n, base: $base, class: (if $base != null then ($bases[$base].class? // null) else null end), tier: $r.tier, model: $r.alias, model_id: $r.id,
-     effort: ($p.effort // $lg.effort // $m.effort // null), opt_in: ($s.opt_in // false), purpose: ($m.purpose // ""),
+     effort: ($p.effort // $lg.effort // $m.effort // "medium"), opt_in: ($s.opt_in // false), purpose: ($m.purpose // ""),
      abilities: ($m.abilities // null), shipped: ($s != null), project: ($p != null), via_roles: (($lg.model != null or $lg.effort != null)),
      source: (if $p != null or $lg.model != null or $lg.effort != null then "project" else "shipped" end), refused: $refused};
 EOF
@@ -229,10 +230,47 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   fi
 }
 
-member_for() { # ability project-or-empty -> the first member registered for it (the project's own members first)
-  jq -r --arg a "$1" --arg p "$2" '[to_entries[] | select(.value.abilities | index($a))]
-      | sort_by((if (.value.project // "") == $p and $p != "" then 0 elif (.value.project // null) == null then 1 else 2 end), (.value.seq // 0))
-      | map(select((.value.project // null) == null or .value.project == $p)) | .[0].key // empty' "$MEMBERS_FILE"
+# the dispatch resolver, in jq (with $PJQ): one role, one profile -> the base member, model and effort, or an error with its exit code
+RESOLVEJQ='
+  def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
+  def serves($a): any((.abilities // [])[]; . == $a);
+  [profiles | {key: .name, value: .}] | from_entries as $P
+  | $d[0].bases as $bases
+  | (if $rclass == "read-only" then "review" else "build" end) as $row
+  | (if $prof != "" then $prof elif $P[$role] != null then $role else null end) as $want
+  | (if $want != null then $want else $row end) as $pn
+  | $P[$pn] as $p
+  | ($m[0] | to_entries | map(select((.value.project // null) == null or .value.project == $proj))
+      | sort_by((if (.value.project // "") == $proj and $proj != "" then 0 else 1 end), (.value.seq // 0))) as $E
+  | def cands($a): [$E[] | select(.value | serves($a) and mclass == $rclass)];
+    if $p == null then {code: 1, err: "no profile named \($pn) (qargi agent models lists them)"}
+    elif $p.base == null then {code: 2, err: "the \($pn) profile has no base and is never dispatched"}
+    elif $p.refused != null then {code: 2, err: "the \($pn) profile is refused: \($p.refused)"}
+    elif $p.class != $rclass then {code: 2, err: "the \($role) role is \($rclass) but the \($pn) profile has base \($p.base), which is \($p.class); use a profile of a \($rclass) base"}
+    else
+      ([$E[] | select(.key == $p.base and (.value | (any((.abilities // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $b
+      | (if $b != null then {m: $b, legacy: false}
+         else (cands($role)[0] // (if $row != $role then cands($row)[0] else null end)) as $l | if $l != null then {m: $l, legacy: true} else null end end) as $sel
+      | if $sel == null then {code: 1, err: "no member serves the \($role) role: qargi agent add NAME --abilities \($role)"}
+        else {code: 0, out: {role: $role, class: $rclass, profile: $pn,
+          profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
+          base: $p.base, member: $sel.m.key, member_scope: (if $sel.m.value.project != null then "project" else "user" end), legacy: $sel.legacy,
+          tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
+    end'
+
+resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
+  local role=$1 prof=$2 proj=$3 pf prov res code
+  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
+    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" \
+    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
+  code=$(jq -r .code <<<"$res")
+  if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
+  jq -r '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)"' <<<"$res"
+  if [ "$(jq -r '.out.model // ""' <<<"$res")" = "" ]; then
+    echo "qargi: warning: model $(jq -r '.out.model_id' <<<"$res") has no alias; the definition of member $(jq -r .out.member <<<"$res") applies" >&2
+  fi
 }
 
 case $verb in
@@ -274,14 +312,9 @@ case $verb in
     echo "removed member $n${f:+ ($f)}";;
   for)
     a=${POS[0]:-}
-    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--project P]   (a role of: $DA_ROLES)"
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
+    [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
-    m=$(member_for "$a" "$PROJ")
-    if [ -z "$m" ]; then   # a role of yours without a member of its own: a member of the built-in role of the same class
-      case $(role_class "$a") in read-only) b=review;; *) b=build;; esac
-      [ "$b" = "$a" ] || m=$(member_for "$b" "$PROJ")
-    fi
-    [ -n "$m" ] || die "no member serves the $a role: qargi agent add NAME --abilities $a"
-    echo "$m";;
+    resolve_for "$a" "$PROFILE" "$PROJ";;
   *) die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac
