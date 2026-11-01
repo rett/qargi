@@ -26,6 +26,8 @@ chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
+chk "bad memory.tiers key"          1 '.memory.tiers={bogus:{path:"/x"}}'
+chk "absolute repo tier path"       1 '.memory.tiers={repo:{path:"/abs/mem"}}'
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
