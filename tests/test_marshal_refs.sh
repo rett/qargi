@@ -423,6 +423,26 @@ hk=$(printf '{"session_id":"s2"}' | env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c"
 printf '%s' "$hk" | jq -e . >/dev/null 2>&1 && [ "$(nsub fetch)" = "$nf" ] && [ "$(nsub push)" = "$np" ] \
   && ok "read verbs: the session hook runs no fetch or push and prints valid JSON" || no "SPEC hook uses status --no-fetch: fetches +$(( $(nsub fetch) - nf )), pushes +$(( $(nsub push) - np )), json: ${hk:0:120}"
 
+# ============================================================ (19) a finished feature is not resurrected by a provisional claim
+# alice claims rz1 offline (provisional); bob claims it and finishes it meanwhile; alice's next verb must drop her claim, not push it
+fb rz1 dn1
+slow a "fetch push"; XE a QARGI_REMOTE_TIMEOUT=1 marshal claim rz1 --as alice >/dev/null 2>&1; unslow a
+XE b marshal claim rz1 --as bob >/dev/null 2>&1; XE b marshal finish rz1 --as bob >/dev/null 2>&1
+RZ=$(oref refs/qargi/done/rz1)
+XE a marshal renew rz1 --as alice; rc=$?
+[ "$RZ" != none ] && [ "$(oref refs/qargi/features/rz1)" = none ] && [ "$(oref refs/qargi/done/rz1)" = "$RZ" ] && [ ! -e "$(S a)/features/app-rz1.json" ] && grep -qi "finished" <(out) \
+  && ok "provisional claim: one that another machine claimed and finished meanwhile is dropped (and the verb says so), not pushed" \
+  || no "provisional claim resurrected a finished feature (rc=$rc): features/rz1 $(oref refs/qargi/features/rz1), done/rz1 $(oref refs/qargi/done/rz1) vs $RZ, local file: $(ls "$(S a)/features/app-rz1.json" 2>&1): $(out)"
+# a done/NAME ref that holds no valid record: finish says so, instead of a push refusal that never goes away
+XE a marshal claim dn1 --as alice >/dev/null 2>&1
+DN=$(oref refs/qargi/features/dn1)
+plant refs/qargi/done/dn1 "$(tree 100644 blob "$(blob 'not json {')" record.json)"
+XE a marshal finish dn1 --as alice; rc=$?
+[ $rc = 1 ] && [ "$DN" != none ] && [ "$(oref refs/qargi/features/dn1)" = "$DN" ] && grep -q "refs/qargi/done/dn1 exists on the remote but holds no valid record" <(out) && ! grep -q "Traceback" "$T/e" \
+  && ok "finish: a done/NAME ref without a valid record is named in a clear refusal (exit 1), the feature stays" \
+  || no "finish with an invalid done/dn1 must refuse clearly (rc=$rc): $(out)"
+OG update-ref -d refs/qargi/done/dn1
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
