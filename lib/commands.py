@@ -174,7 +174,7 @@ COMMANDS = {
         },
     },
     "marshal": {
-        "summary": "Who leads which feature: identity, lease, status, goal, plan, handoff (shared across leads)",
+        "summary": "Who leads which open feature: lease, status, goal, plan, handoff",
         "desc": ("The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the "
                  "tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: "
                  "qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes --as. "
