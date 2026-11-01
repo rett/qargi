@@ -1,15 +1,17 @@
 {
-  "lead": {"tier": "balanced", "effort": "medium"},
-  "roles": {
-    "build": {"tier": "balanced", "effort": "high"},
-    "write": {"tier": "balanced", "effort": "medium"},
-    "test": {"tier": "balanced", "effort": "low"},
-    "review": {"tier": "deep", "effort": "high"}
+  "bases": {
+    "worker": {"abilities": ["build", "write", "test"], "class": "write"},
+    "reviewer": {"abilities": ["review"], "class": "read-only"}
   },
-  "escalate": {"build": "frontier", "write": "frontier", "test": "frontier", "review": "frontier"},
-  "suggested": {
-    "auditor": {"abilities": ["review"], "tier": "fast", "effort": "low", "purpose": "checks a diff or a feature in a clone of its own, read-only"},
-    "advisor": {"abilities": ["review"], "tier": "deep", "effort": "high", "purpose": "reviews the lead's synthesized diff (diff stat, task reports, gate verdicts) before sign-off"},
-    "researcher": {"abilities": ["review"], "tier": "frontier", "effort": "high", "purpose": "research and design judgment on a hard question; read-only; use only when the lead or the owner names it for the task"}
-  }
+  "profiles": {
+    "lead": {"base": null, "tier": "balanced", "effort": "medium", "purpose": "coordinates a team; shown here, never dispatched as a member"},
+    "build": {"base": "worker", "tier": "balanced", "effort": "high", "purpose": "changes the code of a project, with its tests and documentation, in a clone of its own"},
+    "write": {"base": "worker", "tier": "balanced", "effort": "medium", "purpose": "writes the operational documentation on the documentation branch"},
+    "test": {"base": "worker", "tier": "balanced", "effort": "low", "purpose": "writes and repairs tests and reports how the suite behaves"},
+    "review": {"base": "reviewer", "tier": "deep", "effort": "high", "purpose": "judges a change someone else made and writes a report; read-only"},
+    "auditor": {"base": "reviewer", "tier": "fast", "effort": "low", "purpose": "checks a diff or a feature in a clone of its own, read-only"},
+    "advisor": {"base": "reviewer", "tier": "deep", "effort": "high", "purpose": "reviews the lead's synthesized diff (diff stat, task reports, gate verdicts) before sign-off"},
+    "researcher": {"base": "reviewer", "tier": "frontier", "effort": "high", "opt_in": true, "purpose": "research and design judgment on a hard question; read-only; use only when the lead or the owner names it for the task"}
+  },
+  "escalate": {"build": "frontier", "write": "frontier", "test": "frontier", "review": "frontier"}
 }

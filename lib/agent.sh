@@ -7,26 +7,27 @@
 #   agent.sh list
 #   agent.sh rename OLD NEW
 #   agent.sh refresh NAME      re-render a member from the current definition, keeping its name, abilities, model and effort
-#   agent.sh models [--project P] [--json]     the default model and effort of each role, the project's own, the members'
+#   agent.sh models [--project P] [--json]     the bases, the profiles (shipped and the project's), the members and what is wrong with them
 #   agent.sh remove NAME
-#   agent.sh for ABILITY [--project P]     the member that serves ABILITY: dispatch spawns it
+#   agent.sh for ROLE [--profile P] [--project P] [--json]     the member, model and effort for ROLE under a profile: dispatch spawns it
 . "$(dirname "$0")/lib.sh"
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 TEMPLATE=$root/agents/member.md
-DEFAULTS=$root/lib/model-defaults.json   # the one table: a tier and an effort per row
+DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per guard class) and the profiles (a base, a tier and an effort each)
 PROVIDERS=$root/lib/providers            # one data file per provider: its model id for each tier
 # the agent types Claude Code brings itself; a member must not shadow one
 BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON=''
+POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE=''
 while [ $# -gt 0 ]; do
   case $1 in
     --abilities) ABIL=$2; shift 2;;
     --model) MODEL=$2; shift 2;;
     --effort) EFFORT=$2; shift 2;;
     --project) PROJ=$2; shift 2;;
+    --profile) PROFILE=$2; shift 2;;
     --json) JSON=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
@@ -62,8 +63,8 @@ hide_in_git() { # repo file: keep a project-level definition out of the reposito
   grep -qx -F "/$rel" "$ex" || printf '/%s\n' "$rel" >> "$ex"
 }
 
-default_row() { # ability -> the table's role row for it (a role of yours falls back to its class: write -> build, read-only -> review)
-  if jq -e --arg a "$1" '.roles | has($a)' "$DEFAULTS" >/dev/null; then echo "$1"; return; fi
+default_row() { # ability -> the table's profile row for it (a role of yours falls back to its class: write -> build, read-only -> review)
+  case " $ROLE_BUILTIN " in *" $1 "*) jq -e --arg a "$1" '.profiles | has($a)' "$DEFAULTS" >/dev/null && { echo "$1"; return; };; esac
   case $(role_class "$1" 2>/dev/null) in read-only) echo review;; *) echo build;; esac
 }
 
@@ -94,8 +95,8 @@ tier_model() { # provider tier -> the provider's model id
 default_for() { # project ability field -> the project's answer for it, else the table's value (a tier is resolved through the active provider)
   local v; v=$(project_answer "$1" "$2" "$3")
   if [ -z "$v" ]; then
-    if [ "$3" = model ]; then v=$(tier_model "$(provider_for "$1")" "$(jq -r --arg r "$(default_row "$2")" '.roles[$r].tier' "$DEFAULTS")")
-    else v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.roles[$r][$k]' "$DEFAULTS"); fi
+    if [ "$3" = model ]; then v=$(tier_model "$(provider_for "$1")" "$(jq -r --arg r "$(default_row "$2")" '.profiles[$r].tier' "$DEFAULTS")")
+    else v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.profiles[$r][$k]' "$DEFAULTS"); fi
   fi
   echo "$v"
 }
@@ -110,12 +111,15 @@ render() { # name abilities-csv model [effort] -> the definition on stdout
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first
+  local n=${POS[0]:-} a list='' dir file seq first bc
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   valid_name "$n"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
+  bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
+  [ -z "$bc" ] || [ -n "$ABIL" ] || ABIL=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
   for a in $(printf '%s' "${ABIL:-build,write,review,test}" | tr ',' ' '); do
     [ "$a" != lead ] && valid_role "$a" || die "--abilities: a comma-separated list of roles ($DA_ROLES; qargi role list)"
+    [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--abilities: $n is a base of the $bc class; $a is $(role_class "$a")"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
   [ -n "$list" ] || die "--abilities: give at least one"
@@ -137,51 +141,155 @@ add() {
   echo "member $n ($list) at $file"
 }
 
-models() { # the table, the project's overrides, the suggested members and the registered ones
-  local proj=$PROJ pf='{}' ov prov tiers
+# The profile resolver, in jq. Inputs ($d the table, $tiers and $aliases the provider's, $pf the project's answers or {}, $rc each role's class):
+# `profiles` is the list of every profile, the shipped ones with the project's entries merged over them key by key. It is defensive:
+# a malformed entry, key or value is ignored, never an error; what cannot be honoured is marked in `refused`.
+PJQ=$(cat <<'EOF'
+def okeff: . == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max";
+def okmod: type == "string" and test("^[a-z0-9][a-z0-9.-]*$");
+def tier_of($m): ([$aliases | to_entries[] | select(.value == $m) | .key][0]) // ([$tiers | to_entries[] | select(.value == $m) | .key][0]);
+def pclean: if type == "object" then
+    {} + (if (.base | type) == "string" then {base} else {} end)
+       + (if (.tier | type) == "string" and (.tier | test("^[a-z]+$")) then {tier} else {} end)
+       + (if (.model | okmod) then {model} else {} end)
+       + (if (.effort | okeff) then {effort} else {} end)
+       + (if (.purpose | type) == "string" then {purpose} else {} end)
+       + (if (.abilities | type) == "array" then {abilities: [.abilities[] | select(type == "string")]} else {} end)
+  else null end;
+def pprofiles: (($pf.profiles // {}) | if type == "object" then . else {} end)
+  | with_entries(select((.key | test("^[a-z][a-z0-9-]{0,30}$")) and .key != "lead") | .value |= pclean)
+  | with_entries(select(.value != null));
+def legacy($n): (if $n == "lead" then $pf.lead else (($pf.roles // {}) | .[$n]?) end)
+  | if type == "object" then {model: (if (.model | okmod) then .model else null end), effort: (if (.effort | okeff) then .effort else null end)} else {model: null, effort: null} end;
+def profiles:
+  $d[0].profiles as $sh | pprofiles as $pp | $d[0].bases as $bases
+  | [($sh | keys_unsorted[]), (($pp | keys_unsorted) - ($sh | keys_unsorted))[]][] as $n
+  | $sh[$n] as $s | $pp[$n] as $p
+  | (if $p == null then legacy($n) else {model: null, effort: null} end) as $lg
+  | (($s // {}) + ($p // {})) as $m
+  | ($m.base // null) as $base
+  | (if $p.model then {k: "m", v: $p.model} elif $p.tier then {k: "t", v: $p.tier} elif $lg.model then {k: "m", v: $lg.model}
+     else {k: "t", v: ($m.tier // "balanced")} end) as $sel
+  | (if $sel.k == "m" then tier_of($sel.v) as $t | {tier: ($t // $m.tier // null), alias: (if $t then ($aliases[$t] // null) else null end), id: (if $t then ($tiers[$t] // null) else $sel.v end)}
+     else {tier: $sel.v, alias: ($aliases[$sel.v] // null), id: ($tiers[$sel.v] // null)} end) as $r
+  | (if $base == null then (if $n == "lead" then null else "no base: give base worker or reviewer" end)
+     elif $bases[$base] == null then "base \($base) is not a base (\($bases | keys | join(", ")))"
+     elif ([($m.abilities // [])[] | select($rc[.] != null and $rc[.] != $bases[$base].class)] | length) > 0
+       then "abilities \(($m.abilities // []) | join(",")) do not fit base \($base) (\($bases[$base].class))"
+     else null end) as $refused
+  | {name: $n, base: $base, class: (if $base != null then ($bases[$base].class? // null) else null end), tier: $r.tier, model: $r.alias, model_id: $r.id,
+     effort: ($p.effort // $lg.effort // $m.effort // "medium"), opt_in: ($s.opt_in // false), purpose: ($m.purpose // ""),
+     abilities: ($m.abilities // null), shipped: ($s != null), project: ($p != null), via_roles: (($lg.model != null or $lg.effort != null)),
+     source: (if $p != null or $lg.model != null or $lg.effort != null then "project" else "shipped" end), refused: $refused};
+EOF
+)
+
+pf_json() { # project-or-empty -> the project's stored answers as one object ({} when there are none or they are unreadable)
+  local f=$DA_CONF/projects/$1.json
+  if [ -n "$1" ] && [ -f "$f" ]; then jq -c 'if type == "object" then . else {} end' "$f" 2>/dev/null || echo '{}'; else echo '{}'; fi
+}
+
+role_classes() { # -> {role: class} for every role (a role without a readable class is left out)
+  local r c o='{}'
+  for r in $DA_ROLES; do
+    [ "$r" != lead ] || continue
+    c=$(role_class "$r" 2>/dev/null) || continue
+    o=$(jq -c --arg r "$r" --arg c "$c" '.[$r] = $c' <<<"$o")
+  done
+  echo "$o"
+}
+
+models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
+  local proj=$PROJ pf prov tiers aliases rc out
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
-  [ -z "$proj" ] || [ ! -f "$DA_CONF/projects/$proj.json" ] || pf=$(jq -c '{lead: (.lead // {}), roles: (.roles // {})}' "$DA_CONF/projects/$proj.json")
+  pf=$(pf_json "$proj")
   prov=$(provider_for "$proj") || exit 1
-  tiers=$(jq -c .tiers "$PROVIDERS/$prov.json")
-  # the project's answer, when valid and set, per row: {model, effort} or null
-  ov=$(jq -n --argjson pf "$pf" --slurpfile d "$DEFAULTS" '
-    def okm: if type == "string" and test("^[a-z0-9][a-z0-9.-]*$") then . else null end;
-    def oke: if . == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max" then . else null end;
-    def pick($o): ({model: ($o.model? | okm), effort: ($o.effort? | oke)} | with_entries(select(.value != null))) | if . == {} then null else . end;
-    {lead: pick($pf.lead), roles: ($d[0].roles | with_entries(.value = pick($pf.roles[.key]?)))}')
-  local out
-  out=$(jq -n --slurpfile d "$DEFAULTS" --argjson ov "$ov" --slurpfile m "$MEMBERS_FILE" --argjson tiers "$tiers" --arg prov "$prov" '
-    $d[0] as $t
-    | def res: . + {model: $tiers[.tier]};
-    {provider: $prov,
-       lead: ($t.lead | res + {override: $ov.lead}),
-       roles: ($t.roles | with_entries(.value |= res | .value += {override: $ov.roles[.key]})),
-       escalate: ($t.escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
-       suggested: ($t.suggested | with_entries(.value |= res)),
-       members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | {name: .key, abilities: .value.abilities, model: (.value.model // null),
+  tiers=$(jq -c .tiers "$PROVIDERS/$prov.json"); aliases=$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")
+  rc=$(role_classes)
+  local miss='{}' n f
+  while IFS=$'\t' read -r n f; do [ -f "$f" ] || miss=$(jq -c --arg n "$n" '.[$n] = true' <<<"$miss"); done < <(jq -r 'to_entries[] | [.key, (.value.file // "")] | @tsv' "$MEMBERS_FILE")
+  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --arg prov "$prov" "$PJQ"'
+    def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
+    ($d[0].bases) as $bases
+    | ([$m[0] | to_entries[] | .value | mclass] | unique) as $have
+    | def baseof($c): [$bases | to_entries[] | select(.value.class == $c) | .key][0];
+    {provider: $prov, aliases: $aliases,
+       bases: ($bases | with_entries(.key as $k | .value += {registered: ($m[0] | has($k))}
+         | .value += {flags: (if .value.registered or (.value.class | IN($have[])) then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
+       profiles: ([profiles | .flags = ([if .refused then "refused: \(.refused)" else empty end,
+           if .tier != null and ($aliases[.tier] // null) == null then "tier \(.tier) has no alias" else empty end,
+           if .tier == null and .model_id != null then "model \(.model_id) has no alias; the definition of the member applies" else empty end]) | {key: .name, value: .}] | from_entries),
+       escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
+       members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | .key as $k | (.value | mclass) as $c | baseof($c) as $bn | .value.abilities as $ab
+         | {name: $k, abilities: $ab, class: $c, model: (.value.model // null),
          effort: (.value.effort // null), project: (.value.project // null),
          pinned: ((.value.model // "") | startswith("claude-")),
-         frontier: ((.value.model // "") == $tiers.frontier)}]}')
+         frontier: (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)),
+         flags: ([if ($bases | has($k) | not) and $bn != null then (if ($m[0] | has($bn)) then "legacy: retire after \($bn) exists" else "legacy (in use: no \($bn))" end) else empty end,
+           if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
+           if $miss[$k] then "definition file missing" else empty end,
+           if (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)) and $k != "researcher" then "frontier model outside the researcher" else empty end])}]}
+    | .warnings = ([(.bases | to_entries[] | .key as $k | .value.flags[] | {kind: "base", name: $k, message: .}),
+        (.profiles[] | .name as $k | .flags[] | {kind: "profile", name: $k, message: .}),
+        (.members[] | .name as $k | .flags[] | {kind: "member", name: $k, message: .})])')
   if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
-  echo "default tiers, models and efforts (provider: $prov; a role of yours uses its class: write -> build, read-only -> review)"
-  jq -r '(["lead", .lead] , (.roles | to_entries[] | [.key, .value])) | .[1] as $r
-    | [.[0], $r.tier + " -> " + $r.model + "/" + $r.effort, (if $r.override then "override: " + ($r.override.model // $r.model) + "/" + ($r.override.effort // $r.effort) + " (project)" else "" end)] | @tsv' <<<"$out" \
-    | while IFS=$'\t' read -r n d o; do printf '  %-8s %-40s %s\n' "$n" "$d" "$o"; done
+  echo "bases (one member each, by guard class)"
+  jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(",")), (if .value.registered then "registered" else "not registered" end), (.value.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n c a r fl; do printf '  %-10s %-10s %-18s %-15s %s\n' "$n" "$c" "$a" "$r" "$fl"; done
+  echo "profiles (provider: $prov; tier -> alias -> model/effort; a role of yours uses its class: write -> build, read-only -> review)"
+  jq -r '.profiles[] | [.name, (.base // "-"), ((.tier // "?") + " -> " + (.model // "-") + " -> " + (.model_id // "-") + "/" + (.effort // "default")),
+      (.source + (if .via_roles then " (roles)" else "" end)), (if .opt_in then "opt-in" elif .name == "lead" then "never dispatched" else "" end), (.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n b d s t fl; do printf '  %-11s %-9s %-52s %-10s %s\n' "$n" "$b" "$d" "$s" "${t:+$t }$fl"; done
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
-  echo "suggested members (copy the line to add one)"
-  jq -r '.suggested | to_entries[] | "  qargi agent add \(.key) --abilities \(.value.abilities | join(",")) --model \(.value.model) --effort \(.value.effort)   # \(.value.tier): \(.value.purpose)"' <<<"$out"
   echo "members"
   if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME)"; else
-    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(if .frontier then "frontier (opt-in)" elif .pinned then "" else "alias (unpinned)" end)"' <<<"$out" \
+    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
 }
 
-member_for() { # ability project-or-empty -> the first member registered for it (the project's own members first)
-  jq -r --arg a "$1" --arg p "$2" '[to_entries[] | select(.value.abilities | index($a))]
-      | sort_by((if (.value.project // "") == $p and $p != "" then 0 elif (.value.project // null) == null then 1 else 2 end), (.value.seq // 0))
-      | map(select((.value.project // null) == null or .value.project == $p)) | .[0].key // empty' "$MEMBERS_FILE"
+# the dispatch resolver, in jq (with $PJQ): one role, one profile -> the base member, model and effort, or an error with its exit code
+RESOLVEJQ='
+  def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
+  def serves($a): any((.abilities // [])[]; . == $a);
+  [profiles | {key: .name, value: .}] | from_entries as $P
+  | $d[0].bases as $bases
+  | (if $rclass == "read-only" then "review" else "build" end) as $row
+  | (if $prof != "" then $prof elif $P[$role] != null then $role else null end) as $want
+  | (if $want != null then $want else $row end) as $pn
+  | $P[$pn] as $p
+  | ($m[0] | to_entries | map(select((.value.project // null) == null or .value.project == $proj))
+      | sort_by((if (.value.project // "") == $proj and $proj != "" then 0 else 1 end), (.value.seq // 0))) as $E
+  | def cands($a): [$E[] | select(.value | serves($a) and mclass == $rclass)];
+    if $p == null then {code: 1, err: "no profile named \($pn) (qargi agent models lists them)"}
+    elif $p.base == null then {code: 2, err: "the \($pn) profile has no base and is never dispatched"}
+    elif $p.refused != null then {code: 2, err: "the \($pn) profile is refused: \($p.refused)"}
+    elif $p.class != $rclass then {code: 2, err: "the \($role) role is \($rclass) but the \($pn) profile has base \($p.base), which is \($p.class); use a profile of a \($rclass) base"}
+    else
+      ([$E[] | select(.key == $p.base and (.value | (any((.abilities // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $b
+      | (if $b != null then {m: $b, legacy: false}
+         else (cands($role)[0] // (if $row != $role then cands($row)[0] else null end)) as $l | if $l != null then {m: $l, legacy: true} else null end end) as $sel
+      | if $sel == null then {code: 1, err: "no member serves the \($role) role: qargi agent add NAME --abilities \($role)"}
+        else {code: 0, out: {role: $role, class: $rclass, profile: $pn,
+          profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
+          base: $p.base, member: $sel.m.key, member_scope: (if $sel.m.value.project != null then "project" else "user" end), legacy: $sel.legacy,
+          tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
+    end'
+
+resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
+  local role=$1 prof=$2 proj=$3 pf prov res code
+  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
+    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" \
+    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
+  code=$(jq -r .code <<<"$res")
+  if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
+  jq -r '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)"' <<<"$res"
+  if [ "$(jq -r '.out.model // ""' <<<"$res")" = "" ]; then
+    echo "qargi: warning: model $(jq -r '.out.model_id' <<<"$res") has no alias; the definition of member $(jq -r .out.member <<<"$res") applies" >&2
+  fi
 }
 
 case $verb in
@@ -223,14 +331,9 @@ case $verb in
     echo "removed member $n${f:+ ($f)}";;
   for)
     a=${POS[0]:-}
-    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--project P]   (a role of: $DA_ROLES)"
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
+    [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
-    m=$(member_for "$a" "$PROJ")
-    if [ -z "$m" ]; then   # a role of yours without a member of its own: a member of the built-in role of the same class
-      case $(role_class "$a") in read-only) b=review;; *) b=build;; esac
-      [ "$b" = "$a" ] || m=$(member_for "$b" "$PROJ")
-    fi
-    [ -n "$m" ] || die "no member serves the $a role: qargi agent add NAME --abilities $a"
-    echo "$m";;
+    resolve_for "$a" "$PROFILE" "$PROJ";;
   *) die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac

@@ -46,9 +46,9 @@ recommended; do not assume answers:
 6. **Budget** per cloud session in cents (default 500, set on the deployment).
 7. **Memory.** Create the project's stores or attach existing ones (ids).
 8. **Members, once.** The local workers are agents the user names. Ask for their
-   names and abilities, suggesting four members (`builder` for build, `writer` for
-   write, `reviewer` for review, `tester` for test) or one member with all four. Create
-   each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
+   names and abilities, suggesting the two base members (`worker` for build, write and
+   test; `reviewer` for review); specializations such as the auditor are profiles, not
+   members (`qargi agent models`). Create each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
    repository's `.claude/agents`, hidden from git); skip names that `qargi agent list`
    already shows.
 9. **Profile.** Which profile file holds the repository's gates and review steps

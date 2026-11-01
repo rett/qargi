@@ -113,4 +113,19 @@ grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && grep -q 
 blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out"); W2=$(runof <<<"$out")
 [ "$(sed -n '1p' <<<"$blk")" = "RUN_DIR=$W2" ] && [ "$(wc -l <<<"$blk")" = 6 ] && ! grep -q WARNING <<<"$out" && ok "the paths block is intact and the warning is not in stdout" || no "block: $blk"
 rm -rf "$T/s/claude/alpha"; out=$(mk4 w3); [ ! -s "$T/err" ] && ok "no render again: no warning" || no "removed render: $(cat "$T/err")"
+
+# prepare --profile: the resolver is asked before any clone; the run records the profile
+Q=./bin/qargi
+$Q agent add pj-judge --abilities review >/dev/null 2>&1; $Q agent add pj-forge --abilities build >/dev/null 2>&1
+out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
+[ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=pj-judge' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
+  && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"
+[ "$(jq -r 'select(.slug=="pf1") | .profile' "$T/s/local-runs.jsonl")" = advisor ] && ok "the run line carries the profile" || no "jsonl profile"
+n1=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)
+out=$($Q local prepare --repo "$T/r" --base main --slug pf2 --scratch "$T" --role build --profile auditor 2>&1); rcp=$?
+[ "$rcp" != 0 ] && grep -q 'read-only' <<<"$out" && [ "$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)" = "$n1" ] && ! grep -q pf2 "$T/s/local-runs.jsonl" \
+  && ok "a profile of the wrong class dies with the resolver's reason and leaves no run directory" || no "class conflict: $rcp $out"
+out=$($Q local prepare --repo "$T/r" --base main --slug pf3 --scratch "$T" --role build 2>&1); P3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
+grep -qx 'PROFILE=build' <<<"$out" && ! grep -q '^MODEL=' <<<"$out" && [ ! -e "$P3/profile" ] && [ "$(jq -r 'select(.slug=="pf3") | .profile' "$T/s/local-runs.jsonl")" = build ] \
+  && ok "without --profile: PROFILE=<role> and nothing else changes" || no "no profile: $out"
 exit $fail

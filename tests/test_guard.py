@@ -108,14 +108,20 @@ class Review(unittest.TestCase):
     def test_a_member_cannot_change_the_run_record(self):
         self.ability("review")
         a, b = os.path.join(self.run, "ability"), os.path.join(self.run, "refs.before")
+        with open(os.path.join(self.run, "profile"), "w") as f:
+            f.write("advisor\n")
+        pr = os.path.join(self.run, "profile")
         for cls in ((), ("--class", "read-only")):
             for tool, inp in (("Write", {"file_path": a}), ("Edit", {"file_path": b}),
                               ("Bash", {"command": "printf build > %s" % a}), ("Bash", {"command": "echo x >> %s" % b}),
+                              ("Write", {"file_path": pr}), ("Bash", {"command": "printf auditor > %s" % pr}),
                               ("Bash", {"command": "cd %s && printf build > ability" % self.run})):
                 r = self.call(tool, inp, self.out, *cls)
                 self.assertEqual(r.returncode, 2, (tool, inp, cls, r.stderr))
         with open(a) as f:
             self.assertEqual(f.read().strip(), "review")
+        with open(pr) as f:
+            self.assertEqual(f.read().strip(), "advisor")
 
     def test_an_unknown_class_refuses_every_call(self):
         self.assertEqual(self.call("Bash", {"command": "ls"}, None, "--class", "root").returncode, 2)
