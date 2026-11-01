@@ -121,7 +121,7 @@ render() { # name abilities-csv model effort-or-empty provider -> the definition
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first bc prov text
+  local n=${POS[0]:-} a list='' dir file seq first bc prov text ro
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   prov=$(provider_for "$PROJ") || exit 1
   valid_name "$n" "$PROJ"
@@ -135,6 +135,9 @@ add() {
   done
   [ -n "$list" ] || die "--abilities: give at least one"
   first=${list%%,*}
+  # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
+  ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
+  [ -z "$ro" ] || barrier_guard local "$PROJ"
   adapter_for "$prov" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
