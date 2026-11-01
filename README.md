@@ -34,12 +34,14 @@ Every name follows from the project, so resources are identifiable at a glance.
 | role | an ability (`build`, `write`, `review`, `test`) or `lead` | `build` |
 | member (local agent) | any kebab-case name you choose | `forge` |
 | instance (registry) | `<project>-<role>` | `myproject-build` |
-| cloud agent | `<project>-<role>` | `myproject-build` |
+| cloud agent (role) | `<project>-<role>` | `myproject-build` |
+| cloud agent (base) | `<project>-worker` (write class), `<project>-reviewer` (read-only) | `myproject-worker` |
 | environment (shared by the roles) | `<project>-environment` | `myproject-environment` |
-| deployment | `<project>-deployment-<role>` | `myproject-deployment-build` |
+| deployment | `<project>-deployment-<role>` (a base: `-worker`, `-reviewer`) | `myproject-deployment-build` |
 | memory stores (project-level) | `<project>-memory` (recipes), `<project>-reference` | `myproject-memory` |
 | memory folders | `shared/`, `roles/<role>/` | `roles/build/` |
 | session | `<instance>-<task-slug>` | `myproject-build-dots-in-usernames` |
+| session on a base | `<project>-worker-<task-slug>`, `<project>-reviewer-<task-slug>` | `myproject-worker-dots-in-usernames` |
 | branch (in the agent's clone) | `agent/<task-slug>`, the same slug | `agent/dots-in-usernames` |
 
 Memory belongs to the project, not the instance: every instance of a project
@@ -160,7 +162,7 @@ prints one, and `check [NAME]` validates one or all. These verbs only read.
   branches locally and writes the missing methodology files as one commit on `agent/adopt-<methodology>` for you to review.
   It never overwrites a file or pushes; changelog format, tag format and CI content stay yours.
 
-Both print a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
+Each prints a plan and a token; they write only when you apply it with `--plan TOKEN --approved "<your
 words>"` (`qargi help approvals`).
 
 ## Git-flow
@@ -200,8 +202,8 @@ with `--resolved`.
 When several sessions lead the same project, the marshal says who leads which open feature. It keeps one
 record per open feature: the lead (identity and lease), status, goal, plan and a note. The tasks,
 branches, worktrees and the files two features both change are derived from git and the local runs, not
-stored. The records are local to this host in this version; sharing them across machines and developers
-through git refs is planned and not built yet.
+stored. The records are local to this host by default; to share them across machines and developers
+through git refs, see `qargi marshal enable` below.
 
 ```
 qargi marshal status --all            # every open feature: lead, status, goal, tasks, overlap
@@ -241,7 +243,7 @@ Signing cannot stop someone with push access from deleting a ref; it makes forge
 
 ## Skills and command
 
-Twelve skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; four define the abilities (above); the others configure and manage:
+Nine skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
@@ -290,7 +292,7 @@ Seeding never links. To enable a baseline pack for a project: `qargi skill link 
 
 ## Help, manual page and completion
 
-- `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help approvals`, `naming`, `memory`, `push`, `concepts` and `files` explain the ideas.
+- `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help concepts`, `roles`, `approvals`, `naming`, `memory`, `push`, `files` and `dev` explain the ideas.
 - `man qargi` is the complete reference (`qargi help --man | man -l -` if it is not installed).
 - Tab completion for bash, zsh and fish offers commands, verbs, options (each once, also as `--option=value`; with a one-line description in zsh and fish) and the values that exist on your machine, each with its description in zsh and fish: your projects (for `lead` and `team`, those that define teams), instances (cloud ones for `start`, `send`, `track`, `instances budget`), sessions narrowed to what the verb can act on (`stop` a running one, `collect` one whose outputs are not downloaded, `close` and `watch` the open ones), a project's teams, roles and packs (skills or tools by command), memory store and deployment ids, model ids, the branches of the project's repository for `--base`, the keys of a project's answers for `project set` with the values each takes, and the usual spend ceilings and wait times. `install.sh --user` installs all three; zsh needs `fpath=(~/.local/share/zsh/site-functions $fpath)` in `~/.zshrc` before `compinit`.
 - Inside a project's repository you can leave out the project: `qargi lead status`, `qargi team brief code-docs ...`, `qargi canon check`. A role stands for the instance: `qargi instances show build`. `QARGI_PROJECT` names the project from anywhere. A project you type always wins.
@@ -357,7 +359,7 @@ A provider is a descriptor, `lib/providers/NAME.json`, and every provider uses t
 
 The rules that do not depend on the provider: a surface whose read-only barrier is not supported cannot serve the review role, unless you accept that for the project with `qargi provider accept NAME --surface S --no-barrier --asked "..."` (it prints a plan and a token, records `models.accept_no_barrier` and writes the audit log); a provider with no effort control has the effort dropped and `qargi agent models` says so; a provider without a per-dispatch model override must have one member per profile; and the output of a read-only run is never applied as patches. For the bundled `claude` descriptor the local barrier is the guard hook (partial: shell writes are caught heuristically and `local verify` is the backstop); the cloud review agents have no barrier, so a cloud review role needs your acceptance before it is provisioned or started.
 
-A provider's adapter (`lib/providers/NAME/adapter`) implements a small JSON contract (resolve, dispatch-local, barrier-check, provision, start-session, status, collect, stop, cost; exit 3 for what the descriptor says is unsupported), and `bash tests/conformance.sh NAME` runs the conformance cases against it, including a corpus of calls a read-only barrier must allow or deny. Only the local verbs of the `claude` adapter exist so far; its cloud verbs still run through the existing scripts.
+A provider's adapter (`lib/providers/NAME/adapter`) implements a small JSON contract (resolve, dispatch-local, barrier-check, provision, start-session, status, collect, stop, cost; exit 3 for what the descriptor says is unsupported), and `bash tests/conformance.sh NAME` runs the conformance cases against it, including a corpus of calls a read-only barrier must allow or deny. The `claude` adapter has the local verbs and the cloud start-session request builder; its other cloud verbs still run through the existing scripts.
 
 ## Splitting, merging and moving memory
 
@@ -428,10 +430,12 @@ An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`
 
 `install.sh --user` records the tool it installed in `~/.qargi/config/install.json`. A checkout run from anywhere else, for example `bin/qargi` in a worktree, is then a dev run: it keeps its data in `<checkout>/.qargi` (ignored by git), prints `qargi: dev run from ...; data in ...` on stderr once per command, and never touches your live projects, credentials or audit log. The installed copy (for example `/opt/qargi`) is for confirming committed work and managing live projects, and never writes into its own directory. Without `install.json` a checkout behaves as the installed one. To point a dev run at live data on purpose set `QARGI_HOME=~/.qargi`; any explicit `QARGI_HOME`, `QARGI_CONF` or `QARGI_STATE` overrides the sandbox, and `qargi migrate home` refuses in a dev run unless one of them is set. Members call `qargi __guard` and the hooks from `PATH`, which is the installed copy: put `<checkout>/bin` first on `PATH` to test a branch's guard or hooks.
 
-## Cloud profiles per project
+## Cloud (ant) profiles per project
 
 `qargi cloud set PROJECT --profile NAME --workspace-id wrkspc_...` binds a project to an `ant` profile and the workspace it must
-reach; `qargi cloud login PROJECT` logs that profile in on your terminal, and `qargi cloud check` verifies it. From then on every
+reach; `qargi cloud login PROJECT` logs that profile in on your terminal, and `qargi cloud check` verifies it. `qargi cloud list` and `show`
+print the bindings, and `qargi cloud unset PROJECT` removes one. (These are `ant` profiles; the model profiles of a base session are
+described under Choosing models.) From then on every
 command about the project runs `ant` under that profile and refuses to touch another workspace. Without a binding, `ant`'s
 active profile is used.
 

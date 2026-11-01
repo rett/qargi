@@ -4,13 +4,15 @@
 
 - `master` holds released versions only; every release is a tag.
 - `develop` is the integration branch.
-- Work happens on `feature/<name>` branches started with
-  `git flow feature start <name>` and finished with
-  `git flow feature finish <name>` (merge into `develop`).
-- A release is `git flow release start <version>`, final checks and the
-  `VERSION` and `CHANGELOG.md` update on the release branch, then
-  `git flow release finish <version>`. Fixes to a released version use
-  `git flow hotfix`.
+- Work happens on `feature/<name>` branches, with every merge `--no-ff`. Use
+  the `qargi feature` commands, which follow the git-flow model: `qargi feature
+  start <name>`, `qargi feature merge <name> <branch>` for each verified task,
+  and `qargi feature finish <name>` (merge into `develop`, after
+  `qargi feature verify <name>` passed the whole suite).
+- A release is `qargi release start <version>`; the `VERSION` and
+  `CHANGELOG.md` update is its first commit, then `qargi release verify
+  <version>` and `qargi release finish <version>`. Fixes to a released version
+  use `qargi release start <version> --hotfix`.
 - Tags are the bare version number, for example `0.1.0`.
 
 ## Layout
@@ -30,8 +32,7 @@ directory is listed and the reverse, and each pack passes the library's review.
 
 ## Tests
 
-`tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
-guard, members, the memory backends and their split/merge invariants, the role migration, role seeds, shellcheck). It needs no API access and no private data.
+`tests/run.sh` runs everything, and its list of tests and the linter is the inventory. It needs no API access and no private data.
 
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 

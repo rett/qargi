@@ -17,7 +17,7 @@ INTRO = (
 )
 
 ROLES = ("build", "write", "review", "test", "lead")
-ABILITIES = ROLES[:-1]   # the work roles; each is defined by the skill qargi-<ability>
+ABILITIES = ROLES[:-1]   # the work roles; each is defined by roles/<role>/ROLE.md
 def _provider_models():
     """The model ids and aliases of the provider descriptors (lib/providers/NAME.json), for completion."""
     import glob, json, os
@@ -145,7 +145,7 @@ COMMANDS = {
                          opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents", "PROJECT", "project")],
                         desc="Refuses a name that exists, a name that is not kebab-case, and the name of a built-in Claude Code agent type.",
                         examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
-                                  "qargi agent add worker    # one member for all four abilities"]),
+                                  "qargi agent add worker    # the write-class base: build, write and test"]),
             "list": verb("List the members, their abilities and definitions"),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
@@ -247,7 +247,7 @@ COMMANDS = {
                                  "--integrity sets the mode: off signs and checks nothing; advisory signs when a key exists and tags records signed, unsigned or INVALID without ignoring any; "
                                  "strict ignores records not signed by a trusted key and falls back to the last accepted record. Not available in a member run.")),
             "key": verb("Create this machine's signing key for the marshal records (key init)", [("SUBCOMMAND", "none")],
-                        [PROJECT_OPT, opt("--principal", "the name the key is trusted under (default person@machine)", "ID"), opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
+                        [opt("--principal", "the name the key is trusted under (default person@machine)", "ID"), opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                         desc=("`key init` makes $QARGI_CONF/credentials/marshal_ed25519 (mode 600), never overwrites it, and prints the signers line to trust on every lead machine. "
                               "Audited as marshal:key-init. Not available in a member run.")),
             "signers": verb("List, add or remove the keys trusted to sign this project's marshal records (add | remove | list)", [("SUBCOMMAND", "none"), ("[PRINCIPAL]", "none")],
@@ -290,7 +290,7 @@ COMMANDS = {
         "scripts": ["provision.sh"],
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
-                         [opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role (default build)", "ROLE", ROLES),
+                         [opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role, or a base (worker, reviewer); default build", "ROLE", ROLES + ("worker", "reviewer")),
                           opt("--model", "model id, overriding the project's answers", "MODEL", "model"), opt("--effort", "effort level", "LEVEL", EFFORTS),
                           opt("--apt", "extra packages for the shared environment, space separated", "PACKAGES"),
                           opt("--networking", "the sandbox's network access", "MODE", ("unrestricted", "limited")),
@@ -299,7 +299,7 @@ COMMANDS = {
                           opt("--reference-store", "attach this reference store", "ID", "store")],
                          examples=["qargi provision plan acme-write"]),
             "apply": verb("Create the resources of an approved plan", [("NAME", "instance", True)],
-                          [ASKED, PLAN, APPROVED, opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role", "ROLE", ROLES)],
+                          [ASKED, PLAN, APPROVED, opt("--project", "the project, instead of NAME", "PROJECT", "project"), opt("--role", "the role, or a base (worker, reviewer)", "ROLE", ROLES + ("worker", "reviewer"))],
                           desc="Brings new memory stores to the canon, seeds the roles, records the ids and registers the instance."),
             "add-reference": verb("Create and attach a reference store to an existing instance", [("NAME", "instance")], [ASKED, APPROVED]),
         },

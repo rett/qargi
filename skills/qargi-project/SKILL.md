@@ -1,7 +1,7 @@
 ---
 name: qargi-project
 description: Initialise a project for qargi by asking the preliminary questions once (repository, long-lived branches, roles, per-role base branch, push policy, model and effort, packages, skills, budget, memory) and storing the answers outside the repository. Provisioning and dispatch read them.
-argument-hint: init|show|list|validate NAME
+argument-hint: init|new|attach|adopt|show|list|validate NAME
 ---
 
 # /qargi-project
@@ -54,7 +54,12 @@ recommended; do not assume answers:
 9. **Profile.** Which profile file holds the repository's gates and review steps
    (kept under the config directory, per role if the gates differ).
 
-Then write the answers file and store it:
+A project can also start from a repository instead of an answers file: `qargi project new NAME` creates a new one on the
+methodology's branches, `qargi project attach [DIR]` reads an existing one (it shows the answers and the gaps and changes nothing in
+the repository), and `qargi project adopt NAME` then creates the missing long-lived branches and methodology files on a branch to
+review. See `qargi help project`.
+
+Or write the answers file and store it:
 
 ```sh
 qargi project template NAME > answers.json   # edit with the answers

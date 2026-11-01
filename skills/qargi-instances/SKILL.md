@@ -25,4 +25,4 @@ after you have shown the printed PLAN.
 | normalize | `qargi instances normalize NAME --asked "..." [--approved "..."]` | Renames the agent, environment and deployment to `<project>-<role>`, `<project>-environment`, `<project>-deployment-<role>` and the memory and reference stores to `<project>-memory`, `<project>-reference`; plan first. `show` lists the deviations as NAMING lines. |
 | remove | `qargi instances remove NAME` | Registry entry only; refuses with open sessions. |
 
-Instance names are `<project>-<role>` with a role from the fixed list (`build`, `review`, `write`, `test`, and `lead`), for example `myproject-build`; `init` for an existing deployment needs a conforming `--name`.
+Instance names are `<project>-<role>` with a role from the fixed list (`build`, `review`, `write`, `test`, and `lead`), for example `myproject-build`, or a base: `<project>-worker` (class write) or `<project>-reviewer` (read-only; the project must first accept the missing cloud read-only barrier with `qargi provider accept NAME --surface cloud --no-barrier`); `init` for an existing deployment needs a conforming `--name`.
