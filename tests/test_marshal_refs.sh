@@ -502,6 +502,12 @@ kill -0 "$rp" 2>/dev/null && ! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null \
 kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
 [ "$(orec refs/qargi/features/hv2 | jq -r .lead.id)" = bob ] && ok "renewer: the refused renewal left bob's lead alone" || no "renewer overwrote bob's lead on hv2: $(orec refs/qargi/features/hv2)"
 
+# ============================================================ (23) a fetch leaves the lead's FETCH_HEAD alone
+echo sentinel > "$T/m/b/app/.git/FETCH_HEAD"
+XE b marshal status --all --brief >/dev/null 2>&1
+[ "$(cat "$T/m/b/app/.git/FETCH_HEAD" 2>/dev/null)" = sentinel ] && grep -q "^fetch.*--no-write-fetch-head" "$LOG" \
+  && ok "fetch: the refresh does not write FETCH_HEAD of the lead's repository" || no "SPEC the refresh must fetch with --no-write-fetch-head; FETCH_HEAD is now: $(head -c 100 "$T/m/b/app/.git/FETCH_HEAD" 2>&1)"
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
