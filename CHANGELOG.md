@@ -25,7 +25,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whose token covers that head and refuses a lead other than the accepted one; `disable` needs the plan token and your words while
   integrity is on; the guard follows `pushd`/`popd`, refuses links and moves of the key, and normalises `/./` in scanned text.
   Member definitions now also hook the guard on the Read and Grep tools (to keep the key unread); members created earlier keep the old
-  matcher until they are re-added (`qargi agent add`).
+  matcher until they are refreshed (`qargi agent refresh NAME`).
 - Shared marshal. `qargi marshal enable|disable` switch a project between the local records and a shared backend that keeps each
   feature record as a commit on `refs/qargi/features/NAME` of the remote origin: create-only claims, leased updates, an atomic move
   to `refs/qargi/done/NAME` on finish, a fetch that never brings other refs, and takeover judged on the taker's own monotonic clock.
@@ -72,7 +72,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   frontier) to models; a project chooses the provider with `models.provider`. `qargi agent add` takes its model and effort from
   the project's answers, else the table, and writes the effort into the member definition (so does `agent refresh`); the project
   template does the same, and its write role is now Sonnet rather than Opus. `qargi agent models [--project P] [--json]` shows
-  the table, the project's overrides, the suggested members (`auditor` on Haiku, `advisor` on Opus, `researcher` on the opt-in
+  the table, the project's overrides, the shipped profiles (`auditor` on Haiku, `advisor` on Opus, `researcher` on the opt-in
   frontier tier, Fable 5.1) and each member, marking an alias as unpinned and a frontier member as opt-in. The flow skill has an
   advisor sign-off before `feature finish` and says search is a read-only exploration on a small model, not a role.
 - `qargi marshal status --all` (and `--brief`, `--json`, and the session-start hook that uses them) lists only the open features;
@@ -118,7 +118,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   identity and overlap. The lease is `marshal.ttl` minutes per project (default 15; `qargi project set PROJECT marshal.ttl N`),
   renewed by the lead's actions and for the whole run of `feature verify` and `feature finish`, so a suite of any length is
   safe. A feature whose lead stopped is taken over only after the lease ran out and with your words, which are audited.
-  Records are local to the host in this version.
+  Records are local to the host unless the project switches to the shared backend (`marshal enable`).
 - `feature start|merge|sync|verify|finish` and `local prepare --base feature/X` ask the marshal first and refuse when another
   live lead holds the feature; `feature start` records the starter as lead, `finish` marks the record finished, `feature
   status` ends with the marshal's view and `feature list` shows each lead. A marshal that is absent or fails never blocks.
@@ -205,57 +205,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PROJECT`. The run goes on; stdout and the TASK-BLOCK PATHS block are unchanged.
 - The guard protects that directory: members can no longer write under the state's `claude/` directory, and the operands of
   `packs render` are judged as write destinations.
-
-### Fixed
-- Read-only cloud roles now have the `write` built-in tool off as well as `edit` (a reviewer could still create files through
-  `write`); an unknown class now counts as read-only instead of write, and `worker` and `reviewer` are reserved role names.
-
-### Changed
-- The plan token of `packs apply --target claude-code` also covers file modes, the manifest records them, and the swap installs
-  only the tree the token approved.
-- `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,
-  and later checks compare with it: fast-forwards of `develop`, `master` and `agent|feature|release|hotfix/*` branches and new
-  branches there are accepted, while remote refs, tags, deletions and rewrites still fail. A change now exits 2 (it was 1). Run
-  `qargi local verify` on every run before merging any of them.
-- `qargi local prepare` ends its output with a blank line and a `TASK-BLOCK PATHS` block (`RUN_DIR`, `CLONE`, `OUT`, `TMP`, `GIT`,
-  `BASE_SHA`); a caller that evals the output must stop at the blank line.
-- `qargi project attach` reads the tree of the integration branch (`develop`, else the default branch, else `HEAD`) and says which,
-  not the working tree. It prints origin as read and the normalised url. When answers are already stored it shows stored against
-  detected and the fields the stored file lacks, stays read-only and gives no plan token; with `--force` the plan keeps what it
-  cannot detect (the roles' models and effort, cloud, memory, budget).
-- `qargi feature start` refuses a name origin already has, asked live with `git ls-remote`.
-- `qargi feature status|finish` and `qargi release status|push|finish` ask the live origin with `git ls-remote` where the branches
-  are (`QARGI_REMOTE_TIMEOUT` seconds, default 10) instead of the last fetch, and print `remote not checked` when origin cannot
-  be reached.
-- `tests/run.sh` runs without the caller's cloud binding or any `QARGI_*` or `ANTHROPIC_*` variable and with a fresh `HOME`, and
-  every test is hermetic (`tests/hermetic.sh`, `tests/hermetic.py`): fresh qargi config and state, and failing `ant` and `claude`
-  stubs first on `PATH`.
-- The role and contract text lists the rules to follow before DONE. Every cloud agent's prompt changes: run
-  `qargi instances refresh-prompt NAME --if-stale` for each.
-- `qargi feature verify` and `qargi release verify` run the project's test command without the project's cloud binding
-  (`ANTHROPIC_PROFILE`, `QARGI_CLOUD_WORKSPACE`, `QARGI_CLOUD_PROJECT`), and `tests/run.sh` unsets them, so a project with
-  a cloud binding can get a passing whole-suite record.
-- The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
-  ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
-  `qargi-build|write|review|test` skills remain for now and are no longer what a task loads.
-
-### Removed
-- The four ability skills `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test` are gone: nothing loaded them. A member
-  follows the role text that comes with the task block (`roles/<role>/ROLE.md`), and `qargi help roles`, `qargi help agent`
-  and the manual page no longer name them. `install.sh --user` removes the leftover links to them.
-
-### Security
-- A review member could lift its own read-only limit: the guard took the ability from `RUN/ability`, a file the member could
-  write. The guard now refuses any write to a run's `ability` and `refs.before`, and a member that only reviews names its
-  class in the hook command of its definition (under the protected agents directory), which holds on every task whatever the
-  run file says. Run `qargi agent refresh NAME` for existing members to get the new hook; a guard given an unknown class
-  refuses every call.
-- A member could rewrite the installed tool through the links in `~/.claude/skills` (they resolve into the installed copy,
-  which was not a protected location) and a project's `.claude/agents` definitions (which carry the hook that guards a
-  member). The guard now protects the installed tool root recorded in `install.json` and `.claude/agents` outside the run's
-  clone, as it already did `.claude/skills`. Reading stays allowed.
-
-### Added
 - A GitHub Actions workflow runs the whole test suite on pull requests and on pushes to `develop`.
 - `qargi packs load [PACK] --role R [--project P]`: read-only. Without a pack it lists what the role has enabled, with each
   description; with one it prints its approved text and the library path of its other files. It reads the links when called,
@@ -315,16 +264,60 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lib/paths.py` and the top of `lib/lib.sh` are the one place each language resolves these locations; the nine copies of the XDG logic are gone.
 
 ### Changed
+- The plan token of `packs apply --target claude-code` also covers file modes, the manifest records them, and the swap installs
+  only the tree the token approved.
+- `qargi local verify` and `qargi local clean` accept the lead's own work. After a passing verify the run records `RUN/verified`,
+  and later checks compare with it: fast-forwards of `develop`, `master` and `agent|feature|release|hotfix/*` branches and new
+  branches there are accepted, while remote refs, tags, deletions and rewrites still fail. A change now exits 2 (it was 1). Run
+  `qargi local verify` on every run before merging any of them.
+- `qargi local prepare` ends its output with a blank line and a `TASK-BLOCK PATHS` block (`RUN_DIR`, `CLONE`, `OUT`, `TMP`, `GIT`,
+  `BASE_SHA`); a caller that evals the output must stop at the blank line.
+- `qargi project attach` reads the tree of the integration branch (`develop`, else the default branch, else `HEAD`) and says which,
+  not the working tree. It prints origin as read and the normalised url. When answers are already stored it shows stored against
+  detected and the fields the stored file lacks, stays read-only and gives no plan token; with `--force` the plan keeps what it
+  cannot detect (the roles' models and effort, cloud, memory, budget).
+- `qargi feature start` refuses a name origin already has, asked live with `git ls-remote`.
+- `qargi feature status|finish` and `qargi release status|push|finish` ask the live origin with `git ls-remote` where the branches
+  are (`QARGI_REMOTE_TIMEOUT` seconds, default 10) instead of the last fetch, and print `remote not checked` when origin cannot
+  be reached.
+- `tests/run.sh` runs without the caller's cloud binding or any `QARGI_*` or `ANTHROPIC_*` variable and with a fresh `HOME`, and
+  every test is hermetic (`tests/hermetic.sh`, `tests/hermetic.py`): fresh qargi config and state, and failing `ant` and `claude`
+  stubs first on `PATH`.
+- The role and contract text lists the rules to follow before DONE. Every cloud agent's prompt changes: run
+  `qargi instances refresh-prompt NAME --if-stale` for each.
+- `qargi feature verify` and `qargi release verify` run the project's test command without the project's cloud binding
+  (`ANTHROPIC_PROFILE`, `QARGI_CLOUD_WORKSPACE`, `QARGI_CLOUD_PROJECT`), and `tests/run.sh` unsets them, so a project with
+  a cloud binding can get a passing whole-suite record.
+- The cloud agent contract, the member definition and the task skill speak of a role and its text instead of loading an
+  ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
 - Breaking before 1.0: the default locations are `~/.qargi/config` and `~/.qargi/state`, not `$XDG_CONFIG_HOME/qargi` and `$XDG_STATE_HOME/qargi`; the XDG variables no longer move qargi's data. While only the earlier directories exist, every command except `help`, `version`, completion, `__guard`, the run-event hooks and `migrate home` stops and asks you to run `qargi migrate home`; qargi never creates an empty `~/.qargi` next to old data, and `install.sh --user` does not record the install until then.
 - The member guard protects the pack library, `<config>/credentials/` and `<config>/install.json` at the new location (the resolved configuration directory, `$QARGI_HOME/config`, the live one and `~/.qargi/config`) and keeps the earlier XDG paths protected as a backup. The rest of the configuration directory stays writable (the guard decides by path, not by qargi verb), and reading a protected path is still allowed.
 - The member guard refuses a member every skill-modifying verb: `qargi skill|tool new|import|seal|remove|unlink|link|enable|disable`, `qargi discover install`, `qargi packs apply` and `qargi import` (found after wrappers, in `sh -c`, `eval` and `$(...)`, and when `packs.sh` or `discover.py` is run directly), setting `QARGI_NESTED`, and writes under the pack library (`$QARGI_CONF/packs`, honouring the XDG defaults), `~/.claude/skills`, `~/.claude/agents`, `~/.claude/plugins` and any `.claude/skills` directory outside the run's clone (inside the clone it is the work product, reviewed as a patch; paths are resolved first, so a link in the clone to a protected location is still refused). Edit, Write and NotebookEdit are decided by the resolved path; Bash by a documented conservative heuristic (redirections, tee, cp, mv, rm, ln, install, rsync, `sed -i`, `dd of=`, find, tar and so on). The repository's own `skills/` directory in a member's clone and its run directories stay writable. Read-only verbs (`list`, `show`, `check`, `effective`, `search`, `render`) are unchanged. A barrier, not proof; code that writes a file itself (`python -c`) is not covered.
 - The guard fails closed: an unexpected exception inside it is exit 2 with the reason on stderr, not a silent pass. `agents/member.md` sets `onFailure: "block"` and a `timeout` on the hook, so a hook that cannot start, crashes, times out or exits other than 0 or 2 blocks the call (needs Claude Code 2.1.295 or later; an older one runs the call, per the hooks documentation). Frontmatter hooks of a project-level agent file run only once the workspace is trusted.
 - `QARGI_NESTED` no longer stands in for the plan token of `skill|tool new|import|seal|remove|link|unlink|enable|disable` and `packs apply`; `import`, `seal` and `packs apply` always need `--plan`, and an empty expected token is an error. Nothing nested them (`discover install` already cleared it, provisioning only renders). `--approved` remains recorded text: proof that a person approved is still the owner's chat approval.
 
+### Removed
+- The four ability skills `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test` are gone: nothing loaded them. A member
+  follows the role text that comes with the task block (`roles/<role>/ROLE.md`), and `qargi help roles`, `qargi help agent`
+  and the manual page no longer name them. `install.sh --user` removes the leftover links to them.
+
 ### Fixed
+- Read-only cloud roles now have the `write` built-in tool off as well as `edit` (a reviewer could still create files through
+  `write`); an unknown class now counts as read-only instead of write, and `worker` and `reviewer` are reserved role names.
 - `qargi provision apply` no longer fails on the second and later roles of a project: an empty package list became `[""]`, which the shared environment update rejected, before the stores were attached and the instance registered.
 - `qargi memory split|merge|copy`: a note whose own `Sources:` line is exactly `origin not recorded (qargi memory)` (written by an earlier copy or by hand) is no longer mistaken for the line qargi inserts into a note that has none. Undoing a copy or an archive (merging a split's target) now returns both kinds of note byte for byte; which one it was is read from the digest already in the origin segment, so the segment format is unchanged and notes written by earlier versions restore as before.
 - The tracker's `stop_reason` was empty for every session: the session object has no such field. `status`, `watch`, `send`, `close` and `track` now read it from the last `session.status_idle` event of an idle session. `watch` can now print `budget_reached`.
+
+### Security
+- A review member could lift its own read-only limit: the guard took the ability from `RUN/ability`, a file the member could
+  write. The guard now refuses any write to a run's `ability` and `refs.before`, and a member that only reviews names its
+  class in the hook command of its definition (under the protected agents directory), which holds on every task whatever the
+  run file says. Run `qargi agent refresh NAME` for existing members to get the new hook; a guard given an unknown class
+  refuses every call.
+- A member could rewrite the installed tool through the links in `~/.claude/skills` (they resolve into the installed copy,
+  which was not a protected location) and a project's `.claude/agents` definitions (which carry the hook that guards a
+  member). The guard now protects the installed tool root recorded in `install.json` and `.claude/agents` outside the run's
+  clone, as it already did `.claude/skills`. Reading stays allowed.
 
 ## [0.1.0] - 2026-10-28
 
