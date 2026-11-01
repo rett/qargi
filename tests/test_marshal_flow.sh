@@ -90,7 +90,7 @@ export QARGI_LEAD=alice
 
 # --- status and list show the marshal's view
 run $F status w1; rc=$?
-tail -n 3 "$T/o" | grep -q 'lead:' && tail -n 6 "$T/o" | grep -q alice && ok "status: the output ends with the marshal's view (lead: alice)" || no "SPEC status: rc=$rc $(cat "$T/o")"
+grep -q '^  lead: alice' "$T/o" && grep -q '^feature w1 of app$' "$T/o" && ok "status: the output ends with the marshal's view (lead: alice)" || no "SPEC status: rc=$rc $(cat "$T/o")"
 run $F list
 grep -q 'feature/w1: .*\[lead alice\]' "$T/o" && ok "list: a led feature shows [lead alice]" || no "SPEC list lead: $(cat "$T/o")"
 grep -q 'feature/m3: .*\[lead none\]' "$T/o" && ok "list: a feature without a lead shows [lead none]" || no "SPEC list none: $(cat "$T/o")"
