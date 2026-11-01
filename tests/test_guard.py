@@ -177,6 +177,21 @@ class Skills(unittest.TestCase):
         for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
+    def test_refuses_provider_accept_to_a_member(self):
+        for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
+                     "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",
+                     "cd src && qargi provider accept claude --plan 0123456789ab --approved go", "echo $(qargi provider accept claude)",
+                     "bash lib/provider.sh accept claude --surface cloud", "python3 -I lib/provider.py accept claude --surface cloud", "./lib/provider.sh accept claude"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent", r.stderr)
+
+    def test_lets_the_read_only_provider_verbs_through(self):
+        for c in ("qargi provider list", "qargi provider show claude", "qargi provider check claude", "python3 -I lib/provider.py require-barrier claude cloud",
+                  "python3 -I lib/provider.py effective claude local read_only_barrier", "echo qargi provider accept", "grep -n 'provider accept' lib/commands.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_packs_seed_to_a_member(self):
         for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
             r = self.bash(form)
