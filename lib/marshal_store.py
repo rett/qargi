@@ -199,6 +199,13 @@ def branch_exists(ctx, name):
     return git(ctx, "rev-parse", "-q", '--verify', "refs/heads/feature/" + name) is not None
 
 
+def unled(ctx, name, rec):
+    """The record, or for a feature that has a branch but no record yet (started before the marshal, or by hand) an empty unled one."""
+    if rec is None and branch_exists(ctx, name):
+        return {"status": "unled"}
+    return rec
+
+
 def open_features(ctx):
     out = git(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*") or ""
     return sorted(b[len("feature/"):] for b in out.split() if b.startswith("feature/"))
@@ -514,6 +521,7 @@ def v_take(ctx, a):
     ctx.warn_anon()
 
     def fn(rec):
+        rec = unled(ctx, a.name, rec)
         if rec is None:
             raise Refuse("no record for feature %s (claim it: qargi marshal claim %s)" % (a.name, a.name))
         ld = lead_of(rec)
@@ -541,6 +549,7 @@ def v_takeover(ctx, a):
         raise Refuse("takeover needs --approved WORDS: your go-ahead, in your words, for exactly this takeover")
 
     def fn(rec):
+        rec = unled(ctx, a.name, rec)
         if rec is None:
             raise Refuse("no record for feature %s (claim it: qargi marshal claim %s)" % (a.name, a.name))
         st, mins = lease(ctx, rec)
@@ -566,6 +575,7 @@ def v_finish(ctx, a):
     check_name(a.name)
 
     def fn(rec):
+        rec = unled(ctx, a.name, rec)
         if rec is None:
             if a.lenient:
                 return None, False
