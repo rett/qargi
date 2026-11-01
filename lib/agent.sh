@@ -88,6 +88,10 @@ provider_for() { # project-or-empty -> the active provider (the project's models
   echo "$p"
 }
 
+no_effort() { # provider -> 0 when the provider has no effort control (every effort level is null in its descriptor)
+  jq -e '[.effort[]] | all(. == null)' "$PROVIDERS/$1.json" >/dev/null
+}
+
 tier_model() { # provider tier -> the provider's model id
   jq -r --arg t "$2" '.tiers[$t]' "$PROVIDERS/$1.json"
 }
@@ -113,6 +117,7 @@ render() { # name abilities-csv model effort-or-empty provider -> the definition
   local cls=read-only a adapter req out rc
   for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || cls='write'; done
   adapter=$(adapter_for "$5") || exit 1
+  ! no_effort "$5" || set -- "$1" "$2" "$3" '' "$5"
   req=$(jq -nc --arg n "$1" --arg a "$2" --arg c "$cls" --arg m "$3" --arg e "${4:-}" \
     '{member: $n, abilities: ($a | split(",")), class: $c, model: $m, effort: (if $e == "" then null else $e end)}')
   out=$("$adapter" dispatch-local <<<"$req") && rc=0 || rc=$?
@@ -121,7 +126,7 @@ render() { # name abilities-csv model effort-or-empty provider -> the definition
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first bc prov text ro
+  local n=${POS[0]:-} a list='' dir file seq first bc prov text ro ORIG_EFFORT=$EFFORT
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   prov=$(provider_for "$PROJ") || exit 1
   valid_name "$n" "$PROJ"
@@ -141,6 +146,10 @@ add() {
   adapter_for "$prov" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
+  if no_effort "$prov"; then   # the provider cannot be told how hard to think: the member records none
+    [ -z "$ORIG_EFFORT" ] || echo "qargi: note: effort ignored ($prov has no effort control)" >&2
+    EFFORT=''
+  fi
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
   case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
   dir=$(agents_dir "$PROJ") || exit 1; file=$dir/$n.md
@@ -192,7 +201,7 @@ def profiles:
        then "abilities \(($m.abilities // []) | join(",")) do not fit base \($base) (\($bases[$base].class))"
      else null end) as $refused
   | {name: $n, base: $base, class: (if $base != null then ($bases[$base].class? // null) else null end), tier: $r.tier, model: $r.alias, model_id: $r.id,
-     effort: ($p.effort // $lg.effort // $m.effort // "medium"), opt_in: ($s.opt_in // false), purpose: ($m.purpose // ""),
+     effort: (if $noeffort then null else ($p.effort // $lg.effort // $m.effort // "medium") end), opt_in: ($s.opt_in // false), purpose: ($m.purpose // ""),
      abilities: ($m.abilities // null), shipped: ($s != null), project: ($p != null), via_roles: (($lg.model != null or $lg.effort != null)),
      source: (if $p != null or $lg.model != null or $lg.effort != null then "project" else "shipped" end), refused: $refused};
 EOF
@@ -214,21 +223,22 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 }
 
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
-  local proj=$PROJ pf prov tiers aliases rc out
+  local proj=$PROJ pf prov tiers aliases rc out noeff=false
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj") || exit 1
   tiers=$(jq -c .tiers "$PROVIDERS/$prov.json"); aliases=$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")
   rc=$(role_classes)
+  ! no_effort "$prov" || noeff=true
   local miss='{}' n f
   while IFS=$'\t' read -r n f; do [ -f "$f" ] || miss=$(jq -c --arg n "$n" '.[$n] = true' <<<"$miss"); done < <(jq -r 'to_entries[] | [.key, (.value.file // "")] | @tsv' "$MEMBERS_FILE")
-  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --arg prov "$prov" --arg pat "$(jq -r .model_pattern "$PROVIDERS/$prov.json")" "$PJQ"'
+  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --argjson noeffort "$noeff" --arg prov "$prov" --arg pat "$(jq -r .model_pattern "$PROVIDERS/$prov.json")" "$PJQ"'
     def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
     | ([$m[0] | to_entries[] | .value | mclass] | unique) as $have
     | def baseof($c): [$bases | to_entries[] | select(.value.class == $c) | .key][0];
-    {provider: $prov, aliases: $aliases,
+    {provider: $prov, effort_control: ($noeffort | not), aliases: $aliases,
        bases: ($bases | with_entries(.key as $k | .value += {registered: ($m[0] | has($k))}
          | .value += {flags: (if .value.registered or (.value.class | IN($have[])) then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
        profiles: ([profiles | .flags = ([if .refused then "refused: \(.refused)" else empty end,
@@ -252,6 +262,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(",")), (if .value.registered then "registered" else "not registered" end), (.value.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
     | while IFS=$'\t' read -r n c a r fl; do printf '  %-10s %-10s %-18s %-15s %s\n' "$n" "$c" "$a" "$r" "$fl"; done
   echo "profiles (provider: $prov; tier -> alias -> model/effort; a role of yours uses its class: write -> build, read-only -> review)"
+  [ "$noeff" = false ] || echo "  effort: ignored ($prov has no effort control)"
   jq -r '.profiles[] | [.name, (.base // "-"), ((.tier // "?") + " -> " + (.model // "-") + " -> " + (.model_id // "-") + "/" + (.effort // "default")),
       (.source + (if .via_roles then " (roles)" else "" end)), (if .opt_in then "opt-in" elif .name == "lead" then "never dispatched" else "" end), (.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
     | while IFS=$'\t' read -r n b d s t fl; do printf '  %-11s %-9s %-52s %-10s %s\n' "$n" "$b" "$d" "$s" "${t:+$t }$fl"; done
@@ -292,13 +303,24 @@ RESOLVEJQ='
     end'
 
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov res code
+  local role=$1 prof=$2 proj=$3 pf prov res code noeff=false mem mm want ov
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  ! no_effort "$prov" || noeff=true
   res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
-    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" \
+    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  # a provider that cannot set the model per dispatch runs the member's own model and no other
+  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" local per_dispatch_model_override 2>/dev/null) || ov=no
+  if [ "$ov" = no ]; then
+    mem=$(jq -r .out.member <<<"$res"); mm=$(jq -r --arg m "$mem" '.[$m].model // ""' "$MEMBERS_FILE")
+    want=$(jq -r '.out.model // .out.model_id // ""' <<<"$res")
+    if [ -n "$mm" ] && [ -n "$want" ] && [ "$mm" != "$want" ] && [ "$mm" != "$(jq -r '.out.model_id // ""' <<<"$res")" ]; then
+      echo "qargi: the provider $prov cannot set the model per dispatch (per_dispatch_model_override is not supported on local), so member $mem (model $mm) cannot run the $(jq -r .out.profile <<<"$res") profile (model $want). Use one member per profile: qargi agent add NAME --abilities $role --model $want$([ -z "$proj" ] || echo " --project $proj"), or choose a profile with the model of the member" >&2
+      exit 2
+    fi
+  fi
   if [ -n "$JSON" ]; then jq '.out' <<<"$res"; return 0; fi
   jq -r '.out | "\(.member) \(.model // "-") \(.effort // "default") \(.profile)"' <<<"$res"
   if [ "$(jq -r '.out.model // ""' <<<"$res")" = "" ]; then
