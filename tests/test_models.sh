@@ -11,12 +11,21 @@ unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects"
 A=$HOME/.claude/agents
 
-jq -e '(.lead.model | test("^claude-")) and (.lead.effort | IN("low","medium","high","xhigh","max"))
-  and ([.roles.build, .roles.write, .roles.test, .roles.review] | all(.model | test("^claude-")))
-  and ([.roles[], .lead] | all(.effort | IN("low","medium","high","xhigh","max")))
-  and (.suggested | has("auditor") and has("advisor"))
-  and ([.suggested[]] | all(.abilities | length > 0) and all(.purpose | length > 0) and all(.model | test("^claude-")))' "$TABLE" >/dev/null \
-  && ok "the table is valid and complete" || no "table"
+PROV=$PWD/lib/providers
+TIERS='["fast","balanced","deep","frontier"]'
+jq -e --argjson tiers "$TIERS" '([.lead, .roles[], .suggested[]] | all(.tier | IN($tiers[])) and all(.effort | IN("low","medium","high","xhigh","max")))
+  and ([.lead, .roles[], .suggested[]] | all(has("model") | not))
+  and (.roles | has("build") and has("write") and has("test") and has("review"))
+  and (.suggested | has("auditor") and has("advisor") and has("researcher"))
+  and ([.suggested[]] | all(.abilities | length > 0) and all(.purpose | length > 0))' "$TABLE" >/dev/null \
+  && ok "the table is valid and complete (tiers and efforts, no model ids)" || no "table"
+jq -e '.suggested | to_entries | map(select(.value.tier == "frontier") | .key) == ["researcher"]' "$TABLE" >/dev/null && ok "only the researcher is suggested on frontier" || no "frontier suggested"
+jq -e '.escalate == {build:"frontier",write:"frontier",test:"frontier",review:"frontier"}' "$TABLE" >/dev/null && ok "escalate names the tier to offer per role" || no "escalate"
+jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.provider == "claude" and (.tiers | keys | sort) == ($tiers | sort) and (.tiers | all(test("^claude-")))
+  and ([$d[0].lead, $d[0].roles[], $d[0].suggested[]] | map(.tier) | unique - ($tiers) == [])
+  and ([$d[0].lead, $d[0].roles[], $d[0].suggested[]] | map(.tier) | all(. as $t | $tiers | index($t)))' "$PROV/claude.json" >/dev/null \
+  && ok "the claude provider file is valid and maps every tier the table uses" || no "provider file"
+[ "$(ls "$PROV")" = claude.json ] && ok "claude is the only provider file" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
 $DA agent add b1 --abilities build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"
@@ -57,7 +66,13 @@ jq '.old = {abilities:["build"], file:($f), model:"sonnet", effort:null, project
 $DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: sonnet$' "$A/old.md" && ! grep -q '^effort:' "$A/old.md" && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/old.md") && ok "a member without effort renders no effort line" || no "old member"
 
 # agent models
+$DA agent add rs --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1
 out=$($DA agent models 2>&1)
+grep -E '^ *review ' <<<"$out" | grep -q 'deep -> claude-opus-5-5' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> claude-sonnet-5-5' && ok "models: tier and resolved model per row" || no "tier text: $out"
+grep -q 'provider: claude' <<<"$out" && ok "models: the active provider" || no "provider line"
+grep -q 'offer frontier (claude-fable-5-1) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
+grep -q 'qargi agent add researcher --abilities review --model claude-fable-5-1 --effort high' <<<"$out" && ok "models: the researcher is suggested with its add command" || no "researcher line"
+grep -E '^ *rs ' <<<"$out" | grep -q 'frontier (opt-in)' && ! grep -E '^ *b1 ' <<<"$out" | grep -q frontier && ok "models: a member on the frontier model is flagged" || no "frontier flag: $out"
 { grep -q 'lead.*claude-sonnet-5-5.*medium' <<<"$out" && grep -q 'review.*claude-opus-5-5.*high' <<<"$out" && grep -q 'test.*claude-sonnet-5-5.*low' <<<"$out"; } && ok "models: the lead and role rows" || no "models text: $out"
 grep -q 'qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low' <<<"$out" && grep -q 'qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high' <<<"$out" && ok "models: the suggested commands" || no "suggested"
 grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && grep -E '^ *old ' <<<"$out" | grep -q 'alias (unpinned)' && ! grep -E '^ *b1 ' <<<"$out" | grep -q unpinned && ok "models: members, alias marked unpinned" || no "members: $out"
@@ -65,10 +80,26 @@ grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && grep -E '^ *old
 out=$($DA agent models --project alpha 2>&1)
 grep -E '^ *build ' <<<"$out" | grep -q 'override.*claude-opus-5-5.*xhigh' && grep -E '^ *lead ' <<<"$out" | grep -q 'override.*claude-opus-5-5.*high' && grep -E '^ *test ' <<<"$out" | grep -vq override && ok "models --project: overrides marked" || no "override: $out"
 j=$($DA agent models --project alpha --json 2>&1)
-jq -e '(.lead.model) and .roles.build.model and (.suggested.auditor.model == "claude-haiku-5-5") and (.members | length > 0) and (.members | map(select(.name == "old"))[0].pinned == false)' <<<"$j" >/dev/null && ok "models --json is one object with lead, roles, suggested, members" || no "json: $j"
+jq -e '(.lead.model) and .roles.build.model and (.suggested.auditor.model == "claude-haiku-5-5") and .provider == "claude" and .roles.review.tier == "deep" and .roles.review.model == "claude-opus-5-5" and .escalate.build.tier == "frontier" and .escalate.build.model == "claude-fable-5-1" and (.members | length > 0) and (.members | map(select(.name == "old"))[0].pinned == false)' <<<"$j" >/dev/null && ok "models --json is one object with lead, roles, suggested, members" || no "json: $j"
 jq -e '.roles.build.override.model == "claude-opus-5-5" and .roles.build.model == "claude-sonnet-5-5"' <<<"$j" >/dev/null && ok "json carries the default and the project value" || no "json shape"
-$DA agent models --json | jq -e 'keys == ["lead","members","roles","suggested"]' >/dev/null && ok "json without a project" || no "json keys"
+$DA agent models --json | jq -e 'keys == ["escalate","lead","members","provider","roles","suggested"]' >/dev/null && ok "json without a project" || no "json keys"
 [ -z "$(git -C "$T/repo" status --porcelain)" ] && ok "models is read-only" || no "models wrote"
+# the researcher is read-only when added
+$DA agent add res2 --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
+
+# the provider: from the project's models.provider
+jq '.models = {provider:"claude"}' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
+$DA agent add pp --abilities review --project alpha >/dev/null 2>&1 && grep -q '^model: claude-haiku-5-5$' "$PA/pp.md" && ok "models.provider claude resolves through the provider file" || no "provider claude"
+# a different provider, with a file of its own in a copy of the tree, resolves its own ids
+jq '.models.provider = "nope"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
+e=$($DA agent add pq --abilities build --project alpha 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude' <<<"$e" && [ ! -e "$PA/pq.md" ]; } && ok "an unknown models.provider is an error listing the providers (add)" || no "unknown provider add: $e"
+e=$($DA agent models --project alpha 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude' <<<"$e"; } && ok "an unknown models.provider is an error listing the providers (models)" || no "unknown provider models: $e"
+jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
+$DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
+$DA project template alpha | jq -e '.roles.build.model == "claude-sonnet-5-5" and .roles.write.model == "claude-sonnet-5-5" and .roles.build.effort == "high"' >/dev/null && ok "project template writes the resolved claude ids" || no "template"
+
 shellcheck -x -S warning lib/agent.sh lib/project.sh tests/test_models.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"
 exit $fail
