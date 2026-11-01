@@ -42,6 +42,11 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     any other verb, none, or one held in a variable is refused (fail closed);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature: decided like the other protected roots, reading stays allowed;
+  - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
+    it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
+    accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
+    directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
+    records are a later feature);
   - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
 Not covered: code that writes a file itself (python -c, perl -e, node -e, a script written earlier and run), a glob
 that expands to a protected path, a path built from a variable the guard cannot see. A heredoc line that starts with a
@@ -281,6 +286,7 @@ def protected_roots():
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
     roots.update(feature_roots(P, home))
+    roots.update(journal_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -305,8 +311,35 @@ def feature_roots(P=None, home=None):
     return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
+JOURNAL = "ref-journal.jsonl"
+
+
+def state_dirs(P=None, home=None):
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(st) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def journal_roots(P=None, home=None):
+    """The lead's ref journal of the state and its lock (real paths). Rotated and temporary files next to it are found by
+    journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
+    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock")}
+
+
+def journal_sibling(full):
+    """The journal root when full is a file next to the journal named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
+    for st in state_dirs():
+        if os.path.dirname(full) == st and os.path.basename(full).startswith(JOURNAL):
+            return os.path.join(st, JOURNAL)
+    return None
+
+
 def refusal_text(what, dest, root):
     """The sentence for a refused write: the generic one, or for the claude render and the marshal's records the reason."""
+    if root in journal_roots() or journal_sibling(root):
+        return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in claude_render_roots():
@@ -331,6 +364,9 @@ def protected(full, destructive=False):
     for r in protected_roots():
         if inside(full, r) or (destructive and inside(r, full)):
             return r
+    j = journal_sibling(full)
+    if j:
+        return j
     if in_clone(full):          # after the named roots: a link in the clone that leads to one was resolved and is denied above
         return None
     parts = full.split(os.sep)
