@@ -39,11 +39,18 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
 read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
-  - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish, found like the skill verbs
+  - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
     any other verb, none, or one held in a variable is refused (fail closed);
+  - the feature verbs that write the marshal: qargi feature start|finish|verify (start and finish create and finish the lead's record
+    and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
+    allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
+    member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
-    marshal keeps one record per open feature: decided like the other protected roots, reading stays allowed;
+    marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
+    backend): decided like the other protected roots, reading stays allowed;
+  - a write under the marshal/ directory of the state, where `marshal enable` keeps the per-project `.enabled` switch of the
+    shared-refs backend: found and decided like features/, reading stays allowed;
   - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
     it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
     accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
@@ -77,13 +84,14 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "provider.py", "provider.sh",
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
-MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish")
+MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check")
+FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
@@ -296,6 +304,7 @@ def protected_roots():
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
     roots.update(feature_roots(P, home))
+    roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
@@ -320,6 +329,16 @@ def feature_roots(P=None, home=None):
         import paths as P
     home = home or os.path.expanduser("~")
     return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def switch_roots(P=None, home=None):
+    """The marshal/ directory of the state: the per-project `.enabled` switch files of the shared-refs backend. Found as
+    feature_roots does."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "marshal")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
 def memory_roots(P=None, home=None):
@@ -363,6 +382,8 @@ def refusal_text(what, dest, root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in switch_roots():
+        return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in memory_roots():
         return MemoryReason("%s on %s would change %s, a memory tier; %s" % (what, dest, root, MEMORY_NOTE))
     if root in claude_render_roots():
@@ -491,6 +512,8 @@ def skill_verb(prog, rest):
         words = ["upgrade"] + words
     if name == "marshal.sh":
         words = ["marshal"] + words
+    if name == "feature.sh":
+        words = ["feature"] + words
     if name in ("provider.py", "provider.sh"):
         words = ["provider"] + words
     if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
@@ -504,6 +527,9 @@ def skill_verb(prog, rest):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
+    if area == "feature" and verb not in FEATURE_OPEN:
+        return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
+                             % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))

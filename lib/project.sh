@@ -362,6 +362,8 @@ PY
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
     [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
+    # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
+    case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX"); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }

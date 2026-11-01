@@ -58,6 +58,7 @@ run bash tests/test_packs_claude_hostile.sh
 run bash tests/test_review.sh
 run bash tests/test_marshal.sh
 run bash tests/test_marshal_flow.sh
+run bash tests/test_marshal_refs.sh
 run bash tests/test_marshal_hook.sh
 run bash tests/test_journal.sh
 run bash tests/test_team.sh
