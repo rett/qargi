@@ -135,7 +135,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
    repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
 2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
-   subagent_type; `qargi agent list` shows its model and effort) with the task block plus
+   subagent_type; `qargi agent list` shows its model and effort, `qargi agent models` the defaults they came from) with the task block plus
    `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
    one (`qargi agent add NAME --abilities <role>`, the flag keeps its earlier name), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.

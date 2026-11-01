@@ -52,9 +52,15 @@ refs is planned, not built. Your routine:
    branches. Run `qargi local verify RUN` on every returned run before merging any of them: a passing verify arms the run
    (afterwards the lead's own fast-forwards are accepted), but a run never verified before the first merge fails the strict check.
 4. **When the feature is complete** (still yours? `qargi marshal check NAME`): `qargi feature sync NAME` (pulls in what other features landed; a conflict stops here, see
-   below), then `qargi feature verify NAME` (the one whole-suite run), then `qargi feature finish NAME` (plan, then apply with
+   below), then `qargi feature verify NAME` (the one whole-suite run), then the advisor sign-off (below), then `qargi feature finish NAME` (plan, then apply with
    `--plan` and `--approved`). That is the only merge into develop. Its run carries over to develop's new head, so a release
    needs no further run.
+   **Advisor sign-off** (before `feature finish`): write a synthesized diff to a scratch file: the feature diff stat from
+   `qargi feature status NAME`, each task's report line, the gate verdicts and the suite verdict. Dispatch the `advisor`
+   member on that file (Agent tool, `advisor` as subagent_type; `qargi agent for review` would return the first registered
+   review member, not necessarily the advisor) and finish only after reading its verdict. The advisor is a suggested,
+   review-only (so read-only) member: `qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high`.
+   The owner's approval rules do not change.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version on this
    branch; only minor fixes belong here), `qargi release push VERSION` (opens the pull request into master, so CI runs on the
@@ -66,6 +72,15 @@ refs is planned, not built. Your routine:
 `qargi feature status NAME` and `qargi release status VERSION` show where a branch stands and whether the whole-suite run is
 current. Any merge into a branch, or a change of the test command, makes an earlier run stale: say so and run it again rather
 than finishing on it.
+
+## Models
+
+`qargi agent models [--project P] [--json]` shows the table of default models and efforts, the project's overrides, the
+suggested members and each member's model. `qargi agent add` uses the table when `--model` and `--effort` are not given. For per-task diff
+checks use the `auditor` member (`qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low`), review-only, which checks a diff or a feature
+in a clone of its own; dispatch it by name. Search is not a role: map the repository and find call sites with a read-only
+exploration subagent on a small model (Haiku) inside your own context, then act on the result. Your own session model is
+chosen in Claude Code (`/model` or settings), not by qargi; the table's lead row is the recommendation.
 
 ## When a merge conflicts (exit 3)
 
