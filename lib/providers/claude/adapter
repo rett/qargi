@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""The local adapter of the claude provider: lib/providers/claude/adapter VERB, a JSON request on stdin, ONE JSON object on stdout.
+
+The adapter contract (the same for every provider; an adapter may be written in any language):
+  exit 0 ok, 1 bad request, 2 refused by policy, 3 unsupported (the descriptor says `no`, or the verb is not built for the
+  surface), 4 transport error. Vendor access only through $QARGI_TRANSPORT (the local verbs need none). Secrets never in argv.
+
+Verbs served here (the local surface):
+  resolve        {surface, tier, effort, profile}                  -> {model, alias, effort_native|null, notes[]}
+  dispatch-local {member, abilities[], class, model, effort}       -> {definition: {path, text}, spawn: {agent_type, model_alias, effort}}
+                 (project_dir, when given, puts the definition in that repository's .claude/agents)
+  barrier-check  {surface, class, tool_call: {tool, command|path, cwd}} -> {decision: allow|deny, reason}
+Verbs provision, start-session, status, collect, stop and cost are not implemented for the local surface: exit 3.
+Any other verb: exit 1.
+
+Stdlib only. It runs isolated (python3 -I) and finds lib/ and agents/ relative to itself, so it works from a checkout and
+from an installed copy."""
+import os
+import sys
+
+if not sys.flags.isolated:                       # run directly or through the shebang: re-run isolated, stdin and arguments kept
+    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+
+import json  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+LIB = os.path.dirname(os.path.dirname(HERE))
+ROOT = os.path.dirname(LIB)
+NAME = os.path.basename(HERE)                    # the provider this adapter serves: its directory name
+sys.path.insert(0, LIB)
+import provider as P  # noqa: E402
+
+TEMPLATE = os.path.join(ROOT, "agents", "member.md")
+GUARD = os.path.join(LIB, "guard.py")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+CLASSES = ("write", "read-only")
+NOT_BUILT = ("provision", "start-session", "status", "collect", "stop", "cost")
+MEMBER_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+ABILITY_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
+
+
+class Reply(Exception):
+    def __init__(self, code, body):
+        self.code, self.body = code, body
+
+
+def bad(msg):
+    return Reply(1, {"error": msg})
+
+
+def unsupported(msg):
+    return Reply(3, {"error": msg})
+
+
+def field(req, key, kinds, what):
+    v = req.get(key)
+    if not isinstance(v, kinds) or isinstance(v, bool):
+        raise bad("%s: %s" % (key, what))
+    return v
+
+
+def descriptor():
+    try:
+        d = P.load(NAME)
+    except P.ProviderError as e:
+        raise bad(str(e))
+    broken = [m for lvl, m in P.validate(d, NAME) if lvl == "fail"]
+    if broken:
+        raise bad("the descriptor of %s breaks its schema: %s" % (NAME, broken[0]))
+    return d
+
+
+def surface_of(req, d, allowed=None, verb="this verb"):
+    s = field(req, "surface", str, "a surface (local or cloud)")
+    if s not in P.SURFACES:
+        raise bad("surface: '%s' is not one of %s" % (s, ", ".join(P.SURFACES)))
+    if s not in d["surfaces"]:
+        raise unsupported("%s does not list the surface '%s'" % (NAME, s))
+    if allowed and s not in allowed:
+        raise unsupported("%s is served for the %s surface only" % (verb, allowed[0]))
+    return s
+
+
+def effort_of(req):
+    e = req.get("effort")
+    if e is None or e == "":
+        return None
+    if e not in EFFORTS:
+        raise bad("effort: '%s' is not one of %s" % (e, ", ".join(EFFORTS)))
+    return e
+
+
+def alias_of(d, model):
+    """The alias of a model given as an alias or as an id; None for a model that is neither (it is pinned)."""
+    for t in P.TIERS:
+        if model in (d["aliases"].get(t), d["tiers"].get(t)):
+            return d["aliases"].get(t)
+    return None
+
+
+# ---- resolve --------------------------------------------------------------------------------------------------------
+
+def resolve(req):
+    d = descriptor()
+    surface_of(req, d)
+    tier = field(req, "tier", str, "a tier (%s)" % ", ".join(P.TIERS))
+    if tier not in P.TIERS:
+        raise bad("tier: '%s' is not one of %s" % (tier, ", ".join(P.TIERS)))
+    if "profile" in req and req["profile"] is not None and not isinstance(req["profile"], str):
+        raise bad("profile: a profile name")
+    effort = effort_of(req)
+    row = d["tier_detail"][tier]
+    notes, native = [], None
+    if effort is not None:
+        native = d["effort"][effort]
+        if native is None:
+            notes.append("%s has no effort control; effort '%s' is not applied" % (NAME, effort))
+    if row["alias"] is None:
+        notes.append("tier %s has no alias; the model id applies" % tier)
+    return {"model": row["model"], "alias": row["alias"], "effort_native": native, "notes": notes}
+
+
+# ---- dispatch-local ---------------------------------------------------------------------------------------------------
+
+def render(text, name, abilities, cls, model, effort):
+    """The member definition: what lib/agent.sh rendered with sed before the adapter did, byte for byte."""
+    guard_args = " --class read-only" if cls == "read-only" else ""
+    out = []
+    for line in text.split("\n"):
+        if line == "{{EFFORT_LINE}}":
+            if not effort:
+                continue
+            line = "effort: " + effort
+        line = line.replace("{{GUARD_ARGS}}", guard_args).replace("{{NAME}}", name)
+        line = line.replace("{{ABILITIES}}", ", ".join(abilities)).replace("{{MODEL}}", model)
+        out.append(line)
+    return "\n".join(out)
+
+
+def dispatch_local(req):
+    d = descriptor()
+    surface_of({"surface": "local"}, d)
+    name = field(req, "member", str, "a member name")
+    if not MEMBER_RE.match(name) or len(name) > 40:
+        raise bad("member: '%s' is not a member name (kebab-case, at most 40)" % name)
+    ab = field(req, "abilities", list, "a non-empty list of abilities")
+    if not ab or not all(isinstance(a, str) and ABILITY_RE.match(a) for a in ab):
+        raise bad("abilities: a non-empty list of role names")
+    cls = req.get("class")
+    if cls not in CLASSES:
+        raise bad("class: one of %s" % ", ".join(CLASSES))
+    model = field(req, "model", str, "a model alias or id")
+    if not MODEL_RE.match(model):
+        raise bad("model: a model alias or id (letters, digits, . -)")
+    effort = effort_of(req)
+    pd = req.get("project_dir")
+    if pd is not None and (not isinstance(pd, str) or not pd):
+        raise bad("project_dir: a directory path")
+    try:
+        with open(TEMPLATE, encoding="utf-8") as f:
+            tpl = f.read()
+    except OSError as e:
+        raise bad("the member definition is missing: %s (%s)" % (TEMPLATE, e.strerror))
+    base = os.path.join(pd, ".claude", "agents") if pd else os.path.join(os.environ.get("HOME") or os.path.expanduser("~"), ".claude", "agents")
+    return {"definition": {"path": os.path.join(base, name + ".md"), "text": render(tpl, name, ab, cls, model, effort)},
+            "spawn": {"agent_type": name, "model_alias": alias_of(d, model), "effort": d["effort"][effort] if effort else None}}
+
+
+# ---- barrier-check ----------------------------------------------------------------------------------------------------
+
+def barrier_check(req):
+    d = descriptor()
+    surface_of(req, d, allowed=("local",), verb="barrier-check")
+    cls = req.get("class")
+    if cls not in CLASSES:
+        raise bad("class: one of %s" % ", ".join(CLASSES))
+    call = field(req, "tool_call", dict, "an object {tool, command|path, cwd}")
+    tool = call.get("tool")
+    if not isinstance(tool, str) or not tool:
+        raise bad("tool_call.tool: a tool name")
+    inp = {}
+    if "command" in call:
+        if not isinstance(call["command"], str):
+            raise bad("tool_call.command: a string")
+        inp["command"] = call["command"]
+    if "path" in call:
+        if not isinstance(call["path"], str):
+            raise bad("tool_call.path: a string")
+        inp["notebook_path" if tool == "NotebookEdit" else "file_path"] = call["path"]
+    if not inp:
+        raise bad("tool_call: give a command or a path")
+    cwd = call.get("cwd") or os.getcwd()
+    if not isinstance(cwd, str):
+        raise bad("tool_call.cwd: a directory path")
+    cmd = [sys.executable, "-I", GUARD] + (["--class", "read-only"] if cls == "read-only" else [])
+    r = subprocess.run(cmd, input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd}), capture_output=True, text=True)
+    if r.returncode == 0:
+        return {"decision": "allow", "reason": ""}
+    why = r.stderr.strip() or "the guard refused the call"
+    if r.returncode != 2:                         # the guard fails closed: a crash is a refusal, said as such
+        why = "the guard could not decide (exit %d): %s" % (r.returncode, why)
+    return {"decision": "deny", "reason": why}
+
+
+VERBS = {"resolve": resolve, "dispatch-local": dispatch_local, "barrier-check": barrier_check}
+
+
+def main(argv):
+    try:
+        verb = argv[0] if argv else ""
+        if verb in NOT_BUILT:
+            raise unsupported("not implemented for local")
+        if verb not in VERBS:
+            raise bad("unknown verb '%s'; one of %s" % (verb, ", ".join(sorted(list(VERBS) + list(NOT_BUILT)))))
+        try:
+            req = json.loads(sys.stdin.read())
+        except ValueError:
+            raise bad("the request is not JSON")
+        if not isinstance(req, dict):
+            raise bad("the request is not a JSON object")
+        body, code = VERBS[verb](req), 0
+    except Reply as r:
+        body, code = r.body, r.code
+    sys.stdout.write(json.dumps(body) + "\n")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

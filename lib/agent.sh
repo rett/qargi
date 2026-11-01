@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Members: the local agents that do the work, named by you. qargi ships one member definition
-# (agents/member.md); `add` renders it under the name you choose, with the abilities it serves
+# (agents/member.md); `add` has the active provider's local adapter render it under the name you choose, with the abilities it serves
 # (roles: build, write, review, test and yours; a task block carries the role's text). The members are recorded in ~/.qargi/config/agents.json.
 #
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
@@ -13,11 +13,8 @@
 . "$(dirname "$0")/lib.sh"
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-TEMPLATE=$root/agents/member.md
 DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per guard class) and the profiles (a base, a tier and an effort each)
-PROVIDERS=$root/lib/providers            # one data file per provider: its model id for each tier
-# the agent types Claude Code brings itself; a member must not shadow one
-BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
+PROVIDERS=$root/lib/providers            # one descriptor per provider (its models, its reserved agent names and its local adapter)
 
 verb=${1:-}; shift || true
 POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE=''
@@ -34,12 +31,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-valid_name() { # name -> dies with the rule
-  local n=$1 b lc
+valid_name() { # name [project] -> dies with the rule
+  local n=$1 b lc p
   printf '%s' "$n" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#n}" -le 40 ] \
     || die "'$n' is not a member name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
   lc=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')
-  for b in $BUILTIN; do [ "$lc" != "$b" ] || die "'$n' is a built-in Claude Code agent type; choose another name"; done
+  p=$(provider_for "${2:-}") || exit 1
+  for b in $(jq -r '.local.reserved_names[]' "$PROVIDERS/$p.json"); do
+    [ "$lc" != "$b" ] || die "'$n' is a built-in agent type of the provider; choose another name"
+  done
   if [ "$n" = lead ] || valid_role "$n"; then die "'$n' is a role; name the member after itself, for example forge or scribe"; fi
 }
 
@@ -83,13 +83,20 @@ provider_for() { # project-or-empty -> the active provider (the project's models
   local f=$DA_CONF/projects/$1.json p=claude
   [ -z "$1" ] || [ ! -f "$f" ] || p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude
   if ! printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || [ "$p" = schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
-    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -name '*.json' ! -name schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
+    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -maxdepth 1 -name '*.json' ! -name schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
   fi
   echo "$p"
 }
 
 tier_model() { # provider tier -> the provider's model id
   jq -r --arg t "$2" '.tiers[$t]' "$PROVIDERS/$1.json"
+}
+
+adapter_for() { # provider -> the path of its local adapter; dies when the descriptor names none
+  local a; a=$(jq -r '.adapter // empty' "$PROVIDERS/$1.json")
+  [ -n "$a" ] || die "the provider '$1' has no local adapter, so it cannot serve members (its descriptor lib/providers/$1.json names none)"
+  [ -x "$root/$a" ] || die "the local adapter of the provider '$1' is missing or not executable: $root/$a"
+  echo "$root/$a"
 }
 
 default_for() { # project ability field -> the project's answer for it, else the table's value (a tier is resolved through the active provider)
@@ -101,19 +108,23 @@ default_for() { # project ability field -> the project's answer for it, else the
   echo "$v"
 }
 
-render() { # name abilities-csv model [effort] -> the definition on stdout
+render() { # name abilities-csv model effort-or-empty provider -> the definition on stdout, from the provider's adapter (dispatch-local)
   # a member that only reviews is read-only by class, named in its hook command (under the protected agents directory)
-  local ga=' --class read-only' a
-  for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ga=''; done
-  local el="/^{{EFFORT_LINE}}\$/d"
-  [ -z "${4:-}" ] || el="s/^{{EFFORT_LINE}}\$/effort: $4/"
-  sed -e "$el" -e "s/{{GUARD_ARGS}}/$ga/g" -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
+  local cls=read-only a adapter req out rc
+  for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || cls='write'; done
+  adapter=$(adapter_for "$5") || exit 1
+  req=$(jq -nc --arg n "$1" --arg a "$2" --arg c "$cls" --arg m "$3" --arg e "${4:-}" \
+    '{member: $n, abilities: ($a | split(",")), class: $c, model: $m, effort: (if $e == "" then null else $e end)}')
+  out=$("$adapter" dispatch-local <<<"$req") && rc=0 || rc=$?
+  [ "$rc" = 0 ] || die "the local adapter could not render the member definition (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)"
+  jq -j '.definition.text' <<<"$out"
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first bc
+  local n=${POS[0]:-} a list='' dir file seq first bc prov text
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
-  valid_name "$n"
+  prov=$(provider_for "$PROJ") || exit 1
+  valid_name "$n" "$PROJ"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
   bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
   [ -z "$bc" ] || [ -n "$ABIL" ] || ABIL=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
@@ -124,15 +135,15 @@ add() {
   done
   [ -n "$list" ] || die "--abilities: give at least one"
   first=${list%%,*}
-  [ -z "$PROJ" ] || provider_for "$PROJ" >/dev/null || exit 1
+  adapter_for "$prov" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
   case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
-  [ -f "$TEMPLATE" ] || die "the member definition is missing: $TEMPLATE"
   dir=$(agents_dir "$PROJ") || exit 1; file=$dir/$n.md
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
-  mkdir -p "$dir"; render "$n" "$list" "$MODEL" "$EFFORT" > "$file"
+  text=$(render "$n" "$list" "$MODEL" "$EFFORT" "$prov") || exit 1
+  mkdir -p "$dir"; printf '%s\n' "$text" > "$file"
   [ -z "$PROJ" ] || hide_in_git "$(dirname "$(dirname "$dir")")" ".claude/agents/$n.md"
   seq=$(jq '[.[].seq // 0] | max // 0 | . + 1' "$MEMBERS_FILE")
   json_update "$MEMBERS_FILE" '.[$n] = {abilities: ($a | split(",")), file: $f, model: $m, effort: (if $e == "" then null else $e end),
@@ -209,7 +220,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   rc=$(role_classes)
   local miss='{}' n f
   while IFS=$'\t' read -r n f; do [ -f "$f" ] || miss=$(jq -c --arg n "$n" '.[$n] = true' <<<"$miss"); done < <(jq -r 'to_entries[] | [.key, (.value.file // "")] | @tsv' "$MEMBERS_FILE")
-  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --arg prov "$prov" "$PJQ"'
+  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --arg prov "$prov" --arg pat "$(jq -r .model_pattern "$PROVIDERS/$prov.json")" "$PJQ"'
     def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
     | ([$m[0] | to_entries[] | .value | mclass] | unique) as $have
@@ -224,7 +235,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
        members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | .key as $k | (.value | mclass) as $c | baseof($c) as $bn | .value.abilities as $ab
          | {name: $k, abilities: $ab, class: $c, model: (.value.model // null),
          effort: (.value.effort // null), project: (.value.project // null),
-         pinned: ((.value.model // "") | startswith("claude-")),
+         pinned: ((.value.model // "") | test($pat)),
          frontier: (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)),
          flags: ([if ($bases | has($k) | not) and $bn != null then (if ($m[0] | has($bn)) then "legacy: retire after \($bn) exists" else "legacy (in use: no \($bn))" end) else empty end,
            if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
@@ -306,7 +317,7 @@ case $verb in
     old=${POS[0]:-}; new=${POS[1]:-}
     [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW"
     rec=$(jq -ce --arg n "$old" '.[$n]' "$MEMBERS_FILE") || die "no member named $old (qargi agent list)"
-    valid_name "$new"
+    valid_name "$new" "$(jq -r '.project // ""' <<<"$rec")"
     jq -e --arg n "$new" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already"
     f=$(jq -r .file <<<"$rec"); nf=$(dirname "$f")/$new.md
     [ ! -e "$nf" ] || die "$nf exists already"
@@ -316,9 +327,10 @@ case $verb in
   refresh)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
-    [ -f "$TEMPLATE" ] || die "the member definition is missing: $TEMPLATE"
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
-    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r '.model // "sonnet"' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")")
+    prov=$(provider_for "$(jq -r '.project // ""' <<<"$rec")") || exit 1
+    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(jq -r '.aliases.balanced // .tiers.balanced' "$PROVIDERS/$prov.json")" '.model // $d' <<<"$rec")" \
+      "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
     if [ -f "$f" ] && [ "$new" = "$(cat "$f")" ]; then echo "member $n is current ($f)"; exit 0; fi
     mkdir -p "$(dirname "$f")"; printf '%s\n' "$new" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
     echo "refreshed member $n ($f); sessions started afterwards use it";;

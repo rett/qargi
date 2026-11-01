@@ -12,7 +12,8 @@ Every function that reads a descriptor takes root= (the providers directory) for
 
 Usage: provider.py list
        provider.py show NAME [--json]
-       provider.py check NAME            exit 1 on a failure, 0 otherwise (warnings do not fail)"""
+       provider.py check NAME            exit 1 on a failure, 0 otherwise (warnings do not fail); the adapter, when the
+                                         descriptor names one, must exist and be executable"""
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import sys
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+TOOL = os.path.dirname(HERE)                      # the tool root: the checkout, or the installed copy
 PROVIDERS = os.path.join(HERE, "providers")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 SURFACES = ("local", "cloud")
@@ -164,6 +166,9 @@ def validate(d, name=None):
     prov = d.get("provider")
     if name is not None and isinstance(prov, str) and prov != name:
         out.append(("fail", "provider '%s' differs from the file name '%s'" % (prov, name)))
+    ad = d.get("adapter")
+    if isinstance(ad, str) and (os.path.isabs(ad) or ".." in ad.split("/") or not ad.startswith("lib/providers/")):
+        out.append(("fail", "adapter: '%s' is not a path under lib/providers/ of the tool" % ad))
     detail = d.get("tier_detail") if isinstance(d.get("tier_detail"), dict) else {}
     pattern = None
     if isinstance(d.get("model_pattern"), str):
@@ -289,9 +294,25 @@ def cmd_show(name, as_json):
     return 0
 
 
+def adapter_problem(d, tool=None):
+    """None when the descriptor has no adapter or the adapter file exists and is executable, else what is wrong."""
+    ad = d.get("adapter")
+    if not isinstance(ad, str) or os.path.isabs(ad) or ".." in ad.split("/"):
+        return None                               # no adapter, or a path validate() already refused
+    path = os.path.join(tool or TOOL, ad)
+    if not os.path.isfile(path):
+        return "adapter: %s does not exist" % ad
+    if not os.access(path, os.X_OK):
+        return "adapter: %s is not executable" % ad
+    return None
+
+
 def cmd_check(name):
     d = load(name)
     findings = validate(d, name)
+    bad = adapter_problem(d)
+    if bad:
+        findings.append(("fail", bad))
     fails = [m for lvl, m in findings if lvl == "fail"]
     warns = [m for lvl, m in findings if lvl == "warn"]
     print("%s: %s, %s" % (name, _count(len(fails), "failure"), _count(len(warns), "warning")))
@@ -301,6 +322,7 @@ def cmd_check(name):
         print("warn: %s" % m)
     if fails:
         return 1
+    print("adapter: %s" % ("%s (exists, executable)" % d["adapter"] if d.get("adapter") else "none (what needs one is refused)"))
     rows, cannot = [], []
     for s in _surfaces(d):
         for c in capabilities():
