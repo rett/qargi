@@ -14,7 +14,8 @@
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 TEMPLATE=$root/agents/member.md
-DEFAULTS=$root/lib/model-defaults.json   # the one table of default models and efforts
+DEFAULTS=$root/lib/model-defaults.json   # the one table: a tier and an effort per row
+PROVIDERS=$root/lib/providers            # one data file per provider: its model id for each tier
 # the agent types Claude Code brings itself; a member must not shadow one
 BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
 
@@ -77,9 +78,25 @@ project_answer() { # project ability field(model|effort) -> the project's valid 
   return 0
 }
 
-default_for() { # project ability field -> the project's answer for it, else the table's value for the ability's row
+provider_for() { # project-or-empty -> the active provider (the project's models.provider, default claude); dies when it has no file
+  local f=$DA_CONF/projects/$1.json p=claude
+  [ -z "$1" ] || [ ! -f "$f" ] || p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude
+  if ! printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || [ ! -f "$PROVIDERS/$p.json" ]; then
+    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -name '*.json' -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
+  fi
+  echo "$p"
+}
+
+tier_model() { # provider tier -> the provider's model id
+  jq -r --arg t "$2" '.tiers[$t]' "$PROVIDERS/$1.json"
+}
+
+default_for() { # project ability field -> the project's answer for it, else the table's value (a tier is resolved through the active provider)
   local v; v=$(project_answer "$1" "$2" "$3")
-  [ -n "$v" ] || v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.roles[$r][$k]' "$DEFAULTS")
+  if [ -z "$v" ]; then
+    if [ "$3" = model ]; then v=$(tier_model "$(provider_for "$1")" "$(jq -r --arg r "$(default_row "$2")" '.roles[$r].tier' "$DEFAULTS")")
+    else v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.roles[$r][$k]' "$DEFAULTS"); fi
+  fi
   echo "$v"
 }
 
@@ -103,6 +120,7 @@ add() {
   done
   [ -n "$list" ] || die "--abilities: give at least one"
   first=${list%%,*}
+  [ -z "$PROJ" ] || provider_for "$PROJ" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
@@ -120,10 +138,12 @@ add() {
 }
 
 models() { # the table, the project's overrides, the suggested members and the registered ones
-  local proj=$PROJ pf='{}' ov
+  local proj=$PROJ pf='{}' ov prov tiers
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
   [ -z "$proj" ] || [ ! -f "$DA_CONF/projects/$proj.json" ] || pf=$(jq -c '{lead: (.lead // {}), roles: (.roles // {})}' "$DA_CONF/projects/$proj.json")
+  prov=$(provider_for "$proj") || exit 1
+  tiers=$(jq -c .tiers "$PROVIDERS/$prov.json")
   # the project's answer, when valid and set, per row: {model, effort} or null
   ov=$(jq -n --argjson pf "$pf" --slurpfile d "$DEFAULTS" '
     def okm: if type == "string" and test("^[a-z0-9][a-z0-9.-]*$") then . else null end;
@@ -131,24 +151,29 @@ models() { # the table, the project's overrides, the suggested members and the r
     def pick($o): ({model: ($o.model? | okm), effort: ($o.effort? | oke)} | with_entries(select(.value != null))) | if . == {} then null else . end;
     {lead: pick($pf.lead), roles: ($d[0].roles | with_entries(.value = pick($pf.roles[.key]?)))}')
   local out
-  out=$(jq -n --slurpfile d "$DEFAULTS" --argjson ov "$ov" --slurpfile m "$MEMBERS_FILE" '
+  out=$(jq -n --slurpfile d "$DEFAULTS" --argjson ov "$ov" --slurpfile m "$MEMBERS_FILE" --argjson tiers "$tiers" --arg prov "$prov" '
     $d[0] as $t
-    | {lead: ($t.lead + {override: $ov.lead}),
-       roles: ($t.roles | with_entries(.value += {override: $ov.roles[.key]})),
-       suggested: $t.suggested,
+    | def res: . + {model: $tiers[.tier]};
+    {provider: $prov,
+       lead: ($t.lead | res + {override: $ov.lead}),
+       roles: ($t.roles | with_entries(.value |= res | .value += {override: $ov.roles[.key]})),
+       escalate: ($t.escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
+       suggested: ($t.suggested | with_entries(.value |= res)),
        members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | {name: .key, abilities: .value.abilities, model: (.value.model // null),
          effort: (.value.effort // null), project: (.value.project // null),
-         pinned: ((.value.model // "") | startswith("claude-"))}]}')
+         pinned: ((.value.model // "") | startswith("claude-")),
+         frontier: ((.value.model // "") == $tiers.frontier)}]}')
   if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
-  echo "default models and efforts (a role of yours uses its class: write -> build, read-only -> review)"
+  echo "default tiers, models and efforts (provider: $prov; a role of yours uses its class: write -> build, read-only -> review)"
   jq -r '(["lead", .lead] , (.roles | to_entries[] | [.key, .value])) | .[1] as $r
-    | [.[0], $r.model + "/" + $r.effort, (if $r.override then "override: " + ($r.override.model // $r.model) + "/" + ($r.override.effort // $r.effort) + " (project)" else "" end)] | @tsv' <<<"$out" \
-    | while IFS=$'\t' read -r n d o; do printf '  %-8s %-26s %s\n' "$n" "$d" "$o"; done
+    | [.[0], $r.tier + " -> " + $r.model + "/" + $r.effort, (if $r.override then "override: " + ($r.override.model // $r.model) + "/" + ($r.override.effort // $r.effort) + " (project)" else "" end)] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n d o; do printf '  %-8s %-40s %s\n' "$n" "$d" "$o"; done
+  jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
   echo "suggested members (copy the line to add one)"
-  jq -r '.suggested | to_entries[] | "  qargi agent add \(.key) --abilities \(.value.abilities | join(",")) --model \(.value.model) --effort \(.value.effort)   # \(.value.purpose)"' <<<"$out"
+  jq -r '.suggested | to_entries[] | "  qargi agent add \(.key) --abilities \(.value.abilities | join(",")) --model \(.value.model) --effort \(.value.effort)   # \(.value.tier): \(.value.purpose)"' <<<"$out"
   echo "members"
   if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME)"; else
-    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(if .pinned then "" else "alias (unpinned)" end)"' <<<"$out" \
+    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(if .frontier then "frontier (opt-in)" elif .pinned then "" else "alias (unpinned)" end)"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
 }
