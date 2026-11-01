@@ -42,6 +42,10 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
     any other verb, none, or one held in a variable is refused (fail closed);
+  - the feature verbs that write the marshal: qargi feature start|finish|verify (start and finish create and finish the lead's record
+    and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
+    allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
+    member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -80,13 +84,14 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "provider.py", "provider.sh",
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check")
+FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
@@ -507,6 +512,8 @@ def skill_verb(prog, rest):
         words = ["upgrade"] + words
     if name == "marshal.sh":
         words = ["marshal"] + words
+    if name == "feature.sh":
+        words = ["feature"] + words
     if name in ("provider.py", "provider.sh"):
         words = ["provider"] + words
     if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
@@ -520,6 +527,9 @@ def skill_verb(prog, rest):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
+    if area == "feature" and verb not in FEATURE_OPEN:
+        return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
+                             % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
