@@ -78,12 +78,12 @@ grep -E '^ *(worker|reviewer) ' <<<"$out" | grep -q 'write' && grep -E '^ *revie
 grep -q 'offer frontier (claude-fable-5-1) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
 grep -E '^ *researcher ' <<<"$out" | grep -q 'opt-in' && ! grep -E '^ *(auditor|advisor|review) ' <<<"$out" | grep -q 'opt-in' && ok "models: only the researcher is marked opt-in" || no "opt-in text"
 grep -E '^ *lead ' <<<"$out" | grep -q 'never dispatched' && ok "models: the lead is shown, never dispatched" || no "lead row"
-grep -E '^ *rs ' <<<"$out" | grep -q 'frontier (opt-in)' && ! grep -E '^ *b1 ' <<<"$out" | grep -q frontier && ok "models: a member on the frontier model is flagged" || no "frontier flag: $out"
+grep -E '^ *rs ' <<<"$out" | grep -q 'frontier model outside the researcher' && ! grep -E '^ *b1 ' <<<"$out" | grep -q frontier && ok "models: a member on the frontier model is flagged" || no "frontier flag: $out"
 { grep -q 'lead.*claude-sonnet-5-5/medium' <<<"$out" && grep -q 'auditor.*fast -> haiku -> claude-haiku-5-5/low' <<<"$out" && grep -q 'test.*claude-sonnet-5-5/low' <<<"$out"; } && ok "models: the lead and profile rows" || no "models text: $out"
 grep -E '^ *b1 ' <<<"$out" | grep -q 'claude-sonnet-5-5/high' && ok "models: members with model and effort" || no "members: $out"
 ! grep -q 'override\|project' <<<"$out" && ok "models: no project source without a project" || no "override shown"
 j=$($DA agent models --json 2>&1)
-jq -e 'keys == ["aliases","bases","escalate","members","profiles","provider"] and .profiles.lead.base == null and .profiles.researcher.opt_in == true and .profiles.auditor.model == "haiku" and .profiles.auditor.model_id == "claude-haiku-5-5"
+jq -e 'keys == ["aliases","bases","escalate","members","profiles","provider","warnings"] and .warnings == (.warnings | arrays) and .profiles.lead.base == null and .profiles.researcher.opt_in == true and .profiles.auditor.model == "haiku" and .profiles.auditor.model_id == "claude-haiku-5-5"
   and .bases.worker.registered == false and .escalate.build.tier == "frontier" and (.members | length > 0)' <<<"$j" >/dev/null && ok "models --json: bases, profiles, aliases, escalate, members" || no "json keys: $j"
 
 # a project's profiles and its old role answers
@@ -101,6 +101,38 @@ jq '.profiles = "nonsense"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T
 $DA agent models --project alpha --json | jq -e '.profiles.build.source == "project"' >/dev/null && ok "profiles of the wrong type are ignored" || no "profiles type"
 # the researcher is read-only when added
 $DA agent add res2 --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
+
+# problems are flagged rows, never an error
+W=$T/w; mkdir -p "$W/home" "$W/c/projects"
+wd() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s "$DA" "$@"; }
+wm() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s "$DA" agent models "$@"; }
+out=$(wm 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q 'no reviewer: review profiles cannot dispatch' <<<"$out" && grep -E '^ *reviewer ' <<<"$out" | grep -q 'no reviewer'; } && ok "models: a missing base is flagged (no reviewer)" || no "missing base: rc=$rc $out"
+wm --json | jq -e '[.warnings[] | select(.message | test("no reviewer: review profiles cannot dispatch"))] | length == 1' >/dev/null && ok "models --json: the same problem in warnings[]" || no "warnings json"
+wd agent add builder --abilities build,test >/dev/null 2>&1
+out=$(wm 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -E '^ *builder ' <<<"$out" | grep -q 'legacy (in use: no worker)'; } && ok "models: a legacy member in use while there is no worker" || no "legacy in use: $out"
+wd agent add worker --abilities build,write,test >/dev/null 2>&1
+out=$(wm 2>&1)
+grep -E '^ *builder ' <<<"$out" | grep -q 'legacy: retire after worker exists' && ! grep -E '^ *worker +build' <<<"$out" | grep -q legacy && ok "models: a legacy member once the worker exists; the worker itself is not legacy" || no "legacy retire: $out"
+wm --json | jq -e '[.warnings[] | select(.kind == "member" and .name == "builder")][0].message == "legacy: retire after worker exists" and (.members[] | select(.name == "builder") | .flags | length) == 1' >/dev/null && ok "models --json: member flags and warnings agree" || no "member warnings json"
+wd agent add mix --abilities build,review >/dev/null 2>&1
+out=$(wm 2>&1)
+grep -E '^ *mix ' <<<"$out" | grep -q 'write class; never serves review' && ok "models: a mixed-class member is flagged write class" || no "mixed flag: $out"
+wd agent add gone --abilities test >/dev/null 2>&1; rm -f "$W/home/.claude/agents/gone.md"
+out=$(wm 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -E '^ *gone ' <<<"$out" | grep -q 'definition file missing'; } && ok "models: a member whose definition file is missing is flagged" || no "missing file: $out"
+wd agent add deepthought --abilities review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --abilities review --model fable >/dev/null 2>&1; wd agent add researcher --abilities review --model fable >/dev/null 2>&1
+out=$(wm 2>&1)
+{ grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"
+jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},memory:{},budget_cents:500,
+  profiles:{ghost:{base:"nosuch"}, clash:{base:"worker",abilities:["review"]}, tiny:{base:"reviewer",tier:"ultra"}, odd:{base:"worker",model:"claude-odd-9"}}}' > "$W/c/projects/beta.json"
+out=$(wm --project beta 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -E '^ *ghost ' <<<"$out" | grep -q 'refused' && grep -E '^ *clash ' <<<"$out" | grep -q 'refused'; } && ok "models: a project profile with an unknown base or a class conflict is refused (exit 0)" || no "refused: rc=$rc $out"
+{ grep -E '^ *tiny ' <<<"$out" | grep -q 'tier ultra has no alias' && grep -E '^ *odd ' <<<"$out" | grep -q 'no alias'; } && ok "models: a tier or model with no alias is flagged" || no "no alias: $out"
+wm --project beta --json | jq -e '[.warnings[] | select(.kind == "profile") | .name] | (index("ghost") and index("clash") and index("tiny") and index("odd"))' >/dev/null && ok "models --json: profile problems in warnings[]" || no "profile warnings"
+rm -f "$W/c/agents.json"; echo '{}' > "$W/c/agents.json"
+wm >/dev/null 2>&1 && ok "models with no member at all still exits 0" || no "no members"
 
 # the provider: from the project's models.provider
 jq '.models = {provider:"claude"}' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
