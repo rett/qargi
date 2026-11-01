@@ -1,0 +1,13 @@
+{
+  "lead": {"model": "claude-sonnet-5-5", "effort": "medium"},
+  "roles": {
+    "build": {"model": "claude-sonnet-5-5", "effort": "high"},
+    "write": {"model": "claude-sonnet-5-5", "effort": "medium"},
+    "test": {"model": "claude-sonnet-5-5", "effort": "low"},
+    "review": {"model": "claude-opus-5-5", "effort": "high"}
+  },
+  "suggested": {
+    "auditor": {"abilities": ["review"], "model": "claude-haiku-5-5", "effort": "low", "purpose": "checks a diff or a feature in a clone of its own, read-only"},
+    "advisor": {"abilities": ["review"], "model": "claude-opus-5-5", "effort": "high", "purpose": "reviews the lead's synthesized diff (diff stat, task reports, gate verdicts) before sign-off"}
+  }
+}
