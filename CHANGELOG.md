@@ -7,6 +7,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- A lead-only ref journal (`ref-journal.jsonl` in the state directory) records every local branch that qargi's own verbs create,
+  move or delete (`feature start|merge|sync|finish`, `release`, `review apply|prune`). `local verify` now accepts a branch
+  change since the run was prepared when the journal leads from the snapshot to the branch's current value, so several runs
+  prepared in parallel all verify after the lead merged the first one. Remote refs, tags and any unjournaled move are still
+  refused, and the refusal says so. The guard keeps members from writing the journal; it is trusted only as far as the state
+  directory is (signed records come later). `local prepare` records `RUN/started`.
 - `qargi marshal` keeps one record per open feature: its lead (a Claude Code session, identified by the session id the SessionStart
   hook exports as `QARGI_LEAD`, or `--as`), a lease, status, goal, plan and note. `claim`, `status [--all] [--brief|--json]`,
   `set`, `check`, `renew`, `release --note`, `take`, `takeover --approved` and `finish`. Tasks, agent branches, worktrees and
