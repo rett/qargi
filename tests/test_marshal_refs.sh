@@ -423,6 +423,100 @@ hk=$(printf '{"session_id":"s2"}' | env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c"
 printf '%s' "$hk" | jq -e . >/dev/null 2>&1 && [ "$(nsub fetch)" = "$nf" ] && [ "$(nsub push)" = "$np" ] \
   && ok "read verbs: the session hook runs no fetch or push and prints valid JSON" || no "SPEC hook uses status --no-fetch: fetches +$(( $(nsub fetch) - nf )), pushes +$(( $(nsub push) - np )), json: ${hk:0:120}"
 
+# ============================================================ (19) a finished feature is not resurrected by a provisional claim
+# alice claims rz1 offline (provisional); bob claims it and finishes it meanwhile; alice's next verb must drop her claim, not push it
+fb rz1 dn1
+slow a "fetch push"; XE a QARGI_REMOTE_TIMEOUT=1 marshal claim rz1 --as alice >/dev/null 2>&1; unslow a
+XE b marshal claim rz1 --as bob >/dev/null 2>&1; XE b marshal finish rz1 --as bob >/dev/null 2>&1
+RZ=$(oref refs/qargi/done/rz1)
+XE a marshal renew rz1 --as alice; rc=$?
+[ "$RZ" != none ] && [ "$(oref refs/qargi/features/rz1)" = none ] && [ "$(oref refs/qargi/done/rz1)" = "$RZ" ] && [ ! -e "$(S a)/features/app-rz1.json" ] && grep -qi "finished" <(out) \
+  && ok "provisional claim: one that another machine claimed and finished meanwhile is dropped (and the verb says so), not pushed" \
+  || no "provisional claim resurrected a finished feature (rc=$rc): features/rz1 $(oref refs/qargi/features/rz1), done/rz1 $(oref refs/qargi/done/rz1) vs $RZ, local file: $(ls "$(S a)/features/app-rz1.json" 2>&1): $(out)"
+# a done/NAME ref that holds no valid record: finish says so, instead of a push refusal that never goes away
+XE a marshal claim dn1 --as alice >/dev/null 2>&1
+DN=$(oref refs/qargi/features/dn1)
+plant refs/qargi/done/dn1 "$(tree 100644 blob "$(blob 'not json {')" record.json)"
+XE a marshal finish dn1 --as alice; rc=$?
+[ $rc = 1 ] && [ "$DN" != none ] && [ "$(oref refs/qargi/features/dn1)" = "$DN" ] && grep -q "refs/qargi/done/dn1 exists on the remote but holds no valid record" <(out) && ! grep -q "Traceback" "$T/e" \
+  && ok "finish: a done/NAME ref without a valid record is named in a clear refusal (exit 1), the feature stays" \
+  || no "finish with an invalid done/dn1 must refuse clearly (rc=$rc): $(out)"
+OG update-ref -d refs/qargi/done/dn1
+
+# ============================================================ (20) wrong types in a remote record never crash a reader
+for spec in 'tnull|.status = null' 'tnum|.status = 5' 'tlist|.status = ["a"]' 'pnum|.purpose = 5' 'rnum|.renewed_at = 5' 'fnum|.finished_at = [1]'; do
+  plant "refs/qargi/features/${spec%%|*}" "$(tree 100644 blob "$(blob "$(VALID "${spec%%|*}" | jq -c "${spec#*|}")")" record.json)"
+done
+plant refs/qargi/features/wgood "$(tree 100644 blob "$(blob "$(VALID wgood | jq -c '.lead.id = "dora"')")" record.json)"
+XE b marshal status --all --brief; rc1=$?; cp "$T/o" "$T/o.brief"; cp "$T/e" "$T/e.brief"
+XE b marshal status --all --json; rc2=$?; jq -e . "$T/o" >/dev/null 2>&1; js=$?
+XE b marshal check --as bob; rc3=$?
+cat "$T/e.brief" "$T/e" > "$T/e.all"
+hk=$(printf '{"session_id":"s3"}' | env HOME="$T/m/b/home" QARGI_CONF="$T/m/b/c" QARGI_STATE="$T/m/b/s" bash "$TOOL/lib/hook.sh" session-start --project app 2>/dev/null)
+if [ $rc1 = 0 ] && [ $rc2 = 0 ] && [ $js = 0 ] && [ $rc3 = 0 ] && ! grep -q Traceback "$T/e.all" && grep -q '^wgood ' "$T/o.brief" && ! grep -q mallory "$T/o.brief" \
+   && printf '%s' "$hk" | jq -e '.hookSpecificOutput.additionalContext | strings' >/dev/null 2>&1; then
+  ok "wrong types: status --brief/--json, check and the session hook still work (exit 0, no traceback), the valid record is listed"
+else no "SPEC no read verb may exit 70 on remote data: brief rc=$rc1, json rc=$rc2 (valid json: $js), check rc=$rc3, hook: ${hk:0:120}: $(head -c 600 "$T/e.all")"; fi
+miss=''
+for n in tnull tnum tlist pnum rnum fnum; do
+  grep -qi warn "$T/e.all" && grep -qF -e "refs/qargi/features/$n" "$T/e.all" && ! grep -q "^$n " "$T/o.brief" || miss="$miss $n"
+done
+[ -z "$miss" ] && ok "wrong types: a status that is not a known one and a purpose, renewed_at or finished_at that is not text are ignored with a warning naming the ref" || no "SPEC wrong-typed records must be ignored with a warning; not ignored/named:$miss (stderr: $(head -c 800 "$T/e.all"))"
+for n in tnull tnum tlist pnum rnum fnum wgood; do OG update-ref -d "refs/qargi/features/$n"; done
+
+# ============================================================ (21) a provisional claim cannot be taken over
+fb pv1
+slow a "fetch push"
+XE a QARGI_REMOTE_TIMEOUT=1 marshal claim pv1 --as alice >/dev/null 2>&1
+XE a QARGI_REMOTE_TIMEOUT=1 marshal takeover pv1 --as alice --approved "$WORDS"; rc=$?
+unslow a
+[ $rc = 1 ] && ! grep -q Traceback "$T/e" && grep -qi "provisional" <(out) && [ "$(jq -r '.state // ""' "$(S a)/features/app-pv1.json" 2>/dev/null)" = provisional ] && [ "$(oref refs/qargi/features/pv1)" = none ] \
+  && ok "takeover: a provisional record has no age; it is refused with a clear message (exit 1, no traceback), the claim is left as it was" \
+  || no "SPEC takeover of a provisional claim must be a refusal, not exit 70 (rc=$rc): $(out)"
+
+# ============================================================ (22) the renewer survives an unreachable remote and stops on a lost lease
+fb hv1 hv2
+cat > "$T/rn.sh" <<EOS
+. '$TOOL/lib/lib.sh'; . '$TOOL/lib/marshal.sh'
+marshal_hold_start app "\$1"
+echo "\$MARSHAL_HOLD_PID" > "$T/rn.pid"
+sleep "\$2"
+EOS
+RN() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_PROJECT=app QARGI_LEAD=alice QARGI_MARSHAL_RENEW_SEC=1 QARGI_REMOTE_TIMEOUT=1 bash "$T/rn.sh" "$@" >/dev/null 2>&1; }
+XE a marshal claim hv1 --as alice >/dev/null 2>&1
+n0=$(ocount refs/qargi/features/hv1)
+slow a "fetch push"
+RN hv1 9 & rp=$!
+sleep 3.5; unslow a
+wait "$rp"
+n1=$(ocount refs/qargi/features/hv1)
+[ "$n0" = 1 ] && [ "$n1" -gt "$n0" ] \
+  && ok "renewer: renewals go on after the remote was unreachable for a few rounds (hv1: $n0 -> $n1 commits)" || no "SPEC the renewer must go on when the remote is not checked: hv1 commits $n0 -> $n1"
+XE a marshal claim hv2 --as alice >/dev/null 2>&1
+RN hv2 12 & rp=$!
+sleep 1.5
+XE a marshal release hv2 --as alice --note n >/dev/null 2>&1; XE b marshal take hv2 --as bob >/dev/null 2>&1
+sleep 4
+kill -0 "$rp" 2>/dev/null && ! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null \
+  && ok "renewer: it ends when the renewal is refused (another lead took the feature), its holder still running" || no "SPEC the renewer must end on a refusal (holder alive: $(kill -0 "$rp" 2>&1 && echo yes), renewer $(cat "$T/rn.pid") alive: $(kill -0 "$(cat "$T/rn.pid")" 2>&1 && echo yes))"
+kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+[ "$(orec refs/qargi/features/hv2 | jq -r .lead.id)" = bob ] && ok "renewer: the refused renewal left bob's lead alone" || no "renewer overwrote bob's lead on hv2: $(orec refs/qargi/features/hv2)"
+
+# ============================================================ (23) a fetch leaves the lead's FETCH_HEAD alone
+echo sentinel > "$T/m/b/app/.git/FETCH_HEAD"
+XE b marshal status --all --brief >/dev/null 2>&1
+[ "$(cat "$T/m/b/app/.git/FETCH_HEAD" 2>/dev/null)" = sentinel ] && grep -q "^fetch.*--no-write-fetch-head" "$LOG" \
+  && ok "fetch: the refresh does not write FETCH_HEAD of the lead's repository" || no "SPEC the refresh must fetch with --no-write-fetch-head; FETCH_HEAD is now: $(head -c 100 "$T/m/b/app/.git/FETCH_HEAD" 2>&1)"
+
+# ============================================================ (24) inherited APPROVED and PLAN_ARG never apply a marshal verb
+mk e6
+XE e6 APPROVED=leaked PLAN_ARG=leaked marshal enable; rc=$?
+[ $rc = 0 ] && grep -q "^plan token: " "$T/o" && [ ! -e "$(S e6)/marshal/app.enabled" ] && ! grep -q "marshal:enable" "$(S e6)/audit.log" 2>/dev/null \
+  && ok "enable: APPROVED and PLAN_ARG from the environment are not options; without options it only prints the plan" || no "SPEC inherited APPROVED/PLAN_ARG must not apply enable (rc=$rc, file: $(ls "$(S e6)/marshal" 2>&1)): $(out)"
+XE e6 APPROVED=leaked marshal disable >/dev/null 2>&1
+[ "$(jq -r 'select(.verb == "marshal:disable") | .approved' "$(S e6)/audit.log" 2>/dev/null)" = "" ] && grep -q marshal:disable "$(S e6)/audit.log" \
+  && ok "disable: an inherited APPROVED is not written into the audit line" || no "SPEC inherited APPROVED leaked into the audit line: $(cat "$(S e6)/audit.log" 2>&1)"
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc

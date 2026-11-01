@@ -34,7 +34,8 @@ run: never) and never pushes; a verb that changes the marshal exits 2 inside a m
 "remote not checked": reads continue on the cache, a claim stays provisional and the next verb completes or drops it.
 Environment: QARGI_REMOTE_TIMEOUT (seconds for a fetch or push, default 10) and QARGI_MARSHAL_MONO (the monotonic clock; tests).
 
-Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
+Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
+changed, try again; only the refs backend returns it).
 Run through lib/marshal.sh; python3 -I, standard library only."""
 import argparse, calendar, fcntl, json, os, pwd, re, socket, subprocess, sys, time
 
@@ -49,6 +50,11 @@ CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 class Refuse(Exception):
     """A refusal: message to stderr, exit 1."""
+
+
+class Unreachable(Refuse):
+    """The change was not made because the remote was not reached: message to stderr, exit 3. Not a refusal of the lead: a caller that
+    renews a lease for a long step (marshal_hold_start) tries again, one that gets exit 1 knows the lease is lost."""
 
 
 def now():
@@ -239,6 +245,7 @@ def write_local(path, rec):
     os.replace(tmp, path)
 
 
+NOTE_KEYS = ("state", "done_seen")           # keys of the local note of a claim that was not pushed; never part of a pushed record
 REFS_MOD = None
 
 
@@ -255,9 +262,11 @@ def refs_mod():
 
 def sane(rec):
     """The store's own rules for a record read from the remote -> a reason to ignore it, or None."""
-    st = rec.get("status")
-    if st is not None and st not in STATUSES:
-        return "its status %r is unknown" % clean(str(st))[:40]
+    if "status" in rec and rec["status"] not in STATUSES:            # a null or a number is as unknown as a word
+        return "its status %r is unknown" % clean(str(rec["status"]))[:40]
+    for k in ("purpose", "renewed_at", "finished_at"):
+        if rec.get(k) is not None and not isinstance(rec[k], str):
+            return "its %s is not text" % k
     ld = rec.get("lead")
     if ld is not None and not (isinstance(ld, dict) and isinstance(ld.get("id"), str) and ID_RE.fullmatch(ld["id"])):
         return "its lead is not valid"
@@ -286,8 +295,8 @@ def soft_rec(path):
 
 
 class Snap:
-    def __init__(self, feats, done, bad, why):
-        self.feats, self.done, self.bad, self.why = feats, done, bad, why
+    def __init__(self, feats, done, bad, why, bad_done=frozenset()):
+        self.feats, self.done, self.bad, self.why, self.bad_done = feats, done, bad, why, bad_done
 
 
 class RefsBackend:
@@ -334,8 +343,9 @@ class RefsBackend:
                 self.warned.add((ref, w))
                 print("qargi: warning: ignoring %s on the remote: %s" % (ref, w), file=sys.stderr)
         bad = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/features/") and R.name_ok(r.rsplit("/", 1)[1])}
+        bad_done = {r.rsplit("/", 1)[1] for r, _ in ignored if r.startswith("refs/qargi/done/") and R.name_ok(r.rsplit("/", 1)[1])}
         self.snap = Snap({n: dict(rec, _oid=o, _age=ages.get(n, 0)) for n, (o, rec) in feats.items()},
-                         {n: dict(rec, _oid=o) for n, (o, rec) in done.items()}, bad, why)
+                         {n: dict(rec, _oid=o) for n, (o, rec) in done.items()}, bad, why, bad_done)
         return why
 
     def snapshot(self, ctx):
@@ -377,7 +387,7 @@ class RefsBackend:
     # -- writing
     def stamp(self, ctx, name, new, base):
         """The record to write: no private key, rev + 1, no control character, not over the size a reader accepts."""
-        new = {k: v for k, v in new.items() if not k.startswith("_") and k != "state"}
+        new = {k: v for k, v in new.items() if not k.startswith("_") and k not in NOTE_KEYS}
         rev0 = (base or {}).get("rev", 0)
         new["rev"] = (rev0 if isinstance(rev0, int) and not isinstance(rev0, bool) else 0) + 1
         new["updated_at"] = iso(ctx.t)
@@ -387,10 +397,18 @@ class RefsBackend:
             raise Refuse("the record of %s would be over 64 KiB, which no reader accepts: shorten the goal, plan or note" % name)
         return new
 
+    def done_oid(self, name):
+        """The oid of refs/qargi/done/<name> in the cache just read, or None."""
+        return (self.snap.done.get(name) or {}).get("_oid")
+
     def mirror(self, ctx, name, rec, state=None):
-        rec = {k: v for k, v in rec.items() if not k.startswith("_") and k != "state"}
+        """Write the local file. A provisional note also keeps the done/<name> oid the cache showed when the claim was made: a
+        claim is dropped on settling only when another machine finished the feature since."""
+        rec = {k: v for k, v in rec.items() if not k.startswith("_") and k not in NOTE_KEYS}
         if state:
             rec["state"] = state
+            if state == "provisional":
+                rec["done_seen"] = self.done_oid(name)
         write_local(ctx.path(name), rec)
 
     def push_one(self, ctx, name, new, remote_oid):
@@ -433,9 +451,14 @@ class RefsBackend:
             prov = self.provisional(ctx, name)
             if prov is not None and why is None:
                 # settle a claim that was not pushed: complete it when the remote still has no such feature, adopt the remote's record when
-                # it is ours already (the answer of the push was lost), drop it when someone else won meanwhile
-                if remote is None:
-                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k != "state"}, None)
+                # it is ours already (the answer of the push was lost), drop it when someone else won meanwhile or has finished the
+                # feature meanwhile (pushing it would bring a finished feature back to life next to its done/ ref)
+                if remote is None and self.done_oid(name) not in (None, prov.get("done_seen")):
+                    os.unlink(path)
+                    print("qargi: the provisional claim of %s was dropped, not pushed: the feature was finished on the remote meanwhile (refs/qargi/done/%s exists)" % (name, name), file=sys.stderr)
+                    prov = None
+                elif remote is None:
+                    st, last = self.push_one(ctx, name, {k: v for k, v in prov.items() if k not in NOTE_KEYS}, None)
                     if st == "ok":
                         self.mirror(ctx, name, prov)
                     if st in ("ok", "rejected"):
@@ -454,7 +477,7 @@ class RefsBackend:
                 if new is None:
                     return res
                 if not (create and remote is None):
-                    raise Refuse("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+                    raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
                 self.mirror(ctx, name, self.stamp(ctx, name, new, rec), "provisional")
                 print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (why, name), file=sys.stderr)
                 return res
@@ -465,6 +488,8 @@ class RefsBackend:
             remote_oid = remote["_oid"] if remote else None
             finishing = new.get("status") == "finished"
             wrote_prov = False
+            if finishing and name in snap.bad_done:
+                raise Refuse("refs/qargi/done/%s exists on the remote but holds no valid record (see the warning above): ask whoever owns the remote to remove it, then finish again" % name)
             if finishing:
                 try:
                     st, last, _ = R.finish(ctx.repo, self.remote, name, new, remote_oid, (snap.done.get(name) or {}).get("_oid"))
@@ -494,7 +519,7 @@ class RefsBackend:
                 if wrote_prov:
                     print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (last, name), file=sys.stderr)
                     return res
-                raise Refuse("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
+                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
             if retried:                                           # rejected twice
                 if wrote_prov:
                     os.unlink(path)
@@ -873,7 +898,11 @@ def v_takeover(ctx, a):
             raise Refuse("no record for feature %s (claim it: qargi marshal claim %s)" % (a.name, a.name))
         st, mins = lease(ctx, rec)
         if st == "live":
-            left = max(1, -(-(ctx.ttl * 60 - ctx.be.age(ctx, rec)) // 60))
+            age = ctx.be.age(ctx, rec)
+            if age is None:       # a provisional claim has not been seen on the remote: no age, and nobody else leads it there
+                raise Refuse("feature %s is a provisional claim of yours that has not reached the remote yet; there is nothing to take over: "
+                             "run a marshal verb on it when the remote is reachable" % a.name)
+            left = max(1, -(-(ctx.ttl * 60 - age) // 60))
             raise Refuse("feature %s is led by %s and live for another %d min (ttl %d); wait, or ask the lead to release it" % (a.name, clean(lead_of(rec)["id"]), left, ctx.ttl))
         if rec.get("status") in ("finished", "abandoned"):
             raise Refuse("feature %s is %s" % (a.name, rec["status"]))
@@ -1016,6 +1045,9 @@ def main(argv):
         if ctx.be.refs and ctx.be.member and a.verb not in ("status", "check"):
             return usage_exit("marshal %s is not available in a member run: a member never changes the shared marshal or pushes; the lead does" % a.verb)
         globals()["v_" + a.verb](ctx, a)
+    except Unreachable as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 3
     except Refuse as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
