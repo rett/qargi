@@ -316,6 +316,7 @@ def soft_rec(path):
         return None
 
 
+STEPS = 3000                # commits one read of the cache looks at, in all, to find a record by identity (a forger's chains are not free)
 WALK = 200                  # commits under a head that are looked at to find the newest valid record (a lead's renewals make the chain long)
 
 
@@ -341,6 +342,7 @@ class Integrity:
         self.marks_path = os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project)
         self.tags = {}
         self.notes = []
+        self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
     def classify(self, kind, name, rec, parents, message):
         """-> (tag, why): signed | unsigned | INVALID | cannot verify."""
@@ -415,6 +417,9 @@ class Integrity:
         if want is None:
             return False
         for c, _ in R.chain(repo, oid, WALK):
+            if self.steps <= 0:
+                return False                                              # a read that has looked at this many commits is not going to find it
+            self.steps -= 1
             got = self.ident(name, c)
             if got == want:
                 return True
