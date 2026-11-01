@@ -16,6 +16,8 @@ One pair per project:
 
 A project may hold several memory-kind stores, called tiers; structural files repeat per tier, a note lives in one; see `qargi memory tiers`.
 
+A note moves between tiers only by an explicit `qargi memory move`, never by copying it by hand: the note is written into the target tier with its origin in `Sources:`, its index row follows it, and the original goes to `/_archive/<date>/` of the first tier, so a note stays in one tier and nothing is deleted.
+
 Both stores share one shape: `shared/` for what every role needs, and
 `roles/<role>/` for what only that role loads.
 
