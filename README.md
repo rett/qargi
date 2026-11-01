@@ -234,6 +234,18 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 - A member cannot change the render: the guard refuses its writes under `state/claude/`. Only you apply it.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
 
+### Baseline packs
+
+qargi ships three skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
+
+- `shellcheck-gate`: lint every shell file you add or change with shellcheck and quote the verdict among the gates.
+- `keep-a-changelog`: record each user-visible change under Unreleased in `CHANGELOG.md`, in the same commit.
+- `gitflow-member`: a member's part of a git-flow project (its own `agent/<slug>` branch, no merges, only the checks that cover its change).
+
+Install and upgrade add the ones your library lacks with `qargi packs seed --install`, which needs no token and links nothing. `qargi packs seed` shows a plan (one line per pack: `add`, `update`, `current` or `kept`) and a plan token; `--plan TOKEN --approved "<your words>"` applies it, adding missing packs and replacing a copy you never edited when qargi ships a newer text. A copy you edited and sealed, or a pack of your own with the same name, is kept and never overwritten. To take the shipped version of an edited pack again, unlink it, remove it (`qargi skill remove NAME`) and seed.
+
+Seeding never links. To enable a baseline pack for a project: `qargi skill link NAME --scope project --project P`, then render it as above. Not done yet: link proposals when a project is created or attached, user-scope links, and more packs.
+
 ## Help, manual page and completion
 
 - `qargi help` lists the commands by task; `qargi help COMMAND` shows its verbs and `qargi help COMMAND VERB` the arguments and options of one. Every command also takes `--help`. `qargi help approvals`, `naming`, `memory`, `push`, `concepts` and `files` explain the ideas.
@@ -325,6 +337,8 @@ agents go in a profile under `~/.qargi/config/profiles/`, also
 outside the repository: nothing qargi related is added to a project's
 committed files. `--project` installs are hidden from git through the
 repository's local `.git/info/exclude`.
+
+Installing also adds the baseline packs that ship with qargi (`packs/`) to your pack library, without linking any of them (see Baseline packs).
 
 ### Where the data lives
 
