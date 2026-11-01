@@ -489,7 +489,7 @@ the project, instead of NAME.
 .RS
 .TP
 .BI "\-\-role " "ROLE"
-the role (default build).
+the role, or a base (worker, reviewer); default build.
 .RE
 .RS
 .TP
@@ -556,7 +556,7 @@ the project, instead of NAME.
 .RS
 .TP
 .BI "\-\-role " "ROLE"
-the role.
+the role, or a base (worker, reviewer).
 .RE
 .RE
 .RS
@@ -1526,11 +1526,6 @@ off, advisory or strict: how records are signed and checked.
 Create this machine's signing key for the marshal records (key init).
 .br
 `key init` makes $QARGI_CONF/credentials/marshal_ed25519 (mode 600), never overwrites it, and prints the signers line to trust on every lead machine. Audited as marshal:key\-init. Not available in a member run.
-.RS
-.TP
-.BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
-.RE
 .RS
 .TP
 .BI "\-\-principal " "ID"
