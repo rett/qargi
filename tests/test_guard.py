@@ -690,6 +690,59 @@ class Marshal(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    # --- signed marshal records: the lead's signing key, the allowed signers and the acceptance marks
+
+    def test_the_allowed_signers_and_the_acceptance_marks_are_protected(self):
+        """Pin: $STATE/marshal/<project>.signers lies under marshal/ and $STATE/features/.accepted-<project>.json under
+        features/, both protected roots. New: the refusal says what the file is."""
+        m, f = os.path.join(self.state, "marshal"), self.feat
+        os.makedirs(m)
+        for p in (m + "/proj.signers", f + "/.accepted-proj.json"):
+            open(p, "a").close()
+        os.symlink(m, os.path.join(self.clone, "to-marshal"))
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p, text in ((m + "/proj.signers", "allowed signers"), (m + "/new.signers", "allowed signers"), ("to-marshal/proj.signers", "allowed signers"),
+                            ("../../state/marshal/x.signers", "allowed signers"), (f + "/.accepted-proj.json", "acceptance marks"),
+                            (f + "/.accepted-new.json", "acceptance marks"), ("to-features/.accepted-proj.json", "acceptance marks")):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+                    self.assertIn(text, res.stderr, (tool, p))
+        s, a = m + "/proj.signers", f + "/.accepted-proj.json"
+        for target, text in ((s, "allowed signers"), (a, "acceptance marks")):
+            for c in ("echo x > %s" % target, "echo x >> %s" % target, "echo x | tee %s" % target, "cp a %s" % target, "mv a %s" % target, "rm -f %s" % target,
+                      "sed -i s/a/b/ %s" % target, "truncate -s 0 %s" % target, "ln -sf /x %s" % target, "cd %s && echo x > %s" % (os.path.dirname(target), os.path.basename(target)),
+                      "bash -c 'echo x > %s'" % target, "dd if=/dev/null of=%s" % target):
+                res = self.bash(c)
+                self.assertEqual(res.returncode, 2, (c, res.stderr))
+                self.assertIn(text, res.stderr, c)
+        self.refused(["echo x > $QARGI_STATE/marshal/other.signers", "echo '{}' > to-features/.accepted-p.json", "rm -rf %s" % m])
+        for c in ("cat %s" % s, "cat %s" % a, "ls -a %s" % f, "cp %s %s/run/out/" % (s, self.t), "grep -n ssh-ed25519 %s" % s,
+                  "echo x > %s/proj.signers.txt" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_signing_verbs_are_refused_with_their_own_reason(self):
+        """Pin the refusal (the verbs are not in MARSHAL_READ); new: the message says what the verb does."""
+        text = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers", "resign": "signs a marshal record"}
+        for v, why in text.items():
+            for form in ("qargi marshal %s init", "qargi marshal %s add --line x", "qargi marshal %s list", "qargi marshal %s proj f --approved go",
+                         "/opt/q/bin/qargi marshal %s x", "env FOO=1 qargi marshal %s", "sudo qargi marshal %s x", "bash -c 'qargi marshal %s x'",
+                         "eval 'qargi marshal %s x'", "echo $(qargi marshal %s x)", "true && qargi marshal %s x", "bash lib/marshal.sh %s x",
+                         "python3 bin/qargi marshal %s x", "nohup qargi marshal %s x", "qargi 'marshal' '%s'", "v=%s; qargi marshal $v"):
+                res = self.bash(form % v)
+                self.assertEqual(res.returncode, 2, (form % v, res.stderr))
+                self.assertIn("qargi guard:", res.stderr)
+                self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+                if "$v" not in form:
+                    self.assertIn(why, res.stderr, form % v)
+        for c in ("qargi marshal enable --integrity strict", "qargi marshal enable proj --integrity advisory"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+        for c in ("qargi marshal status", "qargi marshal check proj f", "echo qargi marshal key init", "grep -n 'marshal resign' lib/commands.py"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
 
 class RefJournal(unittest.TestCase):
     """The lead's ref journal ($QARGI_STATE/ref-journal.jsonl) is changed only by the lead's own verbs: a write, move, delete

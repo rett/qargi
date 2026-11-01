@@ -56,6 +56,10 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
     directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
     records are a later feature);
+  - the verbs of the signed records: qargi marshal key|signers|resign (the lead's signing key, the allowed signers, a record signed
+    with the key), refused with their own reason; and a write to the allowed signers ($QARGI_STATE/marshal/<project>.signers, under
+    the marshal/ root above) or to the acceptance marks ($QARGI_STATE/features/.accepted-<project>.json, under features/), which the
+    refusal names;
   - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
 Not covered: code that writes a file itself (python -c, perl -e, node -e, a script written earlier and run), a glob
 that expands to a protected path, a path built from a variable the guard cannot see. A heredoc line that starts with a
@@ -91,6 +95,8 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check")
+MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
+                   "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
@@ -380,8 +386,15 @@ def refusal_text(what, dest, root):
     """The sentence for a refused write: the generic one, or for the claude render and the marshal's records the reason."""
     if root in journal_roots() or journal_sibling(root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
+    name = os.path.basename(dest.rstrip("/"))
+    if root in feature_roots() and name.startswith(".accepted-"):
+        return MarshalReason("%s on %s would change %s, the marshal's acceptance marks (the newest signed record this machine has accepted, "
+                             "which a rollback is measured against); %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in switch_roots() and name.endswith(".signers"):
+        return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
+                             % (what, dest, root, MARSHAL_NOTE))
     if root in switch_roots():
         return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in memory_roots():
@@ -530,6 +543,8 @@ def skill_verb(prog, rest):
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
+    if area == "marshal" and verb in MARSHAL_SIGNING:
+        return MarshalReason("qargi marshal %s %s and is not available to an agent (only status and check are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
