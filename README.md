@@ -82,11 +82,27 @@ system   dir    ~/.qargi/memory/system                 missing
 reference: memstore_01DEF (optional, read-only, not composed)
 ```
 
+`qargi memory init TIER` creates a missing directory tier (`repo`, `project`, `shared` or
+`system`) as an empty store of the standard layout, and `qargi memory move PATH --from TIER
+--to TIER` moves one note or a folder of notes from one tier to another. Both print a plan
+and a plan token and change nothing until you apply it with `--plan TOKEN --approved "..."`.
+A move deletes nothing: the original is archived under `/_archive/<date>/` of the first
+tier, the copy records its origin, and the index row follows the note. A note that is also
+in a third tier, or an existing store that is not a standard one, is refused. qargi never
+commits the repo tier: it is written into your checkout, so review and commit it, or ignore
+it in git.
+
+The session-start hook shows the tiers, highest first, then the README of the highest tier
+that has one, each tier's indexes and the notes marked `always`, with size caps and a list of
+what was not loaded. When you dispatch a member, `qargi local prepare` prints a
+`TASK-BLOCK MEMORY` block with the same tier summary and the always-load notes, and warns
+when the repo tier has uncommitted changes, because the member's clone has only the
+committed copy.
+
 Two rules for agents: members and cloud agents write only under `roles/<their role>/` of
 the memory store, and `shared/` is curated, so an agent proposes a shared note in its report
-and the lead or the person promotes it. This first slice is read-only: nothing writes a
-tier, there is no `memory init` or `memory move`, the session-start hook does not compose
-the tiers yet, and there are no remote shares.
+and the lead or the person promotes it. `init` and `move` are the lead's: the guard refuses
+them to a member. There are no remote shares.
 
 ## Roles, abilities and members
 
