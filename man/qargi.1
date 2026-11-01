@@ -15,7 +15,7 @@ Every command takes \fB\-\-help\fR. A command that changes shared resources prin
 .SH CONCEPTS
 Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
 .PP
-Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by a skill (qargi\-build, qargi\-write, qargi\-verify, qargi\-test). The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
+Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
 Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
@@ -262,7 +262,7 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi\-build, qargi\-write, qargi\-review, qargi\-test) the member loads when the task block names it. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
+A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -2910,4 +2910,4 @@ turn off bold in the terminal help.
 .SH EXIT STATUS
 0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.
 .SH SEE ALSO
-The skills qargi\-task, qargi\-team, qargi\-project, qargi\-instances, qargi\-provision, qargi\-memory, qargi\-packs and qargi\-verify in Claude Code, and the ability skills qargi\-build, qargi\-write, qargi\-review and qargi\-test (qargi help roles).
+The skills qargi\-task, qargi\-team, qargi\-project, qargi\-instances, qargi\-provision, qargi\-memory, qargi\-packs and qargi\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).
