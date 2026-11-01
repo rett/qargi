@@ -83,7 +83,7 @@ marshal_main() {
   local -a opt=()
   case $verb in
     claim) want=' --project --as --goal ';;
-    status) want=' --project --all --brief --json ';;
+    status) want=' --project --as --all --brief --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
     check|renew|take|finish) want=' --project --as ';;
     release) want=' --project --as --note ';;
