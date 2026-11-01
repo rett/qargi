@@ -29,7 +29,7 @@ works in its own clone and returns its own series against its own base; series a
 
 | Lead | How |
 |---|---|
-| **This session** (default) | The session-start hook has loaded the lead's resources. You dispatch each member yourself with `/qargi-task` (locally the member `qargi agent for <role>` prints, or a cloud role agent when the user's request names the cloud), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval. |
+| **This session** (default) | The session-start hook has loaded the lead's resources. You dispatch each member yourself with `/qargi-task` (locally the member `qargi agent for <role>` prints on its one line `MEMBER MODEL EFFORT PROFILE`: spawn MEMBER with that model and effort, or a cloud role agent when the user's request names the cloud), in order: build; write with `USAGE_IMPACT` and the build series; review; revise rounds up to `max_rounds`. You verify every run and apply with the user's approval. |
 | **A cloud lead** | `qargi team brief PROJECT TEAM --task ... --done ... --base ...` prints the brief. `qargi start PROJECT-lead --asked "..."`, then `qargi send PROJECT-lead --label SLUG "<brief>" --asked "..."`. The lead starts the members as threads, runs the rounds and reports; `qargi watch`, `qargi collect SID DIR` (it splits the outputs per member), then `qargi team check DIR`. |
 | **A lead started in the console** | Start a session from the lead deployment (`PROJECT-deployment-lead`) and give it a plain task: the team definitions are in its prompt. Afterwards `qargi track SID`, `qargi collect SID DIR`, `qargi team check DIR`. |
 

@@ -56,10 +56,10 @@ refs is planned, not built. Your routine:
    `--plan` and `--approved`). That is the only merge into develop. Its run carries over to develop's new head, so a release
    needs no further run.
    **Advisor sign-off** (before `feature finish`): write a synthesized diff to a scratch file: the feature diff stat from
-   `qargi feature status NAME`, each task's report line, the gate verdicts and the suite verdict. Dispatch the `advisor`
-   member on that file (Agent tool, `advisor` as subagent_type; `qargi agent for review` would return the first registered
-   review member, not necessarily the advisor) and finish only after reading its verdict. The advisor is a suggested,
-   review-only (so read-only) member: `qargi agent add advisor --abilities review --model claude-opus-5-5 --effort high`.
+   `qargi feature status NAME`, each task's report line, the gate verdicts and the suite verdict. Run `qargi agent for review --profile advisor`
+   (one line, `MEMBER MODEL EFFORT PROFILE`) and spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL (omit it
+   when MODEL is `-`) and `effort` EFFORT, on that file; the call's model and effort override the member definition, so pass
+   both. Finish only after reading its verdict. The advisor is a profile of the read-only `reviewer` base, not a member.
    The owner's approval rules do not change.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version on this
@@ -75,14 +75,22 @@ than finishing on it.
 
 ## Models
 
-`qargi agent models [--project P] [--json]` shows the table of default models and efforts, the project's overrides, the
-suggested members and each member's model. `qargi agent add` uses the table when `--model` and `--effort` are not given. For per-task diff
-checks use the `auditor` member (`qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low`), review-only, which checks a diff or a feature
-in a clone of its own; dispatch it by name. Search is not a role: map the repository and find call sites with a read-only
-exploration subagent on a small model (Haiku) inside your own context, then act on the result. Your own session model is
-chosen in Claude Code (`/model` or settings), not by qargi; the table's lead row is the recommendation. The table names tiers
-(fast, balanced, deep, frontier) that a provider file maps to models. Frontier is opt-in: use the `researcher` member
-(`claude-fable-5-1`, review-only) for research or a hard design question only when the owner or you name it for the task.
+There are two base members, one per guard class: `worker` (abilities build, write and test; write class) and `reviewer`
+(review; read-only). Everything else is a profile, resolved at dispatch: a base, a tier (fast, balanced, deep, frontier,
+which `lib/providers/claude.json` maps to models), an effort and a purpose. The shipped profiles are `build`, `write` and
+`test` (worker) and `review`, `auditor` and `advisor` (reviewer), plus `researcher` and `lead`. `qargi agent models
+[--project P] [--json]` shows the bases, the profiles (the project's `profiles.<name>` merged over the shipped ones) and
+the members, and flags legacy one-per-ability members (builder, writer, tester), which still resolve when no base exists.
+
+Dispatch with `qargi agent for ROLE [--profile NAME] [--project P]`. It prints one line, `MEMBER MODEL EFFORT PROFILE`
+(MODEL is the alias, `-` when none). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL (omit it when `-`) and
+`effort` EFFORT: the call's model and effort override the member definition. A profile whose base class does not fit the
+role is refused. For per-task diff checks use `--profile auditor` on review (fast, low effort, read-only). Search is not a
+role: map the repository and find call sites with a read-only exploration subagent on a small model (Haiku) inside your own
+context, then act on the result. Your own session model is chosen in Claude Code (`/model` or settings), not by qargi; the
+`lead` profile's tier is the recommendation (it has no base and is never dispatched). Frontier is opt-in: use
+`--profile researcher` (review, read-only) for research or a hard design question only when the owner or you name it for the
+task.
 
 ## When a merge conflicts (exit 3)
 
