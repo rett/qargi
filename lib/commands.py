@@ -538,7 +538,7 @@ COMMANDS = {
                  "deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the "
                  "origin of every note written is added to its Sources: line, so each change can be undone. Without --approved they "
                  "print the plan and its token and change nothing; a store whose notes changed since the plan is refused."),
-        "scripts": ["memory.sh"],
+        "scripts": ["memory.sh", "tierwrite.sh", "tierplan.py", "tiers.py"],
         "verbs": {
             "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
             "get": verb("Print one note", [("STORE_ID", "store"), ("PATH", "none")], examples=["qargi memory get memstore_01ABC /shared/INDEX.md"]),

@@ -229,7 +229,7 @@ def _canon_check(name, t, lst, project, roles):
             for p in sorted(lst):
                 f.write(json.dumps({"type": "memory", "id": lst[p].get("id", ""), "path": p, "content": lst[p]["content"]}) + "\n")
         r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "canon.py"), "check", "--kind", "memory", "--project", pa,
-                            "--roles", rcsv, "--store", dump], capture_output=True, text=True)
+                            '--roles', rcsv, '--store', dump], capture_output=True, text=True)
     finally:
         try:
             os.unlink(dump)
@@ -292,7 +292,7 @@ def main(argv):
         o = argv[i]
         if o == "--project" and i + 1 < len(argv):
             project, i = argv[i + 1], i + 2
-        elif o == "--ant" and i + 1 < len(argv):
+        elif o == '--ant' and i + 1 < len(argv):
             ant, i = argv[i + 1], i + 2
         elif o == "--json" and verb == "tiers":
             as_json, i = True, i + 1

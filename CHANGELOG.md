@@ -11,6 +11,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--history` adds the finished and abandoned records after them. `qargi marshal check NAME` for a name that has no branch and no
   record now exits 1 with `no feature NAME`, and so do the flow verbs and `local prepare --base feature/NAME` for such a name.
   The error for a branch that is checked out elsewhere says how to free it (`git -C DIR checkout --detach`).
+- Memory tiers (writing, second slice). The session-start hook now lists the notes of the tiers, highest first, as data after the
+  marshal block (at most 4000 characters per note and 16000 in all; a tier that is missing or unreadable is skipped and named).
+  `qargi memory init TIER` creates a tier from the standard layout and `qargi memory move PATH --from TIER --to TIER` moves a
+  note, or a folder of notes, between tiers; both print a plan and a token and apply only with your approval, and nothing is
+  synced or deleted without it. A repo tier with notes that are not committed warns with the count. `local prepare` prints a
+  TASK-BLOCK MEMORY packet for the member, and the guard refuses a member every verb and script that writes a tier. The memory,
+  task and canon documents describe the tiers.
 - Baseline packs. qargi ships three packs under `packs/`: `shellcheck-gate` (lint every shell file you touch and quote the verdict),
   `keep-a-changelog` (one Unreleased entry per user-visible change, in the same commit) and `gitflow-member` (a member's part of
   a git-flow project). `qargi packs seed` stores them in your library: it prints one line per pack (add, update, current or

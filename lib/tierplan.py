@@ -79,7 +79,7 @@ def checkout_of(a, tier):
         raise Refused("the repo tier needs repo.path in the project's answers (qargi project set P repo.path DIR)")
     repo = os.path.expanduser(repo)
     try:
-        r = subprocess.run(["git", "-C", repo, "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["git", "-C", repo, 'rev-parse', '--is-inside-work-tree'], capture_output=True, text=True, timeout=10)
         ok = r.returncode == 0 and r.stdout.strip() == "true"
     except (OSError, subprocess.SubprocessError):
         ok = False
@@ -227,7 +227,8 @@ def select_notes(src, path):
         if path in src and C.is_note(path) and not T.STRUCTURAL.search(path):
             return [path]
         return []
-    return [p for p in T.notes_of(src) if p == path or p.startswith(path + "/")]
+    base = path.rstrip("/")
+    return [p for p in T.notes_of(src) if p == base or p.startswith(base + "/")]
 
 
 def plan_move(path, frm, to, project_arg, today):
@@ -236,6 +237,8 @@ def plan_move(path, frm, to, project_arg, today):
     why = B.path_problem(path)
     if why:
         raise Refused("PATH %s is not a store path (%s)" % (path, why))
+    if re.match(r"^/roles/[^/]+$", path):                         # a role folder given without its trailing slash
+        path += "/"
     if not re.match(r"^/(shared|roles/[^/]+)/", path):
         raise Refused("PATH must lie under /shared/ or /roles/<role>/: %s" % path)
     project, a = load_answers(project_arg)
@@ -370,8 +373,8 @@ def main(argv):
     s.add_argument("--to", required=True, choices=T.ORDER)
     for s in (sub.choices["plan-init"], s):
         s.add_argument("--project")
-        s.add_argument("--today")
-        s.add_argument("--out", required=True)
+        s.add_argument('--today')
+        s.add_argument('--out', required=True)
     for n in ("show", "apply"):
         sub.add_parser(n).add_argument("file")
     a = ap.parse_args(argv)
