@@ -365,7 +365,7 @@ def gather(ctx, names):
     return out
 
 
-def all_names(ctx):
+def all_names(ctx, history=False):
     names = set(open_features(ctx))
     prefix = ctx.project + "-"
     try:
@@ -374,11 +374,22 @@ def all_names(ctx):
                 n = f[len(prefix):-5]
                 if NAME_RE.match(n):
                     rec = read_rec(os.path.join(ctx.state, "features", f))
-                    if n in names or (rec and rec.get("status") != "finished"):
+                    if n in names or (rec and (history or rec.get("status") != "finished")):
                         names.add(n)
     except OSError:
         pass
     return sorted(names)
+
+
+def is_open(d):
+    """A feature is open when its branch exists or its record is neither finished nor abandoned."""
+    return d["branch"] or d["status"] not in ("finished", "abandoned")
+
+
+def listed(ctx, history=False):
+    """-> the gathered items of all features: the open ones, and with history the finished and abandoned ones after them."""
+    items = gather(ctx, all_names(ctx, history))
+    return [i for i in items if is_open(i[1])] + ([i for i in items if not is_open(i[1])] if history else [])
 
 
 def v_status(ctx, a):
@@ -389,7 +400,7 @@ def v_status(ctx, a):
             raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
         items = gather(ctx, [a.name])
     else:
-        items = gather(ctx, all_names(ctx))
+        items = listed(ctx, a.history)
     if a.json:
         objs = [d for _, d, _ in items]
         print(json.dumps(objs[0] if a.name else {"project": ctx.project, "features": objs}, indent=1))
@@ -610,6 +621,8 @@ def v_check(ctx, a):
     if a.name:
         check_name(a.name)
         rec = read_rec(ctx.path(a.name))
+        if rec is None and not branch_exists(ctx, a.name):
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
         if rec is not None:
             rec = ghost_fix(ctx, a.name, rec)
         ld = lead_of(rec)
@@ -627,7 +640,7 @@ def v_check(ctx, a):
         else:
             print("free")
         return
-    items = gather(ctx, all_names(ctx))
+    items = listed(ctx)
     for n, d, rec in items:
         print(brief_line(d))
         for w in warnings_for(ctx, d, True):
@@ -656,6 +669,7 @@ def main(argv):
     p.add_argument('--purpose', default="")
     p.add_argument('--approved')
     p.add_argument('--all', action="store_true"), p.add_argument('--brief', action="store_true"), p.add_argument('--json', action="store_true")
+    p.add_argument('--history', action="store_true")
     p.add_argument('--lenient', action="store_true")
     a = p.parse_args(argv)
     if a.verb not in ("status", "check") and not a.name:
