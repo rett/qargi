@@ -83,6 +83,7 @@
           "role": {"type": "string", "minLength": 1},
           "mode": {"enum": ["plan", "apply"]},
           "model": {"type": "string"},
+          "effort": {"enum": ["low", "medium", "high", "xhigh", "max", "", null]},
           "credentials": {"$ref": "#/$defs/credentials"}
         }
       },
@@ -102,17 +103,33 @@
       }
     },
     "start-session": {
+      "description": "Two shapes. {agent, task, budget_cents?, credentials?} starts a session and answers {session_id, state}. {role, agent_id, agent_version, environment_id, ...} is a pure request builder (no transport call): it answers the body of a sessions-create request, an agent_with_overrides whose model is always an object {id, effort} and never a string (a string resets the effort). The builder is refused (exit 2) when the request carries tools, skills or mcp_servers (the agent has them fixed; they are not overridden per session), lacks a model, an effort or a system prompt, has a system longer than 100000 characters, names an effort the provider has no control for, or names a read-only role or base on a surface with no read-only barrier without accept_no_barrier: true. role and profile name a base (worker, reviewer) or a profile of lib/model-defaults.json; a name that is neither counts as read-only.",
       "request": {
-        "type": "object", "additionalProperties": false, "required": ["surface", "agent", "task"],
+        "type": "object", "additionalProperties": false, "required": ["surface"],
+        "anyOf": [{"required": ["agent", "task"]}, {"required": ["role", "agent_id", "agent_version", "environment_id"]}],
         "properties": {
           "surface": {"const": "cloud"},
           "agent": {"type": "string", "minLength": 1},
           "task": {"type": "string", "minLength": 1},
           "budget_cents": {"type": "integer", "minimum": 0},
-          "credentials": {"$ref": "#/$defs/credentials"}
+          "credentials": {"$ref": "#/$defs/credentials"},
+          "role": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "profile": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9-]*$"},
+          "model": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+          "effort": {"enum": ["low", "medium", "high", "xhigh", "max", "", null]},
+          "system": {"type": "string"},
+          "agent_id": {"type": "string", "minLength": 1},
+          "agent_version": {"type": "integer", "minimum": 0},
+          "environment_id": {"type": "string", "minLength": 1},
+          "resources": {"type": "array", "items": {"type": "object"}},
+          "vault_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "initial_events": {"type": ["array", "null"], "items": {"type": "object"}},
+          "budget": {"type": ["object", "null"]},
+          "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
+          "accept_no_barrier": {"type": "boolean"}
         }
       },
-      "response": {"$ref": "#/$defs/session"}
+      "response": {"anyOf": [{"$ref": "#/$defs/session"}, {"$ref": "#/$defs/session_body"}]}
     },
     "status": {
       "request": {"$ref": "#/$defs/session_request"},
@@ -169,6 +186,31 @@
     "session": {
       "type": "object", "additionalProperties": false, "required": ["session_id", "state"],
       "properties": {"session_id": {"type": "string", "minLength": 1}, "state": {"$ref": "#/$defs/state"}}
+    },
+    "session_body": {
+      "type": "object", "additionalProperties": false, "required": ["agent", "environment_id", "resources", "vault_ids", "metadata"],
+      "description": "the body of a sessions-create request; there are no tools, skills or mcp_servers in it, anywhere",
+      "properties": {
+        "agent": {
+          "type": "object", "additionalProperties": false, "required": ["id", "type", "version", "model", "system"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "type": {"const": "agent_with_overrides"},
+            "version": {"type": "integer", "minimum": 0},
+            "model": {
+              "type": "object", "additionalProperties": false, "required": ["id", "effort"],
+              "properties": {"id": {"type": "string", "minLength": 1}, "effort": {"type": "string", "minLength": 1}}
+            },
+            "system": {"type": "string", "minLength": 1}
+          }
+        },
+        "environment_id": {"type": "string", "minLength": 1},
+        "resources": {"type": "array", "items": {"type": "object"}},
+        "vault_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "initial_events": {"type": "array", "items": {"type": "object"}},
+        "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
+        "budget": {"type": "object"}
+      }
     }
   }
 }
