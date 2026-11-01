@@ -26,11 +26,12 @@ echo '{}' | $V nosuchverb response >/dev/null && no "validator accepts an unknow
 conf() { bash tests/conformance.sh "$@"; }
 conf claude > "$T/claude.out" 2>&1; rc=$?
 { [ $rc = 0 ] && ! grep -q '^FAIL' "$T/claude.out"; } && ok "claude passes" || { no "claude does not pass: rc=$rc"; sed 's/^/     /' "$T/claude.out"; }
-for c in 1 2 3 4 5 6 7 8 9; do
+for c in 1 2 3 4 5 6 7 8 9 10; do
   grep -Eq "^(ok|skip) +\[$c\] " "$T/claude.out" && : || no "claude: no line for case $c"
 done
 grep -Eq '^ok +\[8\] ' "$T/claude.out" && ok "claude: the barrier corpus ran" || no "claude: the barrier corpus did not run"
 grep -Eq '^ok +\[9\] ' "$T/claude.out" && ok "claude: the definition carries the barrier" || no "claude: case 9"
+grep -Eq '^ok +\[10\] ' "$T/claude.out" && ok "claude: the session body carries no tools, skills or mcp_servers" || no "claude: case 10"
 
 declare -A WANT=([push]=8 [failopen]=8 [argv]=5 [unsupported]=3 [planmut]=4 [stoptwice]=6 [costunit]=7 [badshape]=1 [badmodel]=2 [nonote]=2 [nodef]=9 [none]=0)
 for f in "${!WANT[@]}"; do
@@ -51,6 +52,19 @@ for f in "${!WANT[@]}"; do
 done
 grep -q 'git push' "$T/broken.push.out" && ok "the push fault names the call it let through" || no "the push failure does not name the call"
 { grep -Eq '^FAIL +\[5\] ' "$T/broken.argv.out" && ! grep -q 'SENTINEL-credential' "$T/broken.argv.out"; } && ok "the report of the argv fault does not print the credential itself" || no "the report of the argv fault prints the credential"
+
+# case 10 on two faulty copies of the claude adapter: a body that carries tools, and a request with tools that is let through
+for f in body override; do
+  mkdir -p "$T/m.$f"; cp -R lib agents "$T/m.$f/"; ad=$T/m.$f/lib/providers/claude/adapter
+  case $f in
+    body) sed -i 's|^    body\["metadata"\] = meta or {}$|&; body["agent"]["tools"] = []|' "$ad";;
+    override) sed -i 's|^    for k in FIXED_ON_THE_AGENT:$|    for k in ():|' "$ad";;
+  esac
+  cmp -s "$ad" lib/providers/claude/adapter && no "the $f mutation did not change the adapter"
+  conf claude --tool "$T/m.$f" > "$T/m.$f.out" 2>&1; rc=$?
+  # a body with an extra key also leaves the schema, so case 1 may fail with it; no other case may
+  { [ $rc = 1 ] && grep -Eq '^FAIL +\[10\] ' "$T/m.$f.out" && [ "$(grep -E '^FAIL +\[' "$T/m.$f.out" | grep -Evc '^FAIL +\[(1|10)\] ')" = 0 ]; } && ok "a copy of the claude adapter with the '$f' fault fails case 10" || { no "the '$f' fault is not caught by case 10 only: rc=$rc"; sed 's/^/     /' "$T/m.$f.out"; }
+done
 
 # an adapter that is null is a skip, not a failure; an unknown provider is a usage error
 mkdir -p "$T/null/lib/providers"
