@@ -14,6 +14,8 @@ One pair per project:
 | `<project>-memory` | memory | read-write | verified how-to facts, role history |
 | `<project>-reference` | reference | read-only | curated rules, workflow, conventions |
 
+A project may hold several memory-kind stores, called tiers; structural files repeat per tier, a note lives in one; see `qargi memory tiers`.
+
 Both stores share one shape: `shared/` for what every role needs, and
 `roles/<role>/` for what only that role loads.
 
@@ -118,7 +120,8 @@ runs it, and so does `qargi memory lint`.
 - The role is the ability of the task: named in a cloud agent's prompt, and in a
   member's task block (`ABILITY: build`). An agent loads `/README.md`,
   `/shared/INDEX.md` and `/roles/<its role>/INDEX.md`, then only what the task
-  needs, and never reads or writes under another role's folder.
+  needs, and never reads or writes under another role's folder. `shared/` is written only by
+  promotion (`qargi canon promote`) or by the person; an agent proposes.
 - Roles come from the fixed list (`build`, `review`, `write`, `test`, plus `lead`) and from the
   project's stored answers. A role folder for a role the project does not use is a
   deviation.
