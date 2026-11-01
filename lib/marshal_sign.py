@@ -422,3 +422,94 @@ def signers_remove(path, principal):
         return False
     _atomic_write(path, (('\n'.join(keep) + '\n') if keep else '').encode('utf-8'))
     return True
+
+
+# ---- the accepted high-water mark ----------------------------------------------------------------------------------
+# $DA_STATE/features/.accepted-<project>.json: {name: [rev, oid]}, the newest record this machine has accepted for each
+# feature. A record whose rev is lower, or whose rev is the same with another oid, or that does not descend from the accepted
+# oid, is a rollback. A machine with no mark yet trusts what it first sees.
+
+def _mark_args(name, rev, oid):
+    if not (isinstance(name, str) and 0 < len(name) <= 40 and NAME_RE.fullmatch(name)):
+        raise ValueError('%r is not a feature name' % (name,))
+    if not isinstance(rev, int) or isinstance(rev, bool) or rev < 0:
+        raise ValueError('rev is a non-negative integer')
+    if not (isinstance(oid, str) and OID_RE.fullmatch(oid)):
+        raise ValueError('oid is a commit id')
+
+
+def hw_load(path):
+    """The marks -> {name: [rev, oid]}; {} when there is no file. A file that is damaged (or a symlink) raises SignError: it is
+    never read as an empty mark, which would switch the protection off."""
+    if not os.path.lexists(path):
+        return {}
+    data = _read_regular(path)
+    try:
+        d = json.loads(data.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        raise SignError('%s is not valid JSON' % path)
+    if not isinstance(d, dict):
+        raise SignError('%s is not a JSON object' % path)
+    out = {}
+    for name, v in d.items():
+        try:
+            if not (isinstance(v, list) and len(v) == 2):
+                raise ValueError('not a pair')
+            _mark_args(name, v[0], v[1])
+        except ValueError:
+            raise SignError('%s holds a bad entry for %r' % (path, name if isinstance(name, str) and len(name) < 60 else '...'))
+        out[name] = [v[0], v[1]]
+    return out
+
+
+def _hw_save(path, marks):
+    _atomic_write(path, (json.dumps(marks, sort_keys=True, indent=1) + '\n').encode('ascii'))
+
+
+def hw_record(path, name, rev, oid):
+    """Accept (rev, oid) for `name`: True when the mark is now that. A mark never moves backward: a lower rev, or the same rev
+    with another oid, is left alone and gives False (hw_check is what says why). Atomic."""
+    _mark_args(name, rev, oid)
+    marks = hw_load(path)
+    cur = marks.get(name)
+    if cur is not None:
+        if rev < cur[0] or (rev == cur[0] and oid != cur[1]):
+            return False
+        if cur == [rev, oid]:
+            return True
+    marks[name] = [rev, oid]
+    _hw_save(path, marks)
+    return True
+
+
+def hw_drop(path, name):
+    """Forget `name` (its feature is done and the done record was seen). -> True when there was a mark."""
+    marks = hw_load(path)
+    if name not in marks:
+        return False
+    del marks[name]
+    _hw_save(path, marks)
+    return True
+
+
+def hw_check(marks, name, rev, oid, is_ancestor):
+    """May the record (rev, oid) of `name` be accepted, given `marks` (hw_load)? -> (True, "") or (False, "rollback detected: ...").
+    is_ancestor(accepted_oid, oid) answers the git question (merge-base --is-ancestor); one that raises or says no is a rollback."""
+    _mark_args(name, rev, oid)
+    cur = marks.get(name)
+    if cur is None:
+        return True, ''
+    arev, aoid = cur
+    if rev < arev:
+        return False, 'rollback detected: %s is at rev %d, rev %d was accepted before' % (name, rev, arev)
+    if rev == arev:
+        if oid == aoid:
+            return True, ''
+        return False, 'rollback detected: %s rev %d is a different record than the one accepted' % (name, rev)
+    try:
+        ok = bool(is_ancestor(aoid, oid))
+    except Exception:
+        ok = False
+    if not ok:
+        return False, 'rollback detected: %s rev %d does not descend from the accepted rev %d' % (name, rev, arev)
+    return True, ''
