@@ -40,10 +40,18 @@ this machine's key ($QARGI_CONF/credentials/marshal_ed25519, lib/marshal_sign.py
 ($STATE/marshal/<project>.signers) and tags it signed, unsigned or INVALID ("cannot verify" for a sig_v it does not know). Advisory
 uses every record and shows the tag; strict ignores what is not signed, with a warning, and falls back to the last accepted record
 of the feature. The last accepted record of each feature is kept in $STATE/features/.accepted-<project>.json {name: [rev, oid]}
-(a high-water mark): a record with a lower rev, the same rev and another oid, or that does not descend from the accepted one is a
-rollback, warned about as such and never used. A write decides on, and builds on, the last accepted record when the ref's head is
-not one, so junk or replayed pushes can neither renew a lease (the timer counts the accepted oid only) nor block the lead. A ref
-that vanishes without a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
+(a high-water mark): a record with a lower rev, the same rev and another record, or that does not descend from the accepted one is a
+rollback, warned about as such and never used. A record is what its signature covers (rev, digest of the record, signed parent), not the oid
+of the commit that carries it: the same signed record in a commit made again (another committer date) is the same record, it neither
+counts as a fork nor restarts a lease timer, and the descent check follows the chain by oid and, failing that, by record identity. When the head of a ref is not an accepted record (strict: not signed or not valid; or a
+signed rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
+the last accepted one, and a write builds on that: a record that was valid is never dropped by a write, junk or replayed pushes can neither
+renew a lease (the timer counts the accepted oid only) nor block the lead. Advisory uses an unsigned or INVALID head as it is (a write
+builds on it, the timer counts it): only a signed rollback falls back. A signed done/ record carries the oid of the feature record it ended
+(features_oid, signed as the parent of its payload); it clears the mark only while features/NAME is absent and only when that oid is the
+accepted one (or descends from it), so a reused name keeps its mark and an old done cannot be replayed to clear it. A ref that vanishes
+without such a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words and a plan token that covers the head, its lead and its goal, audited by
+marshal.sh); it refuses an unsigned head whose lead is not the lead of the record this machine accepted.
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
@@ -308,6 +316,10 @@ def soft_rec(path):
         return None
 
 
+STEPS = 3000                # commits one read of the cache looks at, in all, to find a record by identity (a forger's chains are not free)
+WALK = 200                  # commits under a head that are looked at to find the newest valid record (a lead's renewals make the chain long)
+
+
 class Snap:
     """What a read of the cache found. feats is what a reader shows, base what a write decides on and builds on (the same unless the
     head of a ref is not an accepted record: then base is the last accepted one); both carry _oid (the head, which a push leases),
@@ -330,6 +342,7 @@ class Integrity:
         self.marks_path = os.path.join(ctx.state, "features", ".accepted-%s.json" % ctx.project)
         self.tags = {}
         self.notes = []
+        self.steps = STEPS                                    # commits this read may still look at to find a record by identity
 
     def classify(self, kind, name, rec, parents, message):
         """-> (tag, why): signed | unsigned | INVALID | cannot verify."""
@@ -347,12 +360,17 @@ class Integrity:
             return "INVALID", "it has no rev"
         if len(parents) > 1:
             return "INVALID", "a record commit has one parent at most"
+        sparent = parents[0] if parents else None
+        if kind == "done":                       # a done commit is a root; the features record it ended is in the record and signed as the parent
+            sparent = rec.get("features_oid")
+            if sparent is not None and not (isinstance(sparent, str) and S.OID_RE.fullmatch(sparent)):
+                return "INVALID", "its features_oid is not a commit id"
         armor, why = S.armor_from_message(message)
         if not armor:
             return "INVALID", why
         ld = rec.get("lead")
         try:
-            payload = S.signed_payload(self.ctx.project, name, kind, rev, parents[0] if parents else None, ld.get("id") if isinstance(ld, dict) else None, rec)
+            payload = S.signed_payload(self.ctx.project, name, kind, rev, sparent, ld.get("id") if isinstance(ld, dict) else None, rec)
         except ValueError as e:
             return "INVALID", "its payload cannot be rebuilt: %s" % e
         ok, why = S.verify(payload, armor, self.signers, signer)
@@ -375,11 +393,77 @@ class Integrity:
     def entry(self, rec, head, acc, tag, why, signer):
         return dict(rec, _oid=head, _acc=acc, _tag=tag, _why=clean(why)[:300], _signer=signer)
 
-    def fallback(self, name, marks, head):
-        """The last accepted record of `name` as an entry whose head is `head`, or None (no mark, or its commit is gone)."""
+    def ident(self, name, oid):
+        """What the signature of the record in commit `oid` covers of it: marshal_sign.record_ident of the record and of the parent the
+        commit sits on (a record commit has one parent at most), or None when it cannot be read."""
+        rec, _ = self.R.read_one(self.ctx.repo, oid, name)
+        if rec is None or sane(rec):
+            return None
+        info = self.R.commit_info(self.ctx.repo, oid)
+        return self.S.record_ident(rec, info[0][0] if info and info[0] else None) if info else None
+
+    def same(self, name, aoid, oid):
+        """Do the commits carry the same signed record (rev, record digest, signed parent), whatever their own oids are?"""
+        a = self.ident(name, aoid)
+        return a is not None and a == self.ident(name, oid)
+
+    def descends(self, name, aoid, oid):
+        """Does the chain under commit `oid` hold the accepted record `aoid`? By oid when it can, else by record identity: a record that
+        was committed again (another committer date) is the same record, and a chain that runs through it descends from it."""
+        repo, R = self.ctx.repo, self.R
+        if R.is_ancestor(repo, aoid, oid):
+            return True
+        want = self.ident(name, aoid)
+        if want is None:
+            return False
+        for c, _ in R.chain(repo, oid, WALK):
+            if self.steps <= 0:
+                return False                                              # a read that has looked at this many commits is not going to find it
+            self.steps -= 1
+            got = self.ident(name, c)
+            if got == want:
+                return True
+            if got is not None and got[0] < want[0]:
+                break                                                     # everything below is older than the accepted record
+        return False
+
+    def check(self, marks, name, rec, oid):
+        """hw_check by record identity: (ok, why)."""
+        return self.S.hw_check(marks, name, rec["rev"], oid, lambda a, b: self.descends(name, a, b), lambda a, b: self.same(name, a, b))
+
+    def newest_valid(self, name, marks, head):
+        """The newest record under `head` (first parent chain, at most WALK commits, `head` itself first) that is signed, verifies and
+        passes the high-water mark: it is at or after the accepted one and descends from it -> (oid, rec, signer) or None. A reader that
+        fell behind finds in this the legitimate records that junk was pushed on top of; a write that builds on it keeps them."""
+        S, R, repo = self.S, self.R, self.ctx.repo
+        for oid, _ in R.chain(repo, head, WALK):
+            rec, _ = R.read_one(repo, oid, name)
+            info = R.commit_info(repo, oid) if rec is not None and not sane(rec) else None
+            if not info:
+                continue
+            tag, _ = self.classify("features", name, rec, info[0], info[1])
+            if tag != "signed":
+                continue
+            if rec["rev"] < marks[name][0]:
+                break                                                     # everything below is older than what was accepted
+            ok, _ = self.check(marks, name, rec, oid)
+            if ok:
+                return oid, rec, rec.get("signer") if S.principal_ok(rec.get("signer")) else None
+        return None
+
+    def fallback(self, name, marks, head, persist=False):
+        """The record a write decides on and builds on when the head of `name` is not an accepted record, as an entry whose head (the
+        lease) is `head`: the newest valid signed record under the head, else the last accepted one; None when there is no mark, or its
+        commit is gone. With `persist` the mark moves to the record found."""
         m = marks.get(name)
         if not m:
             return None
+        found = self.newest_valid(name, marks, head) if head else None
+        if found:
+            oid, rec, signer = found
+            if persist:
+                self.S.hw_record(self.marks_path, name, rec["rev"], oid)
+            return self.entry(rec, head, oid, "signed", "the newest valid record under the head" if oid != m[1] else "the last accepted record", signer)
         rec, _ = self.R.read_one(self.ctx.repo, m[1], name)
         if rec is None or sane(rec):
             return None
@@ -397,21 +481,22 @@ class Integrity:
             tag, why, signer = self.tags.get(("features", name), ("unsigned", "", None))
             cur = self.entry(rec, oid, oid, tag, why, signer)
             if tag == "signed":
-                ok, w = S.hw_check(marks, name, rec["rev"], oid, lambda a, b: R.is_ancestor(repo, a, b))
+                ok, w = self.check(marks, name, rec, oid)
                 if ok:
+                    if marks.get(name) and marks[name][0] == rec["rev"]:
+                        cur["_key"] = marks[name][1]          # the accepted record under another commit: its timer goes on, a re-committed head renews nothing
                     if persist and only in (None, name):
                         S.hw_record(self.marks_path, name, rec["rev"], oid)
                     view[name] = base[name] = cur
                     continue
                 self.notes.append((name, "ignoring refs/qargi/features/%s on the remote: %s" % (name, w)))
-                fb = self.fallback(name, marks, oid)
+                fb = self.fallback(name, marks, oid, persist and only in (None, name))
                 if fb:
                     view[name] = base[name] = fb
                 else:
                     bad.add(name)
                 continue
-            view[name] = cur
-            base[name] = self.fallback(name, marks, oid) or cur
+            view[name] = base[name] = cur       # advisory uses what is there: a write builds on the head that was read, and the timer follows it
             if tag in self.BAD:
                 self.notes.append((name, "refs/qargi/features/%s is %s%s (integrity advisory: the record is still used)" % (name, tag, (": " + why) if why else "")))
         for ref, _ in ignored:
@@ -420,17 +505,25 @@ class Integrity:
             name = ref.rsplit("/", 1)[1]
             if not R.name_ok(name) or name in view:
                 continue
-            fb = self.fallback(name, marks, heads.get(ref))
+            fb = self.fallback(name, marks, heads.get(ref), persist and only in (None, name))
             if fb:
                 view[name] = base[name] = fb
             else:
                 bad.add(name)
+        cleared = set()
         for name, (oid, rec) in done.items():
-            if self.tags.get(("done", name), ("unsigned",))[0] == "signed" and persist and only in (None, name):
-                S.hw_drop(self.marks_path, name)
+            m = marks.get(name)
+            if m is None or self.tags.get(("done", name), ("unsigned",))[0] != "signed" or "refs/qargi/features/" + name in heads:
+                continue                         # the mark of a feature that is open again (a reused name) is that feature's, whatever done/ says
+            fo = rec.get("features_oid")         # a done record ends the feature this machine accepted only when it says so, signed
+            if fo == m[1] or (isinstance(fo, str) and S.OID_RE.fullmatch(fo) and self.descends(name, m[1], fo)):
+                cleared.add(name)
+                if persist and only in (None, name):
+                    S.hw_drop(self.marks_path, name)
         for name in sorted(marks):
-            if "refs/qargi/features/" + name not in heads and name not in done:
-                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s: it was deleted or rewound" % (name, name)))
+            unsigned_done = name in done and self.tags.get(("done", name), ("unsigned",))[0] != "signed"      # advisory uses it as it is, as before
+            if "refs/qargi/features/" + name not in heads and name not in cleared and not unsigned_done:
+                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)))
         return view, base, bad
 
 
@@ -482,7 +575,7 @@ class RefsBackend:
                 view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
                 notes = []
             # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
-            ages = R.observed(ctx.state, ctx.project, {n: e["_acc"] for n, e in based.items()}, persist=not self.member)
+            ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=not self.member)
         finally:
             lk.close()
         # with integrity on, a read about one feature warns about that feature only (the others are not what was asked, and a project that
@@ -712,9 +805,46 @@ class RefsBackend:
         raise Refuse("feature %s could not be updated (%s); try again" % (name, last or "the remote kept changing"))
 
 
-def refs_resign(be, ctx, name):
-    """Sign the unsigned head of refs/qargi/features/NAME: a signed commit on top of it, rev + 1, the record otherwise as it is.
-    -> the new rev, or None when the head is signed already."""
+def resign_target(be, ctx, name):
+    """The head of refs/qargi/features/NAME as resign sees it -> (head oid, record), or (head oid, None) when it is signed already.
+    Refuses a head that is not an unsigned valid record, and, when this machine has accepted a record of NAME, an unsigned head
+    that is not that record's lead's (or is older than it): resign turns what is there into a trusted record, so it never does that
+    for a record a stranger put on top of one the owner saw."""
+    R = be.R
+    why = be.load(ctx, True)
+    if why is not None:
+        raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+    head = be.heads.get("refs/qargi/features/" + name)
+    if head is None:
+        raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
+    rec, w = R.read_one(ctx.repo, head, name)
+    if rec is None or sane(rec):
+        raise Refuse("refs/qargi/features/%s holds no valid record (%s): nothing to sign" % (name, w or sane(rec)))
+    info = R.commit_info(ctx.repo, head)
+    guard = Integrity(be, ctx)
+    tag, w = guard.classify("features", name, rec, info[0], info[1]) if info else ("INVALID", "its commit cannot be read")
+    if tag == "signed":
+        return head, None
+    if tag != "unsigned":
+        raise Refuse("refs/qargi/features/%s is %s (%s): resign only signs an unsigned record" % (name, tag, clean(w)[:200]))
+    m = guard.marks().get(name)
+    if m:
+        acc, _ = R.read_one(ctx.repo, m[1], name)
+        if acc is None or sane(acc):
+            raise Refuse("this machine accepted a record of %s but cannot read it any more, so it cannot tell whether the unsigned head is that record's successor: resign refused" % name)
+        al, hl = lead_of(acc), lead_of(rec)
+        if (al or {}).get("id") != (hl or {}).get("id"):
+            raise Refuse("refs/qargi/features/%s is unsigned and its lead (%s) is not the lead of the record this machine accepted (%s): resign signs only the accepted lead's own unsigned writes; a record someone else put there is not signed" % (
+                name, clean((hl or {}).get("id") or "none")[:80], clean((al or {}).get("id") or "none")[:80]))
+        if isinstance(acc.get("rev"), int) and isinstance(rec.get("rev"), int) and rec["rev"] < acc["rev"]:
+            raise Refuse("refs/qargi/features/%s is unsigned and at rev %d, below the rev %d this machine accepted: resign refused" % (name, rec["rev"], acc["rev"]))
+    return head, rec
+
+
+def refs_resign(be, ctx, name, expect=None, show=False):
+    """Sign the unsigned head of refs/qargi/features/NAME: a signed commit on top of it, rev + 1, the record otherwise as it is
+    -> the new rev, or None when the head is signed already. show: nothing is changed, the answer is what would be signed
+    ({head, rev, lead, goal}, or None when signed already). expect: the head the plan showed; another head is refused."""
     R = be.R
     sg = R.signer_for(ctx.conf, ctx.project)
     if sg is None:
@@ -724,21 +854,14 @@ def refs_resign(be, ctx, name):
     with open(path + ".lock", "a") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         for attempt in range(2):
-            why = be.load(ctx, True)
-            if why is not None:
-                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
-            head = be.heads.get("refs/qargi/features/" + name)
-            if head is None:
-                raise Refuse("no open feature %s on the remote (no refs/qargi/features/%s)" % (name, name))
-            rec, w = R.read_one(ctx.repo, head, name)
-            if rec is None or sane(rec):
-                raise Refuse("refs/qargi/features/%s holds no valid record (%s): nothing to sign" % (name, w or sane(rec)))
-            info = R.commit_info(ctx.repo, head)
-            tag, w = Integrity(be, ctx).classify("features", name, rec, info[0], info[1]) if info else ("INVALID", "its commit cannot be read")
-            if tag == "signed":
+            head, rec = resign_target(be, ctx, name)
+            if rec is None:
                 return None
-            if tag != "unsigned":
-                raise Refuse("refs/qargi/features/%s is %s (%s): resign only signs an unsigned record" % (name, tag, clean(w)[:200]))
+            if show:
+                return {"head": head, "rev": rec.get("rev") if isinstance(rec.get("rev"), int) else 0,
+                        "lead": (lead_of(rec) or {}).get("id") or "none", "goal": " ".join(clean(str(rec.get("goal") or "")).split())[:200]}
+            if expect is not None and head != expect:
+                raise Refuse("refs/qargi/features/%s changed since the plan was shown: run the plan again, show it to the user, then apply it" % name)
             new = be.stamp(ctx, name, rec, rec)
             st, last = be.push_one(ctx, name, new, head, head, sg)
             if st == "ok":
@@ -1167,11 +1290,18 @@ def v_finish(ctx, a):
 
 def v_resign(ctx, a):
     check_name(a.name)
-    if not " ".join((a.approved or "").split()):
-        raise Refuse("resign needs --approved WORDS: your go-ahead, in your words, to sign the record of %s" % a.name)
     if not ctx.be.refs:
         raise Refuse("resign applies to the shared refs backend (qargi marshal enable)")
-    rev = refs_resign(ctx.be, ctx, a.name)
+    if a.show:                      # the plan of lib/marshal.sh: what resign would sign, nothing changed
+        info = refs_resign(ctx.be, ctx, a.name, show=True)
+        if info is None:
+            print("signed")
+        else:
+            print("head %s\nrev %d\nlead %s\ngoal %s" % (info["head"], info["rev"], info["lead"], info["goal"]))
+        return
+    if not " ".join((a.approved or "").split()):
+        raise Refuse("resign needs --approved WORDS: your go-ahead, in your words, to sign the record of %s" % a.name)
+    rev = refs_resign(ctx.be, ctx, a.name, a.expect_head)
     if rev is None:
         print("%s is signed already" % a.name)
     else:
@@ -1260,7 +1390,7 @@ def choose_backend(a):
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend and --remote are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
     p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
@@ -1279,6 +1409,8 @@ def main(argv):
     p.add_argument('--no-fetch', dest="no_fetch", action="store_true")
     p.add_argument('--backend', choices=["local", "refs"])
     p.add_argument('--remote')
+    p.add_argument('--show', action="store_true")
+    p.add_argument('--expect-head', dest="expect_head")
     a = p.parse_args(argv)
     if a.verb not in ("status", "check") and not a.name:
         return usage_exit("%s needs a feature NAME" % a.verb)
