@@ -47,6 +47,7 @@ run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run python3 tests/test_migrate.py
 run python3 tests/test_home.py
+run bash tests/test_install.sh
 run python3 tests/test_migrate_home.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
