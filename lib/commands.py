@@ -186,7 +186,7 @@ COMMANDS = {
             "claim": verb("Become the lead of feature NAME (creates the record; refuses when another lead holds it)", [("NAME", "none")],
                           [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT")]),
             "status": verb("Show one feature, or every open one with --all: lead, status, goal, plan, note, tasks, branches, worktrees, overlap", [("[NAME]", "none")],
-                           [PROJECT_OPT, AS_OPT, opt("--all", "every open feature of the project"), opt("--brief", "one line per feature"), opt("--json", "machine-readable")]),
+                           [PROJECT_OPT, AS_OPT, opt("--all", "every open feature of the project"), opt("--history", "with --all, also the finished and abandoned ones, after the open ones"), opt("--brief", "one line per feature"), opt("--json", "machine-readable")]),
             "set": verb("Update the goal, plan, note or status of a feature you lead", [("NAME", "none")],
                         [PROJECT_OPT, AS_OPT, opt("--goal", "the goal", "TEXT"), opt("--plan", "the plan, free text or a checklist", "TEXT"), opt("--note", "a note for the next reader", "TEXT"),
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),

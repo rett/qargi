@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi marshal status --all` (and `--brief`, `--json`, and the session-start hook that uses them) lists only the open features;
+  `--history` adds the finished and abandoned records after them. `qargi marshal check NAME` for a name that has no branch and no
+  record now exits 1 with `no feature NAME`, and so do the flow verbs and `local prepare --base feature/NAME` for such a name.
+  The error for a branch that is checked out elsewhere says how to free it (`git -C DIR checkout --detach`).
 - Baseline packs. qargi ships three packs under `packs/`: `shellcheck-gate` (lint every shell file you touch and quote the verdict),
   `keep-a-changelog` (one Unreleased entry per user-visible change, in the same commit) and `gitflow-member` (a member's part of
   a git-flow project). `qargi packs seed` stores them in your library: it prints one line per pack (add, update, current or
