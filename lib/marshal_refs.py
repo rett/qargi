@@ -287,6 +287,8 @@ class Signer:
         S = sign_mod()
         rec = dict(rec, sig_v=1, signer=self.principal)
         lead = rec.get("lead")
+        if kind == "done":
+            parent = rec.get("features_oid")      # a done commit is a root: the features record it ends is named in the record and signed as the parent
         try:
             payload = S.signed_payload(self.project, rec.get("feature"), kind, rec.get("rev"), parent, lead.get("id") if isinstance(lead, dict) else None, rec)
             return rec, S.sign(payload, self.keyfile)
@@ -360,7 +362,12 @@ def marshal_push(repo, remote, updates, atomic=False):
 def finish(repo, remote, name, rec, features_oid, done_oid, sign=None, parent=None):
     """Move a feature to done: one commit (child of the last feature commit, or of `parent` when that is not the ref's head), pushed with
     ONE atomic push that creates done/<name> and deletes features/<name>, each under its own lease. -> (status, why, new oid).
-    A signed done commit is a root: the commits below it were signed as kind features, and a done record is checked on its own."""
+    A signed done commit is a root: the commits below it were signed as kind features, and a done record is checked on its own. Its record
+    carries features_oid, the last features record (the one it builds on, else the head it replaces; null when there was none), and the
+    signature covers that oid as the parent of the payload, so a reader can tell which feature record this done ended and an old done
+    cannot be replayed for a feature that was claimed again."""
+    if sign is not None:
+        rec = dict(rec, features_oid=parent or features_oid or None)
     commit = write(repo, rec, None if sign is not None else (parent or features_oid), "marshal: finish %s" % name, sign, "done")
     ups = [(commit, "refs/qargi/done/" + name, done_oid or ZERO)]
     if features_oid:

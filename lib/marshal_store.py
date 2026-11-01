@@ -45,8 +45,10 @@ rollback, warned about as such and never used. When the head of a ref is not an 
 signed rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
 the last accepted one, and a write builds on that: a record that was valid is never dropped by a write, junk or replayed pushes can neither
 renew a lease (the timer counts the accepted oid only) nor block the lead. Advisory uses an unsigned or INVALID head as it is (a write
-builds on it, the timer counts it): only a signed rollback falls back. A ref
-that vanishes without a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
+builds on it, the timer counts it): only a signed rollback falls back. A signed done/ record carries the oid of the feature record it ended
+(features_oid, signed as the parent of its payload); it clears the mark only while features/NAME is absent and only when that oid is the
+accepted one (or descends from it), so a reused name keeps its mark and an old done cannot be replayed to clear it. A ref that vanishes
+without such a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
@@ -353,12 +355,17 @@ class Integrity:
             return "INVALID", "it has no rev"
         if len(parents) > 1:
             return "INVALID", "a record commit has one parent at most"
+        sparent = parents[0] if parents else None
+        if kind == "done":                       # a done commit is a root; the features record it ended is in the record and signed as the parent
+            sparent = rec.get("features_oid")
+            if sparent is not None and not (isinstance(sparent, str) and S.OID_RE.fullmatch(sparent)):
+                return "INVALID", "its features_oid is not a commit id"
         armor, why = S.armor_from_message(message)
         if not armor:
             return "INVALID", why
         ld = rec.get("lead")
         try:
-            payload = S.signed_payload(self.ctx.project, name, kind, rev, parents[0] if parents else None, ld.get("id") if isinstance(ld, dict) else None, rec)
+            payload = S.signed_payload(self.ctx.project, name, kind, rev, sparent, ld.get("id") if isinstance(ld, dict) else None, rec)
         except ValueError as e:
             return "INVALID", "its payload cannot be rebuilt: %s" % e
         ok, why = S.verify(payload, armor, self.signers, signer)
@@ -458,12 +465,20 @@ class Integrity:
                 view[name] = base[name] = fb
             else:
                 bad.add(name)
+        cleared = set()
         for name, (oid, rec) in done.items():
-            if self.tags.get(("done", name), ("unsigned",))[0] == "signed" and persist and only in (None, name):
-                S.hw_drop(self.marks_path, name)
+            m = marks.get(name)
+            if m is None or self.tags.get(("done", name), ("unsigned",))[0] != "signed" or "refs/qargi/features/" + name in heads:
+                continue                         # the mark of a feature that is open again (a reused name) is that feature's, whatever done/ says
+            fo = rec.get("features_oid")         # a done record ends the feature this machine accepted only when it says so, signed
+            if fo == m[1] or (isinstance(fo, str) and S.OID_RE.fullmatch(fo) and R.is_ancestor(repo, m[1], fo)):
+                cleared.add(name)
+                if persist and only in (None, name):
+                    S.hw_drop(self.marks_path, name)
         for name in sorted(marks):
-            if "refs/qargi/features/" + name not in heads and name not in done:
-                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s: it was deleted or rewound" % (name, name)))
+            unsigned_done = name in done and self.tags.get(("done", name), ("unsigned",))[0] != "signed"      # advisory uses it as it is, as before
+            if "refs/qargi/features/" + name not in heads and name not in cleared and not unsigned_done:
+                self.notes.append((name, "refs/qargi/features/%s vanished from the remote and there is no done/%s that ends the record this machine accepted: it was deleted or rewound" % (name, name)))
         return view, base, bad
 
 
