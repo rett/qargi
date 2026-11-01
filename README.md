@@ -216,6 +216,18 @@ records its starter as lead, `feature merge|sync|verify|finish` and `local prepa
 refuse while another live lead holds the feature, and `feature status|list` show the lead. See
 `qargi help marshal`.
 
+Several machines or people on one project: `qargi marshal enable` (plan and token, then `--plan TOKEN --approved "<your words>"`)
+switches the project from the local records to the shared ones. Each record is then a commit on `refs/qargi/features/NAME` of the
+remote `origin` (ordinary branches and tags are never touched), a claim is a create-only push so two machines cannot both win, every
+update is a push that must still match what was fetched, and `feature finish` moves the record to `refs/qargi/done/NAME`. A lease is
+judged on the taker's own clock: a record that stayed unchanged for the ttl, as that machine observed it, may be taken over with your
+words; other machines' clocks are never compared. When the remote cannot be reached the verbs use the last fetched copy and say
+"remote not checked", and a claim made then is marked provisional until it reaches the remote. It is off by default, a member run
+cannot enable, disable or push it, `project set` refuses the `marshal.*` keys except `marshal.ttl`, and `qargi marshal disable` goes
+back to the local records (the refs on the remote stay). Whether your Git host accepts the `refs/qargi/*` namespace is yours to check
+on a scratch repository before enabling it on a real one.
+
+
 ## Skills and command
 
 Twelve skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; four define the abilities (above); the others configure and manage:
