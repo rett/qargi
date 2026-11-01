@@ -66,6 +66,19 @@ role_class() { # name -> write | read-only (lead: coordinator)
   local d; d=$(role_dir "$1") || return 1
   jq -r '.class // "write"' "$d/role.json"
 }
+# The two cloud bases are instance names too: worker (write) and reviewer (read-only), from the bases of model-defaults.json.
+_QARGI_DEFAULTS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/model-defaults.json
+base_class() { # name -> the class of a base (worker, reviewer), or fails when the name is not a base
+  [ -f "$_QARGI_DEFAULTS" ] || return 1
+  jq -er --arg n "$1" '.bases[$n].class // empty' "$_QARGI_DEFAULTS" 2>/dev/null
+}
+is_base() { base_class "$1" >/dev/null; }
+instance_class() { # name -> write | read-only | coordinator; never fails, and a name or a class it does not know is read-only
+  local c
+  [ "$1" != lead ] || { echo coordinator; return 0; }
+  if is_base "$1"; then c=$(base_class "$1"); else c=$(role_class "$1" 2>/dev/null) || c=''; fi
+  case $c in write|read-only) echo "$c";; *) echo read-only;; esac
+}
 run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
   local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
   c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
@@ -79,8 +92,8 @@ valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
 # split_instance NAME: sets PROJECT and ROLE, or dies with the rule.
 split_instance() {
   PROJECT=${1%%-*}; ROLE=${1#*-}
-  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
-    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
+  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || { ! valid_role "$ROLE" && ! is_base "$ROLE"; }; then
+    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES, or a base: worker, reviewer"
   fi
 }
 
@@ -267,7 +280,7 @@ lead_teams_block() { # project
 
 # tools_off ROLE PROJECT_JSON: the built-in tools a cloud role does not get (roles.<role>.tools_off overrides the default).
 tools_off() {
-  local d='web_search web_fetch'; case $(role_class "$1" 2>/dev/null) in read-only|coordinator) d='web_search web_fetch edit';; esac
+  local d='web_search web_fetch edit write'; [ "$(instance_class "$1")" != write ] || d='web_search web_fetch'   # any class but write: no edit, no write
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
