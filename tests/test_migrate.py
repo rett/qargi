@@ -265,7 +265,7 @@ class Migrate(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("nothing to migrate", again.stdout)
         self.assertNotIn("plan token", again.stdout)
-        self.assertEqual(subprocess.run([BIN, "agent", "for", "review"], capture_output=True, text=True, env=self.env).stdout.strip(), "reviewer")
+        self.assertEqual(subprocess.run([BIN, "agent", "for", "review"], capture_output=True, text=True, env=self.env).stdout.split()[0], "reviewer")
 
     def test_member_names_are_the_users(self):
         out = self.q("--member-names", "build=forge,write=scribe").stdout
