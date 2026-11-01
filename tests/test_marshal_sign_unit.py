@@ -336,5 +336,110 @@ class Signers(Base):
                 M.signers_remove(self.signers, bad)
 
 
+class HighWater(unittest.TestCase):
+    """The accepted high-water mark: {name: [rev, oid]}. Ancestry is the caller's git question, injected here."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='hwm.')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.path = os.path.join(self.tmp, 'features', '.accepted-proj.json')
+        self.edges = {(OID1, OID2), (OID2, OID3), (OID1, OID3)}  # ancestor -> descendant
+
+    def anc(self, a, b):
+        return (a, b) in self.edges
+
+    def check(self, rev, oid, name='feat'):
+        return M.hw_check(M.hw_load(self.path), name, rev, oid, self.anc)
+
+    def test_no_mark_trusts_what_it_first_sees(self):
+        self.assertEqual(M.hw_load(self.path), {})
+        self.assertEqual(self.check(7, OID3), (True, ''))
+
+    def test_record_and_load(self):
+        self.assertTrue(M.hw_record(self.path, 'feat', 2, OID2))
+        self.assertEqual(M.hw_load(self.path), {'feat': [2, OID2]})
+        self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
+        self.assertTrue(M.hw_record(self.path, 'other', 1, OID1))
+        self.assertEqual(sorted(M.hw_load(self.path)), ['feat', 'other'])
+        self.assertEqual(sorted(os.listdir(os.path.dirname(self.path))), ['.accepted-proj.json'])
+
+    def test_fine_path(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+        self.assertEqual(self.check(2, OID2), (True, ''))   # the same record again
+        self.assertEqual(self.check(3, OID3), (True, ''))   # a later rev on top of it
+        self.assertEqual(self.check(5, OID3), (True, ''))   # skipped revs are fine: the lead was away
+
+    def test_lower_rev_is_a_rollback(self):
+        M.hw_record(self.path, 'feat', 4, OID3)
+        ok, why = self.check(3, OID2)
+        self.assertFalse(ok)
+        self.assertIn('rollback detected', why)
+
+    def test_same_rev_other_oid_is_a_rollback(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+        ok, why = self.check(2, OID3)
+        self.assertFalse(ok)
+        self.assertIn('rollback detected', why)
+
+    def test_non_ancestor_is_a_rollback(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+        ok, why = M.hw_check(M.hw_load(self.path), 'feat', 3, OID3, lambda a, b: False)
+        self.assertFalse(ok)
+        self.assertIn('rollback detected', why)
+
+    def test_ancestry_callback_that_fails_is_a_rollback(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+
+        def boom(a, b):
+            raise OSError('git is gone')
+        ok, why = M.hw_check(M.hw_load(self.path), 'feat', 3, OID3, boom)
+        self.assertFalse(ok)
+        self.assertIn('rollback detected', why)
+
+    def test_other_features_are_independent(self):
+        M.hw_record(self.path, 'feat', 9, OID3)
+        self.assertEqual(self.check(1, OID1, 'other'), (True, ''))
+
+    def test_record_never_moves_a_mark_back(self):
+        M.hw_record(self.path, 'feat', 4, OID3)
+        self.assertFalse(M.hw_record(self.path, 'feat', 3, OID2))
+        self.assertFalse(M.hw_record(self.path, 'feat', 4, OID2))
+        self.assertTrue(M.hw_record(self.path, 'feat', 4, OID3))
+        self.assertEqual(M.hw_load(self.path), {'feat': [4, OID3]})
+
+    def test_drop(self):
+        M.hw_record(self.path, 'feat', 4, OID3)
+        M.hw_record(self.path, 'other', 1, OID1)
+        self.assertTrue(M.hw_drop(self.path, 'feat'))
+        self.assertFalse(M.hw_drop(self.path, 'feat'))
+        self.assertEqual(M.hw_load(self.path), {'other': [1, OID1]})
+
+    def test_bad_arguments(self):
+        for args in (('Feat', 1, OID1), ('feat', -1, OID1), ('feat', True, OID1), ('feat', 1, 'xyz'), ('', 1, OID1), ('feat', 1.5, OID1)):
+            with self.assertRaises(ValueError, msg=repr(args)):
+                M.hw_record(self.path, *args)
+            with self.assertRaises(ValueError, msg=repr(args)):
+                M.hw_check({}, args[0], args[1], args[2], self.anc)
+
+    def test_a_damaged_file_is_an_error_not_an_empty_mark(self):
+        os.makedirs(os.path.dirname(self.path))
+        for junk in ('{', '[]', '{"feat": [1]}', '{"feat": [1, "zz"]}', '{"feat": [-1, "%s"]}' % OID1, '{"Bad Name": [1, "%s"]}' % OID1, '\x00'):
+            with open(self.path, 'w') as f:
+                f.write(junk)
+            with self.assertRaises(M.SignError, msg=junk):
+                M.hw_load(self.path)
+            with self.assertRaises(M.SignError, msg=junk):
+                M.hw_record(self.path, 'feat', 1, OID1)
+
+    def test_a_symlinked_file_is_refused(self):
+        M.hw_record(self.path, 'feat', 2, OID2)
+        link = os.path.join(self.tmp, 'link.json')
+        os.symlink(self.path, link)
+        with self.assertRaises(M.SignError):
+            M.hw_load(link)
+        with self.assertRaises(M.SignError):
+            M.hw_record(link, 'feat', 3, OID3)
+
+
 if __name__ == '__main__':
     unittest.main()
