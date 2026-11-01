@@ -1,1 +1,1 @@
-{"provider":"claude","tiers":{"fast":"claude-haiku-5-5","balanced":"claude-sonnet-5-5","deep":"claude-opus-5-5","frontier":"claude-fable-5-1"}}
+{"provider":"claude","tiers":{"fast":"claude-haiku-5-5","balanced":"claude-sonnet-5-5","deep":"claude-opus-5-5","frontier":"claude-fable-5-1"},"aliases":{"fast":"haiku","balanced":"sonnet","deep":"opus","frontier":"fable"}}
