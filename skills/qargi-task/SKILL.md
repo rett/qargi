@@ -148,7 +148,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
 ## Features and releases
 
 The work of a project that follows git-flow runs inside features: tasks use `--base feature/NAME` and run targeted checks only (the lead runs the one whole-suite run per feature), and the features, releases and
-conflicts are the lead's process in `/qargi-flow`.
+conflicts are the lead's process in `/qargi-flow`. Before dispatching a task into a feature, the lead runs `qargi marshal check NAME` (the feature marshal: who leads it; see `/qargi-flow`); members never run the verbs that change the marshal.
 
 ## Parallel tasks and targeted tests
 
