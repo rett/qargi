@@ -6,24 +6,27 @@
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
 #   agent.sh list
 #   agent.sh rename OLD NEW
-#   agent.sh refresh NAME      re-render a member from the current definition, keeping its name, abilities and model
+#   agent.sh refresh NAME      re-render a member from the current definition, keeping its name, abilities, model and effort
+#   agent.sh models [--project P] [--json]     the default model and effort of each role, the project's own, the members'
 #   agent.sh remove NAME
 #   agent.sh for ABILITY [--project P]     the member that serves ABILITY: dispatch spawns it
 . "$(dirname "$0")/lib.sh"
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 TEMPLATE=$root/agents/member.md
+DEFAULTS=$root/lib/model-defaults.json   # the one table of default models and efforts
 # the agent types Claude Code brings itself; a member must not shadow one
 BUILTIN="general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup"
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ=''
+POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON=''
 while [ $# -gt 0 ]; do
   case $1 in
     --abilities) ABIL=$2; shift 2;;
     --model) MODEL=$2; shift 2;;
     --effort) EFFORT=$2; shift 2;;
     --project) PROJ=$2; shift 2;;
+    --json) JSON=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
@@ -58,15 +61,39 @@ hide_in_git() { # repo file: keep a project-level definition out of the reposito
   grep -qx -F "/$rel" "$ex" || printf '/%s\n' "$rel" >> "$ex"
 }
 
-render() { # name abilities-csv model -> the definition on stdout
+default_row() { # ability -> the table's role row for it (a role of yours falls back to its class: write -> build, read-only -> review)
+  if jq -e --arg a "$1" '.roles | has($a)' "$DEFAULTS" >/dev/null; then echo "$1"; return; fi
+  case $(role_class "$1" 2>/dev/null) in read-only) echo review;; *) echo build;; esac
+}
+
+project_answer() { # project ability field(model|effort) -> the project's valid answer, or nothing
+  local f=$DA_CONF/projects/$1.json v
+  [ -n "$1" ] && [ -f "$f" ] || return 0
+  v=$(jq -r --arg a "$2" --arg k "$3" 'if $a == "lead" then .lead[$k] else .roles[$a][$k] end // empty' "$f" 2>/dev/null) || return 0
+  case $3 in
+    model) printf '%s' "$v" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' && echo "$v";;
+    effort) case $v in low|medium|high|xhigh|max) echo "$v";; esac;;
+  esac
+  return 0
+}
+
+default_for() { # project ability field -> the project's answer for it, else the table's value for the ability's row
+  local v; v=$(project_answer "$1" "$2" "$3")
+  [ -n "$v" ] || v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.roles[$r][$k]' "$DEFAULTS")
+  echo "$v"
+}
+
+render() { # name abilities-csv model [effort] -> the definition on stdout
   # a member that only reviews is read-only by class, named in its hook command (under the protected agents directory)
   local ga=' --class read-only' a
   for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ga=''; done
-  sed -e "s/{{GUARD_ARGS}}/$ga/g" -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
+  local el="/^{{EFFORT_LINE}}\$/d"
+  [ -z "${4:-}" ] || el="s/^{{EFFORT_LINE}}\$/effort: $4/"
+  sed -e "$el" -e "s/{{GUARD_ARGS}}/$ga/g" -e "s/{{NAME}}/$1/g" -e "s/{{ABILITIES}}/$(printf '%s' "$2" | sed 's/,/, /g')/g" -e "s/{{MODEL}}/$3/g" "$TEMPLATE"
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq
+  local n=${POS[0]:-} a list='' dir file seq first
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   valid_name "$n"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
@@ -75,19 +102,55 @@ add() {
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
   [ -n "$list" ] || die "--abilities: give at least one"
-  MODEL=${MODEL:-sonnet}
+  first=${list%%,*}
+  [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
+  [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
   case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
   [ -f "$TEMPLATE" ] || die "the member definition is missing: $TEMPLATE"
   dir=$(agents_dir "$PROJ") || exit 1; file=$dir/$n.md
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
-  mkdir -p "$dir"; render "$n" "$list" "$MODEL" > "$file"
+  mkdir -p "$dir"; render "$n" "$list" "$MODEL" "$EFFORT" > "$file"
   [ -z "$PROJ" ] || hide_in_git "$(dirname "$(dirname "$dir")")" ".claude/agents/$n.md"
   seq=$(jq '[.[].seq // 0] | max // 0 | . + 1' "$MEMBERS_FILE")
   json_update "$MEMBERS_FILE" '.[$n] = {abilities: ($a | split(",")), file: $f, model: $m, effort: (if $e == "" then null else $e end),
       project: (if $p == "" then null else $p end), created: $t, seq: $s}' \
     --arg n "$n" --arg a "$list" --arg f "$file" --arg m "$MODEL" --arg e "$EFFORT" --arg p "$PROJ" --arg t "$(now)" --argjson s "$seq"
   echo "member $n ($list) at $file"
+}
+
+models() { # the table, the project's overrides, the suggested members and the registered ones
+  local proj=$PROJ pf='{}' ov
+  if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
+  else proj=$(python3 -I "$root/lib/help.py" infer); fi
+  [ -z "$proj" ] || [ ! -f "$DA_CONF/projects/$proj.json" ] || pf=$(jq -c '{lead: (.lead // {}), roles: (.roles // {})}' "$DA_CONF/projects/$proj.json")
+  # the project's answer, when valid and set, per row: {model, effort} or null
+  ov=$(jq -n --argjson pf "$pf" --slurpfile d "$DEFAULTS" '
+    def okm: if type == "string" and test("^[a-z0-9][a-z0-9.-]*$") then . else null end;
+    def oke: if . == "low" or . == "medium" or . == "high" or . == "xhigh" or . == "max" then . else null end;
+    def pick($o): ({model: ($o.model? | okm), effort: ($o.effort? | oke)} | with_entries(select(.value != null))) | if . == {} then null else . end;
+    {lead: pick($pf.lead), roles: ($d[0].roles | with_entries(.value = pick($pf.roles[.key]?)))}')
+  local out
+  out=$(jq -n --slurpfile d "$DEFAULTS" --argjson ov "$ov" --slurpfile m "$MEMBERS_FILE" '
+    $d[0] as $t
+    | {lead: ($t.lead + {override: $ov.lead}),
+       roles: ($t.roles | with_entries(.value += {override: $ov.roles[.key]})),
+       suggested: $t.suggested,
+       members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | {name: .key, abilities: .value.abilities, model: (.value.model // null),
+         effort: (.value.effort // null), project: (.value.project // null),
+         pinned: ((.value.model // "") | startswith("claude-"))}]}')
+  if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
+  echo "default models and efforts (a role of yours uses its class: write -> build, read-only -> review)"
+  jq -r '(["lead", .lead] , (.roles | to_entries[] | [.key, .value])) | .[1] as $r
+    | [.[0], $r.model + "/" + $r.effort, (if $r.override then "override: " + ($r.override.model // $r.model) + "/" + ($r.override.effort // $r.effort) + " (project)" else "" end)] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n d o; do printf '  %-8s %-26s %s\n' "$n" "$d" "$o"; done
+  echo "suggested members (copy the line to add one)"
+  jq -r '.suggested | to_entries[] | "  qargi agent add \(.key) --abilities \(.value.abilities | join(",")) --model \(.value.model) --effort \(.value.effort)   # \(.value.purpose)"' <<<"$out"
+  echo "members"
+  if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME)"; else
+    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(if .pinned then "" else "alias (unpinned)" end)"' <<<"$out" \
+      | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
+  fi
 }
 
 member_for() { # ability project-or-empty -> the first member registered for it (the project's own members first)
@@ -122,10 +185,11 @@ case $verb in
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
     [ -f "$TEMPLATE" ] || die "the member definition is missing: $TEMPLATE"
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
-    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r '.model // "sonnet"' <<<"$rec")")
+    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r '.model // "sonnet"' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")")
     if [ -f "$f" ] && [ "$new" = "$(cat "$f")" ]; then echo "member $n is current ($f)"; exit 0; fi
     mkdir -p "$(dirname "$f")"; printf '%s\n' "$new" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
     echo "refreshed member $n ($f); sessions started afterwards use it";;
+  models) models;;
   remove)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent remove NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
@@ -143,5 +207,5 @@ case $verb in
     fi
     [ -n "$m" ] || die "no member serves the $a role: qargi agent add NAME --abilities $a"
     echo "$m";;
-  *) die "usage: qargi agent add|list|rename|refresh|remove|for ...";;
+  *) die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac
