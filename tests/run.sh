@@ -27,6 +27,7 @@ run python3 tests/test_transfer.py
 run python3 tests/test_discover.py
 run bash tests/test_watch.sh
 run bash tests/test_session.sh
+run bash tests/test_session_profiles.sh
 run python3 tests/test_report.py
 run python3 tests/test_noticed.py
 run python3 tests/test_cloud.py
@@ -35,7 +36,9 @@ run python3 tests/test_supervise.py
 run bash tests/test_prompt.sh
 run python3 tests/test_guard.py
 run bash tests/test_agent.sh
+run bash tests/test_agent_cloud.sh
 run bash tests/test_role.sh
+run bash tests/test_cloud_bases.sh
 run bash tests/test_methodology.sh
 run bash tests/test_attach.sh
 run bash tests/test_new.sh

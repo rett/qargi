@@ -347,8 +347,18 @@ a profile of the role's class (a shipped one such as auditor, advisor or researc
 .RE
 .RS
 .TP
+.BI "\-\-surface " "SURFACE"
+local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member.
+.RE
+.RS
+.TP
+.B \-\-opt\-in
+cloud only: confirm an opt\-in profile such as researcher.
+.RE
+.RS
+.TP
 .B \-\-json
-machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort.
+machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort).
 .RE
 .RE
 .TP
@@ -1596,6 +1606,21 @@ a task slug for the session title.
 .RE
 .RS
 .TP
+.BI "\-\-role " "ROLE"
+the role a base session runs (required for <project>\-worker and <project>\-reviewer).
+.RE
+.RS
+.TP
+.BI "\-\-profile " "PROFILE"
+the profile of the role (default: the role's own).
+.RE
+.RS
+.TP
+.B \-\-opt\-in
+confirm an opt\-in profile such as researcher.
+.RE
+.RS
+.TP
 .BI "\-\-asked " "REQUEST"
 the request, in your words, that names the cloud instance; recorded in the audit log.
 .RE
@@ -1623,6 +1648,21 @@ send to this session.
 .TP
 .B \-\-new
 start a new session first.
+.RE
+.RS
+.TP
+.BI "\-\-role " "ROLE"
+the role a base session runs (required for <project>\-worker and <project>\-reviewer).
+.RE
+.RS
+.TP
+.BI "\-\-profile " "PROFILE"
+the profile of the role (default: the role's own).
+.RE
+.RS
+.TP
+.B \-\-opt\-in
+confirm an opt\-in profile such as researcher.
 .RE
 .RS
 .TP
