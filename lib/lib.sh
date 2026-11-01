@@ -43,10 +43,11 @@ done
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
 # A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions).
 # Four ship with qargi (build, write, review, test; <tool>/roles); you add your own under <config>/roles. Role names are one
-# lower-case token, unique across both places, and never "lead".
+# lower-case token, unique across both places, and never "lead", "worker" or "reviewer" (the last two are the cloud bases).
 ROLE_BUILTIN="build review write test"
-role_dir() { # name -> the directory of the role, or fails
+role_dir() { # name -> the directory of the role, or fails (a base name is never a role, whatever directory carries it)
   local d
+  ! is_base "$1" || return 1
   for d in "$QARGI_TOOL/roles/$1" "$DA_CONF/roles/$1"; do
     if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ]; then echo "$d"; return 0; fi
   done
@@ -58,7 +59,7 @@ role_names() { # the built-in roles, then yours in name order
   for d in "$DA_CONF"/roles/*/; do
     r=$(basename "$d")
     case " $ROLE_BUILTIN " in *" $r "*) continue;; esac
-    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ]; then echo "$r"; fi
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ] && ! is_base "$r"; then echo "$r"; fi
   done
 }
 role_class() { # name -> write | read-only (lead: coordinator)
