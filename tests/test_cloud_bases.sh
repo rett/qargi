@@ -73,6 +73,9 @@ $DA role check worker >/dev/null 2>&1 && no "role check passed for worker" || ok
 out=$($DA role check reviewer 2>&1); grep -q "reserved" <<<"$out" && ok "and says the name is reserved" || no "check reviewer: $out"
 [ "$(cls reviewer)" = read-only ] && [ "$(cls worker)" = write ] && ok "a role directory cannot change the class of a base" || no "squatter changed a class: $(cls reviewer) $(cls worker)"
 agent_prompt reviewer p | grep -q squatter && no "the prompt of a base carries a squatter's text" || ok "the prompt of a base never carries a role directory's text"
+BS=$PWD/provision/templates/base-system.md
+[ "$(agent_prompt reviewer p)" = "$(cat "$BS")" ] && [ "$(agent_prompt worker p)" = "$(cat "$BS")" ] && ok "agent_prompt of a base is the short role-neutral fallback" || no "agent_prompt of a base"
+grep -qiE 'do not write|never write|no memor' "$BS" && [ "$(wc -l < "$BS")" -le 20 ] && ok "the fallback is short and forbids memory writes" || no "fallback shape"
 rm -rf "$T/c/roles/worker" "$T/c/roles/reviewer"
 
 # --- the barrier guard fires for <project>-reviewer (claude has no read-only barrier on cloud)
