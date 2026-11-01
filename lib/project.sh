@@ -33,7 +33,7 @@ PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
 
 validate() { # file -> prints problems, exit 1 if any
-  python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" <<'EOF'
+  python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" "$QARGI_TOOL" "$DA_CONF" <<'EOF'
 import json, re, sys
 path, roles = sys.argv[1], sys.argv[2].split()
 sys.path.insert(0, sys.argv[3])
@@ -89,6 +89,44 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
     need(isinstance(off, list) and all(x in ("web_search", "web_fetch", "edit", "write", "read", "bash", "glob", "grep") for x in off), "%s.tools_off: built-in tools to disable (web_search, web_fetch, edit, ...)" % p)
     sk = cfg.get("skills", [])
     need(isinstance(sk, list) and all(x in ("pdf", "docx", "pptx", "xlsx") for x in sk), "%s.skills: any of pdf, docx, pptx, xlsx" % p)
+prof = c.get("profiles")
+if prof is not None:
+    import os
+    md = json.load(open(os.path.join(sys.argv[3], "model-defaults.json")))
+    tiers_ok = json.load(open(os.path.join(sys.argv[3], "providers", "claude.json")))["tiers"]
+    def role_class(rn):
+        for d in (os.path.join(sys.argv[4], "roles", rn), os.path.join(sys.argv[5], "roles", rn)):
+            try: return json.load(open(os.path.join(d, "role.json"))).get("class", "write")
+            except Exception: pass
+        return None
+    if not isinstance(prof, dict): bad.append("profiles: an object of named profiles")
+    for pn, pf in (prof.items() if isinstance(prof, dict) else []):
+        p = "profiles.%s" % pn
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", pn): bad.append("%s: a lower-case name (letters, digits, hyphen; at most 31 characters)" % p); continue
+        if not isinstance(pf, dict): bad.append("%s: an object like {base, tier, model, effort, purpose, abilities}" % p); continue
+        for k in pf:
+            if k not in ("base", "tier", "model", "effort", "purpose", "abilities"):
+                bad.append("%s.%s: unknown key (base, tier, model, effort, purpose, abilities)" % (p, k))
+        bases = md["bases"]
+        b = pf.get("base")
+        if b is None and pn in md["profiles"]: b = md["profiles"][pn].get("base")
+        if "base" not in pf and pn not in md["profiles"]:
+            bad.append("%s.base: required for a profile of your own (%s)" % (p, ", ".join(bases)))
+        elif "base" in pf and pf["base"] not in bases:
+            bad.append("%s.base: one of %s" % (p, ", ".join(bases))); b = None
+        if "tier" in pf: need(pf["tier"] in tiers_ok, "%s.tier: one of %s" % (p, ", ".join(tiers_ok)))
+        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in ("haiku", "sonnet", "opus", "fable") or re.fullmatch(r"claude-[a-z0-9.-]+", pf["model"])), "%s.model: haiku, sonnet, opus, fable or a model id like claude-sonnet-5-5" % p)
+        if "effort" in pf: need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
+        if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
+        if "abilities" in pf:
+            ab = pf["abilities"]
+            if not (isinstance(ab, list) and all(isinstance(x, str) for x in ab)):
+                bad.append("%s.abilities: a list of roles (%s)" % (p, ", ".join(roles))); continue
+            want = bases.get(b, {}).get("class") if b else None
+            for x in ab:
+                cl2 = role_class(x) if x != "lead" else None
+                if cl2 is None: bad.append("%s.abilities: %s is not a known role (%s)" % (p, x, ", ".join(roles)))
+                elif want and cl2 != want: bad.append("%s.abilities: %s is %s, but base %s is %s" % (p, x, cl2, b, want))
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
@@ -154,7 +192,7 @@ case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
     jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" --slurpfile p "$(dirname "$(readlink -f "$0")")/providers/claude.json" \
-    '$p[0].tiers as $m | ($d[0].roles | map_values(. + {model: $m[.tier]})) as $t | {
+    '$p[0].tiers as $m | ($d[0].profiles | map_values(. + {model: $m[.tier]})) as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {

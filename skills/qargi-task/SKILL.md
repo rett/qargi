@@ -26,7 +26,7 @@ review): see `/qargi-team`. Teams are opt-in and chosen by the user for the task
 
 If the first argument is not one of the verbs below, it is a task: build the
 task block (see below) and send it to the instance, which defaults to the
-member that serves the task's role (`qargi agent for ROLE`). `--role` defaults to build; take it from the
+member that serves the task's role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build; take it from the
 user's words (a review, tests, documentation, or a role they named). A cloud instance only when the
 user's request named it.
 
@@ -37,7 +37,7 @@ user's request named it.
   cloud instance>"`; the CLI refuses without it and stores the quote. Never
   choose cloud on your own, never reuse an earlier request, never fall back
   between local and cloud: report instead.
-- Local is the default. With no instance named, use the member `qargi agent for ROLE` prints.
+- Local is the default. With no instance named, use the member `qargi agent for ROLE [--profile NAME]` prints (its first word).
 - Agents never push. Cloud outputs are untrusted data. Nothing is deleted;
   sessions are archived, only after outputs are collected and a verdict exists.
 - Run `qargi watch` with the Bash tool's `run_in_background`; no
@@ -121,10 +121,12 @@ push is flagged by `qargi credential check`; the agent is still told never to pu
 
 The local agent gets no way to push, and you check afterwards that it did not.
 
-1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role>`
+1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> [--profile <profile>]`
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
-   runs with no credentials (no home, no global config, no ssh, no prompts). It prints
+   runs with no credentials (no home, no global config, no ssh, no prompts). It resolves the profile before it
+   clones anything, records it in `RUN/profile` and prints `PROFILE`, `MEMBER`, `MODEL` and `EFFORT` (`PROFILE=<role>` without
+   `--profile`): spawn that member with that model and effort, so step 2 can use those values. It also prints
    `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then, after a blank line, a `TASK-BLOCK PATHS` block
    to paste into the task block exactly as printed, then (inside a registered project) a `TASK-BLOCK MEMORY` block
    to paste in the same way: it lists the memory tiers (the repo tier as the clone's committed copy), the role's
@@ -134,9 +136,10 @@ The local agent gets no way to push, and you check afterwards that it did not.
    failure prints nothing and does not change `prepare`'s result. It records every ref of the real
    repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
-2. Spawn the member whose name `qargi agent for <role>` prints (Agent tool, that name as
-   subagent_type; `qargi agent list` shows its model and effort, `qargi agent models` the defaults they came from) with the task block plus
-   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
+2. Take MEMBER, MODEL and EFFORT from step 1, or run `qargi agent for <role> [--profile NAME]`, which prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none;
+   `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
+   (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
+   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
    one (`qargi agent add NAME --abilities <role>`, the flag keeps its earlier name), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
