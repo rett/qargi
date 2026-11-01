@@ -596,6 +596,12 @@ class StartSession(Tree):
                 rc, out, _ = self.call(self.req(role=role, profile=profile, accept_no_barrier=True))
                 self.assertEqual(rc, 0)
 
+    def test_the_reviewer_fixture_without_the_acceptance_is_refused_with_the_command(self):
+        rc, out, err = self.call(fixture("refused/reviewer-no-acceptance.request"))
+        self.assertEqual(rc, 2)
+        self.assertIn("provider accept claude --surface cloud --no-barrier", out["error"])
+        self.assertEqual(err, "qargi: " + out["error"] + "\n")
+
     def test_an_unknown_role_fails_closed_as_read_only(self):
         for role, profile in (("mystery", None), ("worker", "mystery"), ("lead", None)):
             with self.subTest(role=role, profile=profile):
