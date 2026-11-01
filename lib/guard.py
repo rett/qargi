@@ -39,11 +39,14 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
 read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
-  - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish, found like the skill verbs
+  - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
     any other verb, none, or one held in a variable is refused (fail closed);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
-    marshal keeps one record per open feature: decided like the other protected roots, reading stays allowed;
+    marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
+    backend): decided like the other protected roots, reading stays allowed;
+  - a write under the marshal/ directory of the state, where `marshal enable` keeps the per-project `.enabled` switch of the
+    shared-refs backend: found and decided like features/, reading stays allowed;
   - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
     it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
     accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
@@ -82,7 +85,7 @@ SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marsha
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
-MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish")
+MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check")
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
@@ -296,6 +299,7 @@ def protected_roots():
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
     roots.update(feature_roots(P, home))
+    roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
@@ -320,6 +324,16 @@ def feature_roots(P=None, home=None):
         import paths as P
     home = home or os.path.expanduser("~")
     return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def switch_roots(P=None, home=None):
+    """The marshal/ directory of the state: the per-project `.enabled` switch files of the shared-refs backend. Found as
+    feature_roots does."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "marshal")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
 def memory_roots(P=None, home=None):
@@ -363,6 +377,8 @@ def refusal_text(what, dest, root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in switch_roots():
+        return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in memory_roots():
         return MemoryReason("%s on %s would change %s, a memory tier; %s" % (what, dest, root, MEMORY_NOTE))
     if root in claude_render_roots():
