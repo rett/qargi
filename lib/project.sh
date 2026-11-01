@@ -34,7 +34,7 @@ verb=${1:-}; shift || true
 
 validate() { # file -> prints problems, exit 1 if any
   python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" "$QARGI_TOOL" "$DA_CONF" <<'EOF'
-import json, re, sys
+import json, os, re, sys
 path, roles = sys.argv[1], sys.argv[2].split()
 sys.path.insert(0, sys.argv[3])
 import provider
@@ -76,11 +76,15 @@ if cl is not None:
     need(isinstance(cl, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", str(cl.get("profile", ""))) and re.fullmatch(r"wrkspc_[A-Za-z0-9]{10,}", str(cl.get("workspace_id", ""))),
          "cloud: {profile: an ant profile name, workspace_id: wrkspc_...} (qargi cloud set)")
 r = c.get("roles", {})
+# the two cloud bases (worker, reviewer) are instance names too: a roles.<base> entry is allowed (it sets that base's defaults)
+# but never required, and the bases are never roles of their own
+try: base_names = list(json.load(open(os.path.join(sys.argv[3], "model-defaults.json"))).get("bases", {}))
+except Exception: base_names = ["worker", "reviewer"]
 need(isinstance(r, dict) and r, "roles: enable at least one role")
 efforts = {"low", "medium", "high", "xhigh", "max"}
 for name, cfg in (r.items() if isinstance(r, dict) else []):
     p = "roles.%s" % name
-    need(name in roles, "%s: not a known role (%s)" % (p, ", ".join(roles)))
+    need(name in roles or name in base_names, "%s: not a known role (%s) or base (%s)" % (p, ", ".join(roles), ", ".join(base_names)))
     need(isinstance(cfg.get("base"), str) and cfg["base"], "%s.base: base branch, or @dispatcher for the dispatching session's branch" % p)
     push = cfg.get("push", {})
     mode = push.get("mode")
