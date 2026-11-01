@@ -263,6 +263,94 @@ class Cap(Tree):
         self.assertEqual(P.cap("claude", "local", "skills"), "yes")
 
 
+class Barrier(Tree):
+    """require_barrier: a read-only role on a surface, from the descriptor and the project's recorded acceptance."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf = os.path.join(self.tmp, "conf")
+        os.makedirs(os.path.join(self.conf, "projects"))
+        self.put("claude", CLAUDE)
+        d = descriptor()
+        d["provider"] = "bare"
+        for s in ("local", "cloud"):
+            d["capabilities"]["read_only_barrier"][s] = {"value": "no", "verified_on": "2026-10-31", "note": "nothing stops a write"}
+        self.put("bare", d)
+
+    def answers(self, project, models):
+        with open(os.path.join(self.conf, "projects", project + ".json"), "w") as f:
+            json.dump({"project": project, "models": models}, f)
+
+    def rb(self, provider, surface, project=None):
+        return P.require_barrier(provider, surface, project, root=self.root, conf=self.conf)
+
+    ACC = {"by": "me", "at": "2026-10-31T12:00:00Z", "reason": "because I said so"}
+
+    def test_a_partial_barrier_passes_with_its_note(self):
+        state, text = self.rb("claude", "local")
+        self.assertEqual(state, "partial")
+        self.assertIn("PreToolUse hook", text)
+
+    def test_no_barrier_is_refused_with_the_command(self):
+        state, text = self.rb("claude", "cloud", "alpha")
+        self.assertEqual(state, "refused")
+        self.assertIn("qargi provider accept claude --surface cloud --no-barrier --project alpha --asked", text)
+
+    def test_the_command_names_a_placeholder_without_a_project(self):
+        self.assertIn("--project PROJECT", self.rb("bare", "local")[1])
+
+    def test_an_unverified_partial_counts_as_no(self):
+        d = descriptor()
+        d["provider"] = "unver"
+        d["capabilities"]["read_only_barrier"]["local"] = {"value": "partial", "verified_on": None, "note": "maybe"}
+        self.put("unver", d)
+        state, text = self.rb("unver", "local")
+        self.assertEqual(state, "refused")
+        self.assertIn("not verified", text)
+
+    def test_a_recorded_acceptance_allows_it_for_that_surface_only(self):
+        self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
+        self.assertEqual(self.rb("claude", "cloud", "alpha")[0], "accepted")
+        self.assertEqual(self.rb("bare", "cloud", "alpha")[0], "accepted")
+        self.assertEqual(self.rb("bare", "local", "alpha")[0], "refused")
+        self.assertEqual(self.rb("claude", "cloud", "beta")[0], "refused")
+
+    def test_a_malformed_acceptance_is_none(self):
+        for rec in ({"by": "me"}, "yes", {**self.ACC, "extra": 1}, {**self.ACC, "reason": ""}):
+            self.answers("alpha", {"accept_no_barrier": {"cloud": rec}})
+            self.assertIsNone(P.accepted("alpha", "cloud", self.conf), rec)
+        self.answers("alpha", {"accept_no_barrier": "all"})
+        self.assertIsNone(P.accepted("alpha", "cloud", self.conf))
+
+    def test_a_verified_yes_passes_silently(self):
+        d = descriptor()
+        d["provider"] = "solid"
+        d["capabilities"]["read_only_barrier"]["cloud"] = {"value": "yes", "verified_on": "2026-10-31", "note": "enforced"}
+        self.put("solid", d)
+        self.assertEqual(self.rb("solid", "cloud"), ("yes", ""))
+
+    def test_an_unknown_provider_raises(self):
+        with self.assertRaises(P.ProviderError):
+            self.rb("nope", "cloud")
+
+    def test_the_cli_exits_2_when_refused_and_0_when_accepted_or_partial(self):
+        env = dict(os.environ, QARGI_CONF=self.conf, QARGI_STATE=os.path.join(self.tmp, "state"), HOME=os.path.join(self.tmp, "home"))
+        os.makedirs(env["HOME"])
+
+        def rb(*a):
+            r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "require-barrier"] + list(a), capture_output=True, text=True, env=env)
+            return r.returncode, r.stderr
+        rc, err = rb("claude", "cloud", "--project", "alpha")
+        self.assertEqual(rc, 2)
+        self.assertIn("qargi provider accept claude --surface cloud --no-barrier --project alpha", err)
+        rc, err = rb("claude", "local")
+        self.assertEqual((rc, "partial read-only barrier" in err), (0, True))
+        self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
+        self.assertEqual(rb("claude", "cloud", "--project", "alpha"), (0, ""))
+        self.assertEqual(rb("nope", "cloud")[0], 1)
+        self.assertEqual(rb("claude", "moon")[0], 1)
+
+
 class Cli(Tree):
     """The verbs, run from a copy of provider.py with its own providers/ (so a changed descriptor never touches lib/)."""
 
