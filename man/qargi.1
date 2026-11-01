@@ -277,12 +277,12 @@ comma\-separated abilities it serves (default build,write,review,test).
 .RS
 .TP
 .BI "\-\-model " "MODEL"
-model alias or id for the definition (default sonnet).
+model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models).
 .RE
 .RS
 .TP
 .BI "\-\-effort " "LEVEL"
-effort level, recorded with the member.
+effort level, written into the definition and recorded with the member (default as for \-\-model).
 .RE
 .RS
 .TP
@@ -306,6 +306,23 @@ Rename a member and its definition.
 Re\-render a member from the member definition qargi ships now.
 .br
 Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+.RE
+.RS
+.TP
+.B models
+Show the default model and effort of each role, the project's own choices and each member's.
+.br
+The shipped defaults are one table of tiers (lib/model\-defaults.json) that a provider file (lib/providers/claude.json; the project's models.provider) maps to models: Sonnet 5.5 for the lead, build, write and test, Opus 5.5 for review, and the suggested members auditor (review on Haiku 5.5), advisor (review on Opus 5.5) and researcher (review on the opt\-in frontier tier, Fable 5.1). A member whose model is an alias (sonnet, opus, haiku) is listed as unpinned. Read\-only; it changes nothing.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-json
+machine\-readable.
+.RE
 .RE
 .RS
 .TP

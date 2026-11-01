@@ -118,8 +118,8 @@ COMMANDS = {
         "verbs": {
             "add": verb("Create a member under a name you choose", [("NAME", "none")],
                         [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
-                         opt("--model", "model alias or id for the definition (default sonnet)", "MODEL", "model"),
-                         opt("--effort", "effort level, recorded with the member", "LEVEL", EFFORTS),
+                         opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
+                         opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
                          opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents", "PROJECT", "project")],
                         desc="Refuses a name that exists, a name that is not kebab-case, and the name of a built-in Claude Code agent type.",
                         examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
@@ -128,6 +128,12 @@ COMMANDS = {
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
                             desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
+            "models": verb("Show the default model and effort of each role, the project's own choices and each member's",
+                           [], [PROJECT_OPT,
+                                opt("--json", "machine-readable")],
+                           desc="The shipped defaults are one table of tiers (lib/model-defaults.json) that a provider file (lib/providers/claude.json; the project's models.provider) maps to models: Sonnet 5.5 for the lead, build, write and test, Opus 5.5 for review, "
+                                "and the suggested members auditor (review on Haiku 5.5), advisor (review on Opus 5.5) and researcher (review on the opt-in frontier tier, Fable 5.1). A member whose model is an alias "
+                                "(sonnet, opus, haiku) is listed as unpinned. Read-only; it changes nothing."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print the member that serves a role", [("ROLE", "workrole")],
                         [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],
