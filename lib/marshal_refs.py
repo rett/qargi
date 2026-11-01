@@ -207,7 +207,7 @@ def chain(repo, oid, limit):
     cannot be walked. A commit's history is what its oid commits to, so what lies under a commit that is trusted is as trustworthy as it."""
     if not OID_RE.fullmatch(oid or "") or limit < 1:
         return []
-    rc, out, _, _ = run_git(repo, ["rev-list", "--first-parent", "--parents", "-n", str(int(limit)), oid], 60)
+    rc, out, _, _ = run_git(repo, ["rev-list", '--first-parent', '--parents', "-n", str(int(limit)), oid], 60)
     if rc != 0:
         return []
     res = []
