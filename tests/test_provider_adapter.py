@@ -264,5 +264,85 @@ class Barrier(unittest.TestCase):
         self.assertEqual(run(ADAPTER, "barrier-check", good)[0], 0)
 
 
+class AgentAdd(Tree):
+    """qargi agent add reaches the definition through the adapter the active provider's descriptor names."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = dict(os.environ, HOME=os.path.join(self.tmp, "home"), QARGI_CONF=os.path.join(self.tmp, "c"), QARGI_STATE=os.path.join(self.tmp, "s"))
+        os.makedirs(os.path.join(self.env["HOME"]))
+        os.makedirs(os.path.join(self.env["QARGI_CONF"], "projects"))
+        self.repo = os.path.join(self.tmp, "repo")
+        subprocess.run(["git", "init", "-q", self.repo], check=True)
+
+    def project(self, provider=None):
+        p = {"schema": 1, "project": "alpha", "repo": {"url": "https://github.com/example/alpha", "path": self.repo, "long_lived": ["main"]},
+             "roles": {"build": {"base": "main", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high"}}, "memory": {}, "budget_cents": 500}
+        if provider:
+            p["models"] = {"provider": provider}
+        with open(os.path.join(self.env["QARGI_CONF"], "projects", "alpha.json"), "w") as f:
+            json.dump(p, f)
+
+    def qargi(self, *args):
+        r = subprocess.run([os.path.join(self.tool, "bin", "qargi")] + list(args), capture_output=True, text=True, env=self.env)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_a_provider_without_a_local_adapter_cannot_add_a_member(self):
+        self.descriptor(lambda d: d.update(provider="plain", adapter=None), name="plain")
+        self.project("plain")
+        rc, out = self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("provider 'plain' has no local adapter", out)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".claude", "agents", "forge.md")))
+        conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
+        if os.path.exists(conf):
+            with open(conf) as f:
+                self.assertNotIn("forge", json.load(f))
+
+    def test_the_definition_the_adapter_returns_is_the_file_written(self):
+        self.project()
+        rc, out = self.qargi("agent", "add", "forge", "--abilities", "build,test", "--project", "alpha")
+        self.assertEqual(rc, 0, out)
+        with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
+            self.assertEqual(f.read(), sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write"))
+        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review")
+        self.assertEqual(rc, 0, out)
+        with open(os.path.join(self.env["HOME"], ".claude", "agents", "judge.md")) as f:
+            self.assertEqual(f.read(), sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only"))
+
+    def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build")[0], 0)
+        conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
+        with open(conf) as f:
+            m = json.load(f)
+        m["forge"]["model"] = None
+        with open(conf, "w") as f:
+            json.dump(m, f)
+        rc, out = self.qargi("agent", "refresh", "forge")
+        self.assertEqual(rc, 0, out)
+        with open(os.path.join(self.env["HOME"], ".claude", "agents", "forge.md")) as f:
+            self.assertIn("\nmodel: sonnet\n", f.read())
+
+    def test_the_reserved_names_come_from_the_descriptor(self):
+        self.assertEqual(self.qargi("agent", "add", "plan")[0], 1)
+        self.descriptor(lambda d: d["local"].update(reserved_names=["plan", "mine"]))
+        rc, out = self.qargi("agent", "add", "mine")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("built-in", out)
+        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build")
+        self.assertEqual(rc, 0, out)
+
+    def test_a_pinned_model_is_one_that_matches_the_model_pattern(self):
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus")[0], 0)
+        rc, out = self.qargi("agent", "models", "--json")
+        self.assertEqual(rc, 0, out)
+        pinned = {m["name"]: m["pinned"] for m in json.loads(out)["members"]}
+        self.assertEqual(pinned, {"forge": True, "judge": False})
+        self.descriptor(lambda d: d.update(model_pattern="^zzz"))
+        pinned = {m["name"]: m["pinned"] for m in json.loads(self.qargi("agent", "models", "--json")[1])["members"]}
+        self.assertEqual(pinned, {"forge": False, "judge": False})
+
+
 if __name__ == "__main__":
     unittest.main()
