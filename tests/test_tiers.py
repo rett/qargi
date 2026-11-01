@@ -489,5 +489,25 @@ class Cli(Base):
         self.assertFalse(os.path.exists(e.d("project")))                 # a missing tier is not created
 
 
+class Slice2Messages(Base):
+    """Slice 2 makes `qargi memory init` and `move` real: the hints of the check name them without "later slice" or "comes later"."""
+    populated = Cli.populated
+
+    def test_missing_and_empty_hints_name_init_without_later_slice(self):
+        e = self.populated()
+        r = e.qargi("memory", "check", "--project", P)
+        self.assertNotIn("later slice", r.stdout)
+        self.assertRegex(r.stdout, r"INFO tier project: missing \(qargi memory init project\)")
+        self.assertRegex(r.stdout, r"INFO tier system: empty \(qargi memory init system\)")
+
+    def test_collision_hint_names_the_move_verb(self):
+        e = self.populated()
+        put(e.d("shared"), {"/shared/r.md": NOTE})
+        r = e.qargi("memory", "check", "--project", P)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL /shared/r.md: in tiers repo, shared (a note lives in one tier; qargi memory move PATH --from T --to T)", r.stdout)
+        self.assertNotIn("comes later", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
