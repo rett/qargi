@@ -4,6 +4,13 @@
 # the command line, finds the project, reads the lease length and audits a takeover.
 #
 #   marshal.sh claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] ...
+#   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
+#   marshal.sh disable [--project P]                                 switch back to the local records
+# enable without options prints the plan and a plan token; applying is --plan TOKEN --approved WORDS (audit line
+# marshal:enable). The switch is the file $DA_STATE/marshal/PROJECT.enabled, written by marshal_refs.py, never a project
+# answer (project set refuses marshal.* but marshal.ttl). enable and disable, like every verb that changes a record, are
+# refused (exit 2) inside a member run. status and check take --no-fetch: read the cache of the remote refs only (the
+# session hook uses it).
 #
 # The project answer marshal.ttl is the lease length in minutes (integer, default 15): qargi project set P marshal.ttl 20.
 # The identity is --as ID, else $QARGI_LEAD, else user@host (anonymous: only ever warns).
@@ -20,7 +27,8 @@
 #   marshal_finish PROJ NAME          mark NAME finished (no record: nothing to do); returns 1 when another lead holds it
 #   marshal_hold_start PROJ NAME      start a background renewer for a long verb: it renews the lease every ttl/3 minutes
 #                                     (QARGI_MARSHAL_RENEW_SEC seconds when set), prints nothing, ends on marshal_hold_stop,
-#                                     when the renewal is refused (not the lead any more) and when the calling shell is gone
+#                                     when the renewal is refused (not the lead any more) and when the calling shell is gone;
+#                                     an unreachable remote ("remote not checked", exit 3) does not end it: it tries again
 #   marshal_hold_stop                 stop the renewer (harmless when none runs)
 # The renewer is a background subshell that polls its parent pid once a second, so it needs no trap in the calling script
 # and never outlives it, whatever way the script ended.
@@ -69,7 +77,10 @@ marshal_hold_start() { # PROJ NAME
       tick=$((tick + 1))
       if [ "$tick" -ge "$period" ]; then
         tick=0
-        marshal_py "$proj" renew "$name" || exit 0
+        # stop when the renewal is refused (exit 1: another lead holds the feature) or cannot succeed (usage); exit 3 is "remote not
+        # checked": the lease is not lost, try again next round
+        rc=0; marshal_py "$proj" renew "$name" || rc=$?
+        [ "$rc" -eq 3 ] || [ "$rc" -eq 0 ] || exit 0
       fi
     done
   ) &
@@ -78,24 +89,34 @@ marshal_hold_start() { # PROJ NAME
 
 marshal_main() {
   set -eu
+  # the options of this call are the only source of the approval and the plan token; a value inherited from the environment is not
+  # (feature.sh and cred.sh do the same)
+  APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json]"
-  local name='' PROJ='' as='' all='' brief='' json='' history='' want
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
+       qargi marshal enable [--project P] [--plan TOKEN --approved WORDS] | disable [--project P]"
+  local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' want
   local -a opt=()
   case $verb in
+    enable|disable) python3 -I "$MARSHAL_LIB/marshal_refs.py" member-check "$verb" || exit $?;;
+  esac
+  case $verb in
+    enable) want=' --project --plan --approved ';;
+    disable) want=' --project ';;
     claim) want=' --project --as --goal ';;
-    status) want=' --project --as --all --history --brief --json ';;
+    status) want=' --project --as --all --history --brief --json --no-fetch ';;
     set) want=' --project --as --goal --plan --note --status ';;
-    check|renew|take|finish) want=' --project --as ';;
+    check) want=' --project --as --no-fetch ';;
+    renew|take|finish) want=' --project --as ';;
     release) want=' --project --as --note ';;
     takeover) want=' --project --as --approved ';;
     *) echo "qargi: $usage" >&2; exit 2;;
   esac
   while [ $# -gt 0 ]; do
     case $1 in
-      --all|--history|--brief|--json)
+      --all|--history|--brief|--json|--no-fetch)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
-        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; esac; shift;;
+        case $1 in --all) all=1;; --history) history=1;; --brief) brief=1;; --json) json=1;; --no-fetch) nofetch=1;; esac; shift;;
       --*)
         case $want in *" $1 "*) ;; *) echo "qargi: unknown option $1 for marshal $verb; $usage" >&2; exit 2;; esac
         [ $# -ge 2 ] || { echo "qargi: $1 needs a value; $usage" >&2; exit 2; }
@@ -103,6 +124,7 @@ marshal_main() {
           --project) PROJ=$2;;
           --as) as=$2;;
           --approved) APPROVED=$2; export APPROVED;;
+          --plan) if [ "$verb" = enable ]; then PLAN_ARG=$2; export PLAN_ARG; else opt+=("$1" "$2"); fi;;
           *) opt+=("$1" "$2");;
         esac
         shift 2;;
@@ -111,7 +133,7 @@ marshal_main() {
     esac
   done
   case $verb in
-    status|check) ;;
+    status|check|enable|disable) ;;
     *) [ -n "$name" ] || { echo "qargi: marshal $verb needs a feature NAME; $usage" >&2; exit 2; };;
   esac
   [ -z "$history" ] || [ -n "$all" ] || { echo "qargi: marshal status --history goes with --all" >&2; exit 2; }
@@ -124,10 +146,33 @@ marshal_main() {
   [ -z "$brief" ] || opt+=(--brief)
   [ -z "$json" ] || opt+=(--json)
   [ -z "$history" ] || opt+=(--history)
+  [ -z "$nofetch" ] || opt+=(--no-fetch)
+  if [ "$verb" = enable ]; then
+    local remote=origin tok
+    git -C "$(marshal_repo "$PROJ")" remote get-url "$remote" >/dev/null 2>&1 || die "the repository of $PROJ has no remote '$remote' to keep the shared refs on"
+    tok=$(printf 'marshal enable %s %s' "$PROJ" "$remote" | plan_token)
+    if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
+      echo "would switch the marshal of $PROJ on this machine to the shared refs backend: the records live in refs/qargi/ on the remote $remote (claims, renewals and finishes are pushed there)"
+      echo "plan token: $tok   (apply with: qargi marshal enable --project $PROJ --plan $tok --approved \"...\")"
+      exit 0
+    fi
+    [ -n "${APPROVED:-}" ] || die "enable needs --approved WORDS (the owner's words); run it without options for the plan"
+    need_plan "$tok"
+    python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-write --state "$DA_STATE" --project "$PROJ" --remote "$remote" --words "$APPROVED" || exit $?
+    audit_log "marshal:enable" "$PROJ $remote"
+    echo "marshal of $PROJ: shared refs backend enabled (remote $remote)"
+    exit 0
+  fi
+  if [ "$verb" = disable ]; then
+    python3 -I "$MARSHAL_LIB/marshal_refs.py" switch-remove --state "$DA_STATE" --project "$PROJ" || exit $?
+    audit_log "marshal:disable" "$PROJ"
+    echo "marshal of $PROJ: local records (the refs on the remote are left as they are)"
+    exit 0
+  fi
   if [ "$verb" = takeover ]; then
     local af rc=0
     af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
-    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED+--approved "$APPROVED"} || rc=$?
+    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED:+--approved "$APPROVED"} || rc=$?
     if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:takeover" "$(cat "$af")"; fi
     rm -f "$af"
     exit "$rc"

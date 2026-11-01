@@ -90,6 +90,34 @@ git --git-dir="$T/remote.git" update-ref -d refs/heads/elsewhere
 git -C "$T/r3" update-ref refs/remotes/origin/zz HEAD
 [ "$(rc "$P3")" = 2 ] && ok "a refs/remotes change fails" || no "refs/remotes change accepted"
 git -C "$T/r3" update-ref -d refs/remotes/origin/zz
+# refs/qargi/ (the marshal refs backend, fetched and pushed by the lead's renewer during a run) is not an agent push; nothing else
+# is relaxed: not another namespace that merely starts with the same letters, not a branch
+HEAD3=$(git -C "$T/r3" rev-parse HEAD); RHEAD=$(git --git-dir="$T/remote.git" rev-parse main)
+out=$(mk p4); P4=$(runof <<<"$out")
+grep -q 'refs/qargi' "$P4/refs.before" && no "the snapshot lists refs/qargi/" || ok "the snapshot does not list refs/qargi/ ones"
+git -C "$T/r3" update-ref refs/qargi/features/x "$HEAD3"; git --git-dir="$T/remote.git" update-ref refs/qargi/features/x "$RHEAD"
+[ "$(rc "$P4")" = 0 ] && ok "refs/qargi/ refs created in the repository and in its remote during a run are not flagged (strict, before a passing verify)" || no "refs/qargi created flagged: $(cat "$P4/refs.diff")"
+grep -q 'refs/qargi' "$P4/refs.after" && no "the after snapshot lists refs/qargi/" || ok "the snapshot taken by verify does not list refs/qargi/ either"
+git -C "$T/r3" update-ref refs/qargi/features/x "$(git -C "$T/r3" rev-parse HEAD~1 2>/dev/null || echo "$HEAD3")"; git --git-dir="$T/remote.git" update-ref -d refs/qargi/features/x
+git -C "$T/r3" update-ref refs/qargi/features/y "$HEAD3"
+[ "$(rc "$P4")" = 0 ] && ok "and changing, adding or deleting them stays unflagged after a passing verify" || no "refs/qargi change flagged: $(cat "$P4/refs.diff")"
+git -C "$T/r3" update-ref -d refs/qargi/features/x; git -C "$T/r3" update-ref -d refs/qargi/features/y
+[ "$(rc "$P4")" = 0 ] && ok "deleting them is unflagged too" || no "refs/qargi deletion flagged"
+printf 'local refs/qargi/features/old %s\n' "$HEAD3" >> "$P4/verified"; sort -o "$P4/verified" "$P4/verified"
+[ "$(rc "$P4")" = 0 ] && ok "a refs/qargi/ line in an older snapshot is ignored" || no "old snapshot line flagged"
+git -C "$T/r3" update-ref refs/qargi-x/features/x "$HEAD3"
+[ "$(rc "$P4")" = 2 ] && ok "refs/qargi-x/ is still compared and fails" || no "refs/qargi-x accepted"
+git -C "$T/r3" update-ref -d refs/qargi-x/features/x
+git -C "$T/r3" branch stray2
+[ "$(rc "$P4")" = 2 ] && ok "a branch outside the allowed namespaces still fails alongside refs/qargi/" || no "stray2 accepted"
+git -C "$T/r3" branch -q -D stray2
+out=$(mk p5); P5=$(runof <<<"$out")
+git -C "$T/r3" update-ref refs/qargi/features/z "$HEAD3"; git -C "$T/r3" update-ref refs/heads/moved "$HEAD3"
+[ "$(rc "$P5")" = 2 ] && ok "a new refs/heads ref still fails the strict comparison with refs/qargi/ present" || no "heads change accepted"
+git -C "$T/r3" update-ref -d refs/heads/moved; git -C "$T/r3" update-ref -d refs/qargi/features/z
+git -C "$T/r3" tag t-qargi "$HEAD3"
+[ "$(rc "$P5")" = 2 ] && ok "a new tag still fails" || no "tag accepted"
+git -C "$T/r3" tag -d t-qargi >/dev/null
 rm -rf "$C1" "$TM"
 # a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
 git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
