@@ -8,10 +8,15 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        verified_on date)
   effective(name, surface, capability) what enforcement may rely on: "yes", "partial" or "no". Unverified counts as no, and so
                                        does a surface the provider does not list.
-Every function that reads a descriptor takes root= (the providers directory) for tests; the default is beside this file."""
+Every function that reads a descriptor takes root= (the providers directory) for tests; the default is beside this file.
+
+Usage: provider.py list
+       provider.py show NAME [--json]
+       provider.py check NAME            exit 1 on a failure, 0 otherwise (warnings do not fail)"""
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -218,3 +223,120 @@ def cap(name, surface, capability, root=None):
 def effective(name, surface, capability, root=None):
     v = cap(name, surface, capability, root)
     return "no" if v == "unverified" else v
+
+
+# ---- the verbs --------------------------------------------------------------------------------------------------------
+
+def _count(n, word):
+    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+
+
+def _state(findings):
+    f = sum(1 for lvl, _ in findings if lvl == "fail")
+    w = sum(1 for lvl, _ in findings if lvl == "warn")
+    return _count(f, "failure") if f else (_count(w, "warning") if w else "clean")
+
+
+def _surfaces(d):
+    s = d.get("surfaces")
+    return [x for x in s if x in SURFACES] if isinstance(s, list) else []
+
+
+def cmd_list():
+    for n in names():
+        try:
+            d = load(n)
+            findings = validate(d, n)
+        except ProviderError as e:
+            print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % e))
+            continue
+        print("%-12s %-12s %s" % (n, ",".join(_surfaces(d)) or "-", _state(findings)))
+    return 0
+
+
+def _verified(cell):
+    return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified" + (", counts as no" if cell.get("value") != "no" else "")
+
+
+def cmd_show(name, as_json):
+    d = load(name)
+    bad = [m for lvl, m in validate(d, name) if lvl == "fail"]
+    if bad:
+        print("qargi: provider '%s' breaks the schema (qargi provider check %s)" % (name, name), file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(d, indent=2))
+        return 0
+    print("%s  (surfaces: %s)" % (name, ", ".join(d["surfaces"])))
+    print("model pattern: %s" % d["model_pattern"])
+    print("tiers")
+    for t in TIERS:
+        r = d["tier_detail"][t]
+        ver = "verified %s" % r["verified_on"] if r["verified_on"] else "verified: no"
+        print("  %-9s %-22s alias %-8s %s  (%s)" % (t, r["model"], r["alias"] or "-", ver, r["source"]))
+    print("effort")
+    for k, v in d["effort"].items():
+        print("  %-7s %s" % (k, v if v is not None else "- (no control)"))
+    print("capabilities")
+    for c in capabilities():
+        print("  %s" % c)
+        for s in d["surfaces"]:
+            cell = d["capabilities"].get(c, {}).get(s)
+            if cell is None:
+                print("    %-6s %-8s no entry" % (s, "no"))
+                continue
+            print("    %-6s %-8s %-28s %s" % (s, cell["value"], _verified(cell), cell["note"]))
+    return 0
+
+
+def cmd_check(name):
+    d = load(name)
+    findings = validate(d, name)
+    fails = [m for lvl, m in findings if lvl == "fail"]
+    warns = [m for lvl, m in findings if lvl == "warn"]
+    print("%s: %s, %s" % (name, _count(len(fails), "failure"), _count(len(warns), "warning")))
+    for m in fails:
+        print("fail: %s" % m)
+    for m in warns:
+        print("warn: %s" % m)
+    if fails:
+        return 1
+    rows, cannot = [], []
+    for s in _surfaces(d):
+        for c in capabilities():
+            v = cap(name, s, c)
+            if v in ("no", "unverified"):
+                rows.append("  %s: %-32s %s" % (s, c, "unverified (counts as no)" if v == "unverified" else "no"))
+        if effective(name, s, "read_only_barrier") == "no":
+            cannot.append("the review role cannot be served on %s" % s)
+    print("degrades:" if rows else "nothing degrades")
+    for r in rows:
+        print(r)
+    for line in cannot:
+        print(line)
+    return 0
+
+
+def main(argv):
+    usage = "usage: qargi provider list | show NAME [--json] | check NAME"
+    if not argv:
+        print(usage, file=sys.stderr)
+        return 2
+    verb, rest = argv[0], argv[1:]
+    try:
+        if verb == "list" and not rest:
+            return cmd_list()
+        pos = [a for a in rest if a != "--json"]
+        if verb == "show" and len(pos) == 1 and len(rest) - len(pos) <= 1:
+            return cmd_show(pos[0], "--json" in rest)
+        if verb == "check" and len(rest) == 1:
+            return cmd_check(rest[0])
+    except ProviderError as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 1
+    print(usage, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
