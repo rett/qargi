@@ -561,6 +561,42 @@ grep -q -- '-Y' "$SKLOG" && ok "ssh-keygen shim log: qargi used ssh-keygen -Y (t
 grep -q -- '-Y sign' "$SKLOG" && grep -q -- '-Y verify' "$SKLOG" && ! grep -E -- '-Y sign.* -n [^q]|-Y verify.* -n [^q]' "$SKLOG" | grep -q . && ok "ssh-keygen shim log: the namespace is always qargi-marshal" || no "SPEC ssh-keygen was called with another namespace: $(grep -E -- '-n [^q]' "$SKLOG" | head -3)"
 [ "$(stat -c %a "$(KEY a)" 2>/dev/null)" = 600 ] && [ "$(stat -c %a "$(KEY b)" 2>/dev/null)" = 600 ] && ok "key: both key files are still mode 0600 after all the runs" || no "SPEC key mode 0600: $(stat -c %a "$(KEY a)" "$(KEY b)" 2>&1)"
 
+# ============================================================ (16) fixes found by the adversarial review: the machines
+# wa and wb are strict machines with their own keys, wc is advisory with a key, wk advisory without one (it writes unsigned records);
+# every one of them trusts the three keys. Each case below is a scenario that was a hole before it was closed.
+mk wa; mk wb; mk wc; mk wk
+fb f1 f2 f3 f4 f5 f6 f6t w1 w2 w3
+for m in wa wb wc wk; do en "$m" || no "setup: enable of $m"; done
+kl() { OWN "$1" key init --principal "$1@ms" >/dev/null 2>&1; grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' "$T/o" | sed 's/^[[:space:]]*//'; }
+LWA=$(kl wa); LWB=$(kl wb); LWC=$(kl wc)
+for m in wa wb wc wk; do for l in "$LWA" "$LWB" "$LWC"; do OWN "$m" signers add --line "$l" >/dev/null 2>&1; done; done
+mode wa strict; mode wb strict; mode wc advisory; mode wk advisory
+{ [ -f "$(KEY wa)" ] && [ -f "$(KEY wb)" ] && [ -f "$(KEY wc)" ] && [ "$(jq -r .integrity "$(EN wb)")" = strict ] && [ "$(jq -r .integrity "$(EN wc)")" = advisory ] && grep -qF "$LWC" "$(SIG wk)"; } \
+  && ok "review fixes: the fixture (wa, wb strict, wc, wk advisory, keys trusted everywhere) is in place" || no "setup of the review-fix machines"
+F=refs/qargi/features
+JUNK=''
+junk() { # REF JQFILTER: an unsigned commit on top of REF's head (no sig_v, no signer, the filter applied to the record); JUNK is its oid
+  local h blob trr; h=$(oref "$1")
+  blob=$(orec "$1" | jq -c "del(.sig_v, .signer) | $2" | OG hash-object -w --stdin); trr=$(printf '100644 blob %s\trecord.json\n' "$blob" | OG mktree)
+  JUNK=$(OG commit-tree -p "$h" -m junk "$trr") && OG update-ref "$1" "$JUNK"
+}
+markof() { jq -c --arg n "$2" '.[$n] // empty' "$(S "$1")/features/.accepted-app.json" 2>/dev/null; }     # MACHINE NAME: the high-water mark of a feature
+anc() { OG merge-base --is-ancestor "$1" "$2"; }                                                          # OLD NEW: OLD is NEW or one of its ancestors
+
+# ------------------------------------------------------------ (16a) strict: junk on top of newer valid records must not hide them
+XE wa marshal claim f1 --as alice --goal g1 >/dev/null 2>&1
+XE wb marshal status f1 >/dev/null 2>&1                                  # wb's mark is rev 1 and stays there while wa works
+XE wa marshal set f1 --as alice --goal g2 >/dev/null 2>&1; XE wa marshal set f1 --as alice --goal g3 --plan PLAN-LEGIT >/dev/null 2>&1
+LEG=$(oref $F/f1); junk $F/f1 '.goal = "junk" | .rev = 99'
+j=$(js wb f1)
+{ [[ $j == *'"goal":"g3"'* && $j == *'"plan":"PLAN-LEGIT"'* ]] && [ "$(markof wb f1)" = "[3,\"$LEG\"]" ]; } \
+  && ok "strict: unsigned junk on top of valid rev 2 and 3: a reader with the mark at rev 1 shows rev 3 and moves its mark to it" || no "SPEC strict fallback must find the newest valid signed record under the junk (json ${j:0:300}; mark $(markof wb f1))"
+XE wb marshal set f1 --as alice --goal from-b; rc=$?
+{ [ $rc = 0 ] && anc "$LEG" $F/f1 && [ "$(jsf $F/f1 .rev)" = 4 ] && [ "$(jsf $F/f1 .goal)" = from-b ] && [ "$(jsf $F/f1 .plan)" = PLAN-LEGIT ] && vok "$(oref $F/f1)" features "$(SIG wb)"; } \
+  && ok "strict: the write of the lagging machine builds on rev 3 (still in the chain, plan kept, signed, rev 4) and replaces the junk" || no "SPEC strict: a write must never drop a valid signed newer record (rc=$rc, origin rev $(jsf $F/f1 .rev), plan '$(jsf $F/f1 .plan)', rev 3 kept: $(anc "$LEG" $F/f1 && echo yes || echo NO)): $(out)"
+j=$(js wa f1); j2=$(js wb f1)
+{ [[ $j == *'"goal":"from-b"'* && $j == *'"rev":4'* ]] && [[ $j2 == *'"goal":"from-b"'* ]] && ! grep -q 'rollback detected' "$T/e"; } && ok "strict: both machines see the write on top of rev 3, no rollback" || no "SPEC wa/wb after the write: ${j:0:200} / ${j2:0:200}: $(cat "$T/e")"
+
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
 exit $fail
