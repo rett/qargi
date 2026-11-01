@@ -166,6 +166,19 @@ class Violations(unittest.TestCase):
         d["adapter"] = 3
         self.one(d, "adapter: 3 is not of type string, null")
 
+    def test_an_adapter_outside_the_providers_directory(self):
+        for ad in ("/usr/bin/adapter", "lib/providers/../guard.py", "bin/qargi", "adapter"):
+            d = descriptor()
+            d["adapter"] = ad
+            self.one(d, "adapter: '%s' is not a path under lib/providers/" % ad)
+
+    def test_the_adapter_may_be_null_or_a_path_under_lib_providers(self):
+        d = descriptor()
+        self.assertEqual(d["adapter"], "lib/providers/claude/adapter")
+        self.assertEqual(fails(d), [])
+        d["adapter"] = None
+        self.assertEqual(fails(d), [])
+
     def test_a_missing_required_key(self):
         d = descriptor()
         del d["effort"]
@@ -262,6 +275,7 @@ class Cli(Tree):
         shutil.copy(os.path.join(LIB, "provider.py"), self.copy)
         os.rename(self.root, os.path.join(self.copy, "providers"))
         self.root = os.path.join(self.copy, "providers")
+        shutil.copytree(os.path.join(LIB, "providers", "claude"), os.path.join(self.root, "claude"), ignore=shutil.ignore_patterns("__pycache__"))
         self.put("claude", CLAUDE)
 
     def run_cli(self, *args):
@@ -388,6 +402,28 @@ class Cli(Tree):
         rc, out, _ = self.run_cli("check", "other")
         self.assertEqual(rc, 0)
         self.assertNotIn("cloud", out)
+
+    def test_check_reports_that_the_adapter_exists_and_is_executable(self):
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 0)
+        self.assertIn("adapter: lib/providers/claude/adapter (exists, executable)", out)
+
+    def test_check_fails_for_an_adapter_that_is_missing_or_not_executable(self):
+        adapter = os.path.join(self.root, "claude", "adapter")
+        os.chmod(adapter, 0o644)
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: adapter: lib/providers/claude/adapter is not executable", out)
+        os.remove(adapter)
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: adapter: lib/providers/claude/adapter does not exist", out)
+
+    def test_check_says_so_for_a_provider_with_no_adapter(self):
+        self.other(lambda d: d.update(adapter=None))
+        rc, out, _ = self.run_cli("check", "other")
+        self.assertEqual(rc, 0)
+        self.assertIn("adapter: none", out)
 
     def test_check_fails_with_exit_1_on_each_kind_of_violation(self):
         cases = {
