@@ -128,12 +128,15 @@ COMMANDS = {
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
                             desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
-            "models": verb("Show the default model and effort of each role, the project's own choices and each member's",
+            "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
-                           desc="The shipped defaults are one table of tiers (lib/model-defaults.json) that a provider file (lib/providers/claude.json; the project's models.provider) maps to models: Sonnet 5.5 for the lead, build, write and test, Opus 5.5 for review, "
-                                "and the suggested members auditor (review on Haiku 5.5), advisor (review on Opus 5.5) and researcher (review on the opt-in frontier tier, Fable 5.1). A member whose model is an alias "
-                                "(sonnet, opus, haiku) is listed as unpinned. Read-only; it changes nothing."),
+                           desc="Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read-only). "
+                                "Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model-defaults.json "
+                                "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
+                                "and a provider file (lib/providers/claude.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
+                                "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the "
+                                "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "prefer that project's own members and read its profiles (default: the project of the current directory)", "PROJECT", "project"),
@@ -480,6 +483,7 @@ COMMANDS = {
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
+                             opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME"),
                              opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)],
                             desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
                                   "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.\n"
