@@ -12,9 +12,12 @@
 # (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
 # The run directory records the task's ability (RUN/ability, default build); under review the guard
 # (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
+# A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
+# is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time; never a repository path or a token), so `qargi report` can list the local runs.
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/marshal.sh"
 
 snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
   ( [ -z "${2:-}" ] || git_auth_env "$2"
@@ -33,15 +36,43 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
   fi
 }
 
+# journaled REPO NAME OLD NEW -> 0 when the lead's ref journal ($DA_STATE/ref-journal.jsonl) explains the change of the local branch
+# NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch): NEW is reachable from OLD by
+# following entries of this repository and ref with epoch >= JSTART, each from its old value to its new one. Entries that start
+# elsewhere (an earlier creation made in the same second as the run) are not on the path, and an unjournaled hand anywhere
+# breaks it, because no entry starts where the hand left the ref. Trusted only as far as the state directory is (the guard keeps
+# an agent from writing it; same-user code could).
+journaled() {
+  local f=$DA_STATE/ref-journal.jsonl rp
+  [ -n "$1" ] && [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
+  rp=$(readlink -f "$1" 2>/dev/null) || rp=$1
+  jq -sre --arg r "$rp" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
+    [ .[] | select(type == "object" and .repo == $r and .ref == $n and ((.epoch // 0) >= $s)) ] as $e
+    | reduce range(0; ($e | length) + 1) as $i ([$o]; . as $seen | . + [ $e[] | select(.old as $x | $seen | index($x)) | .new ] | unique)
+    | ($w != $o) and (index($w) != null)' "$f" >/dev/null 2>&1
+}
+
 # compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
 # (remote refs, refs/remotes, tags, stash, ...) must be identical. A local branch may only move forward (old tip is an
 # ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
 # lead's own merges do. Used with refs.before while the run has no passing verify, with RUN/verified after one.
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
-  local hd='^local refs/heads/'
-  [ -z "$strict" ] || hd='^$^'   # strict: no line is treated as a branch, so the whole snapshot is diffed
+  local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
   if ! diff -u <(grep -v "$hd" "$ref") <(grep -v "$hd" "$aft"); then bad=1; fi
+  if [ -n "$strict" ]; then
+    # strict: a local branch may differ only as far as the lead's ref journal explains it; nothing else (no fast-forward rule)
+    while read -r name; do
+      old=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$ref"); new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
+      [ "$old" != "$new" ] || continue
+      if journaled "$repo" "$name" "${old:-$zero}" "${new:-$zero}"; then continue; fi
+      if [ -z "$new" ]; then echo "branch deleted: $name (was $old)$why"
+      elif [ -z "$old" ]; then echo "branch created: $name $new$why"
+      else echo "branch moved: $name $old -> $new$why"; fi
+      bad=1
+    done < <({ grep "$hd" "$ref"; grep "$hd" "$aft"; } | awk '{print $2}' | sort -u)
+    return $bad
+  fi
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
   while read -r _ name old; do
     new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
@@ -63,6 +94,8 @@ compare() {
 check_run() {
   local run=$1 repo='' ref strict=1
   ref=$run/refs.before
+  # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; an older run falls back to refs.before
+  JSTART=$(cat "$run/started" 2>/dev/null || stat -c %Y "$run/refs.before" 2>/dev/null || true)
   [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
   if [ -f "$run/repo.url" ]; then
     snapshot_url "$(cat "$run/repo.url")" "$(cat "$run/cred.path" 2>/dev/null)" > "$run/refs.after"
@@ -99,6 +132,19 @@ render_warning() {
   return 0
 }
 
+# project_of REPO URL -> the stored project whose repo.path (or repo.url) is the one given; nothing when there is none
+project_of() {
+  local f rp ru
+  for f in "$DA_CONF"/projects/*.json; do
+    [ -f "$f" ] || continue
+    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
+    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
+    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
+    basename "$f" .json; return 0
+  done
+  return 0
+}
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -117,7 +163,23 @@ case $verb in
     CLASS=$(role_class "$ABILITY")
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
-    case $BASE in master|develop) ;; esac
+    LEAD=''
+    case $BASE in
+      feature/?*)
+        MPROJ=$(project_of "$REPO" "$URL")
+        if [ -n "$MPROJ" ]; then
+          mrc=0; merr=$(mktemp "$DA_STATE/.marshal-gate.XXXXXX" 2>/dev/null) || merr=/dev/null
+          marshal_check "$MPROJ" "${BASE#feature/}" 2>"$merr" || mrc=$?
+          if [ "$merr" != /dev/null ]; then
+            cat "$merr" >&2
+            if [ "$mrc" = 1 ] && grep -q '^Traceback' "$merr"; then mrc=70; fi   # an exception also exits 1, but it is not a refusal
+            rm -f "$merr"
+          fi
+          [ "$mrc" -ne 1 ] || exit 1   # another live lead holds the feature: the message is printed, no run is made
+          [ "$mrc" -eq 0 ] || echo "qargi: warning: the marshal could not be asked (status $mrc); the run goes on" >&2
+          LEAD=$("$(dirname "$0")/marshal.sh" status "${BASE#feature/}" --project "$MPROJ" --json 2>/dev/null | jq -r '.lead.id // empty' 2>/dev/null) || LEAD=''
+        fi;;
+    esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
     mkdir -p "$RUN/out" "$RUN/home"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
@@ -127,6 +189,7 @@ case $verb in
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ABILITY" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
+    date +%s > "$RUN/started"   # the epoch the lead's ref journal is read from by `verify`
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
       printf '%s\n' "$URL" > "$RUN/repo.url"; [ -z "$CRED" ] || printf '%s\n' "$CRED" > "$RUN/cred.path"   # a path, never the token
@@ -155,8 +218,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" \
-      '{run:$r, slug:$s, ability:$a, base:$b, started:$t}' >> "$DA_STATE/local-runs.jsonl"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" \
+      '{run:$r, slug:$s, ability:$a, base:$b, started:$t, lead:(if $l == "" then null else $l end)}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
@@ -185,6 +248,8 @@ WRAP
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
       cat "$RUN/refs.diff" >&2
+      [ ! -f "$RUN/verified" ] && echo "(before the run's first passing verify a local branch may differ only as far as the lead's ref journal names it; every other ref must be identical)" >&2 \
+        || echo "(a ref outside the allowed lead-side branch moves changed; the lead's ref journal does not apply after a passing verify)" >&2
       exit 2
     fi;;
   clean)

@@ -4,11 +4,38 @@
 # calls `trap cleanup EXIT`. Merges are made in a detached temporary worktree, and a branch is moved by update-ref only
 # after every merge succeeded, so a conflict leaves everything as it was and no working tree is touched.
 
+# The marshal (lib/marshal.sh) says who leads a feature. Source it unless the caller (marshal.sh itself) already has; when the
+# script is missing the stubs below make every call a warning, never a refusal.
+if ! command -v marshal_check >/dev/null 2>&1; then
+  if [ -f "$(dirname "${BASH_SOURCE[0]}")/marshal.sh" ]; then . "$(dirname "${BASH_SOURCE[0]}")/marshal.sh"
+  else
+    marshal_start() { return 127; }; marshal_check() { return 127; }; marshal_finish() { return 127; }
+    marshal_hold_start() { :; }; marshal_hold_stop() { :; }
+  fi
+fi
+
 g() { git -C "$REPO" "$@"; }
 rec() { echo "$RDIR/$PROJ-${1//\//_}.json"; }   # branch -> the file that records its last full-suite run
 sha_of() { g rev-parse -q --verify "refs/heads/$1" || true; }
 # "SHA pass|fail" of the last whole-suite run of a branch, only if it ran the project's current test command
 verified() { local f; f=$(rec "$1"); [ -f "$f" ] && jq -r --arg c "$TESTCMD" 'select(.command == $c) | .sha + " " + .result' "$f" 2>/dev/null; }
+
+# journal_ref REPO REF OLD NEW VERB -> appends one line to the lead's ref journal ($DA_STATE/ref-journal.jsonl) after a local
+# branch was created (OLD empty), moved or deleted (NEW empty) by one of qargi's own verbs. `qargi local verify` accepts a branch
+# change in a run's strict phase only when this journal names it, so the changes the lead made while a run was out are not blamed
+# on the executor. Append only, under flock; the guard (lib/guard.py) keeps an agent from writing it. A failure here is a warning,
+# never a failure of the verb: the work is done, only a later `local verify` would then want the lead's changes explained.
+journal_ref() {
+  local repo ref old new verb zero=0000000000000000000000000000000000000000 f=${DA_STATE:-}/ref-journal.jsonl
+  ref=$2 old=${3:-$zero} new=${4:-$zero} verb=$5
+  repo=$(readlink -f "$1" 2>/dev/null) || repo=$1
+  [ -n "${DA_STATE:-}" ] && case $ref in refs/heads/?*) ;; *) false;; esac \
+    && ( umask 077; flock 9 && jq -nc --arg at "$(now)" --argjson ep "$(date +%s)" --arg v "$verb" --arg p "${PROJ:-}" --arg r "$repo" \
+           --arg ref "$ref" --arg o "$old" --arg n "$new" --arg by "$(id -un 2>/dev/null || echo unknown)@$(hostname 2>/dev/null || echo unknown)" \
+           '{at:$at, epoch:$ep, verb:$v, project:$p, repo:$r, ref:$ref, old:$o, new:$n, by:$by}' >> "$f" ) 9> "$f.lock" \
+    || echo "qargi: warning: the ref journal could not be written for $ref ($verb); a later 'qargi local verify' of a run prepared before this may not accept the change" >&2
+  return 0
+}
 branch_exists() { [ -n "$(sha_of "$1")" ]; }
 
 # remote_tip BRANCH -> RSTATE and RTIP, RWHY: asks the live remote (git ls-remote, bounded by QARGI_REMOTE_TIMEOUT, 10s) what
@@ -45,7 +72,8 @@ remote_report() {
 
 WT=''
 cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; }; }
-trap cleanup EXIT
+on_exit() { marshal_hold_stop; cleanup; }
+trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
 worktree() { # commit-ish -> a detached temporary worktree there (WT)
   WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX")
   g worktree add -q --detach "$WT" "$1" 2>/dev/null || { rm -rf "$WT"; WT=''; die "could not make a temporary worktree of $1"; }
@@ -122,3 +150,24 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   TESTCMD=$(jq -r '.test_command // ""' "$af")
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
+
+# marshal_gate NAME -> asks the marshal whether this identity may change feature NAME. Only an explicit refusal (status 1, the
+# message already printed) ends the verb with exit 1 and changes nothing; warnings pass through on stderr, and any other failure
+# (script missing, an exception) is a warning too: an unreachable marshal never blocks work.
+marshal_gate() {
+  local rc=0 err
+  err=$(mktemp "$DA_STATE/.marshal-gate.XXXXXX" 2>/dev/null) || err=/dev/null
+  marshal_check "$PROJ" "$1" 2>"$err" || rc=$?
+  if [ "$err" != /dev/null ]; then
+    cat "$err" >&2
+    if [ "$rc" = 1 ] && grep -q '^Traceback' "$err"; then rc=70; fi   # an exception also exits 1, but it is not a refusal
+    rm -f "$err"
+  fi
+  [ "$rc" -ne 0 ] || return 0
+  [ "$rc" -ne 1 ] || exit 1
+  echo "qargi: warning: the marshal could not be asked (status $rc); going on" >&2
+}
+# hold_begin NAME / hold_end -> the lease of NAME is renewed while a long step runs. An interrupt leaves through the EXIT trap,
+# which stops the renewer; hold_end stops it at once and puts the interrupt traps back.
+hold_begin() { trap 'exit 130' INT; trap 'exit 143' TERM; marshal_hold_start "$PROJ" "$1"; }
+hold_end() { marshal_hold_stop; trap - INT TERM; }

@@ -12,6 +12,9 @@
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
 #                                                  origin exists. Needs a passing run at the feature's head.
+# The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
+# (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
+# your lease alive while they run, finish marks the record finished, and list and status show the lead.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
@@ -47,10 +50,13 @@ case $verb in
         g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null && die "origin/$BR was seen at the last fetch and origin cannot be asked now: fetch it or choose another name";;
     esac
     g branch "$BR" develop
-    mkdir -p "$DA_STATE/features"; jq -nc --arg p "$PURPOSE" --arg t "$(now)" '{purpose:$p, started:$t}' > "$DA_STATE/features/$PROJ-$NAME_ARG.json"
+    journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" feature:start
+    # the marshal keeps the record (purpose, started) and makes this identity the lead; the feature exists either way
+    marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
     echo "tasks branch from here: dispatch them with --base $BR";;
   merge)
+    marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
@@ -58,22 +64,28 @@ case $verb in
     need_free "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:merge
     merge_forget "feature-$NAME_ARG-merge-${EXTRA//\//_}"
     echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   sync)
+    marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     g merge-base --is-ancestor develop "$BR" && { echo "$BR already contains develop"; exit 0; }
     need_free "$BR"
     merge_step "$h" refs/heads/develop "feature-$NAME_ARG-sync" "Merge branch 'develop' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
+    journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:sync
     merge_forget "feature-$NAME_ARG-sync"
     echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
   list)
     branches=$(g for-each-ref --format='%(refname:short)' 'refs/heads/feature/*')
     [ -n "$branches" ] || { echo "no open features (qargi feature start NAME)"; exit 0; }
+    # the lead of each feature, from the marshal's brief lines "NAME  lead=ID  ..."; unavailable -> no suffix
+    leads=$("$(dirname "$0")/marshal.sh" status --all --brief --project "$PROJ" 2>/dev/null) || leads=''
     for b in $branches; do
       n=${b#feature/}; pj=$DA_STATE/features/$PROJ-$n.json
-      echo "$b: $(g rev-list --count "develop..$b") ahead, $(g rev-list --count "$b..develop") behind develop; $([ -f "$pj" ] && jq -r '.purpose | if . == "" then "no purpose recorded" else . end' "$pj" || echo "no purpose recorded")"
+      ld=$(printf '%s\n' "$leads" | awk -v n="$n" '$1 == n && $2 ~ /^lead=/ {print substr($2, 6); exit}')
+      echo "$b: $(g rev-list --count "develop..$b") ahead, $(g rev-list --count "$b..develop") behind develop; $([ -f "$pj" ] && jq -r '.purpose | if . == "" then "no purpose recorded" else . end' "$pj" || echo "no purpose recorded")${ld:+ [lead $ld]}"
       g diff --name-only "develop...$b" > "$DA_STATE/.files.$$.$n" 2>/dev/null || true
     done
     any=''
@@ -89,16 +101,21 @@ case $verb in
     echo "feature $NAME_ARG of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "develop..$BR") commit(s) ahead of develop, $(g rev-list --count "$BR..develop") behind"
     g log --format='  %h %s' "develop..$BR" | head -20
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
-    remote_report "$BR"; remote_report develop;;
+    remote_report "$BR"; remote_report develop
+    if mout=$("$(dirname "$0")/marshal.sh" status "$NAME_ARG" --project "$PROJ" 2>/dev/null); then printf '%s\n' "$mout"; fi;;
   verify)
+    marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
+    hold_begin "$NAME_ARG"
     if run_suite; then res=pass; else res=fail; fi
+    hold_end
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$BR")"
     echo "full suite: $res at $(g rev-parse --short "$BR")"; [ "$res" = pass ];;
   finish)
+    marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ "$(verified "$BR")" = "$h pass" ] || die "the whole suite has no passing run at the head of $BR (qargi feature verify $NAME_ARG); the branch must not move after it"
     d0=$(sha_of develop); [ -n "$d0" ] || die "no develop branch"
@@ -114,6 +131,7 @@ case $verb in
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     need_free develop "$BR"
+    hold_begin "$NAME_ARG"
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
     # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
@@ -121,10 +139,13 @@ case $verb in
       g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
     fi
     g update-ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
+    journal_ref "$REPO" refs/heads/develop "$d0" "$MERGED" feature:finish
     merge_forget "$k"
     jq -c --arg s "$MERGED" '.sha = $s' "$(rec "$BR")" > "$(rec develop)"
-    [ -n "$KEEP" ] || g update-ref -d "refs/heads/$BR" "$h"
+    if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" feature:finish; fi
     audit_log "feature:finish" "$PROJ $NAME_ARG"
+    hold_end
+    marshal_finish "$PROJ" "$NAME_ARG" || echo "qargi: warning: the marshal record of $NAME_ARG was not marked finished (see above); the merge is done" >&2
     echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
     if g remote get-url origin >/dev/null 2>&1; then
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi

@@ -36,6 +36,18 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed. What an agent edits in its own clone, the
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
+Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
+  - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish, found like the skill verbs
+    (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
+    any other verb, none, or one held in a variable is refused (fail closed);
+  - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
+    marshal keeps one record per open feature: decided like the other protected roots, reading stays allowed;
+  - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
+    it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
+    accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
+    directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
+    records are a later feature);
+  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
 Not covered: code that writes a file itself (python -c, perl -e, node -e, a script written earlier and run), a glob
 that expands to a protected path, a path built from a variable the guard cannot see. A heredoc line that starts with a
 refused verb is refused even as text (use the Write tool for documents).
@@ -63,7 +75,11 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh")              # the command and the scripts behind the refused verbs
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh")              # the command and the scripts behind the refused verbs
+MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish")
+MARSHAL_READ = ("status", "check")
+LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
+MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
 SHELLS = {"sh", "bash", "dash", "zsh", "ksh"}
 SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
@@ -244,6 +260,10 @@ def review_segment(toks, i, here):
 
 # --- skills: who may change one, and where they live
 
+class MarshalReason(str):
+    """A refusal about the marshal: decide() ends it with the marshal's advice instead of the skills'."""
+
+
 def protected_roots():
     """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -265,6 +285,8 @@ def protected_roots():
     if installed:
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
+    roots.update(feature_roots(P, home))
+    roots.update(journal_roots(P, home))
     return sorted(os.path.realpath(r) for r in roots)
 
 
@@ -280,8 +302,46 @@ def claude_render_roots(P=None, home=None):
     return {os.path.realpath(os.path.join(st, "claude")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
+def feature_roots(P=None, home=None):
+    """The features/ directory of the state: the marshal's record of each open feature. Found as claude_render_roots does."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+JOURNAL = "ref-journal.jsonl"
+
+
+def state_dirs(P=None, home=None):
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(st) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def journal_roots(P=None, home=None):
+    """The lead's ref journal of the state and its lock (real paths). Rotated and temporary files next to it are found by
+    journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
+    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock")}
+
+
+def journal_sibling(full):
+    """The journal root when full is a file next to the journal named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
+    for st in state_dirs():
+        if os.path.dirname(full) == st and os.path.basename(full).startswith(JOURNAL):
+            return os.path.join(st, JOURNAL)
+    return None
+
+
 def refusal_text(what, dest, root):
-    """The sentence for a refused write: the generic one, or for the claude render the reason it is protected."""
+    """The sentence for a refused write: the generic one, or for the claude render and the marshal's records the reason."""
+    if root in journal_roots() or journal_sibling(root):
+        return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in feature_roots():
+        return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in claude_render_roots():
         return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
                 "`qargi packs apply` and changed only by the lead" % (what, dest, root))
@@ -304,6 +364,9 @@ def protected(full, destructive=False):
     for r in protected_roots():
         if inside(full, r) or (destructive and inside(r, full)):
             return r
+    j = journal_sibling(full)
+    if j:
+        return j
     if in_clone(full):          # after the named roots: a link in the clone that leads to one was resolved and is denied above
         return None
     parts = full.split(os.sep)
@@ -326,7 +389,21 @@ def skill_refusal(tool, inp, cwd):
     return bash_skill_refusal(inp.get("command") or "", cwd, 0)
 
 
+def names_lead(t):
+    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
+    lhs, _, rhs = t.partition("=")
+    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD")
+
+
+def lead_refusal(prog, rest, pre):
+    """The reason a segment sets or unsets QARGI_LEAD, or None. pre: the words up to and with the program (VAR=x, env -u NAME)."""
+    if any(names_lead(t) for t in pre) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
+        return MarshalReason("setting or unsetting QARGI_LEAD changes who the lead is and is not available to an agent; " + MARSHAL_NOTE)
+    return None
+
+
 def bash_skill_refusal(command, here, depth):
+    command = command.replace("\\\n", "")                # a line continuation joins the lines
     segs = SEGMENT.split(SUBST.sub(";", command))
     for n, seg in enumerate(segs):
         toks = tokens(seg)
@@ -336,9 +413,12 @@ def bash_skill_refusal(command, here, depth):
         i = skip_wrappers(toks)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
+        prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
+        why = lead_refusal(prog, rest, toks[:i + 1])
+        if why:
+            return why
         if i >= len(toks):
             continue
-        prog, rest = os.path.basename(toks[i]), toks[i + 1:]
         if prog == "cd" and rest:
             here = resolve(here, rest[0])
             continue
@@ -386,7 +466,12 @@ def skill_verb(prog, rest):
         words = ["cloud"] + words
     if name == "upgrade.sh":
         words = ["upgrade"] + words
+    if name == "marshal.sh":
+        words = ["marshal"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "marshal" and verb not in MARSHAL_READ:
+        return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
+                             % (verb or "(no verb)", MARSHAL_NOTE))
     if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
@@ -469,6 +554,9 @@ def decide():
         print("qargi guard: %s. Agents never push; return patches instead." % why, file=sys.stderr)
         return 2
     why = skill_refusal(tool, inp, cwd)
+    if isinstance(why, MarshalReason):
+        print("qargi guard: %s." % why, file=sys.stderr)
+        return 2
     if why:
         print("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change as a "
               "patch or a plan in RUN_DIR." % why, file=sys.stderr)

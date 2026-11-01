@@ -7,6 +7,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- A lead-only ref journal (`ref-journal.jsonl` in the state directory) records every local branch that qargi's own verbs create,
+  move or delete (`feature start|merge|sync|finish`, `release`, `review apply|prune`). `local verify` now accepts a branch
+  change since the run was prepared when the journal leads from the snapshot to the branch's current value, so several runs
+  prepared in parallel all verify after the lead merged the first one. Remote refs, tags and any unjournaled move are still
+  refused, and the refusal says so. The guard keeps members from writing the journal; it is trusted only as far as the state
+  directory is (signed records come later). `local prepare` records `RUN/started`.
+- `qargi marshal` keeps one record per open feature: its lead (a Claude Code session, identified by the session id the SessionStart
+  hook exports as `QARGI_LEAD`, or `--as`), a lease, status, goal, plan and note. `claim`, `status [--all] [--brief|--json]`,
+  `set`, `check`, `renew`, `release --note`, `take`, `takeover --approved` and `finish`. Tasks, agent branches, worktrees and
+  files that two features both change are derived from git and the local runs, not declared. Query it before starting work:
+  `qargi marshal check NAME` refuses when another live lead holds the feature and warns about a stale lead, an anonymous
+  identity and overlap. The lease is `marshal.ttl` minutes per project (default 15; `qargi project set PROJECT marshal.ttl N`),
+  renewed by the lead's actions and for the whole run of `feature verify` and `feature finish`, so a suite of any length is
+  safe. A feature whose lead stopped is taken over only after the lease ran out and with your words, which are audited.
+  Records are local to the host in this version.
+- `feature start|merge|sync|verify|finish` and `local prepare --base feature/X` ask the marshal first and refuse when another
+  live lead holds the feature; `feature start` records the starter as lead, `finish` marks the record finished, `feature
+  status` ends with the marshal's view and `feature list` shows each lead. A marshal that is absent or fails never blocks.
+  `local-runs.jsonl` lines gain `lead`.
+- The session-start hook lists the open features as data for the lead session. The guard keeps members from the mutating
+  marshal verbs, from the state `features/` directory and from setting `QARGI_LEAD`.
 - `qargi release start` has a preflight. Before it creates the branch it checks what a release must update and refuses,
   changing nothing, with a message naming the file and the fix: a man page (`man/*.1`) needs a `.TH` line with a date and a
   version field, and the first commit now sets them to the release's date and `VERSION`; a `CHANGELOG.md` needs a
