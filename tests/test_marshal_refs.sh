@@ -474,6 +474,34 @@ unslow a
   && ok "takeover: a provisional record has no age; it is refused with a clear message (exit 1, no traceback), the claim is left as it was" \
   || no "SPEC takeover of a provisional claim must be a refusal, not exit 70 (rc=$rc): $(out)"
 
+# ============================================================ (22) the renewer survives an unreachable remote and stops on a lost lease
+fb hv1 hv2
+cat > "$T/rn.sh" <<EOS
+. '$TOOL/lib/lib.sh'; . '$TOOL/lib/marshal.sh'
+marshal_hold_start app "\$1"
+echo "\$MARSHAL_HOLD_PID" > "$T/rn.pid"
+sleep "\$2"
+EOS
+RN() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_PROJECT=app QARGI_LEAD=alice QARGI_MARSHAL_RENEW_SEC=1 QARGI_REMOTE_TIMEOUT=1 bash "$T/rn.sh" "$@" >/dev/null 2>&1; }
+XE a marshal claim hv1 --as alice >/dev/null 2>&1
+n0=$(ocount refs/qargi/features/hv1)
+slow a "fetch push"
+RN hv1 9 & rp=$!
+sleep 3.5; unslow a
+wait "$rp"
+n1=$(ocount refs/qargi/features/hv1)
+[ "$n0" = 1 ] && [ "$n1" -gt "$n0" ] \
+  && ok "renewer: renewals go on after the remote was unreachable for a few rounds (hv1: $n0 -> $n1 commits)" || no "SPEC the renewer must go on when the remote is not checked: hv1 commits $n0 -> $n1"
+XE a marshal claim hv2 --as alice >/dev/null 2>&1
+RN hv2 12 & rp=$!
+sleep 1.5
+XE a marshal release hv2 --as alice --note n >/dev/null 2>&1; XE b marshal take hv2 --as bob >/dev/null 2>&1
+sleep 4
+kill -0 "$rp" 2>/dev/null && ! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null \
+  && ok "renewer: it ends when the renewal is refused (another lead took the feature), its holder still running" || no "SPEC the renewer must end on a refusal (holder alive: $(kill -0 "$rp" 2>&1 && echo yes), renewer $(cat "$T/rn.pid") alive: $(kill -0 "$(cat "$T/rn.pid")" 2>&1 && echo yes))"
+kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+[ "$(orec refs/qargi/features/hv2 | jq -r .lead.id)" = bob ] && ok "renewer: the refused renewal left bob's lead alone" || no "renewer overwrote bob's lead on hv2: $(orec refs/qargi/features/hv2)"
+
 # ============================================================ (18) disable
 F1_NOW=$(oref $F1)
 XE a marshal disable; rc=$?; drc=$rc
