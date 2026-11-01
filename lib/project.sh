@@ -12,6 +12,12 @@
 #                                         create a project directory with a git repository and the methodology's generic files
 #   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
 #                                         read an existing repository, show the answers and the gaps, store on approval
+#   project.sh adopt NAME [--methodology M] [--plan T --approved W]
+#                                         close the safe gaps of an attached repository: create the missing long-lived branches
+#                                         (locally, from the default branch) and write the methodology's missing files as one commit
+#                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
+#                                         branch or file, never pushes; refused (exit 2) when dirty, detached, empty, unattached
+#                                         or in a member run
 #   project.sh show NAME | list | validate FILE
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
@@ -335,7 +341,7 @@ PY
       if [ -n "$miss" ]; then echo "  answers the current schema wants and the stored file lacks (--force adds them with defaults):"; sed 's/^/    - /' <<<"$miss"; fi
     fi
     echo
-    echo "gaps against the $meth methodology (nothing is changed in the repository; adopting them is a separate, reviewed change):"
+    echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
     qs=$(jq -r --arg st "$stored" 'if $st == "" then .questions[] else empty end' <<<"$det")
     if [ -n "$qs" ]; then echo; echo "questions:"; sed 's/^/  - /' <<<"$qs"; fi
@@ -357,6 +363,50 @@ PY
     mv "$f" "$sf"; chmod 600 "$sf"
     audit_log "project:attach" "$n"
     echo "project $n stored in $sf (approved: $APPROVED)";;
+  adopt)
+    # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
+    n=${1:-}; shift || true; valid_project "$n" || die "adopt needs the name of an attached project (qargi project list)"
+    meth='' PLAN_ARG='' APPROVED=''
+    while [ $# -gt 0 ]; do
+      case $1 in --methodology) meth=${2:-}; shift 2;; --plan) PLAN_ARG=${2:-}; shift 2;; --approved) APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+    done
+    export PLAN_ARG   # need_plan reads it
+    lib=$(dirname "$0")
+    plan=$(python3 -I "$lib/attach.py" adopt-plan "$n" "$PROJ_DIR/$n.json" ${meth:+--methodology "$meth"}) || exit $?
+    tok=$(jq -S -c .basis <<<"$plan" | plan_token)
+    jq -r '"adopt project \(.project) in \(.path) with the \(.methodology) methodology\n  default branch: \(.base.name) (\(.base.sha[0:7])); integration branch: \(.integration.name)\n  nothing is pushed, merged or checked out; no existing branch or file is changed"' <<<"$plan"
+    if [ "$(jq -r '.branches | length' <<<"$plan")" != 0 ]; then
+      echo "  local branches to create, at the tip of the default branch:"
+      jq -r '.branches[] | "    " + .name' <<<"$plan"
+    fi
+    if [ "$(jq -r '.files | length' <<<"$plan")" != 0 ]; then
+      jq -r '"  files to write (missing from \(.integration.name); one commit on the new branch \(.adopt_branch), cut from \(.integration.name)):"' <<<"$plan"
+      jq -r '.files[] | "    " + .dest' <<<"$plan"
+    fi
+    if [ "$(jq -r '.adopt_exists' <<<"$plan")" = true ]; then
+      jq -r '"  the branch \(.adopt_branch) already exists: it is not touched; review and merge it"' <<<"$plan"
+    fi
+    left() { # the gaps no one should close for you: the report names them before and after
+      if [ "$(jq -r '.left | length' <<<"$plan")" != 0 ]; then
+        echo "  left for you to judge (changed by nothing here):"
+        jq -r '.left[] | "    - \(.kind): \(.what) (\(.why))"' <<<"$plan"
+      fi
+    }
+    left
+    if [ "$(jq -r .nothing_to_do <<<"$plan")" = true ]; then echo; echo "nothing to do: the safe gaps are closed"; exit 0; fi
+    echo
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (create with: qargi project adopt $n --plan $tok --approved \"...\"${meth:+ --methodology $meth})"
+      exit 0
+    fi
+    need_plan "$tok"
+    res=$(python3 -I "$lib/attach.py" adopt-apply "$n" "$PROJ_DIR/$n.json" <<<"$plan") || exit $?
+    audit_log "project:adopt" "$n"
+    jq -r '.branches[] | "created branch " + .' <<<"$res"
+    c=$(jq -r .commit <<<"$res")
+    [ -z "$c" ] || jq -r --arg c "$c" '"created branch \(.adopt_branch) at \($c[0:7]): " + (.files | map(.dest) | join(", "))' <<<"$plan"
+    left
+    echo "approved: $APPROVED; nothing was pushed. Review the branch, merge it into $(jq -r .integration.name <<<"$plan") when it suits you.";;
   set)
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
@@ -372,5 +422,5 @@ PY
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f";;
-  *) die "usage: project.sh template|init|show|list|validate ...";;
+  *) die "usage: project.sh template|init|new|attach|adopt|set|show|list|validate ...";;
 esac
