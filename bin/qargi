@@ -58,6 +58,7 @@ case $area in
   agent) exec "$lib/agent.sh" "$@";;
   role) exec "$lib/role.sh" "$@";;
   feature) exec "$lib/feature.sh" "$@";;
+  marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;
   methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
