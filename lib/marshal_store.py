@@ -71,8 +71,9 @@ def capped(s):
 
 
 class Ctx:
-    def __init__(self, a):
+    def __init__(self, a, be=None):
         self.state, self.project, self.repo = a.state, a.project, a.repo
+        self.be = be or LocalBackend()
         self.ttl = a.ttl if a.ttl and a.ttl > 0 else 15
         user = pwd.getpwuid(os.getuid()).pw_name
         host = socket.gethostname()
@@ -117,10 +118,9 @@ def lease(ctx, rec):
     ld = lead_of(rec)
     if not ld:
         return "none", None
-    r = parse_iso(rec.get("renewed_at"))
-    if r is None:
-        return "stale", None
-    age = ctx.t - r
+    age = ctx.be.age(ctx, rec)
+    if age is None:
+        return ctx.be.no_age, None
     return ("live" if age < ctx.ttl * 60 else "stale"), max(age, 0) // 60
 
 
@@ -128,32 +128,10 @@ def new_lead(ctx, since=None):
     return {"id": ctx.id, "user": ctx.user, "host": ctx.host, "since": since or iso(ctx.t)}
 
 
-def update(ctx, name, fn):
-    """Locked compare-and-swap update. fn(rec or None) -> (new rec or None, result); it may raise Refuse.
-    Returns the result. rev of the new record is the old rev + 1."""
-    path = ctx.path(name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path + ".lock", "a") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
-        rec = read_rec(path)
-        rev0 = rec.get("rev", 0) if rec else 0
-        if not isinstance(rev0, int):
-            rev0 = 0
-        new, res = fn(rec)
-        if new is None:
-            return res
-        if (read_rec(path) or {}).get("rev", 0) != (rec or {}).get("rev", 0):
-            raise Refuse("feature %s changed while it was being updated; try again" % name)
-        new["rev"] = rev0 + 1
-        new["updated_at"] = iso(ctx.t)
-        new["feature"], new["project"] = name, ctx.project
-        tmp = "%s.tmp.%d" % (path, os.getpid())
-        with open(tmp, "w") as f:
-            json.dump(new, f, indent=1)
-            f.write("\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-        return res
+def update(ctx, name, fn, create=False):
+    """Locked compare-and-swap update by the backend of the project (create: fn may create the record of a feature that has none,
+    which a backend that cannot reach its store may then keep provisionally). Returns the result of fn."""
+    return ctx.be.update(ctx, name, fn, create)
 
 
 def fresh(ctx, name, rec):
@@ -175,7 +153,7 @@ def fresh(ctx, name, rec):
 def led_by_msg(ctx, name, rec, tail=""):
     st, mins = lease(ctx, rec)
     ld = lead_of(rec)
-    base = "feature %s is led by %s (renewed %s min ago, ttl %d)" % (name, clean(ld["id"]), "?" if mins is None else mins, ctx.ttl)
+    base = "feature %s is led by %s (%s %s min ago, ttl %d)" % (name, clean(ld["id"]), ctx.be.renewed_word, "?" if mins is None else mins, ctx.ttl)
     if st == "stale":
         base += "; the lease is stale: use qargi marshal takeover %s --approved WORDS" % name
     return base + tail
@@ -184,6 +162,70 @@ def led_by_msg(ctx, name, rec, tail=""):
 def check_name(name):
     if not NAME_RE.match(name or "") or len(name) > 40:
         raise Refuse("'%s' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)" % name)
+
+
+# ---- backends ------------------------------------------------------------------------------------------------------
+
+class LocalBackend:
+    """One JSON file per feature in $STATE/features, this machine only (the default). The lease is the wall clock: renewed_at."""
+    refs = False
+    ghost_fix = True              # a record whose branch is gone is abandoned on a read
+    no_age = "stale"              # the lease of a record without a readable renewed_at
+    renewed_word = "renewed"
+
+    def age(self, ctx, rec):
+        """Seconds since the lease was renewed, or None."""
+        r = parse_iso(rec.get("renewed_at"))
+        return None if r is None else ctx.t - r
+
+    def get(self, ctx, name):
+        return read_rec(ctx.path(name))
+
+    def names(self, ctx, history=False):
+        names = set(open_features(ctx))
+        prefix = ctx.project + "-"
+        try:
+            for f in os.listdir(os.path.join(ctx.state, "features")):
+                if f.startswith(prefix) and f.endswith(".json"):
+                    n = f[len(prefix):-5]
+                    if NAME_RE.match(n):
+                        rec = read_rec(os.path.join(ctx.state, "features", f))
+                        if n in names or (rec and (history or rec.get("status") != "finished")):
+                            names.add(n)
+        except OSError:
+            pass
+        return sorted(names)
+
+    def update(self, ctx, name, fn, create=False):
+        """Locked compare-and-swap update. fn(rec or None) -> (new rec or None, result); it may raise Refuse.
+        Returns the result. rev of the new record is the old rev + 1."""
+        path = ctx.path(name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".lock", "a") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            rec = read_rec(path)
+            rev0 = rec.get("rev", 0) if rec else 0
+            if not isinstance(rev0, int):
+                rev0 = 0
+            new, res = fn(rec)
+            if new is None:
+                return res
+            if (read_rec(path) or {}).get("rev", 0) != (rec or {}).get("rev", 0):
+                raise Refuse("feature %s changed while it was being updated; try again" % name)
+            new["rev"] = rev0 + 1
+            new["updated_at"] = iso(ctx.t)
+            new["feature"], new["project"] = name, ctx.project
+            write_local(path, new)
+            return res
+
+
+def write_local(path, rec):
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        json.dump(rec, f, indent=1)
+        f.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 # ---- git -----------------------------------------------------------------------------------------------------------
@@ -279,8 +321,9 @@ def worktrees_of(ctx, name):
 # ---- describing a feature ------------------------------------------------------------------------------------------
 
 def ghost_fix(ctx, name, rec):
-    """A record whose branch is gone and that never finished is abandoned: record the transition. -> the record."""
-    if rec is None or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
+    """A record whose branch is gone and that never finished is abandoned: record the transition. -> the record.
+    Only the local backend writes it (a read never pushes, and another machine may simply not have the branch)."""
+    if rec is None or not ctx.be.ghost_fix or branch_exists(ctx, name) or rec.get("status") in ("finished", "abandoned"):
         return rec
 
     def fn(r):
@@ -360,25 +403,13 @@ def gather(ctx, names):
     """-> [(name, describe dict, raw record)] after recording ghost transitions."""
     out, cache = [], {}
     for n in names:
-        rec = ghost_fix(ctx, n, read_rec(ctx.path(n)))
+        rec = ghost_fix(ctx, n, ctx.be.get(ctx, n))
         out.append((n, describe(ctx, n, rec, cache), rec))
     return out
 
 
 def all_names(ctx, history=False):
-    names = set(open_features(ctx))
-    prefix = ctx.project + "-"
-    try:
-        for f in os.listdir(os.path.join(ctx.state, "features")):
-            if f.startswith(prefix) and f.endswith(".json"):
-                n = f[len(prefix):-5]
-                if NAME_RE.match(n):
-                    rec = read_rec(os.path.join(ctx.state, "features", f))
-                    if n in names or (rec and (history or rec.get("status") != "finished")):
-                        names.add(n)
-    except OSError:
-        pass
-    return sorted(names)
+    return ctx.be.names(ctx, history)
 
 
 def is_open(d):
@@ -395,7 +426,7 @@ def listed(ctx, history=False):
 def v_status(ctx, a):
     if a.name:
         check_name(a.name)
-        rec = read_rec(ctx.path(a.name))
+        rec = ctx.be.get(ctx, a.name)
         if rec is None and not branch_exists(ctx, a.name):
             raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
         items = gather(ctx, [a.name])
@@ -441,7 +472,7 @@ def v_claim(ctx, a):
         if a.goal is not None:
             r["goal"] = a.goal
         return r, again
-    again = update(ctx, a.name, fn)
+    again = update(ctx, a.name, fn, create=True)
     print("%s %s (lead %s, ttl %d min)" % ("renewed" if again else "claimed", a.name, ctx.id, ctx.ttl))
 
 
@@ -468,7 +499,7 @@ def v_start(ctx, a):
         r["status"], r["finished_at"] = "active", None
         r["renewed_at"], r["updated_by"] = iso(ctx.t), ctx.id
         return r, st
-    update(ctx, a.name, fn)
+    update(ctx, a.name, fn, create=True)
     print("marshal: %s leads %s" % (ctx.id, a.name))
 
 
@@ -565,7 +596,7 @@ def v_takeover(ctx, a):
             raise Refuse("no record for feature %s (claim it: qargi marshal claim %s)" % (a.name, a.name))
         st, mins = lease(ctx, rec)
         if st == "live":
-            left = max(1, -(-(ctx.ttl * 60 - (ctx.t - parse_iso(rec["renewed_at"]))) // 60))
+            left = max(1, -(-(ctx.ttl * 60 - ctx.be.age(ctx, rec)) // 60))
             raise Refuse("feature %s is led by %s and live for another %d min (ttl %d); wait, or ask the lead to release it" % (a.name, clean(lead_of(rec)["id"]), left, ctx.ttl))
         if rec.get("status") in ("finished", "abandoned"):
             raise Refuse("feature %s is %s" % (a.name, rec["status"]))
@@ -620,7 +651,7 @@ def v_check(ctx, a):
     ctx.warn_anon()
     if a.name:
         check_name(a.name)
-        rec = read_rec(ctx.path(a.name))
+        rec = ctx.be.get(ctx, a.name)
         if rec is None and not branch_exists(ctx, a.name):
             raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
         if rec is not None:
