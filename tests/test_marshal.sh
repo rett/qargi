@@ -184,7 +184,7 @@ M $t0 status --all >/dev/null; M $t0 check >/dev/null
 LONG=$(head -c 5000 /dev/zero | tr '\0' Q)
 M $t0 set f7 --as mallory --note "$LONG"
 [ "$(j f7 .note | wc -c)" -ge 5000 ] && ok "long note: the record keeps the text" || no "long note stored short: $(j f7 .note | wc -c)"
-M $t0 status f7 --as bob; c=$(grep -o Q "$T/o" | wc -l)
+M $t0 status f7 --as bob; c=$(grep -oE 'Q{100,}' "$T/o" | tr -d '\n' | wc -c)
 [ "$c" -le 2000 ] && [ "$c" -ge 1990 ] && ok "long note: status prints at most 2000 characters of it" || no "SPEC cap: status printed $c of 5000 characters (want about 2000)"
 
 # --- the shell API and the renewer (real time; ttl 1 minute; renews every second)
