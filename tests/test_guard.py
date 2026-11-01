@@ -596,7 +596,7 @@ class Marshal(unittest.TestCase):
 
     def test_mutating_marshal_verbs_are_refused_however_they_are_run(self):
         cmds = []
-        for v in ("claim", "set", "renew", "release", "take", "takeover", "finish"):
+        for v in ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable"):
             cmds += ["qargi marshal %s proj f" % v, "qargi marshal %s --owner x" % v, "/opt/q/bin/qargi marshal %s" % v, "bin/qargi marshal %s" % v,
                      "env FOO=1 qargi marshal %s" % v, "FOO=1 qargi marshal %s" % v, "command qargi marshal %s" % v, "sudo qargi marshal %s" % v,
                      "bash -c 'qargi marshal %s p f'" % v, "sh -c \"qargi marshal %s\"" % v, "eval 'qargi marshal %s'" % v,
@@ -607,6 +607,50 @@ class Marshal(unittest.TestCase):
         cmds += ["qargi marshal", "qargi marshal frobnicate", "qargi marshal $v", "qargi marshal \"$v\"", "v=claim; qargi marshal $v proj f",
                  "qargi marshal Claim", "qargi marshal CLAIM", "qargi marshal STATUS", "qargi marshal Status", "qargi marshal statuss", "qargi marshal check2"]
         self.refused(cmds)
+
+    def test_the_switch_directory_is_protected_like_features(self):
+        """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
+        m = os.path.join(self.state, "marshal")
+        os.makedirs(m)
+        open(os.path.join(m, "proj.enabled"), "w").close()
+        os.symlink(m, os.path.join(self.clone, "to-marshal"))
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for p in (m + "/proj.enabled", m + "/new.enabled", m, "to-marshal/proj.enabled", "../../state/marshal/x.enabled"):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                    self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+        self.refused(["echo '{}' > %s/proj.enabled" % m, "echo x>>%s/proj.enabled" % m, "echo x | tee %s/proj.enabled" % m, "cp a.json %s/proj.enabled" % m,
+                      "mv a.json %s/proj.enabled" % m, "mv %s /tmp/gone" % m, "rm %s/proj.enabled" % m, "rm -rf %s" % m, "touch %s/other.enabled" % m,
+                      "sed -i s/a/b/ %s/proj.enabled" % m, "ln -sf /x %s/proj.enabled" % m, "cd %s && echo y > proj.enabled" % m,
+                      "echo y > to-marshal/proj.enabled", "bash -c 'echo y > %s/proj.enabled'" % m, "echo y > $QARGI_STATE/marshal/proj.enabled"])
+        for c in ("cat %s/proj.enabled" % m, "ls %s" % m, "grep -rn backend %s" % m, "cp %s/proj.enabled %s/run/out/" % (m, self.t),
+                  "echo x > %s/marshal-notes.md" % self.state, "echo x > %s/marshalled.enabled" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        os.makedirs(os.path.join(self.t, "elsewhere/marshal"))
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.t, "elsewhere/marshal/x.enabled")}).returncode, 0)
+
+    def test_the_switch_directory_is_found_like_the_other_qargi_paths(self):
+        for st, env in ((os.path.join(self.home, ".qargi/state"), dict(QARGI_STATE=None)),
+                        (os.path.join(self.t, "qh/state"), dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),
+                        (os.path.join(self.t, "alt"), dict(QARGI_STATE=os.path.join(self.t, "alt")))):
+            target = os.path.join(st, "marshal")
+            os.makedirs(target, exist_ok=True)
+            self.assertEqual(self.call("Write", {"file_path": target + "/p.enabled"}, **env).returncode, 2, (target, env))
+            self.assertEqual(self.bash("echo x > %s/p.enabled" % target, **env).returncode, 2, (target, env))
+
+    def test_the_observation_cache_of_the_refs_backend_is_protected(self):
+        """$STATE/features/.observed-<project>.json is the taker's own clock record; it lies under features/, so a member may not write it."""
+        o = os.path.join(self.feat, ".observed-proj.json")
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
+            res = self.call(tool, {key: o})
+            self.assertEqual(res.returncode, 2, (tool, res.stderr))
+            self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+        self.refused(["echo '{}' > %s" % o, "rm -f %s" % o, "cp a.json %s" % o, "mv a.json %s" % o, "echo '{}' | tee %s" % o,
+                      "cd %s && echo '{}' > .observed-proj.json" % self.feat])
+        self.assertEqual(self.bash("cat %s" % o).returncode, 0)
 
     def test_a_marshal_word_is_not_a_verb_of_another_command(self):
         for c in ("echo marshal claim", "git log --grep 'marshal claim'", "grep -n 'marshal claim' lib/commands.py", "cat marshal.sh", "ls lib/marshal.sh"):
