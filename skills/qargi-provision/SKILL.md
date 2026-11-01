@@ -7,7 +7,9 @@ argument-hint: plan|apply|add-reference NAME ...
 # /qargi-provision
 
 Names follow the convention in the README: `NAME` is `<project>-<role>` (`--project P
---role R`, role defaults to `build`, from a fixed list); the agent, environment and
+--role R`, role defaults to `build`, from a fixed list) or a base, `<project>-worker` (class write) or
+`<project>-reviewer` (read-only, which needs the project's `qargi provider accept NAME --surface cloud --no-barrier`
+first, because the cloud has no read-only barrier); the agent, environment and
 deployment are `<project>-<role>` and `<project>-deployment-<role>`; the environment is
 shared by the roles of the project, `<project>-environment`, and holds the packages of all
 enabled roles; the memory stores belong to the project: `<project>-memory` and `<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is
