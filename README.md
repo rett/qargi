@@ -328,6 +328,14 @@ Moving from one-per-ability members: `qargi agent add worker` and `qargi agent a
 
 Cloud is unchanged for now: four role agents, with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`).
 
+## Providers
+
+A provider is a descriptor, `lib/providers/NAME.json`, and every provider uses the same schema (`lib/providers/schema.json`): the model each tier (fast, balanced, deep, frontier) maps to, each with the date and source it was verified on; the effort levels it understands; the surfaces it serves (local, cloud); and a capability matrix per surface (model and effort overrides at dispatch, a fixed tool list per agent, a read-only barrier, a session budget ceiling, memory stores, skills, MCP). A capability that has no verification date counts as not supported. `qargi provider list`, `show NAME` and `check NAME` print the descriptors, the matrix and what degrades; a project picks its provider with `models.provider` in its answers (default `claude`).
+
+The rules that do not depend on the provider: a surface whose read-only barrier is not supported cannot serve the review role, unless you accept that for the project with `qargi provider accept NAME --surface S --no-barrier --asked "..."` (it prints a plan and a token, records `models.accept_no_barrier` and writes the audit log); a provider with no effort control has the effort dropped and `qargi agent models` says so; a provider without a per-dispatch model override must have one member per profile; and the output of a read-only run is never applied as patches. For the bundled `claude` descriptor the local barrier is the guard hook (partial: shell writes are caught heuristically and `local verify` is the backstop); the cloud review agents have no barrier, so a cloud review role needs your acceptance before it is provisioned or started.
+
+A provider's adapter (`lib/providers/NAME/adapter`) implements a small JSON contract (resolve, dispatch-local, barrier-check, provision, start-session, status, collect, stop, cost; exit 3 for what the descriptor says is unsupported), and `bash tests/conformance.sh NAME` runs the conformance cases against it, including a corpus of calls a read-only barrier must allow or deny. Only the local verbs of the `claude` adapter exist so far; its cloud verbs still run through the existing scripts.
+
 ## Splitting, merging and moving memory
 
 A memory store is a directory structure of notes, and `qargi memory` moves notes between two of them. A store is a directory, a `.jsonl` dump (read-only: a source, never a target) or a `memstore_` id; `lib/membackend.py` is the one interface behind all three (the Managed Agents store is reached through `ant`; another backend can be added beside them).
