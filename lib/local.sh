@@ -21,17 +21,22 @@
 . "$(dirname "$0")/lib.sh"
 . "$(dirname "$0")/marshal.sh"
 
+# drop_qargi_refs -> stdin without the refs under refs/qargi/ (lines "local REF SHA" and "remote SHA REF"). The marshal refs backend
+# keeps its records there and the lead's renewer fetches and pushes them during a run; that is not an agent push. Only that
+# namespace: refs/qargi-x/ and every other ref stay compared.
+drop_qargi_refs() { awk '{ r = ($1 == "local") ? $2 : $3 } r !~ /^refs\/qargi\//'; }
+
 snapshot_url() { # url credential-file(optional) -> sorted refs of the remote
   ( [ -z "${2:-}" ] || git_auth_env "$2"
     u=$1; [ -z "${2:-}" ] || u=${1/https:\/\//https://x-access-token@}
-    out=$(timeout 60 git ls-remote --heads --tags "$u" 2>/dev/null </dev/null) && printf '%s\n' "$out" | sed 's/^/remote /' | sort || echo "remote unavailable" )
+    out=$(timeout 60 git ls-remote --heads --tags "$u" 2>/dev/null </dev/null) && printf '%s\n' "$out" | sed 's/^/remote /' | drop_qargi_refs | sort || echo "remote unavailable" )
 }
 
 snapshot() { # repo -> sorted refs of the repository and of its remote
-  git -C "$1" for-each-ref --format='local %(refname) %(objectname)' | sort
+  git -C "$1" for-each-ref --format='local %(refname) %(objectname)' | drop_qargi_refs | sort
   if git -C "$1" remote get-url origin >/dev/null 2>&1; then
     if out=$(timeout 60 git -C "$1" ls-remote --heads --tags origin 2>/dev/null </dev/null); then
-      printf '%s\n' "$out" | sed 's/^/remote /' | sort
+      printf '%s\n' "$out" | sed 's/^/remote /' | drop_qargi_refs | sort
     else
       echo "remote unavailable"
     fi
@@ -55,13 +60,14 @@ journaled() {
 }
 
 # compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
-# (remote refs, refs/remotes, tags, stash, ...) must be identical. A local branch may only move forward (old tip is an
-# ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
+# (remote refs, refs/remotes, tags, stash, ...) must be identical (except refs/qargi/, see drop_qargi_refs). A local branch may only move
+# forward (old tip is an ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
 # lead's own merges do. Used with refs.before while the run has no passing verify, with RUN/verified after one.
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
   local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
-  if ! diff -u <(grep -v "$hd" "$ref") <(grep -v "$hd" "$aft"); then bad=1; fi
+  # refs/qargi/ is dropped on both sides, so a snapshot taken before this rule existed compares the same way
+  if ! diff -u <(grep -v "$hd" "$ref" | drop_qargi_refs) <(grep -v "$hd" "$aft" | drop_qargi_refs); then bad=1; fi
   if [ -n "$strict" ]; then
     # strict: a local branch may differ only as far as the lead's ref journal explains it; nothing else (no fast-forward rule)
     while read -r name; do
