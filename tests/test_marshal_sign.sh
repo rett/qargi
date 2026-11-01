@@ -700,6 +700,30 @@ XE wa marshal claim w2 --as alice --goal w2g >/dev/null 2>&1; mode wa off; XE wa
 OWN wa resign w2; r1=$?
 { [ $r1 = 0 ] && [ "$(jsf $F/w2 .signer)" = "$PWA" ]; } && ok "resign: an unsigned head with the lead of the accepted record is signed" || no "SPEC resign of the accepted lead's unsigned record (rc=$r1): $(out)"
 
+# ------------------------------------------------------------ (16f) disable drops the integrity setting: it is an approved step when integrity is on
+# Assumed interface (review fix): `marshal disable` on a machine whose integrity is advisory or strict prints a plan that names the integrity it
+# drops and a plan token, and applies with `--plan TOK --approved WORDS` (audited as marshal:disable with the words); with integrity off it is
+# as before (no token); `marshal enable` always says which integrity is in effect ("integrity off" when the switch has none); a member
+# run still exits 2.
+mk wd; mk we; en wd; en we
+mode wd advisory
+cp "$(EN wd)" "$T/en.wd.before"
+XE wd marshal disable; r0=$?; tkd=$(tokof); grep -qi advisory <(out) && pl=1 || pl=0
+XE wd marshal disable --approved "$WORDS"; r1=$?
+XE wd marshal disable --plan 000000000000 --approved "$WORDS"; r2=$?
+{ [ $r0 = 0 ] && [ -n "$tkd" ] && [ $pl = 1 ] && [ $r1 != 0 ] && [ $r2 != 0 ] && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "disable: with integrity advisory it prints a plan (naming the integrity) and a token, and is refused without the token, with a wrong one and without words; the switch is untouched" || no "SPEC disable with integrity on needs the plan token and the words (rc $r0 $r1 $r2, plan names the integrity: $pl, token '$tkd')"
+OWN wd disable; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$(EN wd)" ] && jq -e --arg w "$WORDS" 'select(.verb == "marshal:disable" and .approved == $w)' "$(S wd)/audit.log" >/dev/null 2>&1; } && ok "disable: with the token and the words it switches back to local records and audits marshal:disable with the words" || no "SPEC approved disable (rc=$rc): $(out); $(tail -2 "$(S wd)/audit.log" 2>&1)"
+XE wd marshal enable; tke=$(tokof); XE wd marshal enable --plan "$tke" --approved "$WORDS"
+{ grep -qi 'integrity off' "$T/o" && [ "$(jq -r '.integrity // "off"' "$(EN wd)")" = off ]; } && ok "enable after disable: says that integrity is off" || no "SPEC enable must say that integrity is off after a disable: $(out)"
+XE we marshal disable; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$(EN we)" ]; } && ok "disable: with integrity off it still needs no token (as before)" || no "SPEC disable with integrity off is as before (rc=$rc): $(out)"
+mkdir -p "$T/run16/work"; echo build > "$T/run16/ability"; : > "$T/run16/refs.before"
+mode wd advisory; cp "$(EN wd)" "$T/en.wd.before"
+( cd "$T/run16/work" && XE wd marshal disable ); r1=$?; e1=$(cat "$T/e")
+( cd "$T/run16/work" && XE wd marshal disable --plan 000000000000 --approved w ); r2=$?
+{ [ $r1 = 2 ] && [ $r2 = 2 ] && grep -qi member <<<"$e1" && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "member: disable, even with a token and words, exits 2 and leaves the switch alone" || no "SPEC member run: disable (rc $r1 $r2): $e1"
+
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
 exit $fail
