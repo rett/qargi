@@ -1,0 +1,49 @@
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Edit", "path": "{CLONE}/src/a.go", "cwd": "{CLONE}"}, "expect": "deny", "why": "edit of a file in the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Write", "path": "src/new.go", "cwd": "{CLONE}"}, "expect": "deny", "why": "write of a new file in the clone, by a relative path"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Write", "path": "{RUN}/../elsewhere.txt", "cwd": "{CLONE}"}, "expect": "deny", "why": "write outside the run directory"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "NotebookEdit", "path": "{CLONE}/n.ipynb", "cwd": "{CLONE}"}, "expect": "deny", "why": "notebook edit in the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "echo x > src/a.go", "cwd": "{CLONE}"}, "expect": "deny", "why": "redirect into the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "printf y >> {CLONE}/README", "cwd": "{CLONE}"}, "expect": "deny", "why": "append into the clone by an absolute path"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "sed -i s/a/b/ src/a.go", "cwd": "{CLONE}"}, "expect": "deny", "why": "in-place sed in the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "rm -f src/a.go", "cwd": "{CLONE}"}, "expect": "deny", "why": "rm in the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "cp /etc/hostname src/", "cwd": "{CLONE}"}, "expect": "deny", "why": "cp into the clone"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git commit -am fix", "cwd": "{CLONE}"}, "expect": "deny", "why": "git commit"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git reset --hard HEAD~1", "cwd": "{CLONE}"}, "expect": "deny", "why": "git reset"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git checkout -- .", "cwd": "{CLONE}"}, "expect": "deny", "why": "git checkout of the tree"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git push", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git push origin main", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push to a named remote"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "cd src && git push", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push after a cd"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git push", "cwd": "/nonexistent/qargi-conformance"}, "expect": "deny", "why": "git push in a directory that does not exist"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "gh pr list", "cwd": "{CLONE}"}, "expect": "deny", "why": "gh reaches the hosting service"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "ssh host ls", "cwd": "{CLONE}"}, "expect": "deny", "why": "ssh reaches a host"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "git push", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "git push origin main", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push to a named remote"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "cd src && git push", "cwd": "{CLONE}"}, "expect": "deny", "why": "git push after a cd"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "git push", "cwd": "/nonexistent/qargi-conformance"}, "expect": "deny", "why": "git push in a directory that does not exist"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "gh pr list", "cwd": "{CLONE}"}, "expect": "deny", "why": "gh reaches the hosting service"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "ssh host ls", "cwd": "{CLONE}"}, "expect": "deny", "why": "ssh reaches a host"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Write", "path": "{RUN}/ability", "cwd": "{OUT}"}, "expect": "deny", "why": "write to RUN/ability"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Edit", "path": "{RUN}/class", "cwd": "{OUT}"}, "expect": "deny", "why": "edit of RUN/class"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Write", "path": "{RUN}/profile", "cwd": "{OUT}"}, "expect": "deny", "why": "write to RUN/profile"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "printf build > {RUN}/ability", "cwd": "{OUT}"}, "expect": "deny", "why": "shell redirect into RUN/ability"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "cd {RUN} && printf write > class", "cwd": "{OUT}"}, "expect": "deny", "why": "shell redirect into RUN/class after a cd"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "echo x >> {RUN}/refs.before", "cwd": "{OUT}"}, "expect": "deny", "why": "append to RUN/refs.before"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Write", "path": "{RUN}/ability", "cwd": "{OUT}"}, "expect": "deny", "why": "write to RUN/ability"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Edit", "path": "{RUN}/class", "cwd": "{OUT}"}, "expect": "deny", "why": "edit of RUN/class"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Write", "path": "{RUN}/profile", "cwd": "{OUT}"}, "expect": "deny", "why": "write to RUN/profile"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "printf build > {RUN}/ability", "cwd": "{OUT}"}, "expect": "deny", "why": "shell redirect into RUN/ability"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "cd {RUN} && printf write > class", "cwd": "{OUT}"}, "expect": "deny", "why": "shell redirect into RUN/class after a cd"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "echo x >> {RUN}/refs.before", "cwd": "{OUT}"}, "expect": "deny", "why": "append to RUN/refs.before"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Write", "path": "{OUT}/report.md", "cwd": "{CLONE}"}, "expect": "allow", "why": "the report in RUN/out"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Edit", "path": "{OUT}/manifest.json", "cwd": "{CLONE}"}, "expect": "allow", "why": "the manifest in RUN/out"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "cat src/a.go", "cwd": "{CLONE}"}, "expect": "allow", "why": "read a file"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git status", "cwd": "{CLONE}"}, "expect": "allow", "why": "git status"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "git log --oneline && git diff HEAD~1", "cwd": "{CLONE}"}, "expect": "allow", "why": "git log and diff"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "make test > {OUT}/test.log 2>&1", "cwd": "{CLONE}"}, "expect": "allow", "why": "a test run that logs into RUN/out"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "grep -rn x src 2>/dev/null", "cwd": "{CLONE}"}, "expect": "allow", "why": "a search that discards its errors"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "go test ./... | tee {OUT}/log.txt", "cwd": "{CLONE}"}, "expect": "allow", "why": "a pipe into tee in RUN/out"}
+{"surface": "local", "class": "read-only", "tool_call": {"tool": "Bash", "command": "ls -la", "cwd": "{CLONE}"}, "expect": "allow", "why": "a directory listing"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Edit", "path": "{CLONE}/src/a.go", "cwd": "{CLONE}"}, "expect": "allow", "why": "edit of a file in the clone"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "echo x > src/a.go", "cwd": "{CLONE}"}, "expect": "allow", "why": "redirect into the clone"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "git commit -am fix", "cwd": "{CLONE}"}, "expect": "allow", "why": "git commit"}
+{"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "git status", "cwd": "{CLONE}"}, "expect": "allow", "why": "git status"}

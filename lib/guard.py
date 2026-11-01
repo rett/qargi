@@ -36,6 +36,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed. What an agent edits in its own clone, the
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
+Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
+read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
@@ -75,7 +77,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
-SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh",
+SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
@@ -489,6 +491,8 @@ def skill_verb(prog, rest):
         words = ["upgrade"] + words
     if name == "marshal.sh":
         words = ["marshal"] + words
+    if name in ("provider.py", "provider.sh"):
+        words = ["provider"] + words
     if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
         return MemoryReason("%s %s changes a memory tier and is not available to an agent; %s" % (name, words[0], MEMORY_NOTE)) \
             if words[:1] in (["apply"], ["plan-init"], ["plan-move"], ["plan"]) else None
@@ -498,6 +502,8 @@ def skill_verb(prog, rest):
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
         which = verb if verb in MEMORY_VERBS else next(w for w in words[1:4] if w in MEMORY_VERBS)
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
+    if area == "provider" and verb == "accept":
+        return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))

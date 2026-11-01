@@ -18,7 +18,22 @@ INTRO = (
 
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by the skill qargi-<ability>
-MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
+def _provider_models():
+    """The model ids and aliases of the provider descriptors (lib/providers/NAME.json), for completion."""
+    import glob, json, os
+    out = []
+    for f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers", "*.json"))):
+        if os.path.basename(f) in ("schema.json", "adapter-schema.json"):
+            continue
+        try:
+            d = json.load(open(f))
+            out += [m for m in list((d.get("tiers") or {}).values()) + list((d.get("aliases") or {}).values()) if isinstance(m, str)]
+        except (OSError, ValueError, AttributeError):
+            pass
+    return tuple(dict.fromkeys(out))
+
+
+MODELS = _provider_models()
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
@@ -54,7 +69,7 @@ REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
-    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["feature", "marshal", "release", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -453,6 +468,34 @@ COMMANDS = {
             "login": verb("Log the project's profile in, bound to its workspace (your terminal only)", [("PROJECT", "project")]),
         },
         "examples": ["qargi cloud set qargi --profile qargi --workspace-id wrkspc_01AbC...", "qargi cloud login qargi", "qargi cloud check"],
+    },
+    "provider": {
+        "summary": "List and check the model providers: tiers, models and what each can do",
+        "desc": ("A provider is a descriptor, lib/providers/NAME.json, with one schema for every provider: the model each tier "
+                 "(fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, "
+                 "which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool "
+                 "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
+                 "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
+                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider (default claude)."),
+        "scripts": ["provider.py"],
+        "verbs": {
+            "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
+            "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
+                         [opt("--json", "machine-readable")]),
+            "accept": verb("Record that you accept a provider surface that has no read-only barrier", [("NAME", "none")],
+                           [opt("--surface", "the surface the acceptance covers", "SURFACE", ("local", "cloud")),
+                            opt("--no-barrier", "accept running the review role without a read-only barrier on that surface"),
+                            opt("--project", "the project whose answers record it (default: the project of the current directory)", "PROJECT", "project"),
+                            opt("--asked", "your words asking for it", "WORDS"), opt("--approved", "your words approving the plan", "WORDS"),
+                            opt("--plan", "the plan token printed without it", "TOKEN")],
+                           desc="Without --plan and --approved it prints what would be recorded and a plan token. Applied, it writes models.accept_no_barrier.SURFACE "
+                                "(who, when, why) to the project's answers and the audit log. It is the only way a provider surface whose read-only barrier "
+                                "is not supported can serve the review role."),
+            "check": verb("Validate a descriptor and say what degrades", [("NAME", "none")],
+                          desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
+                               "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
+                               "therefore cannot be served (for example review where the read-only barrier is not supported)."),
+        },
     },
     "noticed": {
         "summary": "What members noticed and did not act on, and what became of it",

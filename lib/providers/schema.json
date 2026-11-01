@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qargi-provider-descriptor-1",
+  "title": "A qargi provider descriptor (lib/providers/NAME.json)",
+  "description": "One file per model provider. lib/provider.py validates a descriptor against this schema (a stdlib subset: type, enum, const, pattern, required, properties, additionalProperties, items, minItems, uniqueItems, $ref and the format date) and then checks what a schema cannot say: the provider name equals the file name, a capability cell exists only for a surface the provider lists, every tier model matches model_pattern, and tiers and aliases agree with tier_detail. tiers and aliases are the plain maps older code reads; tier_detail carries the verified detail and a later change removes the duplication.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "provider", "surfaces", "model_pattern", "tier_detail", "tiers", "aliases", "effort", "capabilities", "local", "adapter"],
+  "properties": {
+    "schema": {"const": 1},
+    "provider": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "surfaces": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["local", "cloud"]}},
+    "model_pattern": {"type": "string", "description": "A regular expression every tier model id must match"},
+    "tier_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast", "balanced", "deep", "frontier"],
+      "properties": {
+        "fast": {"$ref": "#/$defs/tier"},
+        "balanced": {"$ref": "#/$defs/tier"},
+        "deep": {"$ref": "#/$defs/tier"},
+        "frontier": {"$ref": "#/$defs/tier"}
+      }
+    },
+    "tiers": {
+      "description": "tier to model id; must equal tier_detail.TIER.model",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fast", "balanced", "deep", "frontier"],
+      "properties": {
+        "fast": {"type": "string"}, "balanced": {"type": "string"}, "deep": {"type": "string"}, "frontier": {"type": "string"}
+      }
+    },
+    "aliases": {
+      "description": "tier to alias; must equal tier_detail.TIER.alias",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fast": {"type": ["string", "null"]}, "balanced": {"type": ["string", "null"]}, "deep": {"type": ["string", "null"]}, "frontier": {"type": ["string", "null"]}
+      }
+    },
+    "effort": {
+      "description": "qargi's effort level to the provider's own value; null means the provider has no such control",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["low", "medium", "high", "xhigh", "max"],
+      "properties": {
+        "low": {"type": ["string", "null"]}, "medium": {"type": ["string", "null"]}, "high": {"type": ["string", "null"]},
+        "xhigh": {"type": ["string", "null"]}, "max": {"type": ["string", "null"]}
+      }
+    },
+    "capabilities": {
+      "description": "What the provider can do, per capability and per surface. A cell exists only for a surface listed in surfaces. A value yes or partial whose verified_on is null counts as no wherever it is enforced.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "per_dispatch_model_override": {"$ref": "#/$defs/capability"},
+        "per_dispatch_effort_override": {"$ref": "#/$defs/capability"},
+        "fixed_tool_allowlist_per_agent": {"$ref": "#/$defs/capability"},
+        "read_only_barrier": {"$ref": "#/$defs/capability"},
+        "session_budget_ceiling": {"$ref": "#/$defs/capability"},
+        "memory_stores": {"$ref": "#/$defs/capability"},
+        "skills": {"$ref": "#/$defs/capability"},
+        "mcp": {"$ref": "#/$defs/capability"}
+      }
+    },
+    "local": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reserved_names"],
+      "properties": {
+        "reserved_names": {"type": "array", "items": {"type": "string"}, "description": "names the provider's local agent runtime already uses; a member may not take them"}
+      }
+    },
+    "adapter": {"type": ["string", "null"], "description": "the executable that serves the provider, as a path under the tool root (lib/providers/NAME/adapter); it is called as adapter VERB with a JSON request on stdin. null for none: the provider has no adapter, and what needs one is refused"}
+  },
+  "$defs": {
+    "date": {"type": ["string", "null"], "format": "date", "description": "YYYY-MM-DD, or null when not verified"},
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "alias", "verified_on", "source"],
+      "properties": {
+        "model": {"type": "string"},
+        "alias": {"type": ["string", "null"]},
+        "verified_on": {"$ref": "#/$defs/date"},
+        "source": {"type": "string"}
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local": {"$ref": "#/$defs/cell"},
+        "cloud": {"$ref": "#/$defs/cell"}
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "verified_on", "source", "note"],
+      "properties": {
+        "value": {"enum": ["yes", "partial", "no"]},
+        "verified_on": {"$ref": "#/$defs/date"},
+        "source": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    }
+  }
+}

@@ -37,10 +37,19 @@ validate() { # file -> prints problems, exit 1 if any
 import json, re, sys
 path, roles = sys.argv[1], sys.argv[2].split()
 sys.path.insert(0, sys.argv[3])
+import provider
 try:
     c = json.load(open(path))
 except Exception as e:
     print("not valid JSON: %s" % e); sys.exit(1)
+# the models and the model-id pattern are the project's provider's (models.provider, default claude)
+pname = (c.get("models") or {}).get("provider", "claude") if isinstance(c, dict) and isinstance(c.get("models"), dict) else "claude"
+try:
+    D = provider.load(pname)
+except provider.ProviderError:
+    D = provider.load("claude")
+model_ok = re.compile(D["model_pattern"])
+aliases = [a for a in D["aliases"].values() if a]
 bad = []
 def need(cond, msg):
     if not cond: bad.append(msg)
@@ -80,7 +89,7 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
         bad.append("%s.push.mode: only 'none' is implemented; the coordinator and agent push policies are not built yet" % p)
     po = cfg.get("packs_off", [])
     need(isinstance(po, list) and all(isinstance(x, str) and re.fullmatch(r"(skill|tool):[a-z0-9][a-z0-9-]{0,40}", x) for x in po), "%s.packs_off: a list like [\"skill:name\", \"tool:name\"]" % p)
-    need(re.fullmatch(r"claude-[a-z0-9.-]+", cfg.get("model", "") or ""), "%s.model: a model id like claude-sonnet-5-5" % p)
+    need(model_ok.fullmatch(cfg.get("model", "") or ""), "%s.model: a model id like %s" % (p, D["tiers"]["balanced"]))
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
     need(isinstance(cfg.get("pip", []), list), "%s.pip: a list of Python packages" % p)
@@ -93,7 +102,7 @@ prof = c.get("profiles")
 if prof is not None:
     import os
     md = json.load(open(os.path.join(sys.argv[3], "model-defaults.json")))
-    tiers_ok = json.load(open(os.path.join(sys.argv[3], "providers", "claude.json")))["tiers"]
+    tiers_ok = D["tiers"]
     def role_class(rn):
         for d in (os.path.join(sys.argv[4], "roles", rn), os.path.join(sys.argv[5], "roles", rn)):
             try: return json.load(open(os.path.join(d, "role.json"))).get("class", "write")
@@ -115,7 +124,7 @@ if prof is not None:
         elif "base" in pf and pf["base"] not in bases:
             bad.append("%s.base: one of %s" % (p, ", ".join(bases))); b = None
         if "tier" in pf: need(pf["tier"] in tiers_ok, "%s.tier: one of %s" % (p, ", ".join(tiers_ok)))
-        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in ("haiku", "sonnet", "opus", "fable") or re.fullmatch(r"claude-[a-z0-9.-]+", pf["model"])), "%s.model: haiku, sonnet, opus, fable or a model id like claude-sonnet-5-5" % p)
+        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in aliases or model_ok.fullmatch(pf["model"])), "%s.model: %s or a model id like %s" % (p, ", ".join(aliases), D["tiers"]["balanced"]))
         if "effort" in pf: need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
         if "abilities" in pf:
@@ -127,6 +136,19 @@ if prof is not None:
                 cl2 = role_class(x) if x != "lead" else None
                 if cl2 is None: bad.append("%s.abilities: %s is not a known role (%s)" % (p, x, ", ".join(roles)))
                 elif want and cl2 != want: bad.append("%s.abilities: %s is %s, but base %s is %s" % (p, x, cl2, b, want))
+# models.accept_no_barrier.<surface> = {by, at, reason}: the owner's acceptance of a provider surface with no read-only barrier
+# (written only by `qargi provider accept`; nothing else in models is checked here)
+anb = c.get("models", {}).get("accept_no_barrier") if isinstance(c.get("models"), dict) else None
+if anb is not None:
+    if not isinstance(anb, dict): bad.append("models.accept_no_barrier: an object of surfaces (%s), each {by, at, reason}" % ", ".join(provider.SURFACES))
+    else:
+        for sf, rec in anb.items():
+            p = "models.accept_no_barrier.%s" % sf
+            if sf not in provider.SURFACES: bad.append("%s: not a surface (%s)" % (p, ", ".join(provider.SURFACES))); continue
+            if not isinstance(rec, dict) or set(rec) != {"by", "at", "reason"}: bad.append("%s: exactly {by, at, reason}" % p); continue
+            for k in ("by", "reason"):
+                need(isinstance(rec[k], str) and rec[k].strip(), "%s.%s: a non-empty string" % (p, k))
+            need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
@@ -139,7 +161,7 @@ teams = c.get("teams", {})
 need(isinstance(teams, dict), "teams: an object of named teams")
 if isinstance(teams, dict) and teams:
     ld = c.get("lead", {})
-    need(re.fullmatch(r"claude-[a-z0-9.-]+", (ld or {}).get("model", "") or ""), "lead.model: a model id like claude-opus-5-5 (needed when teams are defined)")
+    need(model_ok.fullmatch((ld or {}).get("model", "") or ""), "lead.model: a model id like %s (needed when teams are defined)" % D["tiers"]["deep"])
     need((ld or {}).get("effort") in efforts, "lead.effort: %s" % "|".join(sorted(efforts)))
     for tn, t in teams.items():
         p = "teams.%s" % tn
