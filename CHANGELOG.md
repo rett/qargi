@@ -235,6 +235,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ability skill. Every cloud agent's prompt changes: run `qargi instances refresh-prompt NAME --if-stale` for each. The
   `qargi-build|write|review|test` skills remain for now and are no longer what a task loads.
 
+### Removed
+- The four ability skills `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test` are gone: nothing loaded them. A member
+  follows the role text that comes with the task block (`roles/<role>/ROLE.md`), and `qargi help roles`, `qargi help agent`
+  and the manual page no longer name them. `install.sh --user` removes the leftover links to them.
+
 ### Security
 - A review member could lift its own read-only limit: the guard took the ability from `RUN/ability`, a file the member could
   write. The guard now refuses any write to a run's `ability` and `refs.before`, and a member that only reviews names its
