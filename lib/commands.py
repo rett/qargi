@@ -526,7 +526,7 @@ COMMANDS = {
         },
     },
     "memory": {
-        "summary": "Check a memory store, read a note, split, merge or copy stores",
+        "summary": "Check a memory store, list its tiers, read a note, split, merge or copy stores",
         "desc": ("split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read-only: a source, never a "
                  "target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is "
                  "deleted: what a split moves out of a store goes to /_archive/<date>/ and a collision to /_conflicts/<date>/, and the "
@@ -536,6 +536,15 @@ COMMANDS = {
         "verbs": {
             "lint": verb("Check a store against the canon", [("STORE_ID", "store")], [opt("--kind", "recipes or reference (for a store before the canon)", "KIND", ("recipes", "reference"))]),
             "get": verb("Print one note", [("STORE_ID", "store"), ("PATH", "none")], examples=["qargi memory get memstore_01ABC /shared/INDEX.md"]),
+            "tiers": verb("List the project's memory tiers (repo, cloud, project, shared, system): where each is, whether it exists, its notes", [],
+                          [PROJECT_OPT, opt("--json", "machine-readable")],
+                          desc=("A tier is one memory store of the standard layout at a fixed rank, highest first: repo > cloud > project > shared > system. "
+                                "Where they are comes from the project's answers (memory.tiers; each key is optional and has a default). "
+                                "The reference store is not a tier. Reads only; nothing is created or changed.")),
+            "check": verb("Check every existing memory tier against the canon, and that no note lives in two tiers", [], [PROJECT_OPT],
+                          desc=("Runs the canon check on each tier that exists, then reports a note path present in two or more tiers (structural files such as "
+                                "README.md and INDEX.md repeat per tier and are fine). A tier that does not exist or cannot be reached is information, not a failure. "
+                                "Exit 1 when anything failed.")),
             "split": verb("Copy the notes a selector picks into another store, optionally archiving the originals", [("FROM", "file"), ("TO", "file")],
                           [PREFIX, ROLE_SEL, NOTE_KIND, opt("--archive", "move the originals to /_archive/<date>/ in FROM (with their origin in Sources:)"), PLAN, APPROVED],
                           desc="At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/<date>/ in TO.",
