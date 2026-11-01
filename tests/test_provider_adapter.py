@@ -468,6 +468,54 @@ class Derived(Tree):
         self.assertEqual(rc, 1)
         self.assertIn("models.provider 'nope' has no descriptor", out)
 
+FIXTURES = os.path.join(HERE, "providers", "claude", "start-session")
+sys.path.insert(0, os.path.join(HERE, "providers", "lib"))
+import validate  # noqa: E402
+
+with open(os.path.join(ROOT, "lib", "providers", "adapter-schema.json")) as _f:
+    SCHEMA = json.load(_f)
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name + ".json")) as f:
+        return json.load(f)
+
+
+def keys_anywhere(v):
+    """Every object key at any depth."""
+    if isinstance(v, dict):
+        return set(v) | set().union(*[keys_anywhere(x) for x in v.values()]) if v else set()
+    if isinstance(v, list):
+        return set().union(*[keys_anywhere(x) for x in v]) if v else set()
+    return set()
+
+
+class StartSessionSchema(unittest.TestCase):
+    """The request and the response of start-session, and the optional effort of provision, in lib/providers/adapter-schema.json."""
+
+    def test_the_goldens_and_the_refusals_are_in_the_schema(self):
+        for name in ("worker", "reviewer-accepted"):
+            self.assertEqual(validate.problems(SCHEMA, "start-session", "request", fixture(name + ".request")), [])
+            self.assertEqual(validate.problems(SCHEMA, "start-session", "response", fixture(name + ".body")), [])
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "error", {"error": "refused"}), [])
+
+    def test_the_schema_keeps_the_old_session_shape_and_closes_the_new_one(self):
+        old = {"surface": "cloud", "agent": "demo-build", "task": "t", "budget_cents": 100}
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "request", old), [])
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "response", {"session_id": "s", "state": "running"}), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "request", dict(fixture("worker.request"), extra=1)), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "request", {"surface": "cloud"}), [])
+        body = fixture("worker.body")
+        body["agent"]["model"] = "claude-sonnet-5-5"                  # a plain string would reset the effort
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "response", body), [])
+
+    def test_provision_takes_an_optional_effort(self):
+        req = {"surface": "cloud", "project": "p", "role": "worker", "mode": "plan"}
+        self.assertEqual(validate.problems(SCHEMA, "provision", "request", req), [])
+        self.assertEqual(validate.problems(SCHEMA, "provision", "request", dict(req, effort="high")), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "provision", "request", dict(req, effort="turbo")), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "provision", "request", dict(req, tools=[])), [])
+
 
 class Hardcodes(unittest.TestCase):
     def test_no_model_id_outside_the_descriptors_and_the_command_table(self):

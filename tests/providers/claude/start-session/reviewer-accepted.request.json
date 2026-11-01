@@ -1,0 +1,12 @@
+{
+  "surface": "cloud",
+  "role": "reviewer",
+  "profile": "auditor",
+  "model": "claude-haiku-5-5",
+  "effort": "low",
+  "system": "You are the auditor of project demo. Read, run checks, write a report; change nothing.\n",
+  "agent_id": "agent_01rev",
+  "agent_version": 1,
+  "environment_id": "env_01demo",
+  "accept_no_barrier": true
+}
