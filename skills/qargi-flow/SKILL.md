@@ -80,7 +80,9 @@ suggested members and each member's model. `qargi agent add` uses the table when
 checks use the `auditor` member (`qargi agent add auditor --abilities review --model claude-haiku-5-5 --effort low`), review-only, which checks a diff or a feature
 in a clone of its own; dispatch it by name. Search is not a role: map the repository and find call sites with a read-only
 exploration subagent on a small model (Haiku) inside your own context, then act on the result. Your own session model is
-chosen in Claude Code (`/model` or settings), not by qargi; the table's lead row is the recommendation.
+chosen in Claude Code (`/model` or settings), not by qargi; the table's lead row is the recommendation. The table names tiers
+(fast, balanced, deep, frontier) that a provider file maps to models. Frontier is opt-in: use the `researcher` member
+(`claude-fable-5-1`, review-only) for research or a hard design question only when the owner or you name it for the task.
 
 ## When a merge conflicts (exit 3)
 
