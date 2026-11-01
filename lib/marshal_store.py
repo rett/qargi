@@ -610,6 +610,8 @@ def v_check(ctx, a):
     if a.name:
         check_name(a.name)
         rec = read_rec(ctx.path(a.name))
+        if rec is None and not branch_exists(ctx, a.name):
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
         if rec is not None:
             rec = ghost_fix(ctx, a.name, rec)
         ld = lead_of(rec)
