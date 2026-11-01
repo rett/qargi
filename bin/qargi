@@ -66,6 +66,7 @@ case $area in
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
   report) exec python3 -I "$lib/report.py" "$@";;
   noticed) exec python3 -I "$lib/noticed.py" "$@";;
+  provider) exec python3 -I "$lib/provider.py" "$@";;
   upgrade) exec "$lib/upgrade.sh" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
