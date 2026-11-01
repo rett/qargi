@@ -146,4 +146,22 @@ out=$("$DA" local prepare --repo "$T/repo-alpha" --base main --slug rv3 --scratc
 { [ "$rc" = 0 ] && grep -q '^CLASS=read-only' <<<"$out"; } && ok "local accepted: prepare makes the read-only run" || no "prepare after accept: rc=$rc $out"
 [ "$(audit)" = 3 ] && ok "each acceptance left its audit line (the first section made one)" || no "audit count $(audit)"
 
+# --- the backstop: a read-only run's product is a report, never patches
+# (gamma is on claude: a partial local barrier passes, so a read-only run can be made; alpha accepted local above)
+out=$("$DA" local prepare --repo "$T/repo-gamma" --base main --slug rep --scratch "$T/scr" --role review 2>/dev/null); RO=$(sed -n 's/^RUN=//p' <<<"$out")
+out=$("$DA" local prepare --repo "$T/repo-gamma" --base main --slug wr --scratch "$T/scr" --role build 2>/dev/null); WR=$(sed -n 's/^RUN=//p' <<<"$out")
+printf '# Review\n\n## Findings\n\nnone\n' > "$RO/out/report.md"
+"$DA" local verify "$RO" >/dev/null 2>&1 && ok "verify passes a read-only run that returned a report" || no "verify of a report-only run"
+mkdir -p "$RO/out/patches" "$WR/out/patches"
+printf 'From 0000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] x\n' > "$RO/out/patches/0001-x.patch"; cp "$RO/out/patches/0001-x.patch" "$WR/out/patches/"
+out=$("$DA" local verify "$RO" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "$RO" <<<"$out" && grep -q 'read-only' <<<"$out" && grep -q 'report' <<<"$out"; } && ok "verify refuses a read-only run that holds patches, names the run and says to read the report" || no "verify of a read-only run with patches: rc=$rc $out"
+"$DA" local verify "$WR" >/dev/null 2>&1 && ok "verify still passes a write run with patches" || no "verify of a write run"
+out=$("$DA" review apply "$RO" --project gamma 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q "$RO" <<<"$out" && grep -q 'read-only' <<<"$out" && grep -q 'report' <<<"$out" && grep -q 'nothing was applied' <<<"$out"; } && ok "review apply refuses a read-only run, names it and says to read the report" || no "review apply of a read-only run: rc=$rc $out"
+[ -z "$(git -C "$T/repo-gamma" branch --list 'agent/*')" ] && ok "and no branch was made" || no "a branch was made"
+rm -f "$RO/out/patches/"*.patch; rm -f "$RO/class"
+printf 'x\n' > "$RO/out/patches/0001-x.patch"
+"$DA" local verify "$RO" >/dev/null 2>&1; [ $? = 2 ] && ok "a run made before RUN/class existed is judged by its ability" || no "run without a class file"
+
 exit $fail
