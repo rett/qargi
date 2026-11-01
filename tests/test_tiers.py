@@ -423,7 +423,7 @@ class Cli(Base):
         self.assertIn("== tier shared (dir %s)" % e.d("shared"), out)
         self.assertNotIn("== tier project", out)                         # missing: not checked
         self.assertIn("== tiers", out)
-        self.assertRegex(out, r"INFO tier project: missing \(qargi memory init project, later slice\)")
+        self.assertRegex(out, r"INFO tier project: missing \(qargi memory init project\)")
         self.assertRegex(out, r"INFO tier system: .*empty|INFO tier system: missing")
         self.assertRegex(out.strip().splitlines()[-1], r"^\d+ fail, \d+ warn, 3 tiers checked$")
 
@@ -432,7 +432,7 @@ class Cli(Base):
         put(e.d("shared"), {"/shared/r.md": NOTE})                       # also in the repo tier
         r = e.qargi("memory", "check", "--project", P)
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertIn("FAIL /shared/r.md: in tiers repo, shared (a note lives in one tier; qargi memory move comes later)", r.stdout)
+        self.assertIn("FAIL /shared/r.md: in tiers repo, shared (a note lives in one tier; qargi memory move PATH --from T --to T)", r.stdout)
         self.assertRegex(r.stdout.strip().splitlines()[-1], r"^[1-9]\d* fail, \d+ warn, \d+ tiers checked$")
 
     def test_check_collision_across_three_tiers(self):
@@ -441,7 +441,7 @@ class Cli(Base):
         e.cloud({**seed_files(P), "/shared/r.md": NOTE})
         r = e.qargi("memory", "check", "--project", P)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("FAIL /shared/r.md: in tiers repo, cloud, shared (a note lives in one tier; qargi memory move comes later)", r.stdout)
+        self.assertIn("FAIL /shared/r.md: in tiers repo, cloud, shared (a note lives in one tier; qargi memory move PATH --from T --to T)", r.stdout)
 
     def test_check_structural_repeats_are_not_collisions(self):
         e = self.populated()

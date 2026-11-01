@@ -489,9 +489,9 @@ def skill_verb(prog, rest):
         words = ["upgrade"] + words
     if name == "marshal.sh":
         words = ["marshal"] + words
-    if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers; plan-*, plan and show only read
-        return MemoryReason("%s apply changes a memory tier and is not available to an agent; %s" % (name, MEMORY_NOTE)) \
-            if words[:1] == ["apply"] else None
+    if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
+        return MemoryReason("%s %s changes a memory tier and is not available to an agent; %s" % (name, words[0], MEMORY_NOTE)) \
+            if words[:1] in (["apply"], ["plan-init"], ["plan-move"], ["plan"]) else None
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]

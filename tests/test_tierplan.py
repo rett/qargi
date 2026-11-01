@@ -166,11 +166,10 @@ class Init(Base):
             e = self.mk()
             base = os.path.join(e.tmp, "ov")
             e.write_answers(dict(e.answers, memory=dict(e.answers["memory"], tiers={"shared": {"path": base}, "system": {"path": base + inner}})))
-            self.init(e, "shared")
-            before = snapshot(base)
-            r = e.qargi("memory", "init", "system", "--project", P)
-            self.assertEqual(r.returncode, 1, (inner, r.stdout + r.stderr))
-            self.assertEqual(snapshot(base), before, inner)
+            for tier in ("shared", "system"):                         # the answers overlap, so neither tier may be created
+                r = e.qargi("memory", "init", tier, "--project", P)
+                self.assertEqual(r.returncode, 1, (inner, tier, r.stdout + r.stderr))
+                self.assertFalse(os.path.exists(base), (inner, tier))
 
     def test_the_repo_tier_needs_a_git_checkout(self):
         e = self.mk()                                                 # the repo directory is not a git work tree

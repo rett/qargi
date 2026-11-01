@@ -91,7 +91,7 @@ tier "$REPOD" REPO; w "$REPOD/roles/lead/INDEX.md" "ROLE-INDEX$(row big.md)"$'\n
 head -c 20000 /dev/zero | tr '\0' 'z' > "$REPOD/roles/lead/big.md"
 out=$(hook); ctx=$(printf '%s' "$out" | ctxof)
 has "$ctx" "[truncated: 20000 chars; read $REPOD/roles/lead/big.md]" && ok "a 20 kB note is cut at 4000 characters with the truncation marker" || no "marker: $(printf '%s' "$ctx" | grep -m1 truncated)"
-z=$(printf '%s' "$ctx" | tr -cd 'z' | wc -c)
+z=$(printf '%s' "$ctx" | grep -o 'z\{100,\}' | tr -cd 'z' | wc -c)
 [ "$z" -le 4000 ] && [ "$z" -gt 3000 ] && ok "at most 4000 characters of the note are kept" || no "kept $z"
 reset
 tier "$REPOD" REPO; tier "$PROJD" PROJECT
