@@ -3,7 +3,7 @@
 file and the accepted high-water mark. Offline. Skips (with a message) when the key tool is not installed.
 Run: python3 tests/test_marshal_sign_unit.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import contextlib, json, os, shutil, stat, sys, tempfile, unittest
+import contextlib, json, os, shutil, stat, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, '..', 'lib')
@@ -439,6 +439,69 @@ class HighWater(unittest.TestCase):
             M.hw_load(link)
         with self.assertRaises(M.SignError):
             M.hw_record(link, 'feat', 3, OID3)
+
+
+class Cli(unittest.TestCase):
+    """python3 -I lib/marshal_sign.py ...: what the shell calls."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='signcli.')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.key = os.path.join(self.tmp, 'cred', 'k')
+        self.signers = os.path.join(self.tmp, 'p.signers')
+
+    def run_cli(self, *args, stdin=b''):
+        r = subprocess.run([sys.executable, '-I', os.path.join(LIB, 'marshal_sign.py')] + list(args), input=stdin, capture_output=True, timeout=60,
+                           env=dict(os.environ))
+        return r.returncode, r.stdout, r.stderr.decode()
+
+    def test_whole_flow(self):
+        rc, out, err = self.run_cli('keygen', '--key', self.key, '--principal', 'alice@laptop')
+        self.assertEqual((rc, err), (0, ''))
+        line = out.decode().strip()
+        self.assertRegex(line, r'^alice@laptop namespaces="qargi-marshal" ssh-ed25519 ')
+        self.assertEqual(self.run_cli('signers', 'add', '--file', self.signers, '--line', line)[0], 0)
+        rc, out, _ = self.run_cli('signers', 'list', '--file', self.signers)
+        self.assertEqual((rc, out.decode().split()[0]), (0, 'alice@laptop'))
+        rec = os.path.join(self.tmp, 'rec.json')
+        with open(rec, 'w') as f:
+            json.dump({'feature': 'feat', 'sig_v': 1, 'signer': 'alice@laptop'}, f)
+        rc, payload, err = self.run_cli('payload', '--project', 'proj', '--feature', 'feat', '--kind', 'features', '--rev', '3', '--parent', OID1,
+                                        '--lead', 'l-1', '--record', rec)
+        self.assertEqual((rc, err), (0, ''))
+        self.assertEqual(payload, M.signed_payload('proj', 'feat', 'features', 3, OID1, 'l-1', {'feature': 'feat', 'sig_v': 1, 'signer': 'alice@laptop'}))
+        rc, arm, err = self.run_cli('sign', '--key', self.key, stdin=payload)
+        self.assertEqual((rc, err), (0, ''))
+        sig = os.path.join(self.tmp, 'sig')
+        with open(sig, 'wb') as f:
+            f.write(arm)
+        rc, _, err = self.run_cli('verify', '--signers', self.signers, '--principal', 'alice@laptop', '--sig', sig, stdin=payload)
+        self.assertEqual((rc, err), (0, ''))
+        rc, _, err = self.run_cli('verify', '--signers', self.signers, '--principal', 'alice@laptop', '--sig', sig, stdin=payload + b' ')
+        self.assertEqual(rc, 1)
+        self.assertTrue(err.strip())
+        self.assertEqual(self.run_cli('signers', 'remove', '--file', self.signers, '--principal', 'alice@laptop')[0], 0)
+        self.assertEqual(self.run_cli('signers', 'list', '--file', self.signers)[1], b'')
+        rc, _, err = self.run_cli('verify', '--signers', self.signers, '--principal', 'alice@laptop', '--sig', sig, stdin=payload)
+        self.assertEqual(rc, 1)
+
+    def test_a_wrong_call_is_status_2_with_a_message(self):
+        for args in ((), ('nonsense',), ('sign',), ('sign', '--key', os.path.join(self.tmp, 'absent')), ('signers',), ('signers', 'add', '--file', self.signers),
+                     ('signers', 'add', '--file', self.signers, '--line', 'junk'), ('keygen', '--key', self.key, '--principal', '-x'),
+                     ('verify', '--signers', self.signers, '--principal', 'a@b', '--sig', os.path.join(self.tmp, 'absent'))):
+            rc, out, err = self.run_cli(*args, stdin=b'payload')
+            self.assertEqual(rc, 2, repr(args))
+            self.assertEqual(out, b'', repr(args))
+            self.assertTrue(err.strip(), repr(args))
+            self.assertNotIn('Traceback', err, repr(args))
+
+    def test_payload_refuses_a_float_record(self):
+        rec = os.path.join(self.tmp, 'rec.json')
+        with open(rec, 'w') as f:
+            f.write('{"a": 1.5}')
+        rc, out, err = self.run_cli('payload', '--project', 'p', '--feature', 'f', '--kind', 'done', '--rev', '1', '--record', rec)
+        self.assertEqual((rc, out), (2, b''))
+        self.assertIn('float', err)
 
 
 if __name__ == '__main__':
