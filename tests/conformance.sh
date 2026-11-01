@@ -6,7 +6,8 @@
 #              with adapter null is skipped with a message (exit 0).
 #   --stub DIR the provider's test directory, default tests/providers/NAME. It holds `stub` (an executable that stands in
 #              for the vendor, exported to the adapter as $QARGI_TRANSPORT; see tests/providers/lib/stub.py), fixtures/
-#              (what the stub replays) and, for case 9, definition.json.
+#              (what the stub replays), for case 9 definition.json and, for a provider whose start-session builds the body of a
+#              session request, start-session/worker.request.json (the request the sample of cases 1, 5 and 10 uses).
 #   --tool DIR a tool root (a directory with lib/providers/) other than this checkout; the suite of a fixture uses it.
 # Output: one line per case, `ok`, `FAIL` (with the problems indented below) or `skip` (with the reason). Exit 1 when any
 # case fails, 2 on a usage error, else 0. Hermetic: HOME, QARGI_CONF and QARGI_STATE are temporary, the adapter's
@@ -26,6 +27,10 @@
 #      surface whose read_only_barrier is not effectively no; a request the barrier cannot decide is never an allow
 #   9  the definition dispatch-local returns for a read-only member carries the barrier the provider's definition.json
 #      names, and the one for a write member does not carry what it says must be absent
+#  10  a start-session that builds the body of a session request (the response has an `agent`): the body has a model that is
+#      an object {id, effort}, and no tools, skills or mcp_servers at any depth; a request that carries one of those keys, or
+#      lacks a model, an effort or a system prompt, or has a system over 100000 characters, is exit 2 with an error body; a
+#      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
 # A case whose verb the adapter does not implement (exit 3) is skipped. A mutated copy of the tool tree (the descriptor
 # changed, the adapter run from the copy) tests what the descriptor of the provider cannot show on its own: an effort
 # with no control, a surface that is not listed. An adapter must therefore find its descriptor and what it needs relative
@@ -118,7 +123,9 @@ sample() {   # VERB SURFACE: a good request for the verb
     dispatch-local) jq -nc --arg m "$MODEL" --arg p "$W/proj" '{member: "conformance-member", abilities: ["build"], class: "write", model: $m, effort: "high", project_dir: $p}';;
     barrier-check) jq -nc --arg s "$2" --arg c "$W/run/clone" '{surface: $s, class: "read-only", tool_call: {tool: "Bash", command: "ls", cwd: $c}}';;
     provision) jq -nc '{surface: "cloud", project: "conformance", role: "build", mode: "plan"}';;
-    start-session) jq -nc '{surface: "cloud", agent: "conformance-build", task: "conformance task", budget_cents: 100}';;
+    start-session)
+      if [ -f "$STUBDIR/start-session/worker.request.json" ]; then jq -c . "$STUBDIR/start-session/worker.request.json"
+      else jq -nc '{surface: "cloud", agent: "conformance-build", task: "conformance task", budget_cents: 100}'; fi;;
     status|collect|stop) jq -nc --arg i "$SID" '{surface: "cloud", session_id: $i}';;
     cost) jq -nc --arg s "$2" --arg i "$SID" '{surface: $s, session_id: $i}';;
   esac
@@ -421,9 +428,46 @@ case9() {
   finish 9 "$title"
 }
 
+# ---- 10: a session body never carries what the agent has fixed ---------------------------------------------------------
+case10() {
+  begin
+  local title="a session body carries no tools, skills or mcp_servers" req k want
+  if ! listed cloud; then nothing "the provider has no cloud surface"; finish 10 "$title"; return; fi
+  req=$(sample start-session cloud)
+  call start-session "$req"
+  if [ "$RC" = 3 ]; then nothing "start-session is not implemented (exit 3)"; finish 10 "$title"; return; fi
+  if [ "$RC" != 0 ] || ! one_json || [ "$(jq 'has("agent")' <<<"$OUT" 2>/dev/null)" != true ]; then
+    nothing "start-session starts a session itself; there is no request body to check"; finish 10 "$title"; return
+  fi
+  ran
+  jq -e '.agent.model | type == "object" and (.id | type == "string") and (.effort | type == "string")' <<<"$OUT" >/dev/null 2>&1 \
+    || problem "the model of the session is not an object {id, effort}: $(jq -c .agent.model <<<"$OUT" | cut -c1-120)"
+  jq -e '[.. | objects | keys[]] | any(. == "tools" or . == "skills" or . == "mcp_servers") | not' <<<"$OUT" >/dev/null 2>&1 \
+    || problem "the body of the session carries tools, skills or mcp_servers"
+  refuses() {   # LABEL JQ-FILTER: the sample request changed by the filter must be exit 2 with an error body
+    call start-session "$(jq -c "$2" <<<"$req")"
+    if [ "$RC" != 2 ]; then problem "$1: exit $RC, not 2: ${OUT:0:120}"
+    elif ! one_json || [ -n "$(check_schema start-session error "$OUT")" ]; then problem "$1: exit 2 without an error body"
+    elif [ ! -s "$W/stderr" ]; then problem "$1: refused without a message on stderr"; fi
+  }
+  for k in tools skills mcp_servers; do refuses "a request with $k" ". + {$k: []}"; done
+  for k in model effort system; do refuses "a request without $k" "del(.$k)"; done
+  refuses "a system over 100000 characters" '.system = ("x" * 100001)'
+  call start-session "$(jq -c '.system = ("x" * 100000)' <<<"$req")"
+  [ "$RC" = 0 ] || problem "a system of exactly 100000 characters: exit $RC: ${OUT:0:120}"
+  if [ "$(eff cloud read_only_barrier)" = no ]; then
+    refuses "a read-only role with no barrier and no acceptance" '.role = "reviewer" | .profile = "review" | del(.accept_no_barrier)'
+    call start-session "$(jq -c '.role = "reviewer" | .profile = "review" | .accept_no_barrier = true' <<<"$req")"
+    [ "$RC" = 0 ] || problem "a read-only role that accepts having no barrier: exit $RC: ${OUT:0:120}"
+    want="read-only gate"
+  else want="no gate (the barrier exists)"; fi
+  note "$want"
+  finish 10 "$title"
+}
+
 echo "conformance: $NAME ($AD_REL)"
 if [ ! -x "$ADAPTER" ]; then echo "FAIL [0] the adapter $AD_REL does not exist or is not executable"; exit 1; fi
 if [ ! -x "$STUB" ]; then echo "FAIL [0] no stub transport at $STUB (an executable; see tests/providers/lib/stub.py)"; exit 1; fi
-case1; case2; case3; case4; case5; case6; case7; case8; case9
+case1; case2; case3; case4; case5; case6; case7; case8; case9; case10
 echo "conformance: $NAME: $nok ok, $nfail FAIL, $nskip skip"
 [ "$nfail" = 0 ]
