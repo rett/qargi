@@ -10,6 +10,8 @@
 #   agent.sh models [--project P] [--json]     the bases, the profiles (shipped and the project's), the members and what is wrong with them
 #   agent.sh remove NAME
 #   agent.sh for ROLE [--profile P] [--project P] [--json]     the member, model and effort for ROLE under a profile: dispatch spawns it
+#   agent.sh for ROLE [--profile P] --surface cloud --project P [--opt-in] [--json]     the same for the cloud: the registered instance
+#                                                              (<project>-worker or -reviewer, else the legacy <project>-ROLE), its model id and effort
 . "$(dirname "$0")/lib.sh"
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -17,7 +19,7 @@ DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per gua
 PROVIDERS=$root/lib/providers            # one descriptor per provider (its models, its reserved agent names and its local adapter)
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE=''
+POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
 while [ $# -gt 0 ]; do
   case $1 in
     --abilities) ABIL=$2; shift 2;;
@@ -26,6 +28,8 @@ while [ $# -gt 0 ]; do
     --project) PROJ=$2; shift 2;;
     --profile) PROFILE=$2; shift 2;;
     --json) JSON=1; shift;;
+    --surface) SURFACE=${2:-}; shift 2;;
+    --opt-in) OPTIN=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
@@ -333,6 +337,83 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
   fi
 }
 
+# the cloud resolver, in jq (with $PJQ and RESOLVE_HEAD): one role, one profile -> the profile's base, tier, model id and effort, or the
+# refusal. Which instance runs it is decided by resolve_cloud, from the registry.
+CLOUDJQ="$RESOLVE_HEAD"'
+  refusal // {code: 0, out: {role: $role, class: $rclass, profile: $pn, base: $p.base, tier: $p.tier, model: $p.model, model_id: $p.model_id,
+    effort: $p.effort, opt_in: $p.opt_in}}'
+
+cloud_inst() { # name -> the registry record when the name is a registered cloud instance, else nothing (inst_get dies on a miss: in a subshell)
+  [ -f "$REG" ] || return 0
+  (inst_get "$1" 2>/dev/null | jq -ec 'select(.location == "cloud")') 2>/dev/null || true
+}
+
+resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFORT PROFILE (or --json), or the reason on stderr (exit 1, or 2 for a refusal)
+  local role=$1 prof=$2 proj=$3 pf prov res code noeff=false base cls row model alias effort req out rc adapter ovm=no ove=yes
+  local inst='' legacy=true brec='' rec rm n why='' ov alt
+  [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
+  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  ! no_effort "$prov" || noeff=true
+  res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
+    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
+    --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" "$PJQ$CLOUDJQ") || die "could not resolve the profile"
+  code=$(jq -r .code <<<"$res")
+  if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
+  prof=$(jq -r .out.profile <<<"$res"); base=$(jq -r .out.base <<<"$res"); cls=$(jq -r .out.class <<<"$res")
+  if [ "$(jq -r .out.opt_in <<<"$res")" = true ] && [ -z "$OPTIN" ]; then
+    echo "qargi: the $prof profile is opt-in (it runs the frontier model on a cloud session): pass --opt-in when you or the person who dispatches the task names it" >&2; exit 2
+  fi
+  # the model id and the effort come from the provider's adapter (the profile's tier, on the cloud surface); a model with no tier is used as it is
+  model=$(jq -r '.out.model_id // empty' <<<"$res"); alias=$(jq -r '.out.model // empty' <<<"$res"); effort=$(jq -r '.out.effort // empty' <<<"$res")
+  if [ -n "$(jq -r '.out.tier // empty' <<<"$res")" ] && [ -n "$model" ]; then
+    adapter=$(adapter_for "$prov") || exit 1
+    req=$(jq -nc --arg t "$(jq -r .out.tier <<<"$res")" --arg e "$effort" --arg p "$prof" '{surface: "cloud", tier: $t, effort: (if $e == "" then null else $e end), profile: $p}')
+    out=$("$adapter" resolve <<<"$req") && rc=0 || rc=$?
+    [ "$rc" = 0 ] || die "the adapter of the provider '$prov' could not resolve the $prof profile on the cloud surface (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)"
+    model=$(jq -r .model <<<"$out"); effort=$(jq -r '.effort_native // empty' <<<"$out")
+  fi
+  [ -n "$model" ] || die "the $prof profile resolves to no model on the $prov provider"
+  # the base instance takes the model and the effort of the session as overrides: only when the provider is verified to honour them
+  row=build; [ "$cls" != read-only ] || row=review
+  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_model_override 2>/dev/null) || ov=no
+  [ "$ov" = yes ] && ovm=yes
+  if [ -n "$effort" ]; then
+    ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_effort_override 2>/dev/null) || ov=no
+    [ "$ov" = yes ] || ove=no
+  fi
+  [ "$ovm" = yes ] || why=per_dispatch_model_override
+  [ "$ove" = yes ] || why=${why:+$why and }per_dispatch_effort_override
+  rec=$(cloud_inst "$proj-$base")
+  if [ -n "$rec" ] && [ "$ovm" = yes ] && [ "$ove" = yes ]; then
+    inst=$proj-$base; legacy=false
+  else
+    [ -z "$rec" ] || brec=$proj-$base
+    for n in "$proj-$role" "$proj-$row"; do   # the role's own instance, then its class's, as the local order does
+      rec=$(cloud_inst "$n"); [ -z "$rec" ] || { inst=$n; break; }
+    done
+    if [ -z "$inst" ]; then
+      if [ -n "$brec" ]; then
+        alt=$proj-$role; [ "$role" = "$row" ] || alt="$alt or $proj-$row"
+        echo "qargi: the instance $brec is registered, but the provider $prov cannot set the model and effort per dispatch on cloud ($why not verified), and no legacy instance $alt is registered to fall back on. Register one (qargi instances init --location cloud --provision --name $proj-$row), or verify the capability in the provider descriptor" >&2
+        exit 2
+      fi
+      echo "qargi: no cloud instance is registered for the $role role of project $proj: expected $proj-$base (the $cls base) or $proj-$role (qargi instances list; qargi instances init --location cloud ...)" >&2
+      exit 1
+    fi
+    rm=$(jq -r '.agent.model // ""' <<<"$rec")
+    if [ "$rm" != "$model" ] && { [ -z "$alias" ] || [ "$rm" != "$alias" ]; }; then
+      echo "qargi: the instance $inst runs ${rm:-an unrecorded model} and cannot take another per dispatch ($([ -n "$why" ] && echo "$why not verified for the provider $prov" || echo "the base $proj-$base is not registered")), so it cannot run the $prof profile (model $model). Register the base instance: qargi instances init --location cloud --provision --name $proj-$base, or choose a profile with the model of the instance" >&2
+      exit 2
+    fi
+  fi
+  if [ -n "$JSON" ]; then
+    jq -n --arg i "$inst" --arg b "$base" --argjson l "$legacy" --arg m "$model" --arg e "$effort" --arg p "$prof" --arg c "$cls" \
+      '{instance: $i, base: (if $l then null else $b end), legacy: $l, model: $m, effort: (if $e == "" then null else $e end), profile: $p, class: $c}'
+    return 0
+  fi
+  echo "$inst $model ${effort:-default} $prof"
+}
+
 case $verb in
   add) add;;
   list)
@@ -376,6 +457,10 @@ case $verb in
     [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
     [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
-    resolve_for "$a" "$PROFILE" "$PROJ";;
+    case $SURFACE in
+      ''|local) resolve_for "$a" "$PROFILE" "$PROJ";;
+      cloud) [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
+      *) die "--surface: local or cloud";;
+    esac;;
   *) die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac
