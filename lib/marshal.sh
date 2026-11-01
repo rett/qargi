@@ -27,7 +27,8 @@
 #   marshal_finish PROJ NAME          mark NAME finished (no record: nothing to do); returns 1 when another lead holds it
 #   marshal_hold_start PROJ NAME      start a background renewer for a long verb: it renews the lease every ttl/3 minutes
 #                                     (QARGI_MARSHAL_RENEW_SEC seconds when set), prints nothing, ends on marshal_hold_stop,
-#                                     when the renewal is refused (not the lead any more) and when the calling shell is gone
+#                                     when the renewal is refused (not the lead any more) and when the calling shell is gone;
+#                                     an unreachable remote ("remote not checked", exit 3) does not end it: it tries again
 #   marshal_hold_stop                 stop the renewer (harmless when none runs)
 # The renewer is a background subshell that polls its parent pid once a second, so it needs no trap in the calling script
 # and never outlives it, whatever way the script ended.
@@ -76,7 +77,10 @@ marshal_hold_start() { # PROJ NAME
       tick=$((tick + 1))
       if [ "$tick" -ge "$period" ]; then
         tick=0
-        marshal_py "$proj" renew "$name" || exit 0
+        # stop when the renewal is refused (exit 1: another lead holds the feature) or cannot succeed (usage); exit 3 is "remote not
+        # checked": the lease is not lost, try again next round
+        rc=0; marshal_py "$proj" renew "$name" || rc=$?
+        [ "$rc" -eq 3 ] || [ "$rc" -eq 0 ] || exit 0
       fi
     done
   ) &
@@ -85,6 +89,9 @@ marshal_hold_start() { # PROJ NAME
 
 marshal_main() {
   set -eu
+  # the options of this call are the only source of the approval and the plan token; a value inherited from the environment is not
+  # (feature.sh and cred.sh do the same)
+  APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
   local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
        qargi marshal enable [--project P] [--plan TOKEN --approved WORDS] | disable [--project P]"
@@ -165,7 +172,7 @@ marshal_main() {
   if [ "$verb" = takeover ]; then
     local af rc=0
     af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
-    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED+--approved "$APPROVED"} || rc=$?
+    QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$PROJ" takeover "${opt[@]}" ${APPROVED:+--approved "$APPROVED"} || rc=$?
     if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:takeover" "$(cat "$af")"; fi
     rm -f "$af"
     exit "$rc"

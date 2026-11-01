@@ -608,6 +608,26 @@ class Marshal(unittest.TestCase):
                  "qargi marshal Claim", "qargi marshal CLAIM", "qargi marshal STATUS", "qargi marshal Status", "qargi marshal statuss", "qargi marshal check2"]
         self.refused(cmds)
 
+    def test_feature_verbs_that_write_the_marshal_are_refused_however_they_are_run(self):
+        """feature start, finish and verify create, finish and renew the lead's record (marshal_start, marshal_finish and the
+        renewer): a member whose working directory lies outside its run would push them with the lead's credentials."""
+        cmds = []
+        for v in ("start", "finish", "verify"):
+            cmds += ["qargi feature %s f" % v, "qargi feature %s f --project proj" % v, "/opt/q/bin/qargi feature %s f" % v, "bin/qargi feature %s f" % v,
+                     "env FOO=1 qargi feature %s f" % v, "sudo qargi feature %s f" % v, "bash -c 'qargi feature %s f'" % v,
+                     "eval 'qargi feature %s f'" % v, "echo $(qargi feature %s f)" % v, "true && qargi feature %s f" % v, "ls; qargi feature %s f" % v,
+                     "qargi 'feature' '%s' f" % v, "bash lib/feature.sh %s f" % v, "lib/feature.sh %s f" % v, "nohup qargi feature %s f" % v,
+                     "v=%s; qargi feature $v f" % v]
+        cmds += ["qargi feature $v f", "qargi feature \"$v\" f", "qargi feature ${V:-start} f", "qargi feature frobnicate f", "qargi feature START f"]
+        self.refused(cmds)
+
+    def test_the_other_feature_verbs_stay_allowed(self):
+        for c in ("qargi feature list", "qargi feature status f", "qargi feature status f --project proj", "qargi feature merge f agent/x",
+                  "qargi feature sync f", "/opt/q/bin/qargi feature status f", "echo qargi feature start f", "git log --grep 'feature finish'",
+                  "grep -n 'feature start' lib/commands.py", "ls lib/feature.sh", "cat lib/feature.sh"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_switch_directory_is_protected_like_features(self):
         """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
         m = os.path.join(self.state, "marshal")
