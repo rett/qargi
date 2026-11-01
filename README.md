@@ -326,7 +326,7 @@ Search is not a role: mapping the repository and finding call sites is done by a
 
 Moving from one-per-ability members: `qargi agent add worker` and `qargi agent add reviewer` (each defaults to its base's abilities), `qargi agent models` to see the legacy members flagged, then retire builder, writer and tester with `qargi agent remove`. The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
 
-Cloud is unchanged for now: four role agents, with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`).
+Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
 
 ## Providers
 

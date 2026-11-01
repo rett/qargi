@@ -14,6 +14,7 @@ verb=${1:-}; shift || true
 
 check_one() { # name -> prints problems, returns 1 if any
   local n=$1 d bad=0 c
+  ! is_base "$n" || { echo "$n: reserved for a cloud base (worker, reviewer); no role may take it"; return 1; }
   d=$(role_dir "$n") || { echo "$n: no such role (needs role.json and ROLE.md)"; return 1; }
   jq -e . "$d/role.json" >/dev/null 2>&1 || { echo "$n: role.json is not valid JSON"; return 1; }
   c=$(jq -r '.class // empty' "$d/role.json")

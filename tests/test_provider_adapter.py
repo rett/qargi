@@ -125,7 +125,7 @@ class Resolve(Tree):
 
 class Protocol(Tree):
     def test_not_built_verbs_are_unsupported_for_local(self):
-        for verb in ("provision", "start-session", "status", "collect", "stop", "cost"):
+        for verb in ("provision", "status", "collect", "stop", "cost"):
             with self.subTest(verb=verb):
                 rc, out = run(ADAPTER, verb, {})
                 self.assertEqual((rc, out), (3, {"error": "not implemented for local"}))
@@ -467,6 +467,230 @@ class Derived(Tree):
         rc, out = self.qargi("provision", "plan", "--project", "zed", "--role", "build")
         self.assertEqual(rc, 1)
         self.assertIn("models.provider 'nope' has no descriptor", out)
+
+FIXTURES = os.path.join(HERE, "providers", "claude", "start-session")
+sys.path.insert(0, os.path.join(HERE, "providers", "lib"))
+import validate  # noqa: E402
+
+with open(os.path.join(ROOT, "lib", "providers", "adapter-schema.json")) as _f:
+    SCHEMA = json.load(_f)
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name + ".json")) as f:
+        return json.load(f)
+
+
+def keys_anywhere(v):
+    """Every object key at any depth."""
+    if isinstance(v, dict):
+        return set(v) | set().union(*[keys_anywhere(x) for x in v.values()]) if v else set()
+    if isinstance(v, list):
+        return set().union(*[keys_anywhere(x) for x in v]) if v else set()
+    return set()
+
+
+class StartSession(Tree):
+    """start-session on the cloud surface builds the sessions-create body and makes no call: a pure request builder."""
+
+    def req(self, **patch):
+        r = fixture("worker.request")
+        r.update(patch)
+        return {k: v for k, v in r.items() if v is not None}
+
+    def call(self, req, adapter=None, env=None):
+        r = subprocess.run([adapter or ADAPTER, "start-session"], input=json.dumps(req), capture_output=True, text=True, env=env)
+        lines = r.stdout.strip().splitlines()
+        self.assertEqual(len(lines), 1, (r.stdout, r.stderr))
+        return r.returncode, json.loads(lines[0]), r.stderr
+
+    def test_the_worker_body_is_the_golden_one(self):
+        rc, out, _ = self.call(fixture("worker.request"))
+        self.assertEqual((rc, out), (0, fixture("worker.body")))
+
+    def test_the_reviewer_with_the_acceptance_is_the_golden_one(self):
+        rc, out, _ = self.call(fixture("reviewer-accepted.request"))
+        self.assertEqual((rc, out), (0, fixture("reviewer-accepted.body")))
+
+    def test_the_model_is_always_an_object_with_the_id_and_the_effort(self):
+        for model in ("sonnet", "claude-sonnet-5-5", "fable", "claude-opus-5-5"):
+            with self.subTest(model=model):
+                rc, out, _ = self.call(self.req(model=model))
+                self.assertEqual(rc, 0)
+                m = out["agent"]["model"]
+                self.assertIsInstance(m, dict)
+                self.assertEqual(set(m), {"id", "effort"})
+                self.assertTrue(m["id"].startswith("claude-"))
+
+    def test_an_alias_becomes_the_id_of_its_tier(self):
+        for tier, row in CLAUDE["tier_detail"].items():
+            with self.subTest(tier=tier):
+                rc, out, _ = self.call(self.req(model=row["alias"]))
+                self.assertEqual((rc, out["agent"]["model"]["id"]), (0, row["model"]))
+
+    def test_the_effort_comes_from_the_effort_map_of_the_adapter(self):
+        self.descriptor(lambda d: d["effort"].update(xhigh="extra"))
+        rc, out, _ = self.call(self.req(effort="xhigh"), adapter=self.adapter)
+        self.assertEqual((rc, out["agent"]["model"]["effort"]), (0, "extra"))
+
+    def test_an_effort_with_no_control_is_refused_not_dropped(self):
+        self.descriptor(lambda d: d["effort"].update(max=None))
+        rc, out, err = self.call(self.req(effort="max"), adapter=self.adapter)
+        self.assertEqual(rc, 2)
+        self.assertIn("max", out["error"])
+        self.assertIn("max", err)
+
+    def test_optional_parts_are_left_out_or_empty(self):
+        rc, out, _ = self.call(self.req(resources=None, vault_ids=None, initial_events=None, budget=None, metadata=None))
+        self.assertEqual(rc, 0)
+        self.assertEqual((out["resources"], out["vault_ids"], out["metadata"]), ([], [], {}))
+        self.assertNotIn("budget", out)
+        self.assertNotIn("initial_events", out)
+
+    def test_the_body_never_carries_tools_skills_or_mcp_servers(self):
+        for name in ("worker.request", "reviewer-accepted.request"):
+            rc, out, _ = self.call(fixture(name))
+            self.assertEqual(rc, 0)
+            self.assertEqual(keys_anywhere(out["agent"]) & {"tools", "skills", "mcp_servers"}, set())
+            self.assertEqual(set(out) & {"tools", "skills", "mcp_servers"}, set())
+
+    def test_a_request_with_tools_skills_or_mcp_servers_is_refused(self):
+        for name, key in (("tools", "tools"), ("skills", "skills"), ("mcp-servers", "mcp_servers")):
+            with self.subTest(key=key):
+                rc, out, err = self.call(fixture("refused/%s.request" % name))
+                self.assertEqual(rc, 2)
+                self.assertIn(key, out["error"])
+                self.assertIn(key, err)
+
+    def test_a_missing_model_effort_or_system_is_refused(self):
+        for name, key in (("no-model", "model"), ("no-effort", "effort"), ("no-system", "system")):
+            with self.subTest(key=key):
+                rc, out, err = self.call(fixture("refused/%s.request" % name))
+                self.assertEqual(rc, 2)
+                self.assertIn(key, out["error"])
+                self.assertIn(key, err)
+        for key in ("model", "effort", "system"):
+            for empty in (None, ""):
+                with self.subTest(key=key, empty=empty):
+                    r = self.req()
+                    r[key] = empty
+                    self.assertEqual(self.call(r)[0], 2)
+
+    def test_a_system_over_100000_characters_is_refused(self):
+        rc, out, _ = self.call(self.req(system="x" * 100000))
+        self.assertEqual((rc, len(out["agent"]["system"])), (0, 100000))
+        rc, out, err = self.call(self.req(system="x" * 100001))
+        self.assertEqual(rc, 2)
+        self.assertIn("100000", out["error"])
+        self.assertIn("100000", err)
+        rc, _, _ = self.call(self.req(system="\u00e9" * 100000))          # characters, not bytes
+        self.assertEqual(rc, 0)
+
+    def test_a_read_only_base_or_profile_needs_the_acceptance(self):
+        for role, profile in (("reviewer", "review"), ("reviewer", None), ("reviewer", "researcher"), ("review", None), ("worker", "auditor"), ("advisor", None)):
+            with self.subTest(role=role, profile=profile):
+                rc, out, err = self.call(self.req(role=role, profile=profile))
+                self.assertEqual(rc, 2)
+                self.assertIn("accept", out["error"])
+                self.assertIn("qargi provider accept", err)
+                rc, out, _ = self.call(self.req(role=role, profile=profile, accept_no_barrier=True))
+                self.assertEqual(rc, 0)
+
+    def test_the_reviewer_fixture_without_the_acceptance_is_refused_with_the_command(self):
+        rc, out, err = self.call(fixture("refused/reviewer-no-acceptance.request"))
+        self.assertEqual(rc, 2)
+        self.assertIn("provider accept claude --surface cloud --no-barrier", out["error"])
+        self.assertEqual(err, "qargi: " + out["error"] + "\n")
+
+    def test_an_unknown_role_fails_closed_as_read_only(self):
+        for role, profile in (("mystery", None), ("worker", "mystery"), ("lead", None)):
+            with self.subTest(role=role, profile=profile):
+                self.assertEqual(self.call(self.req(role=role, profile=profile))[0], 2)
+
+    def test_a_write_role_needs_no_acceptance(self):
+        for role, profile in (("worker", "build"), ("worker", None), ("write", None), ("test", None), ("build", None)):
+            with self.subTest(role=role, profile=profile):
+                self.assertEqual(self.call(self.req(role=role, profile=profile))[0], 0)
+
+    def test_the_acceptance_must_be_the_boolean_true(self):
+        for v in ("true", 1, "yes", {}):
+            with self.subTest(v=v):
+                self.assertEqual(self.call(self.req(role="reviewer", profile="review", accept_no_barrier=v))[0], 1)
+        self.assertEqual(self.call(self.req(role="reviewer", profile="review", accept_no_barrier=False))[0], 2)
+
+    def test_a_verified_barrier_on_cloud_needs_no_acceptance(self):
+        def mutate(d):
+            d["capabilities"]["read_only_barrier"]["cloud"] = {"value": "yes", "verified_on": "2026-10-31", "source": "test", "note": "a changed copy"}
+        self.descriptor(mutate)
+        rc, out, _ = self.call(self.req(role="reviewer", profile="review"), adapter=self.adapter)
+        self.assertEqual(rc, 0, out)
+
+    def test_it_makes_no_transport_call(self):
+        log = os.path.join(self.tmp, "calls")
+        stub = os.path.join(self.tmp, "stub")
+        with open(stub, "w") as f:
+            f.write('#!/bin/sh\necho "$@" >> "%s"\nexit 4\n' % log)
+        os.chmod(stub, 0o755)
+        rc, out, _ = self.call(fixture("worker.request"), env=dict(os.environ, QARGI_TRANSPORT=stub))
+        self.assertEqual(rc, 0)
+        self.assertFalse(os.path.exists(log))
+
+    def test_credentials_are_neither_needed_nor_echoed(self):
+        rc, out, err = self.call(self.req(credentials={"api_key": "SECRET-TEST-VALUE"}))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("SECRET-TEST-VALUE", json.dumps(out) + err)
+
+    def test_the_local_surface_and_an_unlisted_cloud_are_unsupported(self):
+        self.assertEqual(self.call(self.req(surface="local"))[0], 3)
+        def mutate(d):
+            d["surfaces"] = ["local"]
+            for cap in d["capabilities"].values():
+                cap.pop("cloud", None)
+        self.descriptor(mutate)
+        self.assertEqual(self.call(self.req(), adapter=self.adapter)[0], 3)
+
+    def test_a_bad_request_is_exit_1(self):
+        bad = {"no surface": {"surface": None}, "moon": {"surface": "moon"}, "no role": {"role": None}, "role type": {"role": 3},
+               "profile type": {"profile": 3}, "no agent id": {"agent_id": None}, "agent id type": {"agent_id": 7},
+               "no version": {"agent_version": None}, "version type": {"agent_version": "3"}, "version bool": {"agent_version": True},
+               "no environment": {"environment_id": None}, "model type": {"model": 5}, "effort enum": {"effort": "turbo"},
+               "model pattern": {"model": "gpt-9"}, "system type": {"system": ["x"]}, "resources type": {"resources": {}},
+               "resource item": {"resources": ["x"]}, "vault type": {"vault_ids": "v"}, "vault item": {"vault_ids": [1]},
+               "events type": {"initial_events": {}}, "budget type": {"budget": 5}, "metadata type": {"metadata": []},
+               "metadata value": {"metadata": {"a": 1}}, "unknown field": {"task": "do it"}, "legacy agent": {"agent": "x"}}
+        for label, patch in bad.items():
+            with self.subTest(label):
+                self.assertEqual(self.call(self.req(**patch))[0], 1)
+        for raw in ("not json", "[]", ""):
+            r = subprocess.run([ADAPTER, "start-session"], input=raw, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1)
+
+
+class StartSessionSchema(unittest.TestCase):
+    """The request and the response of start-session, and the optional effort of provision, in lib/providers/adapter-schema.json."""
+
+    def test_the_goldens_and_the_refusals_are_in_the_schema(self):
+        for name in ("worker", "reviewer-accepted"):
+            self.assertEqual(validate.problems(SCHEMA, "start-session", "request", fixture(name + ".request")), [])
+            self.assertEqual(validate.problems(SCHEMA, "start-session", "response", fixture(name + ".body")), [])
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "error", {"error": "refused"}), [])
+
+    def test_the_schema_keeps_the_old_session_shape_and_closes_the_new_one(self):
+        old = {"surface": "cloud", "agent": "demo-build", "task": "t", "budget_cents": 100}
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "request", old), [])
+        self.assertEqual(validate.problems(SCHEMA, "start-session", "response", {"session_id": "s", "state": "running"}), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "request", dict(fixture("worker.request"), extra=1)), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "request", {"surface": "cloud"}), [])
+        body = fixture("worker.body")
+        body["agent"]["model"] = "claude-sonnet-5-5"                  # a plain string would reset the effort
+        self.assertNotEqual(validate.problems(SCHEMA, "start-session", "response", body), [])
+
+    def test_provision_takes_an_optional_effort(self):
+        req = {"surface": "cloud", "project": "p", "role": "worker", "mode": "plan"}
+        self.assertEqual(validate.problems(SCHEMA, "provision", "request", req), [])
+        self.assertEqual(validate.problems(SCHEMA, "provision", "request", dict(req, effort="high")), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "provision", "request", dict(req, effort="turbo")), [])
+        self.assertNotEqual(validate.problems(SCHEMA, "provision", "request", dict(req, tools=[])), [])
 
 
 class Hardcodes(unittest.TestCase):

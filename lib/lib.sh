@@ -43,10 +43,11 @@ done
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
 # A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions).
 # Four ship with qargi (build, write, review, test; <tool>/roles); you add your own under <config>/roles. Role names are one
-# lower-case token, unique across both places, and never "lead".
+# lower-case token, unique across both places, and never "lead", "worker" or "reviewer" (the last two are the cloud bases).
 ROLE_BUILTIN="build review write test"
-role_dir() { # name -> the directory of the role, or fails
+role_dir() { # name -> the directory of the role, or fails (a base name is never a role, whatever directory carries it)
   local d
+  ! is_base "$1" || return 1
   for d in "$QARGI_TOOL/roles/$1" "$DA_CONF/roles/$1"; do
     if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ]; then echo "$d"; return 0; fi
   done
@@ -58,13 +59,31 @@ role_names() { # the built-in roles, then yours in name order
   for d in "$DA_CONF"/roles/*/; do
     r=$(basename "$d")
     case " $ROLE_BUILTIN " in *" $r "*) continue;; esac
-    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ]; then echo "$r"; fi
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ] && ! is_base "$r"; then echo "$r"; fi
   done
 }
 role_class() { # name -> write | read-only (lead: coordinator)
   [ "$1" != lead ] || { echo coordinator; return 0; }
   local d; d=$(role_dir "$1") || return 1
   jq -r '.class // "write"' "$d/role.json"
+}
+# The two cloud bases are instance names too: worker (write) and reviewer (read-only), from the bases of model-defaults.json.
+_QARGI_DEFAULTS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/model-defaults.json
+base_class() { # name -> the class of a base (worker, reviewer), or fails when the name is not a base
+  [ -f "$_QARGI_DEFAULTS" ] || return 1
+  jq -er --arg n "$1" '.bases[$n].class // empty' "$_QARGI_DEFAULTS" 2>/dev/null
+}
+is_base() { base_class "$1" >/dev/null; }
+instance_class() { # name -> write | read-only | coordinator; never fails, and a name or a class it does not know is read-only
+  local c
+  [ "$1" != lead ] || { echo coordinator; return 0; }
+  if is_base "$1"; then c=$(base_class "$1"); else c=$(role_class "$1" 2>/dev/null) || c=''; fi
+  case $c in write|read-only) echo "$c";; *) echo read-only;; esac
+}
+class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a base, and those of the project's own profiles that use it
+  local f=${2:-}; [ -f "$f" ] && jq -e . "$f" >/dev/null 2>&1 || f=''
+  jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
+    '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
 run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
   local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
@@ -79,8 +98,8 @@ valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
 # split_instance NAME: sets PROJECT and ROLE, or dies with the rule.
 split_instance() {
   PROJECT=${1%%-*}; ROLE=${1#*-}
-  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
-    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
+  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || { ! valid_role "$ROLE" && ! is_base "$ROLE"; }; then
+    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES, or a base: worker, reviewer"
   fi
 }
 
@@ -267,7 +286,7 @@ lead_teams_block() { # project
 
 # tools_off ROLE PROJECT_JSON: the built-in tools a cloud role does not get (roles.<role>.tools_off overrides the default).
 tools_off() {
-  local d='web_search web_fetch'; case $(role_class "$1" 2>/dev/null) in read-only|coordinator) d='web_search web_fetch edit';; esac
+  local d='web_search web_fetch edit write'; [ "$(instance_class "$1")" != write ] || d='web_search web_fetch'   # any class but write: no edit, no write
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
@@ -280,6 +299,8 @@ prompt_root() {
 agent_prompt() { # role [project]
   local root; root=$(prompt_root)
   local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 sk=$root/skills
+  # a base (worker, reviewer) is a role-neutral agent: the role text comes with each session, so the agent itself holds only a short fallback
+  if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
   [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
