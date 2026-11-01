@@ -163,6 +163,8 @@ case $verb in
     fi
     [ "$ABILITY" != lead ] && valid_role "$ABILITY" || die "--role: one of $DA_ROLES (qargi role list)"
     CLASS=$(role_class "$ABILITY")
+    # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
+    [ "$CLASS" != read-only ] || barrier_guard local "$(project_of "$REPO" "$URL")"
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
@@ -270,6 +272,11 @@ WRAP
     fi;;
   verify)
     RUN=${1:-}; [ -f "$RUN/refs.before" ] || die "verify needs a RUN dir made by prepare"
+    # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
+    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+      echo "qargi: $RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $RUN/out/report.md, and do not apply or accept the patches." >&2
+      exit 2
+    fi
     if check_run "$RUN"; then
       if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
       else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi

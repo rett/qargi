@@ -11,6 +11,7 @@ import json, os, re, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import methodology as M  # noqa: E402
+import provider as PV  # noqa: E402
 
 
 def git(d, *args):
@@ -192,10 +193,11 @@ def detect(d, name=None, methodology="gitflow"):
         questions.append("repo.long_lived: no master, main, trunk or develop branch was found; name the branches no agent may touch")
     if not cmd:
         questions.append("test_command: no test command was recognised; name the command that runs the whole suite")
+    default_model = PV.load("claude")["tiers"]["balanced"]   # a project that is not stored yet has the default provider
     roles = {}
     for r, cfg in (m.get("roles") or {}).items():
         base = cfg.get("base", "@dispatcher")
-        roles[r] = {"base": base, "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high" if r in ("build", "test") else "medium", "apt": [], "skills": []}
+        roles[r] = {"base": base, "push": {"mode": "none"}, "model": default_model, "effort": "high" if r in ("build", "test") else "medium", "apt": [], "skills": []}
     answers = {
         "schema": 1, "project": pname, "methodology": methodology,
         "repo": {"url": https_url(remote) if remote else "https://github.com/OWNER/REPO", "path": dpath, "credential_file": "",

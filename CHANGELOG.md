@@ -7,6 +7,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Providers. Each model provider is a descriptor (`lib/providers/NAME.json`, one schema) with its tier-to-model map and verification
+  dates, effort levels, surfaces and a per-surface capability matrix; `qargi provider list|show|check` prints and validates them,
+  and `check` says what degrades (an unverified capability counts as unsupported). The `claude` provider has a local adapter
+  (`lib/providers/claude/adapter`: resolve, dispatch-local, barrier-check) behind which members are rendered, and the Claude model ids
+  and id pattern that were spread through the code now come from its descriptor. A surface with no read-only barrier cannot serve
+  the review role unless the project records `models.accept_no_barrier` with `qargi provider accept` (plan and token, audit-logged);
+  for `claude` that means a cloud review role needs your acceptance, while the local guard counts as a partial barrier. A provider with
+  no effort control has the effort dropped and `agent models` says so, `agent for` refuses a profile on a provider that cannot override
+  the model per dispatch, and `local verify` and `review apply` never apply patches from a read-only run. `bash tests/conformance.sh NAME`
+  runs a conformance suite (verb shapes, unsupported verbs, secrets out of argv, a barrier corpus, the read-only definition) against an
+  adapter, with a deliberately broken adapter proving the suite catches faults. A member cannot run `provider accept`.
 - Base members and profiles. Two base members, one per guard class: `worker` (build, write, test) and `reviewer` (review, read-only);
   `qargi agent add worker|reviewer` defaults to the base's own abilities and refuses abilities of the other class. Specializations
   are profiles {base, tier, effort, purpose}, resolved at dispatch: shipped `build`, `write`, `test`, `review`, `auditor` (Haiku),

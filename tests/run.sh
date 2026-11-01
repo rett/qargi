@@ -13,6 +13,11 @@ run() { local s=$SECONDS; echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | 
 run python3 tests/test_canon.py
 run python3 tests/test_tiers.py
 run bash tests/test_models.sh
+run python3 tests/test_provider.py
+run python3 tests/test_provider_adapter.py
+run bash tests/test_provider_degrade.sh
+run bash tests/conformance.sh claude
+run bash tests/test_conformance_selftest.sh
 run python3 tests/test_tierplan.py
 run bash tests/test_tier_hook.sh
 run bash tests/test_tier_packet.sh

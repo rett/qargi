@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qargi-provider-adapter-1",
+  "title": "The request and the response of every verb of a provider adapter (lib/providers/NAME/adapter VERB)",
+  "description": "An adapter is called as `adapter VERB` with ONE JSON object on stdin and prints ONE JSON object on stdout. Exit codes: 0 ok (stdout is the verb's response), 1 bad request, 2 refused by policy, 3 unsupported (the descriptor says no or unverified for what the verb needs, the surface is not listed, or the verb is not built for the surface), 4 transport error. Any other exit code is a failure of the adapter. For every exit code but 0 stdout is {error}. Vendor access goes only through the executable in $QARGI_TRANSPORT; secrets (the credentials object of a request) never appear in the adapter's argv or in what it prints. The conformance suite (tests/conformance.sh) checks an adapter against this file with tests/providers/lib/validate.py, a stdlib subset: type, enum, const, pattern, required, properties, additionalProperties, items, minItems, minLength, minimum, anyOf and a local $ref. verbs.VERB.request and verbs.VERB.response are the schemas of the two sides; `error` is the schema of stdout for a nonzero exit.",
+  "exit_codes": {"0": "ok", "1": "bad request", "2": "refused by policy", "3": "unsupported", "4": "transport error"},
+  "verbs": {
+    "resolve": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["surface", "tier"],
+        "properties": {
+          "surface": {"$ref": "#/$defs/surface"},
+          "tier": {"$ref": "#/$defs/tier"},
+          "effort": {"enum": ["low", "medium", "high", "xhigh", "max", "", null]},
+          "profile": {"type": ["string", "null"]}
+        }
+      },
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["model", "alias", "effort_native", "notes"],
+        "properties": {
+          "model": {"type": "string", "minLength": 1},
+          "alias": {"type": ["string", "null"]},
+          "effort_native": {"type": ["string", "null"]},
+          "notes": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "dispatch-local": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["member", "abilities", "class", "model"],
+        "properties": {
+          "member": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+          "abilities": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}},
+          "class": {"$ref": "#/$defs/class"},
+          "model": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+          "effort": {"enum": ["low", "medium", "high", "xhigh", "max", "", null]},
+          "project_dir": {"type": "string", "minLength": 1}
+        }
+      },
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["definition", "spawn"],
+        "properties": {
+          "definition": {
+            "type": "object", "additionalProperties": false, "required": ["path", "text"],
+            "properties": {"path": {"type": "string", "minLength": 1}, "text": {"type": "string", "minLength": 1}}
+          },
+          "spawn": {
+            "type": "object", "additionalProperties": false, "required": ["agent_type", "model_alias", "effort"],
+            "properties": {"agent_type": {"type": "string", "minLength": 1}, "model_alias": {"type": ["string", "null"]}, "effort": {"type": ["string", "null"]}}
+          }
+        }
+      }
+    },
+    "barrier-check": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["surface", "class", "tool_call"],
+        "properties": {
+          "surface": {"$ref": "#/$defs/surface"},
+          "class": {"$ref": "#/$defs/class"},
+          "tool_call": {
+            "type": "object", "additionalProperties": false, "required": ["tool"],
+            "anyOf": [{"required": ["command"]}, {"required": ["path"]}],
+            "properties": {
+              "tool": {"type": "string", "minLength": 1},
+              "command": {"type": "string"},
+              "path": {"type": "string"},
+              "cwd": {"type": "string"}
+            }
+          }
+        }
+      },
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["decision", "reason"],
+        "properties": {"decision": {"enum": ["allow", "deny"]}, "reason": {"type": "string"}}
+      }
+    },
+    "provision": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["surface", "project", "role", "mode"],
+        "properties": {
+          "surface": {"const": "cloud"},
+          "project": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1},
+          "mode": {"enum": ["plan", "apply"]},
+          "model": {"type": "string"},
+          "credentials": {"$ref": "#/$defs/credentials"}
+        }
+      },
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["mode", "plan", "applied"],
+        "properties": {
+          "mode": {"enum": ["plan", "apply"]},
+          "plan": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["action", "resource", "name"],
+              "properties": {"action": {"enum": ["create", "update", "keep", "delete"]}, "resource": {"type": "string", "minLength": 1}, "name": {"type": "string", "minLength": 1}}
+            }
+          },
+          "applied": {"type": "boolean"}
+        }
+      }
+    },
+    "start-session": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["surface", "agent", "task"],
+        "properties": {
+          "surface": {"const": "cloud"},
+          "agent": {"type": "string", "minLength": 1},
+          "task": {"type": "string", "minLength": 1},
+          "budget_cents": {"type": "integer", "minimum": 0},
+          "credentials": {"$ref": "#/$defs/credentials"}
+        }
+      },
+      "response": {"$ref": "#/$defs/session"}
+    },
+    "status": {
+      "request": {"$ref": "#/$defs/session_request"},
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["session_id", "state", "cost_cents"],
+        "properties": {"session_id": {"type": "string", "minLength": 1}, "state": {"$ref": "#/$defs/state"}, "cost_cents": {"type": ["integer", "null"], "minimum": 0}}
+      }
+    },
+    "collect": {
+      "request": {"$ref": "#/$defs/session_request"},
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["session_id", "state", "artifacts", "output"],
+        "properties": {
+          "session_id": {"type": "string", "minLength": 1},
+          "state": {"$ref": "#/$defs/state"},
+          "artifacts": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "path"], "properties": {"name": {"type": "string", "minLength": 1}, "path": {"type": "string", "minLength": 1}}}},
+          "output": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "stop": {
+      "request": {"$ref": "#/$defs/session_request"},
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["session_id", "stopped", "state"],
+        "properties": {"session_id": {"type": "string", "minLength": 1}, "stopped": {"type": "boolean"}, "state": {"$ref": "#/$defs/state"}}
+      }
+    },
+    "cost": {
+      "request": {
+        "type": "object", "additionalProperties": false, "required": ["surface"],
+        "properties": {"surface": {"$ref": "#/$defs/surface"}, "session_id": {"type": "string", "minLength": 1}}
+      },
+      "response": {
+        "type": "object", "additionalProperties": false, "required": ["unit", "amount"],
+        "description": "the unit is cents, or the amount is null (the provider cannot say what it cost; the unit is then null)",
+        "properties": {"unit": {"enum": ["cents", null]}, "amount": {"type": ["integer", "null"], "minimum": 0}}
+      }
+    }
+  },
+  "error": {
+    "type": "object", "additionalProperties": false, "required": ["error"],
+    "properties": {"error": {"type": "string", "minLength": 1}}
+  },
+  "$defs": {
+    "surface": {"enum": ["local", "cloud"]},
+    "tier": {"enum": ["fast", "balanced", "deep", "frontier"]},
+    "class": {"enum": ["write", "read-only"]},
+    "state": {"enum": ["starting", "running", "idle", "completed", "failed", "stopped"]},
+    "credentials": {"type": "object", "description": "secrets for the vendor; they travel on stdin of the adapter and, to the transport, on its stdin or in its environment, never in argv", "additionalProperties": {"type": "string"}},
+    "session_request": {
+      "type": "object", "additionalProperties": false, "required": ["surface", "session_id"],
+      "properties": {"surface": {"const": "cloud"}, "session_id": {"type": "string", "minLength": 1}}
+    },
+    "session": {
+      "type": "object", "additionalProperties": false, "required": ["session_id", "state"],
+      "properties": {"session_id": {"type": "string", "minLength": 1}, "state": {"$ref": "#/$defs/state"}}
+    }
+  }
+}

@@ -377,6 +377,70 @@ Print a role's instructions as a task block carries them.
 Validate one role, or all of them.
 .RE
 .TP
+.B qargi provider
+List and check the model providers: tiers, models and what each can do.
+.PP
+A provider is a descriptor, lib/providers/NAME.json, with one schema for every provider: the model each tier (fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool list per agent, a read\-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not verified counts as not supported. A provider with no read\-only barrier on a surface cannot serve the review role there unless you accept that with qargi provider accept. The project's models.provider chooses the provider (default claude).
+.RS
+.TP
+.B list
+List the providers with the surfaces they serve and whether the descriptor is clean.
+.RE
+.RS
+.TP
+.BI "show " "NAME"
+Print one provider: tiers and models, effort levels and the capability matrix per surface.
+.RS
+.TP
+.B \-\-json
+machine\-readable.
+.RE
+.RE
+.RS
+.TP
+.BI "accept " "NAME"
+Record that you accept a provider surface that has no read\-only barrier.
+.br
+Without \-\-plan and \-\-approved it prints what would be recorded and a plan token. Applied, it writes models.accept_no_barrier.SURFACE (who, when, why) to the project's answers and the audit log. It is the only way a provider surface whose read\-only barrier is not supported can serve the review role.
+.RS
+.TP
+.BI "\-\-surface " "SURFACE"
+the surface the acceptance covers.
+.RE
+.RS
+.TP
+.B \-\-no\-barrier
+accept running the review role without a read\-only barrier on that surface.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project whose answers record it (default: the project of the current directory).
+.RE
+.RS
+.TP
+.BI "\-\-asked " "WORDS"
+your words asking for it.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your words approving the plan.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed without it.
+.RE
+.RE
+.RS
+.TP
+.BI "check " "NAME"
+Validate a descriptor and say what degrades.
+.br
+Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles therefore cannot be served (for example review where the read\-only barrier is not supported).
+.RE
+.TP
 .B qargi provision
 Create the cloud agent, deployment and environment of an instance.
 .PP
