@@ -40,8 +40,10 @@ this machine's key ($QARGI_CONF/credentials/marshal_ed25519, lib/marshal_sign.py
 ($STATE/marshal/<project>.signers) and tags it signed, unsigned or INVALID ("cannot verify" for a sig_v it does not know). Advisory
 uses every record and shows the tag; strict ignores what is not signed, with a warning, and falls back to the last accepted record
 of the feature. The last accepted record of each feature is kept in $STATE/features/.accepted-<project>.json {name: [rev, oid]}
-(a high-water mark): a record with a lower rev, the same rev and another oid, or that does not descend from the accepted one is a
-rollback, warned about as such and never used. When the head of a ref is not an accepted record (strict: not signed or not valid; or a
+(a high-water mark): a record with a lower rev, the same rev and another record, or that does not descend from the accepted one is a
+rollback, warned about as such and never used. A record is what its signature covers (rev, digest of the record, signed parent), not the oid
+of the commit that carries it: the same signed record in a commit made again (another committer date) is the same record, it neither
+counts as a fork nor restarts a lease timer, and the descent check follows the chain by oid and, failing that, by record identity. When the head of a ref is not an accepted record (strict: not signed or not valid; or a
 signed rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
 the last accepted one, and a write builds on that: a record that was valid is never dropped by a write, junk or replayed pushes can neither
 renew a lease (the timer counts the accepted oid only) nor block the lead. Advisory uses an unsigned or INVALID head as it is (a write
@@ -388,6 +390,41 @@ class Integrity:
     def entry(self, rec, head, acc, tag, why, signer):
         return dict(rec, _oid=head, _acc=acc, _tag=tag, _why=clean(why)[:300], _signer=signer)
 
+    def ident(self, name, oid):
+        """What the signature of the record in commit `oid` covers of it: marshal_sign.record_ident of the record and of the parent the
+        commit sits on (a record commit has one parent at most), or None when it cannot be read."""
+        rec, _ = self.R.read_one(self.ctx.repo, oid, name)
+        if rec is None or sane(rec):
+            return None
+        info = self.R.commit_info(self.ctx.repo, oid)
+        return self.S.record_ident(rec, info[0][0] if info and info[0] else None) if info else None
+
+    def same(self, name, aoid, oid):
+        """Do the commits carry the same signed record (rev, record digest, signed parent), whatever their own oids are?"""
+        a = self.ident(name, aoid)
+        return a is not None and a == self.ident(name, oid)
+
+    def descends(self, name, aoid, oid):
+        """Does the chain under commit `oid` hold the accepted record `aoid`? By oid when it can, else by record identity: a record that
+        was committed again (another committer date) is the same record, and a chain that runs through it descends from it."""
+        repo, R = self.ctx.repo, self.R
+        if R.is_ancestor(repo, aoid, oid):
+            return True
+        want = self.ident(name, aoid)
+        if want is None:
+            return False
+        for c, _ in R.chain(repo, oid, WALK):
+            got = self.ident(name, c)
+            if got == want:
+                return True
+            if got is not None and got[0] < want[0]:
+                break                                                     # everything below is older than the accepted record
+        return False
+
+    def check(self, marks, name, rec, oid):
+        """hw_check by record identity: (ok, why)."""
+        return self.S.hw_check(marks, name, rec["rev"], oid, lambda a, b: self.descends(name, a, b), lambda a, b: self.same(name, a, b))
+
     def newest_valid(self, name, marks, head):
         """The newest record under `head` (first parent chain, at most WALK commits, `head` itself first) that is signed, verifies and
         passes the high-water mark: it is at or after the accepted one and descends from it -> (oid, rec, signer) or None. A reader that
@@ -403,7 +440,7 @@ class Integrity:
                 continue
             if rec["rev"] < marks[name][0]:
                 break                                                     # everything below is older than what was accepted
-            ok, _ = S.hw_check(marks, name, rec["rev"], oid, lambda a, b: R.is_ancestor(repo, a, b))
+            ok, _ = self.check(marks, name, rec, oid)
             if ok:
                 return oid, rec, rec.get("signer") if S.principal_ok(rec.get("signer")) else None
         return None
@@ -438,8 +475,10 @@ class Integrity:
             tag, why, signer = self.tags.get(("features", name), ("unsigned", "", None))
             cur = self.entry(rec, oid, oid, tag, why, signer)
             if tag == "signed":
-                ok, w = S.hw_check(marks, name, rec["rev"], oid, lambda a, b: R.is_ancestor(repo, a, b))
+                ok, w = self.check(marks, name, rec, oid)
                 if ok:
+                    if marks.get(name) and marks[name][0] == rec["rev"]:
+                        cur["_key"] = marks[name][1]          # the accepted record under another commit: its timer goes on, a re-committed head renews nothing
                     if persist and only in (None, name):
                         S.hw_record(self.marks_path, name, rec["rev"], oid)
                     view[name] = base[name] = cur
@@ -471,7 +510,7 @@ class Integrity:
             if m is None or self.tags.get(("done", name), ("unsigned",))[0] != "signed" or "refs/qargi/features/" + name in heads:
                 continue                         # the mark of a feature that is open again (a reused name) is that feature's, whatever done/ says
             fo = rec.get("features_oid")         # a done record ends the feature this machine accepted only when it says so, signed
-            if fo == m[1] or (isinstance(fo, str) and S.OID_RE.fullmatch(fo) and R.is_ancestor(repo, m[1], fo)):
+            if fo == m[1] or (isinstance(fo, str) and S.OID_RE.fullmatch(fo) and self.descends(name, m[1], fo)):
                 cleared.add(name)
                 if persist and only in (None, name):
                     S.hw_drop(self.marks_path, name)
@@ -530,7 +569,7 @@ class RefsBackend:
                 view = based = {n: dict(rec, _oid=o, _acc=o) for n, (o, rec) in feats.items()}
                 notes = []
             # the timer counts the oid of the record a write builds on: a junk or replayed push changes the head, not that oid
-            ages = R.observed(ctx.state, ctx.project, {n: e["_acc"] for n, e in based.items()}, persist=not self.member)
+            ages = R.observed(ctx.state, ctx.project, {n: e.get("_key", e["_acc"]) for n, e in based.items()}, persist=not self.member)
         finally:
             lk.close()
         # with integrity on, a read about one feature warns about that feature only (the others are not what was asked, and a project that

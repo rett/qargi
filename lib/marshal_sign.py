@@ -15,7 +15,9 @@ list (never a shell), with a timeout, in a scratch directory of mode 0700. The p
   armor_from_message(message)  the one signature block of a commit message -> (armor, why)
   keygen(keyfile, principal)   a new ed25519 key (0600, never overwrites) -> the allowed signers line
   signers_add(file, line) / signers_remove(file, principal) / signers_list(file)   atomic edits of the allowed signers file
-  hw_load(file) / hw_record(file, name, rev, oid) / hw_check(marks, name, rev, oid, is_ancestor) / hw_drop(file, name)
+  record_ident(record, parent) -> (rev, record_sha256, parent) or None   what a signature covers of a record: two commits with the same
+                               identity carry the same signed record, whatever their own oids (committer dates, formatting) are
+  hw_load(file) / hw_record(file, name, rev, oid) / hw_check(marks, name, rev, oid, is_ancestor, same) / hw_drop(file, name)
                                the accepted high-water mark {name: [rev, oid]}
 
 Environment: QARGI_MARSHAL_KEYGEN the key tool (default ssh-keygen; tests inject a fake); QARGI_MARSHAL_SIGN_TIMEOUT seconds
@@ -106,6 +108,19 @@ def signed_payload(project, feature, kind, rev, parent, lead, record):
         raise ValueError('record is an object')
     return canonical_json({'v': PAYLOAD_V, 'ns': NS, 'project': project, 'feature': feature, 'kind': kind, 'rev': rev,
                            'parent': parent, 'lead': lead, 'record_sha256': hashlib.sha256(canonical_json(record)).hexdigest()})
+
+
+def record_ident(record, parent):
+    """The identity of a signed record: (rev, sha256 of its canonical form, the parent oid it is signed on or None), or None when the
+    record has no such form. It is what the signature covers of the record's place in the chain, so it does not change when the commit
+    that carries the record is made again (same tree, parent and message, another committer date)."""
+    try:
+        rev = record.get('rev')
+        if type(rev) is not int or rev < 0:
+            return None
+        return rev, hashlib.sha256(canonical_json(record)).hexdigest(), parent
+    except (ValueError, AttributeError):
+        return None
 
 
 # ---- armor ---------------------------------------------------------------------------------------------------------
@@ -427,8 +442,8 @@ def signers_remove(path, principal):
 
 # ---- the accepted high-water mark ----------------------------------------------------------------------------------
 # $DA_STATE/features/.accepted-<project>.json: {name: [rev, oid]}, the newest record this machine has accepted for each
-# feature. A record whose rev is lower, or whose rev is the same with another oid, or that does not descend from the accepted
-# oid, is a rollback. A machine with no mark yet trusts what it first sees.
+# feature. A record whose rev is lower, or whose rev is the same with another oid (that is not the same signed record, see
+# record_ident), or that does not descend from the accepted oid, is a rollback. A machine with no mark yet trusts what it first sees.
 
 def _mark_args(name, rev, oid):
     if not (isinstance(name, str) and 0 < len(name) <= 40 and NAME_RE.fullmatch(name)):
@@ -493,9 +508,11 @@ def hw_drop(path, name):
     return True
 
 
-def hw_check(marks, name, rev, oid, is_ancestor):
+def hw_check(marks, name, rev, oid, is_ancestor, same=None):
     """May the record (rev, oid) of `name` be accepted, given `marks` (hw_load)? -> (True, "") or (False, "rollback detected: ...").
-    is_ancestor(accepted_oid, oid) answers the git question (merge-base --is-ancestor); one that raises or says no is a rollback."""
+    is_ancestor(accepted_oid, oid) answers the git question (does the chain under oid hold the accepted record); one that raises or says
+    no is a rollback. same(accepted_oid, oid), when given, says that two commits carry the same signed record (record_ident): the same
+    rev under another oid is then the accepted record, not a fork."""
     _mark_args(name, rev, oid)
     cur = marks.get(name)
     if cur is None:
@@ -506,6 +523,11 @@ def hw_check(marks, name, rev, oid, is_ancestor):
     if rev == arev:
         if oid == aoid:
             return True, ''
+        try:
+            if same is not None and same(aoid, oid):
+                return True, ''
+        except Exception:
+            pass
         return False, 'rollback detected: %s rev %d is a different record than the one accepted' % (name, rev)
     try:
         ok = bool(is_ancestor(aoid, oid))
