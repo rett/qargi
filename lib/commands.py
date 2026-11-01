@@ -135,9 +135,11 @@ COMMANDS = {
                                 "and the suggested members auditor (review on Haiku 5.5), advisor (review on Opus 5.5) and researcher (review on the opt-in frontier tier, Fable 5.1). A member whose model is an alias "
                                 "(sonnet, opus, haiku) is listed as unpinned. Read-only; it changes nothing."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
-            "for": verb("Print the member that serves a role", [("ROLE", "workrole")],
-                        [opt("--project", "prefer that project's own members (default: the project of the current directory)", "PROJECT", "project")],
-                        desc="The first member registered for the role, else for a built-in role of the same class (a read-only role needs a member of review); a project's own members come first. Dispatch spawns this one."),
+            "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
+                        [opt("--project", "prefer that project's own members and read its profiles (default: the project of the current directory)", "PROJECT", "project"),
+                         opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
+                         opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort")],
+                        desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when it is registered; otherwise the first registered member of the role's class (shown as legacy). A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
         },
     },
     "role": {
