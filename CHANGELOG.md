@@ -7,6 +7,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Baseline packs. qargi ships three packs under `packs/`: `shellcheck-gate` (lint every shell file you touch and quote the verdict),
+  `keep-a-changelog` (one Unreleased entry per user-visible change, in the same commit) and `gitflow-member` (a member's part of
+  a git-flow project). `qargi packs seed` stores them in your library: it prints one line per pack (add, update, current or
+  kept) and a plan token, and applies with your approval; an untouched shipped copy is updated when qargi ships newer text, a
+  copy you edited and sealed or a pack of your own with the same name is kept and never overwritten, and seeding never links a
+  pack. `install.sh` (and so `qargi upgrade`) adds the packs your library lacks with `packs seed --install`, which needs no token
+  and never updates. Link a pack to a project with `qargi skill link`; proposing links when a project is created or attached is
+  not built yet. A member cannot run `packs seed`.
 - Memory tiers (read-only, first slice). A project's memory is five ranked tiers, highest first: repo, cloud, project, shared,
   system. A tier is a memory store of the standard layout in a directory (defaults under the qargi root; `memory.tiers` in the
   project answers moves any of them) or, for cloud, the project's memory store. `qargi memory tiers [--json]` lists them with
