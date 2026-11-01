@@ -41,8 +41,10 @@ this machine's key ($QARGI_CONF/credentials/marshal_ed25519, lib/marshal_sign.py
 uses every record and shows the tag; strict ignores what is not signed, with a warning, and falls back to the last accepted record
 of the feature. The last accepted record of each feature is kept in $STATE/features/.accepted-<project>.json {name: [rev, oid]}
 (a high-water mark): a record with a lower rev, the same rev and another oid, or that does not descend from the accepted one is a
-rollback, warned about as such and never used. A write decides on, and builds on, the last accepted record when the ref's head is
-not one, so junk or replayed pushes can neither renew a lease (the timer counts the accepted oid only) nor block the lead. A ref
+rollback, warned about as such and never used. When the head of a ref is not an accepted record (strict: not signed or not valid; or a
+rollback), a reader and a write use the newest valid signed record on the first-parent chain under the head (the mark moves to it), else
+the last accepted one, and a write builds on that: a record that was valid is never dropped by a write, junk or replayed pushes can neither
+renew a lease (the timer counts the accepted oid only) nor block the lead. A ref
 that vanishes without a done/ record warns. `resign NAME` signs an unsigned open record (the owner's words, audited by marshal.sh).
 
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
@@ -308,6 +310,9 @@ def soft_rec(path):
         return None
 
 
+WALK = 200                  # commits under a head that are looked at to find the newest valid record (a lead's renewals make the chain long)
+
+
 class Snap:
     """What a read of the cache found. feats is what a reader shows, base what a write decides on and builds on (the same unless the
     head of a ref is not an accepted record: then base is the last accepted one); both carry _oid (the head, which a push leases),
@@ -375,11 +380,39 @@ class Integrity:
     def entry(self, rec, head, acc, tag, why, signer):
         return dict(rec, _oid=head, _acc=acc, _tag=tag, _why=clean(why)[:300], _signer=signer)
 
-    def fallback(self, name, marks, head):
-        """The last accepted record of `name` as an entry whose head is `head`, or None (no mark, or its commit is gone)."""
+    def newest_valid(self, name, marks, head):
+        """The newest record under `head` (first parent chain, at most WALK commits, `head` itself first) that is signed, verifies and
+        passes the high-water mark: it is at or after the accepted one and descends from it -> (oid, rec, signer) or None. A reader that
+        fell behind finds in this the legitimate records that junk was pushed on top of; a write that builds on it keeps them."""
+        S, R, repo = self.S, self.R, self.ctx.repo
+        for oid, _ in R.chain(repo, head, WALK):
+            rec, _ = R.read_one(repo, oid, name)
+            info = R.commit_info(repo, oid) if rec is not None and not sane(rec) else None
+            if not info:
+                continue
+            tag, _ = self.classify("features", name, rec, info[0], info[1])
+            if tag != "signed":
+                continue
+            if rec["rev"] < marks[name][0]:
+                break                                                     # everything below is older than what was accepted
+            ok, _ = S.hw_check(marks, name, rec["rev"], oid, lambda a, b: R.is_ancestor(repo, a, b))
+            if ok:
+                return oid, rec, rec.get("signer") if S.principal_ok(rec.get("signer")) else None
+        return None
+
+    def fallback(self, name, marks, head, persist=False):
+        """The record a write decides on and builds on when the head of `name` is not an accepted record, as an entry whose head (the
+        lease) is `head`: the newest valid signed record under the head, else the last accepted one; None when there is no mark, or its
+        commit is gone. With `persist` the mark moves to the record found."""
         m = marks.get(name)
         if not m:
             return None
+        found = self.newest_valid(name, marks, head) if head else None
+        if found:
+            oid, rec, signer = found
+            if persist:
+                self.S.hw_record(self.marks_path, name, rec["rev"], oid)
+            return self.entry(rec, head, oid, "signed", "the newest valid record under the head" if oid != m[1] else "the last accepted record", signer)
         rec, _ = self.R.read_one(self.ctx.repo, m[1], name)
         if rec is None or sane(rec):
             return None
@@ -404,7 +437,7 @@ class Integrity:
                     view[name] = base[name] = cur
                     continue
                 self.notes.append((name, "ignoring refs/qargi/features/%s on the remote: %s" % (name, w)))
-                fb = self.fallback(name, marks, oid)
+                fb = self.fallback(name, marks, oid, persist and only in (None, name))
                 if fb:
                     view[name] = base[name] = fb
                 else:
@@ -420,7 +453,7 @@ class Integrity:
             name = ref.rsplit("/", 1)[1]
             if not R.name_ok(name) or name in view:
                 continue
-            fb = self.fallback(name, marks, heads.get(ref))
+            fb = self.fallback(name, marks, heads.get(ref), persist and only in (None, name))
             if fb:
                 view[name] = base[name] = fb
             else:
