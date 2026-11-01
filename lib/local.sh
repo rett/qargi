@@ -3,14 +3,14 @@
 # has no remote, runs git through a credential-less wrapper, and the coordinator
 # compares every ref of the real repository (and of its remote) before and after.
 #
-#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R]
+#   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
 #   local.sh verify RUN_DIR
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory
 #
 # This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
 # from a config). It is not a sandbox against an agent that deliberately goes around it
 # (it runs as the same user): `verify` is what turns such an attempt into a loud failure.
-# The run directory records the task's ability (RUN/ability, default build); under review the guard
+# The run directory records the task's ability (RUN/ability, default build) and, under --profile, the profile (RUN/profile); under review the guard
 # (qargi __guard) refuses every change to the clone, so a review writes only to OUT.
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
@@ -150,9 +150,9 @@ project_of() {
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build PROFILE=''
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability|--role) ABILITY=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability|--role) ABILITY=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
@@ -165,6 +165,16 @@ case $verb in
     CLASS=$(role_class "$ABILITY")
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
+    # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
+    MEMBER='' MODEL='' EFFORT=''
+    if [ -n "$PROFILE" ]; then
+      PPJ=$(project_of "$REPO" "$URL"); pargs0=(for "$ABILITY" --profile "$PROFILE" --json)
+      [ -z "$PPJ" ] || pargs0+=(--project "$PPJ")
+      PRES=$("$(dirname "$0")/agent.sh" "${pargs0[@]}" 2>&1 </dev/null) || die "${PRES#qargi: }"
+      MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$(jq -r '.model // "-"' <<<"$PRES"); EFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
+    else
+      PROFILE=$ABILITY
+    fi
     LEAD=''
     case $BASE in
       feature/?*)
@@ -191,6 +201,7 @@ case $verb in
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ABILITY" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
+    [ -z "$MEMBER" ] || printf '%s\n' "$PROFILE" > "$RUN/profile"
     date +%s > "$RUN/started"   # the epoch the lead's ref journal is read from by `verify`
     if [ -n "$URL" ]; then
       snapshot_url "$URL" "$CRED" > "$RUN/refs.before"
@@ -220,14 +231,16 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" \
-      '{run:$r, slug:$s, ability:$a, base:$b, started:$t, lead:(if $l == "" then null else $l end)}' >> "$DA_STATE/local-runs.jsonl"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" \
+      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end)}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
     echo "ABILITY=$ABILITY"
     echo "ROLE=$ABILITY"
     echo "CLASS=$CLASS"
+    echo "PROFILE=$PROFILE"
+    [ -z "$MEMBER" ] || { echo "MEMBER=$MEMBER"; echo "MODEL=$MODEL"; echo "EFFORT=$EFFORT"; }
     echo "CLONE=$RUN/clone"
     echo "OUT=$RUN/out"
     echo "TMP=$TMPD"
