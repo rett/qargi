@@ -51,6 +51,20 @@ $DA agent remove anvil >/dev/null 2>&1 && [ ! -e "$A/anvil.md" ] && [ "$(fm test
 $DA agent remove omni >/dev/null 2>&1; $DA agent for review >/dev/null 2>&1 && no "for found a removed member" || ok "for fails, with a hint, when no member serves the ability"
 $DA agent for review 2>&1 | grep -q "qargi agent add NAME --abilities review" && ok "the hint names the command" || no "hint"
 
+# a base name takes only the abilities of its class
+$DA agent add worker --abilities review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
+$DA agent add worker --abilities build,review >/dev/null 2>&1 && no "worker accepted build,review" || ok "add worker refuses a mixed list"
+$DA agent add reviewer --abilities build >/dev/null 2>&1 && no "reviewer accepted build" || ok "add reviewer refuses an ability of the write class"
+$DA agent add reviewer --abilities review,test >/dev/null 2>&1 && no "reviewer accepted review,test" || ok "add reviewer refuses a mixed list"
+$DA agent add worker --abilities tw >/dev/null 2>&1; [ ! -e "$A/worker.md" ] && ok "a refused base leaves no definition" || no "worker.md written"
+e=$($DA agent add reviewer --abilities write 2>&1); grep -q 'reviewer' <<<"$e" && grep -q 'read-only' <<<"$e" && ok "and says which class the base has" || no "base message: $e"
+mkdir -p "$T/c/roles/tw"; jq -n '{class:"write"}' > "$T/c/roles/tw/role.json"; echo "the tw role" > "$T/c/roles/tw/ROLE.md"
+$DA agent add worker --abilities tw,test >/dev/null 2>&1 && jq -e '.worker.abilities == ["tw","test"]' "$T/c/agents.json" >/dev/null && ok "a custom write role fits the worker" || no "worker tw"
+$DA agent remove worker >/dev/null 2>&1
+$DA agent add worker >/dev/null 2>&1 && jq -e '.worker.abilities == ["build","write","test"]' "$T/c/agents.json" >/dev/null && ok "add worker with no list serves the base's abilities" || no "worker default"
+$DA agent add reviewer >/dev/null 2>&1 && jq -e '.reviewer.abilities == ["review"]' "$T/c/agents.json" >/dev/null && grep -q -- '--class read-only' "$A/reviewer.md" && ok "add reviewer with no list serves review, read-only by class" || no "reviewer default"
+$DA agent remove worker >/dev/null 2>&1; $DA agent remove reviewer >/dev/null 2>&1
+
 # profiles: the base member, the legacy order, the class rules
 for m in $($DA agent list | cut -d' ' -f1); do $DA agent remove "$m" >/dev/null 2>&1; done
 for pair in "tw:write" "ro:read-only"; do

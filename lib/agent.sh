@@ -111,12 +111,15 @@ render() { # name abilities-csv model [effort] -> the definition on stdout
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first
+  local n=${POS[0]:-} a list='' dir file seq first bc
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   valid_name "$n"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
+  bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
+  [ -z "$bc" ] || [ -n "$ABIL" ] || ABIL=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
   for a in $(printf '%s' "${ABIL:-build,write,review,test}" | tr ',' ' '); do
     [ "$a" != lead ] && valid_role "$a" || die "--abilities: a comma-separated list of roles ($DA_ROLES; qargi role list)"
+    [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--abilities: $n is a base of the $bc class; $a is $(role_class "$a")"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
   [ -n "$list" ] || die "--abilities: give at least one"
@@ -204,28 +207,44 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   prov=$(provider_for "$proj") || exit 1
   tiers=$(jq -c .tiers "$PROVIDERS/$prov.json"); aliases=$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")
   rc=$(role_classes)
-  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --arg prov "$prov" "$PJQ"'
+  local miss='{}' n f
+  while IFS=$'\t' read -r n f; do [ -f "$f" ] || miss=$(jq -c --arg n "$n" '.[$n] = true' <<<"$miss"); done < <(jq -r 'to_entries[] | [.key, (.value.file // "")] | @tsv' "$MEMBERS_FILE")
+  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --arg prov "$prov" "$PJQ"'
+    def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
-    | {provider: $prov, aliases: $aliases,
-       bases: ($bases | with_entries(.key as $k | .value += {registered: ($m[0] | has($k))})),
-       profiles: ([profiles | {key: .name, value: .}] | from_entries),
+    | ([$m[0] | to_entries[] | .value | mclass] | unique) as $have
+    | def baseof($c): [$bases | to_entries[] | select(.value.class == $c) | .key][0];
+    {provider: $prov, aliases: $aliases,
+       bases: ($bases | with_entries(.key as $k | .value += {registered: ($m[0] | has($k))}
+         | .value += {flags: (if .value.registered or (.value.class | IN($have[])) then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
+       profiles: ([profiles | .flags = ([if .refused then "refused: \(.refused)" else empty end,
+           if .tier != null and ($aliases[.tier] // null) == null then "tier \(.tier) has no alias" else empty end,
+           if .tier == null and .model_id != null then "model \(.model_id) has no alias; the definition of the member applies" else empty end]) | {key: .name, value: .}] | from_entries),
        escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
-       members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | {name: .key, abilities: .value.abilities, model: (.value.model // null),
+       members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | .key as $k | (.value | mclass) as $c | baseof($c) as $bn | .value.abilities as $ab
+         | {name: $k, abilities: $ab, class: $c, model: (.value.model // null),
          effort: (.value.effort // null), project: (.value.project // null),
          pinned: ((.value.model // "") | startswith("claude-")),
-         frontier: (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier))}]}')
+         frontier: (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)),
+         flags: ([if ($bases | has($k) | not) and $bn != null then (if ($m[0] | has($bn)) then "legacy: retire after \($bn) exists" else "legacy (in use: no \($bn))" end) else empty end,
+           if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
+           if $miss[$k] then "definition file missing" else empty end,
+           if (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)) and $k != "researcher" then "frontier model outside the researcher" else empty end])}]}
+    | .warnings = ([(.bases | to_entries[] | .key as $k | .value.flags[] | {kind: "base", name: $k, message: .}),
+        (.profiles[] | .name as $k | .flags[] | {kind: "profile", name: $k, message: .}),
+        (.members[] | .name as $k | .flags[] | {kind: "member", name: $k, message: .})])')
   if [ -n "$JSON" ]; then printf '%s\n' "$out"; return 0; fi
   echo "bases (one member each, by guard class)"
-  jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(",")), (if .value.registered then "registered" else "not registered" end)] | @tsv' <<<"$out" \
-    | while IFS=$'\t' read -r n c a r; do printf '  %-10s %-10s %-18s %s\n' "$n" "$c" "$a" "$r"; done
+  jq -r '.bases | to_entries[] | [.key, .value.class, (.value.abilities | join(",")), (if .value.registered then "registered" else "not registered" end), (.value.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n c a r fl; do printf '  %-10s %-10s %-18s %-15s %s\n' "$n" "$c" "$a" "$r" "$fl"; done
   echo "profiles (provider: $prov; tier -> alias -> model/effort; a role of yours uses its class: write -> build, read-only -> review)"
   jq -r '.profiles[] | [.name, (.base // "-"), ((.tier // "?") + " -> " + (.model // "-") + " -> " + (.model_id // "-") + "/" + (.effort // "default")),
-      (.source + (if .via_roles then " (roles)" else "" end)), (if .opt_in then "opt-in" elif .name == "lead" then "never dispatched" else "" end)] | @tsv' <<<"$out" \
-    | while IFS=$'\t' read -r n b d s t; do printf '  %-11s %-9s %-52s %-10s %s\n' "$n" "$b" "$d" "$s" "$t"; done
+      (.source + (if .via_roles then " (roles)" else "" end)), (if .opt_in then "opt-in" elif .name == "lead" then "never dispatched" else "" end), (.flags | map("! " + .) | join("; "))] | @tsv' <<<"$out" \
+    | while IFS=$'\t' read -r n b d s t fl; do printf '  %-11s %-9s %-52s %-10s %s\n' "$n" "$b" "$d" "$s" "${t:+$t }$fl"; done
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
   echo "members"
   if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME)"; else
-    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(if .frontier then "frontier (opt-in)" else "" end)"' <<<"$out" \
+    jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
 }
