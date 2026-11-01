@@ -7,6 +7,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Cloud profiles. A project can provision two cloud base agents, `<project>-worker` (write class) and `<project>-reviewer` (read-only),
+  and start a session of a role and profile on one: `qargi start|send <project>-worker --role build --profile build`. The model and
+  effort are overridden per session with a full model object and the role's prompt is rendered fresh, so the base needs no prompt
+  refresh; its tools stay fixed on the agent. `agent for ROLE --surface cloud` resolves the instance and uses a base only when it is
+  registered and the provider's cloud override capabilities are verified (they now are for `claude`, from a scratch run on
+  2026-11-01); otherwise the four role agents keep serving, and a profile with a different model than the role agent refuses.
+  A reviewer base needs the project's `provider accept` for the missing cloud read-only barrier before it is provisioned or started.
+  The claude adapter gained a `start-session` request builder, with a conformance check that a body never carries tools, skills or
+  MCP servers.
 - Providers. Each model provider is a descriptor (`lib/providers/NAME.json`, one schema) with its tier-to-model map and verification
   dates, effort levels, surfaces and a per-surface capability matrix; `qargi provider list|show|check` prints and validates them,
   and `check` says what degrades (an unverified capability counts as unsupported). The `claude` provider has a local adapter
@@ -167,6 +176,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PROJECT`. The run goes on; stdout and the TASK-BLOCK PATHS block are unchanged.
 - The guard protects that directory: members can no longer write under the state's `claude/` directory, and the operands of
   `packs render` are judged as write destinations.
+
+### Fixed
+- Read-only cloud roles now have the `write` built-in tool off as well as `edit` (a reviewer could still create files through
+  `write`); an unknown class now counts as read-only instead of write, and `worker` and `reviewer` are reserved role names.
 
 ### Changed
 - The plan token of `packs apply --target claude-code` also covers file modes, the manifest records them, and the swap installs

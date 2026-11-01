@@ -1,0 +1,13 @@
+{
+  "agent": {
+    "id": "agent_01rev",
+    "type": "agent_with_overrides",
+    "version": 1,
+    "model": {"id": "claude-haiku-5-5", "effort": "low"},
+    "system": "You are the auditor of project demo. Read, run checks, write a report; change nothing.\n"
+  },
+  "environment_id": "env_01demo",
+  "resources": [],
+  "vault_ids": [],
+  "metadata": {}
+}

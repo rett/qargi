@@ -1,0 +1,1 @@
+{"surface":"cloud","role":"worker","profile":"build","model":"sonnet","effort":"high","system":"s","agent_id":"agent_1","agent_version":1,"environment_id":"env_1","tools":[{"type":"agent_toolset_20260401","default_config":{"enabled":true}}]}
