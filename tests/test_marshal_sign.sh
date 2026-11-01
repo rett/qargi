@@ -27,6 +27,9 @@
 #   - rollback, a forked record at the same rev, and a head that does not descend from the accepted one all print `rollback detected`
 #     in both advisory and strict (strict also falls back to the accepted record; what an advisory reader shows is not asserted).
 #     A vanished ref (no done/ record) prints a warning naming the ref.
+#   - a signed done record is a root commit whose record carries `features_oid`, the oid of the last features record (null when there was
+#     none); that oid is the `parent` of its signed payload (review fix: an old done cannot be replayed to clear the mark of a feature
+#     that is open again, and a done clears the mark only when its features_oid is the accepted oid).
 #   - the verification of a record gives up in well under 60 seconds when ssh-keygen hangs (the test hangs it for 60 s and allows 90).
 #   - the "member run" and the exit status 2 with "member" on stderr are the ones of test_marshal_refs.sh.
 set -u
@@ -134,8 +137,10 @@ def main():
         if len(blocks) != 1 or len(msg.encode()) > 8192 or len(blocks[0].encode()) > 2048: sys.exit("bad block count or size")
         rec = json.loads(git(gd, "cat-file", "-p", c + ":record.json"))
         if rec.get("sig_v") != 1 or not isinstance(rec.get("signer"), str): sys.exit("no sig_v 1 or signer")
-        try: parent = git(gd, "rev-parse", "-q", "--verify", c + "^").decode().strip()
-        except subprocess.CalledProcessError: parent = None
+        if kind == "done": parent = rec.get("features_oid")   # a done commit is a root; the oid of the last features record is in the record and signed
+        else:
+            try: parent = git(gd, "rev-parse", "-q", "--verify", c + "^").decode().strip()
+            except subprocess.CalledProcessError: parent = None
         data = payload(project, rec["feature"], kind, rec, parent)
         with tempfile.TemporaryDirectory() as d:
             sf = os.path.join(d, "sig"); open(sf, "w").write(blocks[0] + "\n")
@@ -617,6 +622,27 @@ tamper f4 '.goal = "tampered"'; K4=$(oref $F/f4)
 XE wc marshal set f4 --as alice --plan P4; rc=$?
 { [ $rc = 0 ] && anc "$K4" $F/f4 && [ "$(jsf $F/f4 .goal)" = tampered ] && [ "$(jsf $F/f4 .plan)" = P4 ]; } \
   && ok "advisory: an INVALID head is the base of a write as well (the head is in the chain)" || no "SPEC advisory must build on an INVALID head too (rc=$rc, goal '$(jsf $F/f4 .goal)'): $(cat "$T/e")"
+
+# ------------------------------------------------------------ (16c) a signed done/ ref does not clear the mark of a feature that is open again, and an old one cannot be replayed
+XE wa marshal claim f5 --as alice --goal life1 >/dev/null 2>&1; XE wa marshal finish f5 --as alice >/dev/null 2>&1
+D5=refs/qargi/done/f5; DONE1=$(oref $D5)
+XE wa marshal claim f5 --as alice --goal l2r1 >/dev/null 2>&1; G1=$(oref $F/f5)
+XE wa marshal set f5 --as alice --goal l2r2 >/dev/null 2>&1; XE wa marshal set f5 --as alice --goal l2r3 >/dev/null 2>&1; G3=$(oref $F/f5)
+XE wb marshal status f5 >/dev/null 2>&1
+{ [ "$DONE1" != none ] && [ "$(markof wb f5)" = "[3,\"$G3\"]" ]; } && ok "reuse of a name: with done/f5 of the first life still there, the mark of the second life (rev 3) is kept" || no "SPEC the mark of an open feature must stay when done/ exists (mark '$(markof wb f5)', done $DONE1)"
+OG update-ref $F/f5 "$G1"
+j=$(js wb f5); XE wb marshal status f5
+{ grep -q 'rollback detected' <(out) && [[ $j == *'"goal":"l2r3"'* ]]; } && ok "reuse of a name: a rewind to rev 1 of the second life is a rollback, the accepted rev 3 is kept" || no "SPEC a rewind next to an old done/ must be detected (json ${j:0:200}): $(cat "$T/e")"
+OG update-ref -d $F/f5                                                          # features/f5 deleted, the old done/f5 replayed
+XE wb marshal status f5; cp "$T/e" "$T/e.f5"
+{ [ "$(markof wb f5)" = "[3,\"$G3\"]" ] && grep -qi 'warn' "$T/e.f5" && grep -qF f5 "$T/e.f5"; } && ok "replay: the old signed done/f5 does not clear the mark of the second life and the vanished ref warns" || no "SPEC an old done must not drop the mark (mark '$(markof wb f5)'): $(cat "$T/e.f5")"
+OG update-ref $F/f5 "$G1"; XE wb marshal status f5
+grep -q 'rollback detected' <(out) && ok "replay: and the rewound rev 1 behind it is still a rollback" || no "SPEC replayed done + rewind must be detected: $(out)"
+OG update-ref $F/f5 "$G3"
+XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
+{ [ $rc = 0 ] && [ "$DONE2" != "$DONE1" ] && [ "$(jsf $D5 .features_oid)" = "$G3" ] && chain_ok $D5 "$(SIG wa)" >/dev/null; } && ok "finish: the signed done record carries the oid of the last features record in its signed payload (and verifies by the spec's payload)" || no "SPEC signed done carries the features oid (rc=$rc, features_oid '$(jsf $D5 .features_oid)', G3 $G3): $(chain_ok $D5 "$(SIG wa)"; cat "$T/ste" 2>/dev/null)"
+XE wb marshal status f5; rc=$?
+{ [ -z "$(markof wb f5)" ] && ! grep -qi 'warn' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
 
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
