@@ -21,7 +21,12 @@ trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
-SHIP=$SRC/bin/qargi; YES=$TOOL/bin/qargi
+SHIPT=$T/ship; mkdir -p "$SHIPT"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
+# the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
+jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = null)
+  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$SHIPT/lib/providers/claude.json"
+SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
 jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = "2026-10-31")
   | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = "2026-10-31")' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$TOOL/lib/providers/claude.json"
 
