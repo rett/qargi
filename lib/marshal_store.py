@@ -34,7 +34,8 @@ run: never) and never pushes; a verb that changes the marshal exits 2 inside a m
 "remote not checked": reads continue on the cache, a claim stays provisional and the next verb completes or drops it.
 Environment: QARGI_REMOTE_TIMEOUT (seconds for a fetch or push, default 10) and QARGI_MARSHAL_MONO (the monotonic clock; tests).
 
-Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage.
+Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
+changed, try again; only the refs backend returns it).
 Run through lib/marshal.sh; python3 -I, standard library only."""
 import argparse, calendar, fcntl, json, os, pwd, re, socket, subprocess, sys, time
 
@@ -49,6 +50,11 @@ CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 class Refuse(Exception):
     """A refusal: message to stderr, exit 1."""
+
+
+class Unreachable(Refuse):
+    """The change was not made because the remote was not reached: message to stderr, exit 3. Not a refusal of the lead: a caller that
+    renews a lease for a long step (marshal_hold_start) tries again, one that gets exit 1 knows the lease is lost."""
 
 
 def now():
@@ -471,7 +477,7 @@ class RefsBackend:
                 if new is None:
                     return res
                 if not (create and remote is None):
-                    raise Refuse("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
+                    raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (why, name))
                 self.mirror(ctx, name, self.stamp(ctx, name, new, rec), "provisional")
                 print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (why, name), file=sys.stderr)
                 return res
@@ -513,7 +519,7 @@ class RefsBackend:
                 if wrote_prov:
                     print("qargi: remote not checked (%s): the claim of %s is provisional here; the next marshal verb on it completes or drops it" % (last, name), file=sys.stderr)
                     return res
-                raise Refuse("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
+                raise Unreachable("remote not checked (%s): feature %s was not changed; try again when the remote is reachable" % (last, name))
             if retried:                                           # rejected twice
                 if wrote_prov:
                     os.unlink(path)
@@ -1039,6 +1045,9 @@ def main(argv):
         if ctx.be.refs and ctx.be.member and a.verb not in ("status", "check"):
             return usage_exit("marshal %s is not available in a member run: a member never changes the shared marshal or pushes; the lead does" % a.verb)
         globals()["v_" + a.verb](ctx, a)
+    except Unreachable as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 3
     except Refuse as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
