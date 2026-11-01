@@ -692,6 +692,108 @@ class Marshal(unittest.TestCase):
 
     # --- signed marshal records: the lead's signing key, the allowed signers and the acceptance marks
 
+    KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
+
+    def make_key(self, base=None):
+        """A credentials directory with the lead's signing key (private and public), another credential and a look-alike."""
+        cred = os.path.join(base or self.conf, "credentials")
+        os.makedirs(cred, exist_ok=True)
+        for n in ("marshal_ed25519", "marshal_ed25519.pub", "tok", "marshalled", "marshal-notes"):
+            with open(os.path.join(cred, n), "w") as f:
+                f.write("x\n")
+        return cred
+
+    def key_refused(self, cmds, env=None):
+        for c in cmds:
+            res = self.bash(c, **(env or {}))
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("the marshal's signing key", res.stderr, c)
+            self.assertIn(self.KEY_NOTE, res.stderr, c)
+
+    def test_the_signing_key_cannot_be_read_by_any_construct(self):
+        """New behaviour: a read of a credential stays allowed in general, but not of credentials/marshal_*."""
+        cred = self.make_key()
+        k, out = os.path.join(cred, "marshal_ed25519"), os.path.join(self.t, "run/out")
+        os.symlink(k, os.path.join(self.clone, "to-key"))
+        os.symlink(cred, os.path.join(self.clone, "to-creds"))
+        cmds = ["cat %s" % k, "cat %s.pub" % k, "head -c 40 %s" % k, "tail %s" % k, "less %s" % k, "more %s" % k, "base64 %s" % k, "strings %s" % k,
+                "grep -n . %s" % k, "grep BEGIN %s" % k, "xxd %s" % k, "od -c %s" % k, "sed -n 1p %s" % k, "awk 1 %s" % k, "ssh-keygen -y -f %s" % k,
+                "cp %s %s/k" % (k, out), "dd if=%s of=%s/k" % (k, out), "tar cf %s/k.tar %s" % (out, k), "rsync %s %s/" % (k, out),
+                "cat < %s" % k, "cat <%s" % k, "xargs cat < %s" % k, "cat %s > %s/k" % (k, out), "cat %s | base64" % k, "wc -c %s" % k,
+                "cat $QARGI_CONF/credentials/marshal_ed25519", "cat ${QARGI_CONF}/credentials/marshal_ed25519", "cat to-key", "cat to-creds/marshal_ed25519",
+                "cat ../../conf/credentials/marshal_ed25519", "cat %s/../credentials/marshal_ed25519" % cred, "cat --file=%s" % k,
+                "cd %s && cat marshal_ed25519" % cred, "cd %s; head marshal_ed25519" % cred, "cd %s && cat *" % cred, "cd %s && cat marshal_*" % cred,
+                "cat %s/marshal_*" % cred, "cat %s/m*" % cred, "cat %s/marshal_ed2551?" % cred, "cat %s/marshal_ed2551[0-9]" % cred, "cat %s/cred*/marshal_ed25519" % self.conf,
+                "cat %s/marshal_{ed25519,x}" % cred, "cat %s/*" % cred,
+                "bash -c 'cat %s'" % k, "sh -c \"cat %s\"" % k, "bash -lc 'cd %s && cat marshal_ed25519'" % cred, "eval 'cat %s'" % k, "echo $(cat %s)" % k,
+                "echo `cat %s`" % k, "true && cat %s" % k, "ls; cat %s" % k, "sudo cat %s" % k, "env FOO=1 cat %s" % k, "nohup cat %s" % k, "timeout 5 cat %s" % k,
+                "FOO=1 cat %s" % k, "(cat %s)" % k, "python3 -c 'print(open(\"%s\").read())'" % k, "python3 -I -c \"import sys; sys.stdout.write(open('%s').read())\"" % k]
+        self.key_refused(cmds)
+        self.assertEqual(self.bash("cp -t %s/run/out %s" % (self.t, k)).returncode, 2)     # the destination rule of cp reads the key as one (its text differs)
+
+    def test_the_signing_key_cannot_be_read_by_the_read_tools(self):
+        cred = self.make_key()
+        os.symlink(cred, os.path.join(self.clone, "to-creds"))
+        for tool, inp in (("Read", {"file_path": os.path.join(cred, "marshal_ed25519")}), ("Read", {"file_path": os.path.join(cred, "marshal_ed25519.pub")}),
+                          ("Read", {"file_path": "to-creds/marshal_ed25519"}), ("NotebookRead", {"notebook_path": os.path.join(cred, "marshal_ed25519")}),
+                          ("Grep", {"pattern": "BEGIN", "path": os.path.join(cred, "marshal_ed25519")}), ("Grep", {"pattern": "BEGIN", "path": cred}),
+                          ("Grep", {"pattern": "BEGIN", "path": self.conf}), ("Grep", {"pattern": "BEGIN", "path": "to-creds"})):
+            res = self.call(tool, inp)
+            self.assertEqual(res.returncode, 2, (tool, inp, res.stderr))
+            self.assertIn("the marshal's signing key", res.stderr)
+            self.assertIn(self.KEY_NOTE, res.stderr)
+        for tool, inp in (("Read", {"file_path": os.path.join(cred, "tok")}), ("Read", {"file_path": os.path.join(cred, "marshalled")}),
+                          ("Read", {"file_path": os.path.join(self.conf, "marshal_ed25519")}), ("Grep", {"pattern": "x", "path": os.path.join(cred, "tok")}),
+                          ("Grep", {"pattern": "x", "path": "src"}), ("Glob", {"pattern": "*", "path": cred}), ("Read", {"file_path": "skills/qargi-build"})):
+            res = self.call(tool, inp)
+            self.assertEqual(res.returncode, 0, (tool, inp, res.stderr))
+
+    def test_a_directory_that_holds_the_signing_key_cannot_be_read_whole(self):
+        """New behaviour: a recursive reader named on the credentials directory (or above it) would carry the key along."""
+        cred = self.make_key()
+        out = os.path.join(self.t, "run/out")
+        self.key_refused(["cp -r %s %s/" % (cred, out), "cp -r %s %s/" % (self.conf, out), "cp -a %s %s/c" % (cred, out), "tar cf %s/c.tar %s" % (out, cred),
+                          "tar czf %s/c.tgz %s" % (out, self.conf), "rsync -a %s/ %s/c/" % (cred, out), "grep -r BEGIN %s" % cred, "grep -rn x %s" % self.conf,
+                          "rg BEGIN %s" % cred,
+                          "zip -r %s/z.zip %s" % (out, self.conf), "cd %s && tar cf %s/c.tar ." % (cred, out), "cd %s && cp -r . %s/c" % (cred, out),
+                          "cd %s && grep -r BEGIN ." % cred, "bash -c 'cp -r %s %s/c'" % (cred, out)])
+        for c in ("find %s -type f -exec cat {} +" % cred, "find %s -type f -execdir cat {} ;" % self.conf):     # find's actions already count as writes
+            self.assertEqual(self.bash(c).returncode, 2, c)
+        for c in ("ls %s" % cred, "ls -la %s" % self.conf, "cat %s/tok" % cred, "cp %s/tok %s/t" % (cred, out), "grep -n x %s/tok" % cred,
+                  "find %s -type f" % cred, "grep -r x %s/instances.json" % self.conf, "cp -r %s %s/c" % (self.clone, out), "cp -r src %s/c" % out):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_signing_key_is_found_like_the_other_qargi_paths(self):
+        qh, xdgc = os.path.join(self.t, "qh"), os.path.join(self.t, "xdgc")
+        for base, env in ((qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)), (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
+                          (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None)), (xdgc + "/qargi", dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc))):
+            k = os.path.join(self.make_key(base), "marshal_ed25519")
+            self.key_refused(["cat %s" % k, "base64 %s" % k, "bash -c 'cat %s'" % k], env)
+            res = self.call("Read", {"file_path": k}, **env)
+            self.assertEqual(res.returncode, 2, (base, res.stderr))
+
+    def test_metadata_and_look_alikes_of_the_signing_key_stay_allowed(self):
+        """Pin (passes before and after): the other credentials, names that only look like the key's and its metadata stay open."""
+        cred = self.make_key()
+        k = os.path.join(cred, "marshal_ed25519")
+        for c in ("ls %s" % k, "ls -la %s" % cred, "stat %s" % k, "test -f %s" % k, "[ -f %s ]" % k, "[[ -s %s ]]" % k,
+                  "cat %s/tok" % cred, "cat %s/marshalled" % cred, "cat %s/marshal-notes" % cred, "cat %s/marshal_ed25519" % self.conf,
+                  "cat lib/marshal_store.py", "cat marshal_ed25519", "echo marshal_ed25519", "grep -rn marshal_ lib/marshal.sh", "cp lib/marshal_refs.py %s/run/out/" % self.t,
+                  "qargi marshal status", "qargi marshal check proj f", "echo credentials/marshal_ed25519 is the key", "git log --grep marshal_ed25519"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        for tool in ("Write", "Edit"):                                    # writing it stays refused by the credentials root, as before
+            res = self.call(tool, {"file_path": k})
+            self.assertEqual(res.returncode, 2, (tool, res.stderr))
+            self.assertIn("protected location", res.stderr)
+        self.assertEqual(self.bash("echo x > %s" % k).returncode, 2)
+        self.assertEqual(self.bash("rm -f %s" % k).returncode, 2)
+        self.assertEqual(self.bash("cp /dev/null %s.pub" % k).returncode, 2)
+        os.makedirs(os.path.join(self.clone, "credentials"))               # a credentials directory inside the clone is work product
+        self.assertEqual(self.bash("cat credentials/marshal_ed25519").returncode, 0)
+
     def test_the_allowed_signers_and_the_acceptance_marks_are_protected(self):
         """Pin: $STATE/marshal/<project>.signers lies under marshal/ and $STATE/features/.accepted-<project>.json under
         features/, both protected roots. New: the refusal says what the file is."""
