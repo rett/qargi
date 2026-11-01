@@ -1,1 +1,180 @@
-{"provider":"claude","tiers":{"fast":"claude-haiku-5-5","balanced":"claude-sonnet-5-5","deep":"claude-opus-5-5","frontier":"claude-fable-5-1"},"aliases":{"fast":"haiku","balanced":"sonnet","deep":"opus","frontier":"fable"}}
+{
+  "schema": 1,
+  "provider": "claude",
+  "surfaces": [
+    "local",
+    "cloud"
+  ],
+  "model_pattern": "^claude-[a-z0-9.-]+$",
+  "tier_detail": {
+    "fast": {
+      "model": "claude-haiku-5-5",
+      "alias": "haiku",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "balanced": {
+      "model": "claude-sonnet-5-5",
+      "alias": "sonnet",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "deep": {
+      "model": "claude-opus-5-5",
+      "alias": "opus",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "frontier": {
+      "model": "claude-fable-5-1",
+      "alias": "fable",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    }
+  },
+  "tiers": {
+    "fast": "claude-haiku-5-5",
+    "balanced": "claude-sonnet-5-5",
+    "deep": "claude-opus-5-5",
+    "frontier": "claude-fable-5-1"
+  },
+  "aliases": {
+    "fast": "haiku",
+    "balanced": "sonnet",
+    "deep": "opus",
+    "frontier": "fable"
+  },
+  "effort": {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max"
+  },
+  "capabilities": {
+    "per_dispatch_model_override": {
+      "local": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "dispatch",
+        "note": "Agent tool model parameter overrides the definition; verified by a dispatch"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": null,
+        "source": "ant sessions create --agent agent_with_overrides",
+        "note": "read from the CLI help; not yet exercised"
+      }
+    },
+    "per_dispatch_effort_override": {
+      "local": {
+        "value": "yes",
+        "verified_on": null,
+        "source": "Agent tool effort parameter",
+        "note": "not yet verified to take effect"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": null,
+        "source": "model_config effort",
+        "note": "not exercised"
+      }
+    },
+    "fixed_tool_allowlist_per_agent": {
+      "local": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "agents/member.md",
+        "note": "tools: in the member definition"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/provision.sh",
+        "note": "tool configs in the provisioned agent"
+      }
+    },
+    "read_only_barrier": {
+      "local": {
+        "value": "partial",
+        "verified_on": "2026-10-31",
+        "source": "lib/guard.py",
+        "note": "PreToolUse hook; shell writes are caught heuristically, local verify is the backstop"
+      },
+      "cloud": {
+        "value": "no",
+        "verified_on": "2026-10-31",
+        "source": "lib/provision.sh",
+        "note": "cloud review agents have the edit tool off but shell on and no hook"
+      }
+    },
+    "session_budget_ceiling": {
+      "local": {
+        "value": "no",
+        "verified_on": "2026-10-31",
+        "source": "lib/session.sh",
+        "note": "local runs have no cost"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/session.sh check_budget",
+        "note": "a session is stopped at the project's budget"
+      }
+    },
+    "memory_stores": {
+      "local": {
+        "value": "no",
+        "verified_on": "2026-10-31",
+        "source": "lib/memory.sh",
+        "note": "memory stores are a cloud feature"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/provision.sh",
+        "note": "recipes and reference stores attached at provisioning"
+      }
+    },
+    "skills": {
+      "local": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/packs.sh",
+        "note": "skills load from .claude/skills"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/provision.sh",
+        "note": "skills attached to the provisioned agent"
+      }
+    },
+    "mcp": {
+      "local": {
+        "value": "yes",
+        "verified_on": null,
+        "source": "lib/packs.sh",
+        "note": "rendered by packs, not end-to-end tested"
+      },
+      "cloud": {
+        "value": "yes",
+        "verified_on": "2026-10-31",
+        "source": "lib/provision.sh",
+        "note": "MCP servers in the provisioned agent"
+      }
+    }
+  },
+  "local": {
+    "reserved_names": [
+      "general-purpose",
+      "explore",
+      "plan",
+      "statusline-setup",
+      "claude-code-guide",
+      "claude",
+      "output-style-setup"
+    ]
+  },
+  "adapter": null
+}
