@@ -153,12 +153,12 @@ EOF
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
-    jq -n --arg n "$n" '{
+    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" '$d[0].roles as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
-        build: {base: "@dispatcher", push: {mode: "none"}, model: "claude-sonnet-5-5", effort: "high", apt: [], skills: []},
-        write: {base: "gh-pages", push: {mode: "none"}, model: "claude-opus-5-5", effort: "medium", apt: [], skills: ["pdf"]}
+        build: {base: "@dispatcher", push: {mode: "none"}, model: $t.build.model, effort: $t.build.effort, apt: [], skills: []},
+        write: {base: "gh-pages", push: {mode: "none"}, model: $t.write.model, effort: $t.write.effort, apt: [], skills: ["pdf"]}
       },
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
