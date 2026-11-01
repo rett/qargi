@@ -668,6 +668,10 @@ def main(argv):
         return 1
     except SystemExit as e:
         return e.code if isinstance(e.code, int) else 2
+    except Exception:          # a bug is not a refusal: exit 70, so a caller never mistakes it for "another lead holds this"
+        import traceback
+        traceback.print_exc()
+        return 70
     return 0
 
 
