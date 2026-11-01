@@ -183,7 +183,7 @@ class DevRun(Base):
         self.assertTrue(os.path.isdir(self.dev + "/.qargi/state"))
         self.assertEqual(self.snapshot(self.dev), sorted([".qargi", ".qargi/config", ".qargi/config/agents.json", ".qargi/config/instances.json",
                                                          ".qargi/state", ".qargi/state/sessions.json", "bin", "bin/qargi", "lib", "VERSION"] +
-                                                        ["lib/" + n for n in os.listdir(os.path.join(self.dev, "lib")) if n != "__pycache__"]), "a dev run wrote outside .qargi")
+                                                        [os.path.relpath(os.path.join(d, n), self.dev) for d, ds, fs in os.walk(os.path.join(self.dev, "lib")) if "__pycache__" not in d for n in ds + fs if n != "__pycache__"]), "a dev run wrote outside .qargi")
         self.assertEqual([p for p in self.snapshot(self.live) if p not in before], [], "a dev run touched live data")
         self.assertEqual(r.stdout, self.q(self.inst, "project", "list").stdout)
 
