@@ -123,8 +123,8 @@ COMMANDS = {
     "agent": {
         "summary": "Name the members: the local agents that do the work",
         "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
-                 "abilities it serves: build, write, review, test (all four by default). Each ability is a skill (qargi-build, "
-                 "qargi-write, qargi-review, qargi-test) the member loads when the task block names it. Review is read-only as a "
+                 "abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role "
+                 "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
                  "and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
@@ -895,22 +895,22 @@ TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
-        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by a skill (qargi-build, qargi-write, qargi-verify, qargi-test). The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
+        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
-    "roles": ("Roles, abilities, skills and members", [
-        "Role build: the ability build, defined by the skill qargi-build; changes the code with its tests, manual page, help and changelog.",
-        "Role write: the ability write, skill qargi-write; writes the operational documentation on its own branch.",
-        "Role review: the ability review, skill qargi-review; reads a change, runs its checks and reports a verdict, and changes no file.",
-        "Role test: the ability test, skill qargi-test; writes and repairs tests and proves them failing first and stable.",
+    "roles": ("Roles, abilities and members", [
+        "Role build: the ability build; changes the code with its tests, manual page, help and changelog.",
+        "Role write: the ability write; writes the operational documentation on its own branch.",
+        "Role review: the ability review; reads a change, runs its checks and reports a verdict, and changes no file.",
+        "Role test: the ability test; writes and repairs tests and proves them failing first and stable.",
         "Role lead: no ability of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
         "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
-        "qargi ships. The task block names the ability and its skill; the member loads it. qargi agent for ABILITY prints the member "
-        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's skill in its prompt.",
-        "Earlier installations (roles dev and docs, the agents qargi-dev, qargi-docs, qargi-review, qargi-test) move with qargi migrate roles."]),
+        "qargi ships. The task block names the ability and carries its role text; there is no ability skill to load. qargi agent for ABILITY prints the member "
+        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's role text in its prompt.",
+        "Earlier installations (roles dev and docs, and the agents named qargi-<role> that served them) move with qargi migrate roles."]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "
