@@ -9,7 +9,7 @@ trap 'rm -rf "$HOME"' EXIT
 cd "$(dirname "$0")/.." || exit 1
 rc=0
 t0=$SECONDS
-run() { local s=$SECONDS; echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo "$out" | tail -20; echo "FAILED: $*"; rc=1; fi; echo "   ($((SECONDS - s))s)"; }
+run() { local s=$SECONDS; echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo "$out" | grep -E "FAIL|Error|error:" | head -30; echo "$out" | tail -20; echo "FAILED: $*"; rc=1; fi; echo "   ($((SECONDS - s))s)"; }
 run python3 tests/test_canon.py
 run bash tests/test_canon_audit.sh
 run python3 tests/test_tiers.py
