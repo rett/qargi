@@ -1177,5 +1177,445 @@ class MemoryTiers(unittest.TestCase):
         self.assertEqual(self.bash("echo x > %s/run/out/memory-r.md" % self.t).returncode, 0)
 
 
+class HookProtocol(unittest.TestCase):
+    """The hook protocol is data (CLAUDE_HOOK, or the barrier.hook of a definition): it turns the hook's JSON into a neutral Call, and the
+    decisions see only that."""
+    @staticmethod
+    def load():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("qargi_guard_protocol", os.path.join(os.path.dirname(BIN), "..", "lib", "guard.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_claude_hook_data_makes_these_calls(self):
+        g = self.load()
+        for data, want in (({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/w"}, ("shell", "Bash", "ls", "", "/w")),
+                           ({"tool_input": {"command": "ls"}, "cwd": "/w"}, ("shell", None, "ls", "", "/w")),
+                           ({"tool_name": "Edit", "tool_input": {"file_path": "a", "path": "b"}, "cwd": "/w"}, ("write", "Edit", "", "a", "/w")),
+                           ({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("write", "NotebookEdit", "", "n", "/w")),
+                           ({"tool_name": "MultiEdit", "tool_input": {"path": "b"}, "cwd": "/w"}, ("write", "MultiEdit", "", "", "/w")),
+                           ({"tool_name": "Read", "tool_input": {"file_path": "r"}, "cwd": "/w"}, ("read", "Read", "", "r", "/w")),
+                           ({"tool_name": "NotebookRead", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("read", "NotebookRead", "", "n", "/w")),
+                           ({"tool_name": "Grep", "tool_input": {"path": "d", "pattern": "x"}, "cwd": "/w"}, ("search", "Grep", "", "d", "/w")),
+                           ({"tool_name": "Glob", "tool_input": {"pattern": "*"}, "cwd": "/w"}, (None, "Glob", "", "", "/w")),
+                           ({"tool_name": "Bash", "tool_input": None, "cwd": None}, ("shell", "Bash", "", "", os.getcwd()))):
+            self.assertEqual(tuple(g.parse_call(g.CLAUDE_HOOK, data)), want, data)
+
+    def test_the_shipped_claude_code_definition_carries_the_data_the_guard_has_built_in(self):
+        path = os.path.join(os.path.dirname(BIN), "..", "lib", "providers", "claude-code.json")
+        if not os.path.exists(path):
+            self.skipTest("lib/providers/claude-code.json is not shipped yet")
+        with open(path) as f:
+            hook = json.load(f)["barrier"]["hook"]
+        self.assertEqual(hook, self.load().CLAUDE_HOOK)
+
+    def test_a_hook_input_that_cannot_be_read_is_an_error_not_a_pass(self):
+        g = self.load()
+        for data in ([], "ls", None, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Bash", "tool_input": [1]}):
+            with self.assertRaises(TypeError, msg=data):
+                g.parse_call(g.CLAUDE_HOOK, data)
+
+
+def runtime(name, **parts):
+    """A schema 2 definition of a local runtime (what a library holds); parts are its sections: resources, barrier, ..."""
+    d = {"schema": 2, "kind": "provider", "provider": name, "family": None, "surface": "local", "description": "a test runtime",
+         "models": {"pattern": "^m-[a-z]+$", "tiers": {"*": {"model": "m-one", "alias": None, "verified_on": None, "source": "test"}}, "effort": None},
+         "capabilities": {}, "resources": {}, "agents": None, "barrier": {"kind": "none"}}
+    d.update(parts)
+    return d
+
+
+FAKEMD_HOOK = {"input": "json-stdin", "tool_pointer": "/event/tool", "command_pointer": "/event/args/cmd", "cwd_pointer": "/workdir",
+               "path_pointers": ["/event/args/target"],
+               "tool_names": {"shell": ["run_shell"], "write": ["patch_file", "create_file"], "read": ["open_file"], "search": ["grep_tree"]},
+               "deny": {"exit": 0, "stdout": {"decision": "deny", "reason": "{reason}", "detail": ["{reason}", {"again": "x{reason}y"}]}}, "allow": {"exit": 0}}
+FAKECLI_HOOK = {"input": "json-stdin", "tool_pointer": "/call/name", "command_pointer": "/call/input/command", "cwd_pointer": "/call/cwd",
+                "path_pointers": {"write": ["/call/input/dest"], "read": ["/call/input/src", "/call/input/dir"]},
+                "tool_names": {"shell": ["sh"], "write": ["put"], "read": ["get"], "search": ["find_in"]},
+                "deny": {"exit": 3, "stream": "stdout"}, "allow": {"exit": 0}}
+
+
+class ProviderHook(unittest.TestCase):
+    """`qargi __guard --provider NAME` reads how that provider's hook hands over a call and how it denies from the provider's definition,
+    and asks the same decisions. The runtimes here are definitions in a library; none of them is Claude Code."""
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp())
+        self.home, self.conf = os.path.join(self.t, "home"), os.path.join(self.t, "conf")
+        self.run = os.path.join(self.t, "run")
+        self.clone, self.out = os.path.join(self.run, "clone"), os.path.join(self.run, "out")
+        for d in ("home", "conf/packs/skills/s", "run/clone/src", "run/out"):
+            os.makedirs(os.path.join(self.t, d))
+        for name, text in (("ability", "build\n"), ("refs.before", "")):
+            with open(os.path.join(self.run, name), "w") as f:
+                f.write(text)
+        self.define("fakemd", barrier={"kind": "hook", "hook": FAKEMD_HOOK})
+        self.define("fakecli", barrier={"kind": "hook", "hook": FAKECLI_HOOK})
+
+    def tearDown(self):
+        shutil.rmtree(self.t, ignore_errors=True)
+
+    def define(self, name, **parts):
+        d = os.path.join(self.conf, "packs", "providers", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(runtime(name, **parts), f)
+
+    def run_guard(self, args, payload):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf})
+        return subprocess.run([BIN, "__guard", *args], input=payload if isinstance(payload, str) else json.dumps(payload), capture_output=True, text=True, env=e)
+
+    def md(self, tool, args, *more):
+        return self.run_guard(["--provider", "fakemd", *more], {"event": {"tool": tool, "args": args}, "workdir": self.clone})
+
+    def cli(self, name, inp, *more):
+        return self.run_guard(["--provider", "fakecli", *more], {"call": {"name": name, "input": inp, "cwd": self.clone}})
+
+    def denied_md(self, r):
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["decision"], "deny")
+        self.assertEqual(doc["detail"], [doc["reason"], {"again": "x%sy" % doc["reason"]}])
+        self.assertTrue(doc["reason"].startswith("qargi guard: "), doc)
+        return doc["reason"]
+
+    def test_a_json_deny_on_standard_output_with_exit_0(self):
+        self.assertIn("Agents never push", self.denied_md(self.md("run_shell", {"cmd": "git push origin main"})))
+        self.assertIn("gh is not available", self.denied_md(self.md("run_shell", {"cmd": "gh pr list"})))
+        lib = os.path.join(self.conf, "packs/skills/s/SKILL.md")
+        self.assertIn("a protected location", self.denied_md(self.md("run_shell", {"cmd": "echo x > %s" % lib})))
+        self.assertIn("a protected location", self.denied_md(self.md("patch_file", {"target": lib})))
+        self.assertIn("a protected location", self.denied_md(self.md("create_file", {"target": "~/.claude/skills/x/SKILL.md"})))
+        self.assertIn("changes a skill and is not available to an agent", self.denied_md(self.md("run_shell", {"cmd": "qargi skill new x"})))
+
+    def test_a_call_that_passes_is_exit_0_with_nothing_printed(self):
+        for tool, args in (("run_shell", {"cmd": "ls -la && git status"}), ("patch_file", {"target": "src/a.go"}), ("open_file", {"target": "src/a.go"}),
+                           ("grep_tree", {"target": "src"}), ("unknown_tool", {"cmd": "git push"}), ("run_shell", {})):
+            r = self.md(tool, args)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), (tool, args))
+        self.assertEqual(self.run_guard(["--provider", "fakemd"], "not json").returncode, 0)
+
+    def test_the_names_and_pointers_are_the_providers_not_claudes(self):
+        # Claude's tool names mean nothing to a provider that does not list them, and the provider's own are judged
+        r = self.run_guard(["--provider", "fakemd"], {"tool_name": "Bash", "tool_input": {"command": "git push"}, "cwd": self.clone})
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        r = self.run_guard([], {"event": {"tool": "run_shell", "args": {"cmd": "git push"}}})
+        self.assertEqual((r.returncode, r.stdout), (0, ""))                  # and the default (Claude's) protocol cannot read fakemd's calls
+
+    def test_a_call_that_names_no_tool_is_a_shell_command(self):
+        r = self.run_guard(["--provider", "fakemd"], {"event": {"args": {"cmd": "git push"}}, "workdir": self.clone})
+        self.assertIn("Agents never push", self.denied_md(r))
+
+    def test_the_read_only_class_and_the_signing_key_are_held_through_the_provider_too(self):
+        for tool, args in (("patch_file", {"target": "src/a.go"}), ("run_shell", {"cmd": "echo x > src/a.go"}), ("create_file", {"target": os.path.join(self.t, "e")})):
+            r = self.md(tool, args)
+            self.assertEqual((r.returncode, r.stdout), (0, ""), tool)
+            self.assertIn("under the review ability", self.denied_md(self.md(tool, args, "--class", "read-only")))
+        self.assertEqual(self.md("create_file", {"target": os.path.join(self.out, "report.md")}, "--class", "read-only").stdout, "")
+        os.makedirs(os.path.join(self.conf, "credentials"))
+        key = os.path.join(self.conf, "credentials", "marshal_ed25519")
+        open(key, "w").close()
+        for tool, args in (("open_file", {"target": key}), ("grep_tree", {"target": os.path.dirname(key)}), ("run_shell", {"cmd": "cat " + key})):
+            self.assertIn("signing key", self.denied_md(self.md(tool, args)))
+
+    def test_a_stream_and_an_exit_status_of_the_definition(self):
+        lib = os.path.join(self.conf, "packs/skills/s/SKILL.md")
+        r = self.cli("put", {"dest": lib})
+        self.assertEqual((r.returncode, r.stderr), (3, ""))
+        self.assertIn("a protected location", r.stdout)
+        self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.endswith("\n"), r.stdout)
+        r = self.cli("sh", {"command": "git push"})
+        self.assertEqual((r.returncode, r.stderr), (3, ""))
+        self.assertIn("Agents never push", r.stdout)
+        # a map of path pointers by kind: put reads dest only, get reads src then dir, find_in (a search) reads like get
+        self.assertEqual(self.cli("put", {"src": lib}).stdout, "")
+        self.assertEqual(self.cli("get", {"src": "src/a.go", "dir": lib}).stdout, "")
+        os.makedirs(os.path.join(self.conf, "credentials"))
+        open(os.path.join(self.conf, "credentials", "marshal_ed25519"), "w").close()
+        self.assertIn("signing key", self.cli("find_in", {"dir": os.path.join(self.conf, "credentials")}).stdout)
+        self.assertEqual(self.cli("get", {"dir": os.path.join(self.conf, "credentials")}).stdout, "")      # get is not a search: a directory is not the key
+
+    def test_failures_are_refusals_in_the_providers_way(self):
+        r = self.md("run_shell", {"cmd": 7})
+        self.assertIn("internal error", self.denied_md(r))
+        r = self.run_guard(["--provider", "fakemd"], {"event": "ls"})
+        self.assertIn("internal error", self.denied_md(r))
+        self.assertIn("unknown class", self.denied_md(self.md("run_shell", {"cmd": "ls"}, "--class", "root")))
+        self.assertIn("unknown class", self.denied_md(self.md("run_shell", {"cmd": "ls"}, "--class")))
+        r = self.cli("sh", {"command": 7})
+        self.assertEqual((r.returncode, r.stderr), (3, ""))
+        self.assertIn("internal error", r.stdout)
+
+    def refused_before_judging(self, args, *words):
+        r = self.run_guard(args, {"event": {"tool": "run_shell", "args": {"cmd": "ls"}}})
+        self.assertEqual((r.returncode, r.stdout), (2, ""), r)
+        self.assertTrue(r.stderr.startswith("qargi guard: "), r.stderr)
+        for w in words:
+            self.assertIn(w, r.stderr)
+
+    def test_a_provider_whose_hook_cannot_be_read_refuses_every_call(self):
+        self.refused_before_judging(["--provider"], "--provider")
+        self.refused_before_judging(["--provider", "nosuch"], "nosuch")
+        self.refused_before_judging(["--provider", "../x"], "unknown provider")
+        self.define("nobarrier")
+        self.refused_before_judging(["--provider", "nobarrier"], "nobarrier", "hook")
+        self.define("sandboxed", barrier={"kind": "sandbox-args"})
+        self.refused_before_judging(["--provider", "sandboxed"], "sandboxed", "sandbox-args")
+        self.refused_before_judging(["--provider", "claude"], "claude", "hook")                       # shipped, schema 1: no hook data
+        bad_hooks = (({k: v for k, v in FAKEMD_HOOK.items() if k != "tool_pointer"}, "tool_pointer"),
+                     ({**FAKEMD_HOOK, "input": "argv"}, "input"),
+                     ({**FAKEMD_HOOK, "command_pointer": "cmd"}, "command_pointer"),
+                     ({**FAKEMD_HOOK, "path_pointers": "target"}, "path_pointers"),
+                     ({**FAKEMD_HOOK, "path_pointers": {"edit": ["/a"]}}, "path_pointers"),
+                     ({**FAKEMD_HOOK, "tool_names": {"shell": "run_shell"}}, "tool_names"),
+                     ({**FAKEMD_HOOK, "tool_names": {"shell": ["x"], "write": ["x"]}}, "x"),
+                     ({**FAKEMD_HOOK, "tool_names": {"ls": ["x"]}}, "tool_names"),
+                     ({k: v for k, v in FAKEMD_HOOK.items() if k != "deny"}, "deny"),
+                     ({**FAKEMD_HOOK, "deny": {"exit": 2}}, "deny"),
+                     ({**FAKEMD_HOOK, "deny": {"exit": "2", "stream": "stderr"}}, "deny"),
+                     ({**FAKEMD_HOOK, "deny": {"exit": 2, "stream": "file"}}, "deny"),
+                     ({**FAKEMD_HOOK, "deny": {"exit": 0, "stdout": "no"}}, "deny"),
+                     ({**FAKEMD_HOOK, "allow": {"exit": "0"}}, "allow"),
+                     ({**FAKEMD_HOOK, "extra": 1}, "extra"))
+        for n, (bad, word) in enumerate(bad_hooks):
+            name = "bad%d" % n
+            self.define(name, barrier={"kind": "hook", "hook": bad})
+            self.refused_before_judging(["--provider", name], name, word)
+
+
+class ProviderRoots(unittest.TestCase):
+    """The skills and agents directories the guard protects are the ones the provider definitions name (resources.skills and
+    resources.agents: project_dir and user_dir), whatever runtime they belong to."""
+    setUp_skills, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
+    FAKECLI = {"skills": {"project_dir": ".agents/skills", "user_dir": "~/.fakecli/skills", "items": "dir-per-item", "entry": "SKILL.md",
+                          "link": {"project": "dir-symlink", "user": "none"}},
+               "agents": {"project_dir": ".fake/agents", "user_dir": "~/.fake/agents", "items": "file-per-item", "ext": ".toml",
+                          "link": {"project": "none", "user": "none"}},
+               "settings": {"files": [{"scope": "user", "path": "~/.fake/config.toml", "format": "toml"}], "allow_pointer": None},
+               "memory": {"user_dir": "~/.fake/memory", "link": {"user": "dir-symlink"}}}
+
+    def setUp(self):
+        self.setUp_skills()
+        for d in ("home/.fakecli/skills/x", "home/.fake/agents", "home/.claude/plugins", "proj/.agents/skills/p", "proj/.fake/agents", "proj/.fake/other",
+                  "run/clone/.agents/skills/p"):
+            os.makedirs(os.path.join(self.t, d), exist_ok=True)
+
+    def define(self, name, resources, raw=None):
+        d = os.path.join(self.conf, "packs", "providers", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            if raw is not None:
+                f.write(raw)
+            else:
+                json.dump(runtime(name, resources=resources), f)
+
+    def refused(self, c):
+        r = self.bash(c)
+        self.assertEqual(r.returncode, 2, (c, r.stderr))
+        self.assertIn("a protected location (skills, the pack library, credentials)", r.stderr, c)
+
+    def test_without_a_definition_that_names_them_those_directories_are_not_protected(self):
+        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > ~/.fake/agents/m.toml", "echo y > %s/.agents/skills/p/SKILL.md" % self.proj,
+                  "echo y > %s/.fake/agents/m.toml" % self.proj, "rm -rf %s/.fake" % self.proj):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_the_directories_of_a_definition_in_the_library_are_protected(self):
+        self.define("fakecli", self.FAKECLI)
+        p = self.proj
+        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > $HOME/.fake/agents/m.toml", "rm -rf ~/.fakecli/skills/x", "cp a ~/.fake/agents/",
+                  "echo y > %s/.agents/skills/p/SKILL.md" % p, "echo y > %s/.fake/agents/m.toml" % p, "cd %s && echo y > .fake/agents/m.toml" % p,
+                  "touch %s/sub/.agents/skills/q" % p, "rm -rf %s/.fake" % p, "rm -rf %s/.agents" % p, "mv %s/.fake /tmp/gone" % p,
+                  "rm -rf ../../proj/.agents/skills/p", "tee %s/.fake/agents/n.toml < /dev/null" % p):
+            self.refused(c)
+        for tool, path in (("Write", "~/.fakecli/skills/x/SKILL.md"), ("Edit", "~/.fake/agents/m.toml"), ("NotebookEdit", p + "/.agents/skills/p/n.ipynb"),
+                           ("Write", p + "/.fake/agents/m.toml"), ("Write", "../../proj/.agents/skills/p/SKILL.md")):
+            r = self.call(tool, {"notebook_path" if tool == "NotebookEdit" else "file_path": path})
+            self.assertEqual(r.returncode, 2, (tool, path, r.stderr))
+            self.assertIn("a protected location", r.stderr)
+            self.assertIn("%s on %s would change" % (tool, path), r.stderr)
+
+    def test_only_those_directories_are_protected(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > ~/.fakecli/other.txt", "echo y > ~/.fake/config.toml", "echo y > ~/.fake/memory/m.md", "echo y > %s/.agents/other" % self.proj,
+                  "echo y > %s/.fake/other/x" % self.proj, "echo y > %s/agents/m.toml" % self.proj, "rm -rf %s/.fake/other" % self.proj,
+                  "ls ~/.fakecli/skills; cat %s/.fake/agents/m.toml" % self.proj):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_inside_the_clone_they_are_the_work_product_as_the_claude_ones_are(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > .agents/skills/p/SKILL.md", "mkdir -p .fake/agents && touch .fake/agents/m.toml", "rm -rf .agents", "rm -rf .claude"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        os.symlink(os.path.join(self.home, ".fakecli/skills"), os.path.join(self.clone, "to-user"))
+        self.refused("echo y > to-user/x/SKILL.md")                       # a link that leads out of the clone to a protected one is followed
+
+    def test_the_claude_directories_stay_protected_beside_them(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json",
+                  "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
+            self.refused(c)
+        self.assertEqual(self.bash("echo x > %s/home/.claude/settings.json" % self.t).returncode, 0)
+
+    def test_a_definition_with_an_unusable_path_protects_nothing_by_it(self):
+        res = {"skills": {"project_dir": "../up/skills", "user_dir": "/etc/skills", "items": "dir-per-item"},
+               "agents": {"project_dir": "/abs/agents", "user_dir": "relative/agents", "items": "file-per-item"}, "mcp": None}
+        self.define("odd", res)
+        self.define("empty", {})
+        self.define("onlyuser", {"skills": {"user_dir": "~/.only/skills", "items": "dir-per-item"}})
+        self.assertEqual(self.bash("echo y > /etc/skills/x; echo y > relative/agents/m; echo y > %s/up/skills/x" % self.t).returncode, 0)
+        self.refused("echo y > ~/.only/skills/x")
+
+    def test_definitions_that_cannot_be_read_refuse_the_calls_that_need_the_roots(self):
+        self.define("fakecli", self.FAKECLI)
+        self.define("garbled", None, raw="{not json")
+        r = self.bash("echo y > %s/notes.txt" % self.proj)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("qargi guard: internal error", r.stderr)
+        self.assertIn("garbled", r.stderr)
+        self.assertIn("refusing the call because the guard could not check it", r.stderr)
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 2)
+        for c in ("ls -la", "cat %s/notes.txt" % self.proj, "git status", "echo hi"):              # a call that writes nowhere needs no roots
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        self.assertEqual(self.bash("git push").returncode, 2)
+
+    def test_a_name_defined_twice_refuses_too(self):
+        self.define("claude", {})                                         # the shipped provider's name
+        r = self.bash("echo y > %s/notes.txt" % self.proj)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("defined twice", r.stderr)
+
+
+class RuntimeRender(unittest.TestCase):
+    """$DA_STATE/render/<project>/<runtime> is where the renders of every runtime go (skills, tools, members): instructions a session follows,
+    changed only by the lead, like the claude/ directory beside it."""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def setUp(self):
+        self.setUp_skills()
+        self.state = os.path.join(self.t, "state")
+        self.render = os.path.join(self.state, "render", "proj", "fakecli")
+        os.makedirs(os.path.join(self.render, "agents"))
+        os.symlink(self.render, os.path.join(self.clone, "to-render"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_STATE", self.state)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def test_writes_under_the_render_directory_are_refused(self):
+        r = self.render
+        for tool, key, p in (("Write", "file_path", r + "/agents/m.toml"), ("Edit", "file_path", "to-render/agents/m.toml"), ("NotebookEdit", "notebook_path", r + "/n.ipynb"),
+                             ("Write", "file_path", os.path.join(self.state, "render")), ("Write", "file_path", "../../state/render/proj/x")):
+            for cls in ((), ("--class", "read-only")):
+                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}), capture_output=True, text=True,
+                                     env={**os.environ, "HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+                self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                self.assertIn("the render of a project's skills, tools and members that a runtime loads", res.stderr)
+                self.assertIn("changed only by the lead", res.stderr)
+        for c in ("echo x > %s/agents/m.toml" % r, "cp a.md %s/agents/" % r, "rm -rf %s/agents" % r, "rm -rf %s/render" % self.state, "echo x > to-render/agents/m.toml",
+                  "mv a.md %s/x.md" % r, "cd %s && touch n" % r, "sed -i s/a/b/ %s/agents/m.toml" % r):
+            res = self.bash(c, QARGI_STATE=self.state)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("the render of a project's skills, tools and members that a runtime loads", res.stderr)
+
+    def test_reading_it_and_writing_beside_it_stay_allowed(self):
+        r = self.render
+        for c in ("cat %s/agents/m.toml" % r, "ls %s" % r, "grep -rn x %s" % r, "echo x > %s/renders.txt" % self.state, "echo x > %s/run/out/render-r.md" % self.t,
+                  "cp %s/agents/m.toml %s/run/out/" % (r, self.t)):
+            res = self.bash(c, QARGI_STATE=self.state)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_claude_directory_keeps_its_own_sentence(self):
+        res = self.bash("echo x > %s/claude/proj/CLAUDE.md" % self.state, QARGI_STATE=self.state)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("the render of a project's skills and tools that Claude Code loads; it is managed by `qargi packs apply`", res.stderr)
+
+
+class ProviderVerbs(unittest.TestCase):
+    """The provider definitions are the user's: a member is refused every verb that changes them (new, import, seal, remove, rename,
+    enable, disable, attest, migrate and accept, and any verb that is added) and keeps the ones that only read."""
+    setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
+    call = Skills.call
+    LIFECYCLE = ("new fakecli", "import ./fakecli", "seal fakecli", "remove fakecli", "rename fakecli other", "enable fakecli --project p", "disable fakecli",
+                 "attest fakecli read_only_barrier --asked x", "migrate claude --dry-run", "migrate claude --as local=a,cloud=b", "unseal fakecli", "invented x")
+    FORMS = ("qargi provider %s", "/opt/q/bin/qargi provider %s", "sudo qargi provider %s", "cd src && qargi provider %s", "echo ok; qargi provider %s --approved go",
+             "bash -c 'qargi provider %s'", "eval 'qargi provider %s'", "echo $(qargi provider %s)", "env FOO=1 qargi provider %s", "timeout 5 qargi provider %s",
+             "bash lib/provider.sh %s", "python3 -I lib/provider.py %s", "./lib/provider.py %s", "/opt/q/lib/provider.py %s")
+
+    def test_refuses_the_lifecycle_verbs_in_every_form(self):
+        for v in self.LIFECYCLE:
+            for form in self.FORMS:
+                c = form % v
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi provider %s changes the provider definitions and is not available to an agent" % v.split()[0], r.stderr, c)
+                self.assertIn("qargi guard:", r.stderr)
+
+    def test_accept_keeps_its_own_sentence(self):
+        r = self.bash("qargi provider accept claude --surface cloud --no-barrier --asked x")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent", r.stderr)
+        self.assertNotIn("changes the provider definitions", r.stderr)
+
+    def test_lets_the_verbs_that_only_read_through(self):
+        for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider check claude", "qargi provider effective claude local skills",
+                  "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
+                  "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
+                  "echo qargi provider seal x", "grep -n 'provider migrate' lib/provider.py", "cat provider.sh"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+
+class LibraryScripts(unittest.TestCase):
+    """lib/linker.py (the link engine: what a checkout loads its skills and agents from) and lib/render.py (the renderer of member
+    definitions, which can run the command a definition names) are qargi's own and are not available to a member when run directly. Their
+    names are common, so only the files of the tool are refused: a render.py or linker.py of a project, or of the clone a member works in, is
+    its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    LIB = os.path.realpath(os.path.join(os.path.dirname(BIN), "..", "lib"))
+
+    def refused(self, c, text, **kw):
+        r = self.bash(c, **kw)
+        self.assertEqual(r.returncode, 2, (c, r.stderr))
+        self.assertIn(text, r.stderr, c)
+        self.assertIn("qargi guard:", r.stderr)
+
+    def test_refuses_the_tools_own_scripts_run_directly(self):
+        lib = self.LIB
+        render = "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
+        link = "qargi packs link changes a skill and is not available to an agent"
+        for c in ("python3 -I %s/render.py render spec.json def.json", "python3 %s/render.py render spec.json def.json", "%s/render.py render s d",
+                  "bash -c 'python3 -I %s/render.py render s d'", "env X=1 python3 %s/render.py render s d", "sudo python3 %s/render.py render s d",
+                  "echo $(python3 %s/render.py render s d)", "cd src && python3 %s/render.py render s d", "python3 %s/../lib/render.py render s d",
+                  "python3 %s/render.py"):
+            self.refused(c % lib, render)
+        for c in ("python3 -I %s/linker.py", "python3 %s/linker.py plan link in.json t", "%s/linker.py", "bash -c 'python3 %s/linker.py'", "sudo python3 -I %s/linker.py"):
+            self.refused(c % lib, link)
+        self.refused("python3 -I render.py render s d", render, cwd=lib)
+        self.refused("python3 -I linker.py", link, cwd=lib)
+        self.refused("cd %s && python3 render.py render s d" % lib, render)
+        self.refused("./render.py render s d", render, cwd=lib)
+        self.refused("python3 lib/render.py render s d", render, cwd=os.path.dirname(lib))
+        os.symlink(lib, os.path.join(self.clone, "tool-lib"))                     # a link in the clone to the tool's lib is followed
+        self.refused("python3 tool-lib/render.py render s d", render)
+
+    def test_refuses_the_installed_copy_too(self):
+        opt = os.path.join(self.t, "opt")
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        self.refused("python3 -I %s/lib/render.py render s d" % opt, "lib/render.py is the renderer of member definitions")
+        self.refused("python3 %s/lib/linker.py" % opt, "qargi packs link changes a skill")
+        self.assertEqual(self.bash("python3 -I %s/other/render.py render s d" % opt).returncode, 0)
+
+    def test_a_script_of_the_same_name_that_is_not_the_tools_is_not_refused(self):
+        for c in ("python3 render.py render s d", "python3 -I lib/render.py render s d", "python3 scripts/linker.py", "./render.py", "python3 %s/proj/render.py" % self.t,
+                  "cd src && python3 ../tools/linker.py", "cat %s/render.py" % self.LIB, "grep -n def %s/linker.py" % self.LIB, "python3 -m unittest tests/test_render.py",
+                  "python3 -I %s/render_helpers.py" % self.LIB, "echo python3 %s/render.py" % self.LIB, "ls %s/linker.py" % self.LIB):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        r = self.bash("python3 -I lib/render.py render s d", cwd=self.proj)           # a project's own, with no lib of the tool
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
