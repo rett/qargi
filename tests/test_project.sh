@@ -103,4 +103,18 @@ grep -q '^finding: models.provider is not set and there is no default provider: 
 out=$($DA project attach "$AR" --name provless --url https://github.com/example/provless --plan "$tok" --approved go 2>&1)
 grep -q '^finding: models.provider is not set' <<<"$out" && [ "$(jq -r '.models.provider // "none"' $T/c/projects/provless.json)" = none ] && echo "ok   attach stores no models.provider and says so" || { echo "FAIL attach stores a provider: $out"; fail=1; }
 $DA project validate provless >/dev/null 2>&1 && echo "ok   the stored answers of an attached project validate" || { echo "FAIL attached project does not validate"; fail=1; }
+# the hint about a repository's own skills names the provider's directory, and every provider's while the project has none
+TOOL=$T/tool; mkdir -p "$TOOL"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+jq '.provider = "agentx" | .adapter = null | .layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render"' lib/providers/claude.json > "$TOOL/lib/providers/agentx.json"
+FX=$TOOL/bin/qargi
+HR=$T/hrepo; git init -q -b main "$HR"; echo x > "$HR/README"; git -C "$HR" -c user.name=t -c user.email=t@example.net add -A; git -C "$HR" -c user.name=t -c user.email=t@example.net commit -q -m one
+mkdir -p "$HR/.agent/skills/one" "$HR/.claude/skills/two"; echo x > "$HR/.agent/skills/one/SKILL.md"; echo x > "$HR/.claude/skills/two/SKILL.md"
+out=$($FX project attach "$HR" --name hintp --url https://github.com/example/hintp 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+grep -qx "repo has its own .agent/skills (1 skill): qargi packs link hintp offers to use the library's instead and shows which are new" <<<"$out" && grep -qx "repo has its own .claude/skills (1 skill): qargi packs link hintp offers to use the library's instead and shows which are new" <<<"$out" \
+  && echo "ok   no provider yet: the hint is given for the skills directory of every provider" || { echo "FAIL hint for every provider: $out"; fail=1; }
+$FX project attach "$HR" --name hintp --url https://github.com/example/hintp --plan "$tok" --approved go >/dev/null 2>&1; $FX project set hintp models.provider agentx >/dev/null 2>&1
+out=$($FX project attach "$HR" --name hintp 2>&1)
+grep -qx "repo has its own .agent/skills (1 skill): qargi packs link hintp offers to use the library's instead and shows which are new" <<<"$out" && ! grep -q "repo has its own .claude/skills" <<<"$out" \
+  && echo "ok   a project with a provider: the hint names that provider's skills directory only" || { echo "FAIL hint for the provider: $out"; fail=1; }
 exit $fail

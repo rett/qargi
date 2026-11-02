@@ -38,6 +38,7 @@ Usage: provider.py list
        provider.py require-skills NAME [--would TEXT]
                                          exit 3 with that refusal unless the provider supports skills on the local surface
        provider.py launch NAME RENDER    the command that starts a session on the render directory RENDER (exit 3: none)
+       provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR]
                                          prints the project's provider (models.provider); exit 2 when it names none or there is no such project
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
@@ -378,6 +379,21 @@ def provider_of(project, conf=None):
     return project_provider(answers, project)
 
 
+def skills_dirs(name=None, root=None):
+    """The project skills directories, relative to a checkout: NAME's (none when it has none), or the distinct ones of every provider
+    that has one and supports skills on the local surface. For a hint about a repository whose project names no provider yet."""
+    out = []
+    for n in ([name] if name else names(root)):
+        try:
+            require_skills(n, "list the skills directory", root)
+            d = layout(n, root)["project_skills_dir"]
+        except ProviderError:
+            continue
+        if d and d not in out:
+            out.append(d)
+    return out
+
+
 def checkout_key(rule, path):
     """The key of a checkout under a rule of the descriptor; nonalnum-dash replaces every non-alphanumeric character by -."""
     if rule != "nonalnum-dash":
@@ -624,6 +640,10 @@ def main(argv):
             return cmd_effective(rest[0], rest[1], rest[2])
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
             return cmd_require_barrier(rest[0], rest[1], rest[3] if len(rest) == 4 else None)
+        if verb == "skills-dirs" and len(rest) <= 1:
+            for d in skills_dirs(rest[0] if rest else None):
+                print(d)
+            return 0
         if verb == "of":
             if len(rest) in (1, 3) and (len(rest) == 1 or rest[1] == '--conf'):
                 print(provider_of(rest[0], rest[2] if len(rest) == 3 else None))

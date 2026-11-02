@@ -357,12 +357,17 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
-    # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored
-    rs=$(jq -r .found.path <<<"$det")/.claude/skills
-    if [ -d "$rs" ] && [ ! -L "$rs" ]; then
-      ns=$(find "$rs" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)
-      if [ "$ns" -gt 0 ]; then echo "repo has its own .claude/skills ($ns skill$([ "$ns" -eq 1 ] || echo s)): qargi packs link $n offers to use the library's instead and shows which are new"; fi
-    fi
+    # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
+    # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
+    plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" 2>/dev/null </dev/null) || pv=''
+    while IFS= read -r sd; do
+      [ -n "$sd" ] || continue
+      rs=$(jq -r .found.path <<<"$det")/$sd
+      if [ -d "$rs" ] && [ ! -L "$rs" ]; then
+        ns=$(find "$rs" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)
+        if [ "$ns" -gt 0 ]; then echo "repo has its own $sd ($ns skill$([ "$ns" -eq 1 ] || echo s)): qargi packs link $n offers to use the library's instead and shows which are new"; fi
+      fi
+    done < <(python3 -I "$plib/provider.py" skills-dirs $pv 2>/dev/null </dev/null)
     qs=$(jq -r --arg st "$stored" 'if $st == "" then .questions[] else empty end' <<<"$det")
     if [ -n "$qs" ]; then echo; echo "questions:"; sed 's/^/  - /' <<<"$qs"; fi
     echo
