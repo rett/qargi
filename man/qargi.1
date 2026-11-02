@@ -110,6 +110,11 @@ a deployment option to record and explain (see qargi methodology deployment).
 .RE
 .RS
 .TP
+.BI "\-\-provider " "NAME"
+the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list).
+.RE
+.RS
+.TP
 .BI "\-\-plan " "TOKEN"
 the plan token printed by the same command without \-\-approved.
 .RE
@@ -124,7 +129,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "attach " "[DIR]"
 Attach to an existing repository: read it, show the answers and the gaps, store on approval.
 .br
-Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget).
+Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it would store, the gaps against the methodology and what it could not determine, and a plan token. With \-\-plan and \-\-approved it stores the answers outside the repository. The safe gaps are closed by qargi project adopt, the rest by hand. It reads the tree of the methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields the stored file lacks, stays read\-only and gives no plan token; with \-\-force the plan replaces what it detects and keeps what it cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with \-\-provider NAME, and without it the output says so; with \-\-force \-\-provider fills in a provider that is not set and never replaces one.
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -139,6 +144,11 @@ the methodology to compare with (default gitflow).
 .TP
 .BI "\-\-url " "URL"
 the repository URL, when it has no origin remote.
+.RE
+.RS
+.TP
+.BI "\-\-provider " "NAME"
+the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list).
 .RE
 .RS
 .TP
@@ -290,7 +300,7 @@ A member is a Claude Code subagent you name, rendered from the one member defini
 .BI "add " "NAME"
 Create a member under a name you choose.
 .br
-Refuses a name that exists, a name that is not kebab\-case, and the name of a built\-in Claude Code agent type.
+The definition is rendered by the provider of the project in effect: \-\-project, else QARGI_PROJECT, else the project whose checkout you are in. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider).
 .RS
 .TP
 .BI "\-\-abilities " "LIST"
@@ -309,7 +319,7 @@ effort level, written into the definition and recorded with the member (default 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents.
+put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it.
 .RE
 .RE
 .RS
@@ -334,7 +344,7 @@ Keeps its name, abilities and model. Use it after an upgrade changes the definit
 .B models
 Show the base members, the profiles with their resolved models and efforts, and each member.
 .br
-Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/claude.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the base exists), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. Read\-only.
+Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the base exists), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. Read\-only.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -412,7 +422,7 @@ Validate one role, or all of them.
 .B qargi provider
 List and check the model providers: tiers, models and what each can do.
 .PP
-A provider is a descriptor, lib/providers/NAME.json, with one schema for every provider: the model each tier (fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool list per agent, a read\-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not verified counts as not supported. A provider with no read\-only barrier on a surface cannot serve the review role there unless you accept that with qargi provider accept. The project's models.provider chooses the provider (default claude).
+A provider is a descriptor, lib/providers/NAME.json, with one schema for every provider: the model each tier (fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool list per agent, a read\-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not verified counts as not supported. A provider with no read\-only barrier on a surface cannot serve the review role there unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2).
 .RS
 .TP
 .B list
@@ -2925,6 +2935,11 @@ Plan, then apply, the move to the ability names and to named members.
 .TP
 .BI "\-\-member\-names " "LIST"
 ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester).
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider).
 .RE
 .RS
 .TP

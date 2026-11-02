@@ -28,6 +28,7 @@ import roles as R  # noqa: E402
 
 CONF, STATE = R.conf(), R.state()
 NESTED_APPROVAL = "qargi migrate roles"
+PROJECT = [""]   # the project whose provider the new members are rendered for (--project; there is no default provider)
 
 
 def F(name):
@@ -305,7 +306,8 @@ def plan_agents(p, names):
             p.say("  qargi agent add %s --abilities %s    (%s)" % (new, ability, os.path.join(adir, new + ".md")))
 
             def add(new=new, ability=ability):
-                r = subprocess.run([os.path.join(HERE, "agent.sh"), "add", new, F("abilities"), ability], stdin=subprocess.DEVNULL)
+                r = subprocess.run([os.path.join(HERE, "agent.sh"), "add", new, F("abilities"), ability],
+                                   stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_PROJECT=PROJECT[0]))   # the provider of this project; the member stays user-level
                 if r.returncode != 0:
                     raise RuntimeError("qargi agent add %s failed" % new)
             p.act("add the member " + new, add)
@@ -350,7 +352,7 @@ def main(argv):
         import migrate_home
         return migrate_home.main(argv[1:])
     if argv[:1] != ["roles"]:
-        print("usage: qargi migrate roles|home [--member-names build=NAME,...] [--apply --plan TOKEN --asked \"...\"]", file=sys.stderr)
+        print("usage: qargi migrate roles|home [--member-names build=NAME,...] [--project NAME] [--apply --plan TOKEN --asked \"...\"]", file=sys.stderr)
         return 2
     apply, token, asked, names_arg = False, "", "", ""
     i = 1
@@ -360,12 +362,16 @@ def main(argv):
         elif a == "--plan" and i + 1 < len(argv): token = argv[i + 1]; i += 2
         elif a == "--asked" and i + 1 < len(argv): asked = argv[i + 1]; i += 2
         elif a == "--member-names" and i + 1 < len(argv): names_arg = argv[i + 1]; i += 2
+        elif a == "--project" and i + 1 < len(argv): PROJECT[0] = argv[i + 1]; i += 2
         else: die("unknown argument %s (qargi help migrate roles)" % a, 2)
     ASKED[0] = asked
     names = member_names(names_arg)
     work = tempfile.mkdtemp(prefix="qargi-migrate.")
     try:
         p = build(names, work)
+        if any(lbl.startswith("add the member ") for lbl, _ in p.actions) and not PROJECT[0]:
+            die("the plan adds members, and a member is rendered for a project's provider (there is no default): pass --project NAME, a project whose "
+                "models.provider is set (qargi project set NAME models.provider PROVIDER)", 2)
         print("qargi migrate roles: %s" % ("applying this plan" if apply else "plan (nothing is changed)"))
         print("\n".join(p.lines))
         if not p.actions:

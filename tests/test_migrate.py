@@ -112,7 +112,7 @@ def fixture(t, project="alpha"):
                       "apt": [], "skills": []} for r in ("dev", "docs", "review")},
         "lead": {"model": "claude-opus-5-5", "effort": "high"},
         "teams": {"code-docs": {"members": ["dev", "docs", "review"], "scopes": {"docs": ["site/"]}, "done": {"docs": "make lint"}}},
-        "memory": {"memory_store": "memstore_M", "reference_store": "memstore_R"}, "budget_cents": 500}))
+        "memory": {"memory_store": "memstore_M", "reference_store": "memstore_R"}, "budget_cents": 500, "models": {"provider": "claude"}}))
     w(os.path.join(conf, "profiles", P + ".md"), "profile\n")
     w(os.path.join(conf, "packs", "links.json"), json.dumps({"links": [{"pack": "skill:pdf", "scope": "project-role", "project": P, "role": "docs"}]}))
     res = [{"type": "memory_store", "memory_store_id": "memstore_M", "access": "read_write"},
@@ -164,7 +164,7 @@ class Migrate(unittest.TestCase):
         shutil.rmtree(self.t, ignore_errors=True)
 
     def q(self, *args, **extra):
-        return subprocess.run([BIN, "migrate", "roles"] + list(args), capture_output=True, text=True, env=dict(self.env, **extra),
+        return subprocess.run([BIN, "migrate", "roles"] + ([] if "--project" in args else ["--project", "alpha"]) + list(args), capture_output=True, text=True, env=dict(self.env, **extra),
                               cwd=self.t, stdin=subprocess.DEVNULL)
 
     def token(self, out):
@@ -265,7 +265,7 @@ class Migrate(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("nothing to migrate", again.stdout)
         self.assertNotIn("plan token", again.stdout)
-        self.assertEqual(subprocess.run([BIN, "agent", "for", "review"], capture_output=True, text=True, env=self.env).stdout.split()[0], "reviewer")
+        self.assertEqual(subprocess.run([BIN, "agent", "for", "review", "--project", "alpha"], capture_output=True, text=True, env=self.env).stdout.split()[0], "reviewer")
 
     def test_member_names_are_the_users(self):
         out = self.q("--member-names", "build=forge,write=scribe").stdout

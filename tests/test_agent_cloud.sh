@@ -36,7 +36,7 @@ python3 -I "$TOOL/lib/provider.py" check claude >/dev/null && python3 -I "$TOOL/
 
 # the projects: alpha has a base pair and the legacy instances, beta only the legacy ones, gamma only a worker, delta nothing
 for p in alpha beta gamma delta epsilon; do
-  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
 jq '.models = {provider: "effunver"}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 inst() { # name model effort -> one cloud instance record
@@ -99,7 +99,8 @@ e=$("$YES" agent for review --profile researcher --surface cloud --project alpha
 # --- nothing registered
 e=$("$YES" agent for build --surface cloud --project delta 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'delta' <<<"$e" && grep -q 'registered' <<<"$e"; } && ok "no cloud instance (a local one does not count): exit 1 with a clear message" || no "delta: rc=$rc $e"
-"$YES" agent for build --surface cloud --project nosuchproject >/dev/null 2>&1; [ $? = 1 ] && ok "a project with no instances: exit 1" || no "nosuchproject"
+e=$("$YES" agent for build --surface cloud --project nosuchproject 2>&1); rc=$?
+{ [ $rc = 2 ] && [ "$e" = "qargi: no such project 'nosuchproject'" ]; } && ok "a project that is not stored: exit 2 and it says so (there is no provider to look up)" || no "nosuchproject: rc=$rc $e"
 e=$("$YES" agent for review --surface cloud --project beta 2>&1); [ "$e" = "beta-review $O high review" ] && ok "a project with only the legacy reviewer works" || no "beta review: $e"
 echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --project alpha >/dev/null 2>&1; [ $? = 1 ] && ok "an empty registry: exit 1, none invented" || no "empty registry"
 [ "$(cat "$T/c/instances.json")" = '{}' ] && ok "and the registry is left as it was" || no "registry changed"
@@ -109,6 +110,7 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 "$YES" agent for build --surface cloud >/dev/null 2>&1; [ $? != 0 ] && ok "cloud needs a project (none is inferred outside one)" || no "cloud without project"
 
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
+export QARGI_PROJECT=alpha   # there is no default provider: the project in effect lends its models.provider to the user-level members
 $YES agent add builder --abilities build,test >/dev/null 2>&1; $YES agent add judge --abilities review >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
