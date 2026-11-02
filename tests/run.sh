@@ -11,6 +11,7 @@ rc=0
 t0=$SECONDS
 run() { local s=$SECONDS; echo "== $*"; if out=$("$@" 2>&1); then echo "$out" | tail -3; else echo "$out" | tail -20; echo "FAILED: $*"; rc=1; fi; echo "   ($((SECONDS - s))s)"; }
 run python3 tests/test_canon.py
+run bash tests/test_canon_audit.sh
 run python3 tests/test_tiers.py
 run bash tests/test_models.sh
 run python3 tests/test_provider.py

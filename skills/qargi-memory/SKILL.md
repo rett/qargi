@@ -36,7 +36,7 @@ only its own role's index, never another role's folder.
 | apply | `qargi canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: renames keep identity and history, conflicts go to `/_conflicts/<date>/`, the marker is written last, a re-run resumes. Show the plan first. |
 | import | `qargi canon import PROJECT --from STORE --role R --map docs-v0 [--approved "..."]` | Merges a foreign store (the old documentation store layout) into `roles/<R>/` with relevant folder names (numbered prefixes removed, references rewritten); curated parts into the reference store, history into the memory store. The source is only read. |
 | promote | `qargi canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
-| audit | `qargi canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder. |
+| audit | `qargi canon audit PROJECT` | Read-only: reports a session of one role writing under another role's folder; a cloud base session (`<project>-worker`, `<project>-reviewer`) is attributed through its role in the local session tracker, and one that cannot be attributed is counted in a NOTE. |
 
 `qargi memory lint` runs `canon check` (structure, note format, indexes and hygiene).
 A new project's stores start from `provision/role-seeds/`: `shared/` (gates, source map, test
