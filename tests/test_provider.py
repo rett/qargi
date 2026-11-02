@@ -1687,5 +1687,78 @@ class MigrateCli(CliBase):
         self.assertEqual(self.run_cli("migrate", "claude", "extra", "--dry-run")[0], 2)
 
 
+class ShippedClaude(unittest.TestCase):
+    """The shipped split of claude: catalogs/claude.json and the two runtimes claude-code (local) and claude-platform (cloud). Until the
+    consumers that read the schema 1 claude.json directly have moved to the loader, that file stays, and these tests hold the two
+    forms to one table: a change to one that is not made to the other fails here."""
+
+    RUNTIMES = (("claude-code", "local", "alias"), ("claude-platform", "cloud", "id"))
+
+    def test_the_catalog_and_the_runtimes_have_no_failure(self):
+        self.assertEqual([m for lvl, m in P.validate(P.catalog("claude"), "claude") if lvl == "fail"], [])
+        for name, surface, _ in self.RUNTIMES:
+            with self.subTest(name):
+                _, raw, findings = P.findings_of(name)
+                self.assertEqual([m for lvl, m in findings if lvl == "fail"], [])
+                self.assertEqual((raw["family"], raw["surface"], raw["models"]["catalog"]), ("claude", surface, "claude"))
+                self.assertEqual(P.surfaces_of(name), [surface])
+
+    def test_the_catalog_is_the_models_table_of_claude_json(self):
+        cat = P.catalog("claude")
+        self.assertEqual((cat["pattern"], cat["tiers"], cat["effort"]), (CLAUDE["model_pattern"], CLAUDE["tier_detail"], CLAUDE["effort"]))
+        self.assertEqual(CLAUDE["tiers"], {t: r["model"] for t, r in cat["tiers"].items()})
+        self.assertEqual(CLAUDE["aliases"], {t: r["alias"] for t, r in cat["tiers"].items()})
+
+    def test_each_runtime_says_what_claude_json_says_of_its_surface(self):
+        for name, surface, use in self.RUNTIMES:
+            with self.subTest(name):
+                doc = P.definition(name)
+                self.assertEqual(doc["capabilities"], {c: row[surface] for c, row in CLAUDE["capabilities"].items()})
+                m = P.models_of(name)
+                self.assertEqual(m["use"], use)
+                self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: CLAUDE["aliases"][t] if use == "alias" else CLAUDE["tiers"][t] for t in P.TIERS})
+                for c in P.capabilities():
+                    self.assertEqual(P.effective(name, surface, c), P.effective("claude", surface, c), c)
+                view = P.load(name)                                     # the schema 1 view older readers get
+                self.assertEqual((view["surfaces"], view["tiers"], view["aliases"], view["effort"], view["model_pattern"]),
+                                 ([surface], CLAUDE["tiers"], CLAUDE["aliases"], CLAUDE["effort"], CLAUDE["model_pattern"]))
+
+    def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
+        self.assertEqual(P.layout("claude-code", home="/h"), P.layout("claude", home="/h"))
+        self.assertEqual(P.load("claude-code")["local"], CLAUDE["local"])
+        self.assertEqual(P.launch_line("claude-code", "/r"), P.launch_line("claude", "/r"))
+        self.assertEqual(P.definition("claude-code")["session"]["render_target"], "claude-code")
+
+    def test_claude_platform_has_no_local_resources(self):
+        doc = P.definition("claude-platform")
+        self.assertEqual((doc["resources"], doc["agents"]), ({}, None))
+        with self.assertRaises(P.Unsupported):
+            P.require("claude-platform", "project_skills_dir", "link skills")
+
+    def test_the_two_runtimes_serve_one_surface_each(self):
+        with self.assertRaises(P.ProviderError):
+            P.definition("claude-code", "cloud")
+        with self.assertRaises(P.ProviderError):
+            P.definition("claude-platform", "local")
+
+    def test_without_the_schema_1_file_the_string_claude_resolves_per_surface_with_the_family_notice(self):
+        tmp = tempfile.mkdtemp(prefix="shipped.")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        root = os.path.join(tmp, "providers")
+        shutil.copytree(os.path.join(LIB, "providers"), root, ignore=shutil.ignore_patterns("__pycache__"))
+        os.remove(os.path.join(root, "claude.json"))
+        answers = {"models": {"provider": "claude"}}
+        for name, surface, _ in self.RUNTIMES:
+            with self.subTest(surface):
+                runtime, notice = P.resolve_project(answers, surface, "alpha", root=root)
+                self.assertEqual(runtime, name)
+                self.assertIn("through the family", notice)
+                self.assertIn("qargi project set alpha models.provider.%s %s" % (surface, name), notice)
+        self.assertEqual(P.resolve_runtime("claude-code", "local", root=root), "claude-code")
+        self.assertEqual(P.provider_of({"models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}}, "cloud", root=root), "claude-platform")
+        with self.assertRaises(P.NoProvider):                            # the cloud runtime does not serve the local surface
+            P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha", root=root)
+
+
 if __name__ == "__main__":
     unittest.main()
