@@ -115,6 +115,16 @@ the provider the project's agents run on (models.provider, with its models); not
 .RE
 .RS
 .TP
+.BI "\-\-provider\-local " "NAME"
+the runtime of the local surface (models.provider.local); use it with \-\-provider\-cloud instead of \-\-provider.
+.RE
+.RS
+.TP
+.BI "\-\-provider\-cloud " "NAME"
+the runtime of the cloud surface (models.provider.cloud).
+.RE
+.RS
+.TP
 .BI "\-\-plan " "TOKEN"
 the plan token printed by the same command without \-\-approved.
 .RE
@@ -149,6 +159,16 @@ the repository URL, when it has no origin remote.
 .TP
 .BI "\-\-provider " "NAME"
 the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list).
+.RE
+.RS
+.TP
+.BI "\-\-provider\-local " "NAME"
+the runtime of the local surface (models.provider.local); use it with \-\-provider\-cloud instead of \-\-provider.
+.RE
+.RS
+.TP
+.BI "\-\-provider\-cloud " "NAME"
+the runtime of the cloud surface (models.provider.cloud).
 .RE
 .RS
 .TP
@@ -791,11 +811,21 @@ Skills and tools share one library with globally unique names; a link attaches o
 .TP
 .BI "new " "NAME"
 Create a pack from a template.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RE
 .RS
 .TP
 .BI "import " "SOURCE"
 Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -836,6 +866,13 @@ Show a pack.
 .TP
 .BI "seal " "NAME"
 Approve the current content of a pack (after you edited it).
+.br
+A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"
@@ -967,11 +1004,21 @@ A tool is an MCP server with an explicit list of allowed tools and a permission 
 .TP
 .BI "new " "NAME"
 Create a pack from a template.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RE
 .RS
 .TP
 .BI "import " "SOURCE"
 Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -1012,6 +1059,13 @@ Show a pack.
 .TP
 .BI "seal " "NAME"
 Approve the current content of a pack (after you edited it).
+.br
+A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"
@@ -1283,6 +1337,11 @@ the role, for the role scopes.
 .TP
 .B \-\-dry\-run
 print the plan and stop; changes nothing.
+.RE
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with (default: the catalog entry's, else asked).
 .RE
 .RE
 .SS Run a task

@@ -96,7 +96,9 @@ COMMANDS = {
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
                          opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
-                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"), PLAN, APPROVED],
+                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
+                         opt("--provider-local", "the runtime of the local surface (models.provider.local); use it with --provider-cloud instead of --provider", "NAME"),
+                         opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours."),
@@ -106,6 +108,8 @@ COMMANDS = {
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
                             opt("--url", "the repository URL, when it has no origin remote", "URL"),
                             opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
+                         opt("--provider-local", "the runtime of the local surface (models.provider.local); use it with --provider-cloud instead of --provider", "NAME"),
+                         opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"),
                             PLAN, APPROVED, opt("--force", "replace the detected answers, keep the rest")],
                            desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
@@ -770,7 +774,8 @@ COMMANDS = {
                             [opt("--scope", "user, user-role, project or project-role (default: ask)", "SCOPE", ("user", "user-role", "project", "project-role")),
                              opt("--project", "the project, for the project scopes", "PROJECT", "project"),
                              opt("--role", "the role, for the role scopes", "ROLE", ROLES),
-                             opt("--dry-run", "print the plan and stop; changes nothing")],
+                             opt("--dry-run", "print the plan and stop; changes nothing"),
+                             opt("--compatible", "the providers the pack works with (default: the catalog entry's, else asked)", "LIST")],
                             desc="Interactive: it asks at the terminal, and your answers are the recorded approvals.",
                             examples=["qargi discover install skill-pdf --project acme --role write"]),
         },
@@ -920,12 +925,13 @@ COMMANDS = {
 
 # skill and tool share one set of verbs
 PACK_VERBS = {
-    "new": verb("Create a pack from a template", [("NAME", "none")]),
+    "new": verb("Create a pack from a template", [("NAME", "none")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST")]),
     "import": verb("Import a pack from a directory, file or pinned git URL, after a review", [("SOURCE", "file")],
-                   [opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
+                   [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
     "list": verb("List the library, or what a project and role get", [("PROJECT", "project", True), ("ROLE", "role", True)]),
     "show": verb("Show a pack", [("NAME", "pack")]),
-    "seal": verb("Approve the current content of a pack (after you edited it)", [("NAME", "pack")], [PLAN, APPROVED]),
+    "seal": verb("Approve the current content of a pack (after you edited it)", [("NAME", "pack")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), PLAN, APPROVED],
+                 desc="A pack with no compatible_providers needs --compatible once; giving it again changes the declaration and the plan says so."),
     "link": verb("Attach a pack at a scope", [("NAME", "pack")],
                  [opt("--scope", "where it applies", "SCOPE", ("user", "user-role", "project", "project-role")),
                   opt("--project", "for the project scopes", "PROJECT", "project"), opt("--role", "for the role scopes", "ROLE", ROLES)]),
