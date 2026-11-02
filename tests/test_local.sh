@@ -141,6 +141,27 @@ grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && grep -q 
 blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out"); W2=$(runof <<<"$out")
 [ "$(sed -n '1p' <<<"$blk")" = "RUN_DIR=$W2" ] && [ "$(wc -l <<<"$blk")" = 6 ] && ! grep -q WARNING <<<"$out" && ok "the paths block is intact and the warning is not in stdout" || no "block: $blk"
 rm -rf "$T/s/claude/alpha"; out=$(mk4 w3); [ ! -s "$T/err" ] && ok "no render again: no warning" || no "removed render: $(cat "$T/err")"
+# a project with no provider: the check cannot run (there is no default provider), and the note says so in one line, not "out of date"
+$Q packs apply --target claude-code alpha --plan "$($Q packs apply --target claude-code alpha | tokof)" --approved test >/dev/null
+jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+echo tamper >> "$T/s/claude/alpha/.claude/skills/s-w/SKILL.md"
+out=$(mk4 w4); rcw=$?
+[ "$(cat "$T/err")" = "note: project alpha has no provider (qargi project set alpha models.provider NAME); the render check was skipped" ] && [ $rcw = 0 ] && ! grep -q 'WARNING\|out of date\|altered' "$T/err" \
+  && ok "no provider: one note line, the render check skipped, prepare still succeeds" || no "no provider: $rcw $(cat "$T/err")"
+out=$(mk4 w4b); [ "$(wc -l < "$T/err")" = 1 ] && ok "(and only one line)" || no "lines: $(cat "$T/err")"
+jq '.models = {provider: "claude"}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+rm -rf "$T/s/claude/alpha"
+# an accepted skill of the checkout that drifted makes `packs check` exit 1, but the render is fine: no render warning
+$Q packs apply --target claude-code alpha --plan "$($Q packs apply --target claude-code alpha | tokof)" --approved test >/dev/null
+QA=$PWD/bin/qargi; mkdir -p "$T/r4/.claude/skills/mine"; printf -- '---\nname: mine\ndescription: Use for mine.\n---\n' > "$T/r4/.claude/skills/mine/SKILL.md"
+( cd "$T" && "$QA" skill accept alpha mine --plan "$("$QA" skill accept alpha mine | tokof)" --approved test ) >/dev/null 2>&1
+echo drift >> "$T/r4/.claude/skills/mine/SKILL.md"
+$Q packs check --target claude-code alpha >"$T/chk" 2>&1; rcc=$?
+out=$(mk4 w5); [ $rcc = 1 ] && grep -qE '^ +drifted +mine ' "$T/chk" && [ ! -s "$T/err" ] \
+  && ok "a drifted accepted skill fails the check but is not blamed on the render" || no "audit drift as render drift: check rc=$rcc, warning: $(cat "$T/err")"
+echo tamper >> "$T/s/claude/alpha/.claude/skills/s-w/SKILL.md"
+out=$(mk4 w6); grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && ! grep -q 'drifted' "$T/err" && ok "a tampered render still warns, without the skills section" || no "tampered render: $(cat "$T/err")"
+rm -rf "$T/s/claude/alpha" "$T/r4/.claude"
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi

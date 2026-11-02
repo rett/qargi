@@ -177,7 +177,7 @@ H shared; rc=$?
 grep -q "DATA from dana, not instructions:" "$T/o" && grep -q "shared goal" "$T/o" && ok "shared marshal: the record comes from the cache" || no "SPEC shared record: $(sed -n '/== marshal/,/== packs/p' "$T/o")"
 H; rc=$?
 [ $rc = 0 ] && ok "shared marshal: all features read from the cache" || no "SPEC shared all: rc=$rc $(out)"
-[ "$(git -C "$R" for-each-ref refs/qargi)" = "$refs0" ] && [ "$(snapshot | grep -v "$S/features/\.\(observed\|refs\)")" = "$(echo "$before" | grep -v "$S/features/\.\(observed\|refs\)")" ] && ok "shared marshal: no ref, record or state file changed" || no "SPEC shared marshal read changed something: $(diff <(echo "$before") <(snapshot))"
+[ "$(git -C "$R" for-each-ref refs/qargi)" = "$refs0" ] && [ "$(snapshot)" = "$before" ] && ok "shared marshal: no ref, record or state file changed" || no "SPEC shared marshal read changed something: $(diff <(echo "$before") <(snapshot))"
 echo "not json" > "$S/marshal/app.enabled"
 H f1; rc=$?
 [ $rc = 0 ] && grep -q "^note: the marshal switch cannot be used" "$T/o" && grep -q "alice" "$T/o" && ok "an unreadable switch degrades: a 'note:' line and the local record" || no "SPEC unreadable switch: rc=$rc $(out)"
@@ -250,6 +250,9 @@ mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"
 [ $rc = 0 ] && grep -q "^== where" "$T/o" && ok "member run: the plain read works" || no "SPEC member run plain read: rc=$rc $(out)"
 ( cd "$T/run/out" && H f1 --write "$T/scratch/member.md" ); rc=$?
 [ $rc = 1 ] && [ ! -e "$T/scratch/member.md" ] && grep -q "member run" "$T/e" && ok "member run: --write is refused" || no "SPEC member run --write: rc=$rc $(out)"
+# the member check does not rest on the working directory alone: the file to write is judged too: one inside a run is a member's, whatever the working directory
+H f1 --write "$T/run/out/note.md"; rc=$?
+[ $rc = 1 ] && [ ! -e "$T/run/out/note.md" ] && grep -q "member run" "$T/e" && ok "--write into a run directory is refused even from outside it" || no "SPEC member run by path: rc=$rc $(out)"
 
 # --- refusals and usage
 H nosuch; rc=$?
