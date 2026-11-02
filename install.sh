@@ -27,7 +27,7 @@
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
-skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team"
+skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team qargi-session"
 # skills an earlier version installed for the four abilities; roles/<role>/ROLE.md carries their text now
 retired_skills="qargi-build qargi-write qargi-review qargi-test"
 target='' proj='' mode='' copy='' force='' uninstall=''
@@ -100,7 +100,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-verify|qargi-flow|qargi-team)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-verify|qargi-flow|qargi-team|qargi-session)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
