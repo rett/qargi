@@ -58,7 +58,7 @@ import packs_audit  # noqa: E402  (strict_hash)
 import paths  # noqa: E402
 import provider  # noqa: E402
 
-NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
 BACKUP_SUFFIX = ".qargi-backup"
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -123,7 +123,7 @@ def skills_dir(inp):
 
 def render_path(inp):
     project = inp["project"]
-    if not NAME_RE.match(project) or ".." in project:
+    if not NAME_RE.fullmatch(project) or ".." in project:
         die("not a project name: " + project)
     return os.path.join(os.path.abspath(inp["state"]), inp["provider"], project, skills_dir(inp))
 

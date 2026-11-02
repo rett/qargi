@@ -286,6 +286,16 @@ rm -f "$ACC"
 
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
+# --- text a hand-edited accepted.json puts in the unaccept plan has no control character; a name is a name only in full
+jq -n '{user:{},projects:{alpha:{evil:{sha256:"0123456789abcdef", path:"/p\u001b[31mred", approved:"ok\n== forged line\u0007", at:"t\u0000x"}}}}' > "$ACC"
+out=$(ua alpha evil); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && [ "$(grep -c '^== forged' <<<"$out")" = 0 ] && grep -q "approved: ok== forged line" <<<"$out" \
+  && ok "the unaccept plan prints the stored path, time and approval without control characters" || no "unaccept control characters: $out"
+rm -f "$ACC"
+out=$(ac alpha $'mine\n' 2>&1) && no "accepted a skill name with a trailing newline" || { grep -q "^qargi: not a skill name: mine" <<<"$out" && ok "a skill name with a trailing newline is not a skill name (shell)" || no "newline name (shell): $out"; }
+out=$(echo '{}' > "$T/empty.json"; python3 -I "$ROOT/lib/packs_audit.py" target "$T/empty.json" $'mine\n' project "$T/t.json" 2>&1) && no "target accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && ok "a skill name with a trailing newline is not a skill name (script)" || no "newline name (script): $out"; }
+out=$(python3 -I "$ROOT/lib/packs_audit.py" store accept "$ACC" project alpha $'mine\n' aaaaaaaaaaaaaaaa x y z 2>&1) && no "store accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && [ ! -e "$ACC" ] && ok "store refuses it too" || no "newline name (store): $out"; }
+
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
 
 # --- a provider with another layout: the places, the settings files and the exclusion key come from its descriptor

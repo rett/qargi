@@ -277,6 +277,10 @@ $PYL plan link "$T/in.json" "$T/tokfile" >/dev/null 2>&1 && [ -s "$T/tokfile" ] 
 # --- a provider whose layout differs: every path comes from its descriptor, and a missing facility is a refusal (exit 3)
 # A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
 # has its own render target, and no renderer: the render is made by hand.
+# a name with a trailing newline is not a project name, nor a skill name
+jq '.project = "alpha\n"' "$T/in.json" > "$T/in3.json"; out=$($PYL plan link "$T/in3.json" "$T/tokfile" 2>&1) && no "a project name with a trailing newline was accepted" || { grep -q "not a project name" <<<"$out" && ok "a project name with a trailing newline is refused" || no "newline project: $out"; }
+out=$($DA skill accept alpha $'mine\n' 2>&1) && no "a skill name with a trailing newline was accepted" || { grep -q "^qargi: not a skill name: mine" <<<"$out" && ok "the shell refuses a skill name with a trailing newline as 'not a skill name'" || no "newline skill (shell): $out"; }
+
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
