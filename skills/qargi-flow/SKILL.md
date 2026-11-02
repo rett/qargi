@@ -30,7 +30,7 @@ machines and developers (see the shared marshal below). Your routine:
   actions renews it (`qargi marshal renew NAME` by hand). With the flow wiring `feature verify` and `feature finish` renew it for
   their whole run, and `feature merge|sync|verify|finish` and `local prepare --base feature/X` refuse while another live lead holds
   the feature; `feature status|list` show the lead.
-- **Hand over**: `qargi marshal release NAME --note "what the next lead must know"`; the next session runs `qargi marshal take NAME`.
+- **Hand over**: `qargi marshal release NAME --note "what the next lead must know"`; the next session runs `qargi marshal take NAME`. To start a fresh session from stored state use `qargi marshal handoff NAME` and the `/qargi-session` skill.
 - **A lead that went quiet**: once the lease ran out, `qargi marshal takeover NAME --approved "<the user's words>"`. It needs the
   user's go-ahead for exactly that takeover; never invent it. While the lease is live, wait or ask the lead to release.
 - **Identity**: `QARGI_LEAD` (the SessionStart hook writes the session id into `CLAUDE_ENV_FILE`; this is assumed from Claude Code's

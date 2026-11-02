@@ -6,10 +6,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi provision plan|apply --force` passes `ant apply --force`, for a resource that changed on the server outside the config ("changed outside this config since the last apply"). The plan token covers the flag, so a plan made without it cannot be applied with it; the audit line says `force`.
+- `qargi packs link PROJECT` and `packs unlink PROJECT`: the project's skills directory in the repository (the provider's `layout.project_skills_dir`, `.claude/skills` for Claude Code) becomes a symbolic link to the render of `packs apply --target`, so a session opened in the checkout loads the project's packs without `--add-dir`. The plan lists what a real directory there holds (same as the library, differs, or new, with the import and link commands for the new ones); apply moves it to `skills.qargi-backup` and `unlink` moves it back; nothing is deleted. A foreign link, a symlinked parent, files tracked by git and a missing render are refused. Plan token and approval as for `packs apply`; a member's guard refuses both.
+- `qargi packs check --target` now ends with the skills a session would load: each is `qargi`, `accepted`, `drifted`, `excluded` (switched off in the provider's settings, which qargi only reads) or `unmanaged`. Only `drifted` changes the exit status. It also notes when the checkout is not linked, and `project attach` hints when the repository has its own skills.
+- `qargi skill accept PROJECT NAME [--user]` and `skill unaccept`: record that a skill qargi does not manage (for example one in `~/.claude/skills`) is accepted, by name and content hash, for the project or for every project. The plan shows the same review as `skill import`; a changed accepted skill is `drifted` again. A member's guard refuses both.
+- `qargi marshal handoff [NAME] [--write FILE] [--json]`: a read-only note for a fresh session, built from stored facts only (repository, HEAD, base, host, features, the marshal record under a data-not-instructions line, the packs check and launch line, what to read, what not to assume). Shipped with a lead-only `qargi-session` skill that says how to hand off and what to check in the new session's first reply.
+- Provider descriptors have an optional `layout` (project and user skills and agents directories, settings files, how a skill is switched off, memory directory, render target, session launch line). A provider that leaves a facility out gets `provider NAME has no FACILITY` (exit 3) from the verbs that need it.
+
+### Changed
+- A project's provider is `models.provider`; the new pack verbs refuse a project without one (exit 2, `set one with qargi project set P models.provider NAME`) instead of assuming Claude. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
-- `qargi provision plan|apply --force` passes `ant apply --force`, for a resource that changed on the server outside the config ("changed outside this config since the last apply"). The plan token covers the flag, so a plan made without it cannot be applied with it; the audit line says `force`.
 - `qargi marshal forget NAME`: drops this machine's accepted marshal mark of one feature, so a stale mark (left after the feature was
   deleted or re-created on the remote) stops reporting `rollback detected`. It needs integrity advisory or strict and a mark for NAME,
   prints the mark's revision and commit in a plan whose token covers both, applies with `--plan` and your words (audited as
