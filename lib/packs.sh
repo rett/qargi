@@ -39,7 +39,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-INSTALL='' USER_SCOPE='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -54,6 +54,7 @@ while [ $# -gt 0 ]; do
     --target) TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
+    '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
@@ -252,7 +253,7 @@ cc_main() { # verb: apply|check
     local rc=0
     prov_need "$prj" "list the skills a session would load" project_skills_dir
     python3 -I "$PY" check "$CC_W/in.json" || rc=1
-    au_report "$CC_W/in.json" "$CC_W" || rc=1
+    [ -n "$RENDER_ONLY" ] || au_report "$CC_W/in.json" "$CC_W" || rc=1
     exit $rc
   fi
   python3 -I "$PY" prep "$CC_W/in.json" || exit 1
