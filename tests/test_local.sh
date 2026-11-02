@@ -8,6 +8,9 @@ T=$(mktemp -d); fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote.git" && git -C "$T/r" push -q origin main
+# a read-only role (or a profile) is looked up through the repository's project, and its models.provider (there is no default provider)
+mkdir -p "$T/c/projects"
+jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
@@ -165,7 +168,7 @@ rm -rf "$T/s/claude/alpha" "$T/r4/.claude"
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi
-$Q agent add pj-judge --abilities review >/dev/null 2>&1; $Q agent add pj-forge --abilities build >/dev/null 2>&1
+QARGI_PROJECT=rproj $Q agent add pj-judge --abilities review >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add pj-forge --abilities build >/dev/null 2>&1
 out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 [ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=pj-judge' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
   && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"

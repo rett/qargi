@@ -14,6 +14,7 @@ run python3 tests/test_canon.py
 run bash tests/test_canon_audit.sh
 run python3 tests/test_tiers.py
 run bash tests/test_models.sh
+run bash tests/test_no_default_provider.sh
 run python3 tests/test_provider.py
 run python3 tests/test_provider_adapter.py
 run bash tests/test_provider_degrade.sh
