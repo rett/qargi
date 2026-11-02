@@ -410,7 +410,8 @@ COMMANDS = {
                                "offers skill import and skill link for the new ones; apply then moves the directory to the backup name (skills.qargi-backup "
                                "beside it) and links, so skills not imported stop loading until they are. Nothing is deleted. If git does not ignore the path "
                                "it prints the line to add to .git/info/exclude and never edits that file. A provider that has no such directory is "
-                               "refused (exit 3); a project with no provider is refused (exit 2). A local member's guard refuses it.")),
+                               "refused (exit 3). Every verb that takes --target (packs apply, packs check), packs link and unlink, skill accept and marshal handoff "
+                               "exit 2 when the project has no provider (qargi project set P models.provider NAME). A local member's guard refuses it.")),
             "unlink": verb("Undo packs link", [("PROJECT", "project")], [PLAN, APPROVED],
                            desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
