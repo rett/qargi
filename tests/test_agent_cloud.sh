@@ -99,7 +99,8 @@ e=$("$YES" agent for review --profile researcher --surface cloud --project alpha
 # --- nothing registered
 e=$("$YES" agent for build --surface cloud --project delta 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'delta' <<<"$e" && grep -q 'registered' <<<"$e"; } && ok "no cloud instance (a local one does not count): exit 1 with a clear message" || no "delta: rc=$rc $e"
-"$YES" agent for build --surface cloud --project nosuchproject >/dev/null 2>&1; [ $? = 1 ] && ok "a project with no instances: exit 1" || no "nosuchproject"
+e=$("$YES" agent for build --surface cloud --project nosuchproject 2>&1); rc=$?
+{ [ $rc = 2 ] && [ "$e" = "qargi: no such project 'nosuchproject'" ]; } && ok "a project that is not stored: exit 2 and it says so (there is no provider to look up)" || no "nosuchproject: rc=$rc $e"
 e=$("$YES" agent for review --surface cloud --project beta 2>&1); [ "$e" = "beta-review $O high review" ] && ok "a project with only the legacy reviewer works" || no "beta review: $e"
 echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --project alpha >/dev/null 2>&1; [ $? = 1 ] && ok "an empty registry: exit 1, none invented" || no "empty registry"
 [ "$(cat "$T/c/instances.json")" = '{}' ] && ok "and the registry is left as it was" || no "registry changed"

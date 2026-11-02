@@ -142,8 +142,9 @@ COMMANDS = {
                         [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
-                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents", "PROJECT", "project")],
-                        desc="Refuses a name that exists, a name that is not kebab-case, and the name of a built-in Claude Code agent type.",
+                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it", "PROJECT", "project")],
+                        desc=("The definition is rendered by the provider of the project in effect: --project, else QARGI_PROJECT, else the project whose checkout you are in. "
+                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider)."),
                         examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
                                   "qargi agent add worker    # the write-class base: build, write and test"]),
             "list": verb("List the members, their abilities and definitions"),
@@ -156,7 +157,7 @@ COMMANDS = {
                            desc="Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read-only). "
                                 "Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model-defaults.json "
                                 "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
-                                "and a provider file (lib/providers/claude.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
+                                "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the "
                                 "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
