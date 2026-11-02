@@ -199,6 +199,7 @@ class Complete(Env):
         self.assertEqual(H.complete(["close", ""]), ["sesn_1"])
         self.assertEqual(H.complete(["canon", "apply", "--kind", ""]), ["memory", "reference"])
         self.assertEqual(H.complete(["skill", "link", "x", "--scope", ""]), ["user", "user-role", "project", "project-role"])
+        self.assertEqual(H.complete(["agent", "for", "build", "--surface", ""]), ["local", "cloud"])
         self.assertIn("--plan", H.complete(["canon", "apply", "alpha", "-"]))
         self.assertEqual(H.complete(["review", "check", ""]), ["@dir"])
         self.assertEqual(H.complete(["project", "init", "x", "--answers", ""]), ["@file"])
