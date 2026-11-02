@@ -18,7 +18,7 @@ D=$T/s/claude/alpha
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
-mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
+mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 apply() { $DA packs apply --target claude-code alpha "$@"; }
 plan() { apply | tok_of; }
 go() { apply --plan "$(plan)" --approved test; }
@@ -67,7 +67,7 @@ go >/dev/null; $DA skill enable alpha write s-write >/dev/null; go >/dev/null
 
 # --- tool pack -> mcp.json, settings.json
 printf '%s' '{"name":"issues","url":"https://mcp.example.net/","vault_ids":["vlt_abc123"],"tools":{"list_issues":"always_allow","create_issue":"always_ask","other":"auto"}}' > "$T/t.json"
-itok=$($DA tool import "$T/t.json" | tok_of); $DA tool import "$T/t.json" --plan "$itok" --approved test >/dev/null
+itok=$($DA tool import "$T/t.json" --compatible any | tok_of); $DA tool import "$T/t.json" --compatible any --plan "$itok" --approved test >/dev/null
 $DA tool link issues --scope project-role --project alpha --role build >/dev/null
 out=$(apply); grep -q "needs credentials you configure yourself.*issues" <<<"$out" && ok "the plan lists tools that need credentials" || no "credentials note: $out"
 out=$(go)
