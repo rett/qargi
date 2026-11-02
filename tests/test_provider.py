@@ -36,7 +36,8 @@ class Tree(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = os.path.join(self.tmp, "providers")
         os.makedirs(self.root)
-        shutil.copy(os.path.join(LIB, "providers", "schema.json"), self.root)
+        for sch in ("schema.json", "schema-2.json"):
+            shutil.copy(os.path.join(LIB, "providers", sch), self.root)
 
     def put(self, name, d):
         with open(os.path.join(self.root, name + ".json"), "w") as f:
@@ -902,6 +903,203 @@ class Schema2(unittest.TestCase):
         d = descriptor()
         d["models"] = {}
         self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
+
+
+class V2Tree(Tree):
+    """A temporary shipped directory (root, with catalogs/) and a temporary pack library, both fixtures."""
+
+    def setUp(self):
+        super().setUp()
+        self.library = os.path.join(self.tmp, "library")
+        self.state = os.path.join(self.tmp, "state")
+        os.makedirs(self.library)
+        os.makedirs(os.path.join(self.root, "catalogs"))
+
+    def put_catalog(self, family, d=None):
+        with open(os.path.join(self.root, "catalogs", family + ".json"), "w") as f:
+            json.dump(d or catalog(family), f)
+
+    def put_lib(self, name, d):
+        os.makedirs(os.path.join(self.library, name), exist_ok=True)
+        with open(os.path.join(self.library, name, "definition.json"), "w") as f:
+            json.dump(d, f)
+
+    def kw(self, **extra):
+        return dict(root=self.root, library=self.library, **extra)
+
+
+class Loader(V2Tree):
+    """The loader: shipped files and the pack library, schema 1 upgraded in memory, catalogs, the legacy view."""
+
+    def test_the_shipped_claude_descriptor_loads_exactly_as_before(self):
+        self.assertEqual(P.load("claude"), CLAUDE)
+        self.assertIn("claude", P.names())
+        self.assertEqual(P.cap("claude", "local", "skills"), "yes")
+        self.assertEqual(P.origin("claude"), "shipped")
+
+    def test_schema_1_is_upgraded_in_memory_one_definition_per_surface(self):
+        self.put("claude", CLAUDE)
+        self.assertEqual(P.surfaces_of("claude", **self.kw()), ["local", "cloud"])
+        loc = P.definition("claude", "local", **self.kw())
+        cld = P.definition("claude", "cloud", **self.kw())
+        self.assertEqual((loc["schema"], loc["kind"], loc["provider"], loc["surface"], loc["family"]), (2, "provider", "claude", "local", None))
+        self.assertEqual(cld["surface"], "cloud")
+        self.assertEqual(loc["models"]["pattern"], CLAUDE["model_pattern"])
+        self.assertEqual(loc["models"]["tiers"], CLAUDE["tier_detail"])
+        self.assertEqual(loc["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["local"])
+        self.assertEqual(cld["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["cloud"])
+        self.assertEqual(loc["agents"]["reserved_names"], CLAUDE["local"]["reserved_names"])
+        self.assertIsNone(cld["agents"])
+        self.assertEqual(loc["adapter"], "adapter")
+        with self.assertRaises(P.ProviderError) as cm:
+            P.definition("claude", **self.kw())
+        self.assertIn("serves local, cloud; name the surface", str(cm.exception))
+        with open(os.path.join(self.root, "claude.json")) as f:      # the file itself is untouched
+            self.assertEqual(json.load(f), CLAUDE)
+
+    def test_the_layout_of_schema_1_is_mapped_to_resources(self):
+        self.put("claude", CLAUDE)
+        res = P.definition("claude", "local", **self.kw())["resources"]
+        self.assertEqual(res["skills"]["project_dir"], ".claude/skills")
+        self.assertEqual(res["skills"]["user_dir"], "~/.claude/skills")
+        self.assertEqual(res["skills"]["exclusion"], {"form": "settings-key", "files": ["user", "project", "project-local"], "pointer": "/skillOverrides",
+                                                      "shape": "map", "off": "off"})
+        self.assertEqual(res["agents"]["project_dir"], ".claude/agents")
+        self.assertEqual([f["scope"] for f in res["settings"]["files"]], ["user", "project", "project-local"])
+        self.assertEqual(res["memory"], {"user_dir": "~/.claude/projects/{checkout_key}/memory", "checkout_key": "nonalnum-dash", "link": {"user": "dir-symlink"}})
+        self.assertEqual(P.definition("claude", "cloud", **self.kw())["resources"], {})
+        self.assertEqual(fails(P.definition("claude", "local", **self.kw()), "claude"), [])      # and the result is a valid schema 2 document
+
+    def test_the_layout_accessor_answers_from_the_resources_for_both_schemas(self):
+        self.put("claude", CLAUDE)
+        want = dict(CLAUDE["layout"])
+        lay = P.layout("claude", home="/h", **self.kw())
+        self.assertEqual(lay["project_skills_dir"], want["project_skills_dir"])
+        self.assertEqual(lay["exclusion"], want["exclusion"])
+        self.assertEqual(lay["render_target"], "claude-code")
+        self.assertEqual(lay["session_launch"], want["session_launch"])
+        self.assertEqual(lay["settings_files"][0], {"scope": "user", "path": "/h/.claude/settings.json"})
+        res = {"skills": {"project_dir": ".fake/skills", "user_dir": "~/.fake/skills", "items": "dir-per-item", "entry": "SKILL.md"},
+               "settings": {"files": [{"scope": "user", "path": "~/.fake/s.json", "format": "json"}]},
+               "memory": {"user_dir": "~/.fake/m/{checkout_key}", "checkout_key": "nonalnum-dash"}}
+        self.put("fakecli", runtime("fakecli", resources=res, session={"launch": "fake --add {render}", "render_target": "fakecli"}))
+        lay = P.layout("fakecli", home="/h", **self.kw())
+        self.assertEqual((lay["project_skills_dir"], lay["user_skills_dir"], lay["project_agents_dir"]), (".fake/skills", "/h/.fake/skills", None))
+        self.assertEqual((lay["memory_dir"], lay["checkout_key"], lay["exclusion"], lay["render_target"]), ("/h/.fake/m/{checkout_key}", "nonalnum-dash", None, "fakecli"))
+        self.assertEqual(P.launch_line("fakecli", "/r", **self.kw()), "fake --add /r")
+        self.assertEqual(P.memory_dir("fakecli", "/x/y", home="/h", **self.kw()), "/h/.fake/m/-x-y")
+        with self.assertRaises(P.Unsupported) as cm:
+            P.require("fakecli", "project_agents_dir", "write the agent", **self.kw())
+        self.assertEqual(str(cm.exception), "provider fakecli has no project agents directory: write the agent")
+
+    def test_a_v2_fixture_loads_and_reads_like_a_v1_one_through_load(self):
+        self.put("fakecli", runtime("fakecli", capabilities={"skills": cell()}))
+        self.assertEqual(P.names(**self.kw()), ["fakecli"])
+        d = P.load("fakecli", **self.kw())
+        self.assertEqual((d["provider"], d["surfaces"], d["model_pattern"]), ("fakecli", ["local"], "^.+$"))
+        self.assertEqual(d["tiers"], {t: "my-model" for t in P.TIERS})
+        self.assertEqual(d["aliases"], {t: None for t in P.TIERS})
+        self.assertEqual(d["effort"], {e: None for e in ("low", "medium", "high", "xhigh", "max")})
+        self.assertEqual(d["capabilities"]["skills"], {"local": cell()})
+        self.assertEqual(d["local"], {"reserved_names": []})
+        self.assertEqual(P.cap("fakecli", "local", "skills", **self.kw()), "yes")
+        self.assertEqual(P.cap("fakecli", "cloud", "skills", **self.kw()), "no")
+        self.assertEqual(P.definition("fakecli", **self.kw())["provider"], "fakecli")
+        self.assertEqual(P.models_of("fakecli", **self.kw())["tiers"]["deep"]["model"], "my-model")
+
+    def test_a_catalog_reference_takes_the_models_of_the_catalog(self):
+        self.put_catalog("fam")
+        self.put("fam-cli", runtime("fam-cli", family="fam", models={"catalog": "fam", "use": "alias"}))
+        self.put("fam-hosted", runtime("fam-hosted", family="fam", surface="cloud", models={"catalog": "fam", "use": "id"}))
+        m = P.models_of("fam-cli", **self.kw())
+        self.assertEqual((m["catalog"], m["use"], m["pattern"]), ("fam", "alias", "^fam-[a-z0-9.-]+$"))
+        self.assertEqual(m["tiers"]["balanced"], tier("fam-mid", "mid"))
+        self.assertEqual(m["effort"], {"low": "low", "medium": "medium", "high": "high", "xhigh": None, "max": None})
+        self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["small", "mid", "big", "fam-top"])       # alias when the tier has one, else the id
+        mh = P.models_of("fam-hosted", **self.kw())
+        self.assertEqual([P.model_for(mh, t) for t in P.TIERS], ["fam-small", "fam-mid", "fam-big", "fam-top"])
+        d = P.load("fam-cli", **self.kw())
+        self.assertEqual((d["tiers"]["fast"], d["aliases"]["fast"], d["model_pattern"]), ("fam-small", "small", "^fam-[a-z0-9.-]+$"))
+
+    def test_a_catalog_reference_to_nothing_or_to_a_runtime_is_refused(self):
+        self.put("lost", runtime("lost", models={"catalog": "nope", "use": "id"}))
+        with self.assertRaises(P.ProviderError) as cm:
+            P.models_of("lost", **self.kw())
+        self.assertIn("no catalog 'nope'", str(cm.exception))
+        with open(os.path.join(self.root, "catalogs", "wrong.json"), "w") as f:
+            json.dump(runtime("wrong"), f)
+        self.put("lost", runtime("lost", models={"catalog": "wrong", "use": "id"}))
+        with self.assertRaises(P.ProviderError) as cm:
+            P.models_of("lost", **self.kw())
+        self.assertIn("catalog 'wrong' is not a catalog", str(cm.exception))
+
+    def test_the_pack_library_adds_definitions_and_catalogs(self):
+        self.put_lib("libcat", catalog("libcat"))
+        self.put_lib("libcli", runtime("libcli", family="libcat", models={"catalog": "libcat", "use": "id"}))
+        self.put("fakecli", runtime("fakecli"))
+        self.assertEqual(P.names(**self.kw()), ["fakecli", "libcli"])            # a catalog is not a runtime
+        self.assertEqual((P.origin("libcli", **self.kw()), P.origin("fakecli", **self.kw())), ("library", "shipped"))
+        self.assertEqual(P.models_of("libcli", **self.kw())["tiers"]["fast"]["model"], "fam-small")
+        self.assertEqual(P.load("libcli", **self.kw())["provider"], "libcli")
+        with self.assertRaises(P.ProviderError) as cm:
+            P.load("nope", **self.kw())
+        self.assertIn("available: fakecli, libcli", str(cm.exception))
+
+    def test_a_broken_library_definition_breaks_only_itself(self):
+        self.put("fakecli", runtime("fakecli"))
+        os.makedirs(os.path.join(self.library, "broken"))
+        with open(os.path.join(self.library, "broken", "definition.json"), "w") as f:
+            f.write("{")
+        self.put_lib("named", runtime("other-name"))
+        self.put_lib("old", descriptor())
+        self.assertEqual(P.names(**self.kw()), ["broken", "fakecli", "named", "old"])
+        self.assertEqual(P.load("fakecli", **self.kw())["provider"], "fakecli")
+        for n, needle in (("broken", "not readable JSON"), ("named", "declares provider 'other-name'"), ("old", "library definitions are schema 2")):
+            with self.assertRaises(P.ProviderError, msg=n) as cm:
+                P.load(n, **self.kw())
+            self.assertIn(needle, str(cm.exception))
+
+    def test_the_same_name_in_the_shipped_directory_and_the_library_is_refused(self):
+        self.put("dupe", runtime("dupe"))
+        self.put_lib("dupe", runtime("dupe"))
+        self.put("fine", runtime("fine"))
+        with self.assertRaises(P.Clash) as cm:
+            P.load("dupe", **self.kw())
+        self.assertEqual(str(cm.exception), "'dupe' is defined twice (shipped and library); qargi provider remove dupe, or rename it")
+        self.assertIsInstance(cm.exception, P.ProviderError)
+        for f in (P.definition, P.surfaces_of, P.models_of):
+            with self.assertRaises(P.Clash):
+                f("dupe", **self.kw())
+        with self.assertRaises(P.Clash):
+            P.effective("dupe", "local", "skills", **self.kw())
+        self.assertEqual(P.load("fine", **self.kw())["provider"], "fine")        # a clash refuses what needs the name, nothing else
+        self.assertEqual(P.names(**self.kw()), ["dupe", "fine"])
+
+    def test_a_catalog_in_both_places_or_a_library_name_taken_by_a_shipped_catalog_is_refused(self):
+        self.put_catalog("fam")
+        self.put_lib("fam", catalog("fam"))
+        self.put("user", runtime("user", models={"catalog": "fam", "use": "id"}))
+        with self.assertRaises(P.Clash):
+            P.models_of("user", **self.kw())
+        self.put_catalog("taken")
+        self.put_lib("taken", runtime("taken"))
+        with self.assertRaises(P.Clash):
+            P.load("taken", **self.kw())
+
+    def test_an_explicit_root_without_a_library_sees_no_library(self):
+        self.put_lib("libcli", runtime("libcli"))
+        self.put("fakecli", runtime("fakecli"))
+        self.assertEqual(P.names(root=self.root), ["fakecli"])
+
+    def test_the_default_library_is_below_the_configuration_directory(self):
+        conf = os.environ["QARGI_CONF"]
+        self.assertEqual(P.library_dir(), os.path.join(conf, "packs", "providers"))
+        os.makedirs(os.path.join(conf, "packs", "providers", "homecli"))
+        self.addCleanup(shutil.rmtree, os.path.join(conf, "packs", "providers", "homecli"), True)
+        with open(os.path.join(conf, "packs", "providers", "homecli", "definition.json"), "w") as f:
+            json.dump(runtime("homecli"), f)
+        self.assertIn("homecli", P.names())
+        self.assertEqual(P.origin("homecli"), "library")
 
 
 if __name__ == "__main__":
