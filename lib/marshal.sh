@@ -4,6 +4,7 @@
 # the command line, finds the project, reads the lease length and audits a takeover.
 #
 #   marshal.sh claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] ...
+#   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
 #   marshal.sh enable --integrity off|advisory|strict [--project P] [--plan TOKEN --approved WORDS]   set how records are signed
@@ -23,7 +24,9 @@
 # covers both, applying a changed mark is refused (marshal:forget); with integrity off, or with no mark for NAME, it exits 2. The signing key is the
 # file $DA_CONF/credentials/marshal_ed25519 (mode 600, made by key init, never overwritten, never in an argument list, the audit log
 # or the tracker); the trusted signers are the file $DA_STATE/marshal/PROJECT.signers; the mode is the field integrity of the
-# switch file (default off). A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
+# switch file (default off). handoff needs no lease and works for a feature someone else leads; it changes no record, ref or audit line and
+# fetches nothing (the shared records are read from the cache this machine holds); only --write FILE makes a file (new, mode 600, never
+# inside a repository or the qargi directories), which the guard refuses to a member. A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
 # session hook uses it).
 #
 # The project answer marshal.ttl is the lease length in minutes (integer, default 15): qargi project set P marshal.ttl 20.
@@ -108,6 +111,7 @@ marshal_main() {
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
   local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
+       qargi marshal handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
@@ -131,6 +135,7 @@ marshal_main() {
     disable) want=' --project --plan --approved ';;
     claim) want=' --project --as --goal ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
+    handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
     check) want=' --project --as --no-fetch ';;
     renew|take|finish) want=' --project --as ';;
@@ -162,7 +167,7 @@ marshal_main() {
     esac
   done
   case $verb in
-    status|check|enable|disable|key) ;;
+    status|check|handoff|enable|disable|key) ;;
     signers) case $sub in
         remove) [ -n "$name" ] || { echo "qargi: marshal signers remove needs the PRINCIPAL to drop; $usage" >&2; exit 2; };;
         *) [ -z "$name" ] || { echo "qargi: unexpected argument $name; $usage" >&2; exit 2; };;
@@ -325,6 +330,10 @@ marshal_main() {
     if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:takeover" "$(cat "$af")"; fi
     rm -f "$af"
     exit "$rc"
+  fi
+  if [ "$verb" = handoff ]; then
+    # read only: no lease, no fetch, no record written; the file of --write is the only thing it may make
+    exec python3 -I "$MARSHAL_LIB/marshal_handoff.py" --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --repo "$(marshal_repo "$PROJ")" --ttl "$(marshal_ttl "$PROJ")" "${opt[@]}"
   fi
   marshal_py "$PROJ" "$verb" "${opt[@]}"
 }

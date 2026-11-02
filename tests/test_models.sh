@@ -148,7 +148,7 @@ e=$($DA agent models --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "models.provider 'schema'" <<<"$e" && grep -q 'available: claude$' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
 jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
-[ "$($DA project template alpha | sha256sum | cut -d' ' -f1)" = 8efee3c2ababf5b293c2f7ea9b9a4e3afdbbb6f1706a55a08eb826002e91d293 ] && ok "project template output is byte-identical to before the profiles" || no "template"
+[ "$($DA project template alpha | sha256sum | cut -d' ' -f1)" = e7b0ee756a604905e80fe4782ec602307260bee817b8cd0b9e7b85c6e798a43a ] && ok "project template output is byte-identical to before the profiles" || no "template"
 $DA project template alpha | jq -e '.roles.build.model == "claude-sonnet-5-5" and .roles.write.model == "claude-sonnet-5-5" and .roles.build.effort == "high"' >/dev/null && ok "project template writes the resolved claude ids" || no "template ids"
 
 shellcheck -x -S warning lib/agent.sh lib/project.sh tests/test_models.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"

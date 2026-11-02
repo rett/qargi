@@ -165,7 +165,10 @@ class Skills(unittest.TestCase):
 
     def test_refuses_the_verbs_that_change_a_skill(self):
         verbs = ["%s %s x" % (a, v) for a in ("skill", "tool") for v in ("new", "import", "seal", "remove", "unlink", "link", "enable", "disable")]
-        verbs += ["discover install skill-pdf --project p", "packs apply p-build --asked x", "import backup.tar.gz"]
+        verbs += ["skill accept p x", "skill unaccept p x", "skill accept p x --user", "skill unaccept p x --user --plan 0123456789ab --approved go",
+                  "skill accept p x --plan 0123456789ab --approved go"]
+        verbs += ["discover install skill-pdf --project p", "packs apply p-build --asked x", "packs link p", "packs unlink p --plan 0123456789ab --approved go",
+                  "packs link p --plan 0123456789ab --approved go", "import backup.tar.gz"]
         for v in verbs:
             for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "echo ok; qargi %s --approved go",
                          "bash -c 'qargi %s'", "sh -c \"cd /x && qargi %s\"", "eval 'qargi %s'", "echo $(qargi %s)", "echo `qargi %s`",
@@ -174,8 +177,37 @@ class Skills(unittest.TestCase):
                 self.assertEqual(r.returncode, 2, form % v)
                 self.assertIn("changes a skill and is not available to an agent", r.stderr)
                 self.assertIn("qargi guard:", r.stderr)
-        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "python3 -I lib/discover.py install foo"):
+        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "./lib/packs.sh packs link p", "bash lib/packs.sh skill accept p x", "./lib/packs.sh skill unaccept p x --user", "bash lib/packs.sh packs unlink p", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
+
+    def test_refuses_the_helper_scripts_of_the_link_and_accept_verbs_run_directly(self):
+        """packs_link.py (packs link|unlink), packs_audit.py store (skill accept|unaccept) and marshal_handoff.py --write are what the shell
+        verbs call; run directly with a hand-made inputs file they would skip the plan token and the audit line."""
+        direct = ("python3 -I lib/packs_link.py apply link in.json 0123456789ab", "python3 -I lib/packs_link.py plan unlink in.json t",
+                  "python3 lib/packs_link.py apply link in.json \"$(cat t)\"", "./lib/packs_link.py apply link in.json x", "bash -c 'python3 -I lib/packs_link.py apply unlink in.json x'",
+                  "cd lib && python3 -I packs_link.py apply link ../in.json x", "/opt/q/lib/packs_link.py plan link in.json t",
+                  "python3 -I lib/packs_audit.py store accept acc.json project p x 0123456789ab /r/x why 2026-01-01T00:00:00Z",
+                  "python3 -I lib/packs_audit.py store unaccept acc.json user p x", "python3 -I lib/packs_audit.py store $v acc.json user p x",
+                  "python3 -I lib/packs_audit.py $(echo store) accept acc.json user p x", "env X=1 python3 /opt/q/lib/packs_audit.py store accept a.json user p x h")
+        for c in direct:
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("changes a skill and is not available to an agent", r.stderr)
+        self.assertIn("qargi packs link", self.bash("python3 -I lib/packs_link.py apply link in.json t").stderr)
+        self.assertIn("qargi packs unlink", self.bash("python3 -I lib/packs_link.py apply unlink in.json t").stderr)
+        self.assertIn("qargi skill accept", self.bash("python3 -I lib/packs_audit.py store accept a.json user p x h").stderr)
+        self.assertIn("qargi skill unaccept", self.bash("python3 -I lib/packs_audit.py store unaccept a.json user p x").stderr)
+        for c in ("python3 -I lib/packs_audit.py report in.json", "python3 -I lib/packs_audit.py acceptance acc.json project p x",
+                  "python3 -I lib/packs_audit.py scan in.json out.json", "python3 -I lib/packs_audit.py target in.json x project out.json",
+                  "cat lib/packs_link.py", "grep -n store lib/packs_audit.py", "python3 -I lib/marshal_handoff.py --state s --conf c --project p f"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        for c in ("python3 -I lib/marshal_handoff.py --state s --conf c --project p --write note.md", "python3 lib/marshal_handoff.py --write=note.md --state s",
+                  "python3 lib/marshal_handoff.py --wr note.md --state s", "python3 lib/marshal_handoff.py --w note.md", "./lib/marshal_handoff.py --project p $OPT note.md",
+                  "python3 lib/marshal_handoff.py --project p $(echo --write) note.md", "python3 lib/marshal_handoff.py --project p `echo --write` n"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the lead changes the marshal; report it in your task output", r.stderr)
 
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
@@ -201,7 +233,8 @@ class Skills(unittest.TestCase):
 
     def test_lets_the_read_only_verbs_through(self):
         for c in ("qargi skill list", "qargi skill show x", "qargi tool check p build", "qargi skill effective p build", "qargi discover search pdf",
-                  "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi export a.tgz", "qargi help skill",
+                  "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi packs check --target claude-code p",
+                  "echo qargi skill accept p x", "git commit -m 'qargi skill unaccept p x'", "qargi export a.tgz", "qargi help skill",
                   "git commit -m 'qargi skill new is refused for members'", "grep -rn 'qargi skill link' docs", "echo qargi skill remove x",
                   "ls skills", "qargi local verify"):
             r = self.bash(c)
@@ -219,7 +252,7 @@ class Skills(unittest.TestCase):
     def test_edit_tools_are_decided_by_the_resolved_path(self):
         c, lib, ls = self.clone, self.lib, self.lskill
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
-            for p in (os.path.join(lib, "skills/s/SKILL.md"), os.path.join(lib, "links.json"), os.path.join(ls, "x/SKILL.md"), "../home/.claude/skills/x/SKILL.md",
+            for p in (os.path.join(lib, "skills/s/SKILL.md"), os.path.join(lib, "links.json"), os.path.join(lib, "accepted.json"), os.path.join(ls, "x/SKILL.md"), "../home/.claude/skills/x/SKILL.md",
                       "link-to-library/skills/s/SKILL.md", os.path.join(self.proj, ".claude/skills/p/SKILL.md"), "../../proj/.claude/skills/new/SKILL.md",
                       "~/.claude/skills/x/SKILL.md", "~/.claude/agents/m.md", "~/.claude/plugins/p/plugin.json"):
                 r = self.call(tool, {key: p})
@@ -240,7 +273,8 @@ class Skills(unittest.TestCase):
 
     def test_bash_writes_to_a_protected_location_are_refused(self):
         lib, ls = self.lib, self.lskill
-        for c in ("echo x > %s/skills/s/SKILL.md" % lib, "echo x >> %s/links.json" % lib, "echo x>%s/links.json" % lib, "cat a 2> %s/e" % ls,
+        for c in ("echo x > %s/skills/s/SKILL.md" % lib, "echo x >> %s/links.json" % lib, "echo x>%s/links.json" % lib, "echo '{}' > %s/accepted.json" % lib, "cp a.json %s/accepted.json" % lib, "mv a.json %s/accepted.json" % lib,
+                  "sed -i s/a/b/ %s/accepted.json" % lib, "rm %s/accepted.json" % lib, "cat a 2> %s/e" % ls,
                   "echo x | tee %s/x/SKILL.md" % ls, "cp a.md %s/x/" % ls, "cp -t %s/x a.md" % ls, "cp --target-directory=%s/x a.md" % ls,
                   "mv %s/x /tmp/gone" % ls, "mv a.md %s/x/SKILL.md" % ls, "rm -rf %s/skills/s" % lib, "rm -rf ~/.claude", "rm -rf %s" % self.home,
                   "ln -s /etc/passwd %s/x/SKILL.md" % ls, "install -m 644 a %s/x/SKILL.md" % ls, "sed -i s/a/b/ %s/x/SKILL.md" % ls,
@@ -260,7 +294,7 @@ class Skills(unittest.TestCase):
     def test_bash_reads_and_other_writes_are_not_refused(self):
         lib, ls = self.lib, self.lskill
         for c in ("cat %s/x/SKILL.md" % ls, "cat %s/x/SKILL.md > %s/run/out/copy.md" % (ls, self.t), "cp %s/x/SKILL.md %s/run/out/" % (ls, self.t),
-                  "grep -rn foo %s" % lib, "ls -la %s" % ls, "diff -r %s/x skills/qargi-build" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
+                  "grep -rn foo %s" % lib, "cat %s/accepted.json" % lib, "jq . %s/accepted.json" % lib, "ls -la %s" % ls, "diff -r %s/x skills/qargi-build" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
                   "jq . %s/links.json > %s/run/out/l.json" % (lib, self.t), "find %s -name '*.md'" % ls, "find %s -name SKILL.md -exec cat {} +" % self.clone + " > /dev/null",
                   "tar czf %s/run/out/lib.tgz -C %s ." % (self.t, lib), "echo x > %s/home/.claude/settings.json" % self.t, "rm -rf %s/run/out/old" % self.t,
                   "curl -s http://h/f -o %s/run/out/f" % self.t, "touch %s/.claude" % self.proj, "ls ~/.claude/skills", "echo ~/.claude/skills > list.txt", "cd %s && ls" % lib):
@@ -607,6 +641,43 @@ class Marshal(unittest.TestCase):
         cmds += ["qargi marshal", "qargi marshal frobnicate", "qargi marshal $v", "qargi marshal \"$v\"", "v=claim; qargi marshal $v proj f",
                  "qargi marshal Claim", "qargi marshal CLAIM", "qargi marshal STATUS", "qargi marshal Status", "qargi marshal statuss", "qargi marshal check2"]
         self.refused(cmds)
+
+    def test_handoff_is_a_read_for_a_member_until_it_is_given_a_file_to_write(self):
+        """marshal handoff reads like status and check do; only --write (a file is made) is refused, however it is run, and so is an
+        argument the guard cannot read because a variable holds it."""
+        for c in ("qargi marshal handoff", "qargi marshal handoff f", "qargi marshal handoff f --project proj", "qargi marshal handoff f --json",
+                  "qargi marshal handoff --as me", "/opt/q/bin/qargi marshal handoff f", "bin/qargi marshal handoff f --json", "env FOO=1 qargi marshal handoff f",
+                  "bash -c 'qargi marshal handoff f'", "bash lib/marshal.sh handoff f", "echo $(qargi marshal handoff f)", "ls; qargi marshal handoff f",
+                  "qargi marshal handoff f | head -5", "timeout 5 qargi marshal handoff f --json"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        cmds = []
+        for w in ("--write note.md", "--write /tmp/x/note.md", "--write=note.md", "--json --write note.md", "f --write note.md", "f --project proj --write note.md"):
+            cmds += ["qargi marshal handoff %s" % w, "/opt/q/bin/qargi marshal handoff %s" % w, "bin/qargi marshal handoff %s" % w,
+                     "env FOO=1 qargi marshal handoff %s" % w, "sudo qargi marshal handoff %s" % w, "bash -c 'qargi marshal handoff %s'" % w,
+                     "sh -c \"qargi marshal handoff %s\"" % w, "eval 'qargi marshal handoff %s'" % w, "echo $(qargi marshal handoff %s)" % w,
+                     "true && qargi marshal handoff %s" % w, "ls; qargi marshal handoff %s" % w, "qargi 'marshal' 'handoff' %s" % w,
+                     "bash lib/marshal.sh handoff %s" % w, "lib/marshal.sh marshal handoff %s" % w, "nohup qargi marshal handoff %s" % w]
+        cmds += ["qargi marshal handoff f '--write' note.md", "qargi marshal handoff f \"--write\" note.md", "qargi marshal handoff f $OPT note.md",
+                 "qargi marshal handoff f ${OPT:---json}", "qargi marshal handoff f `echo --json`", "v=handoff; qargi marshal $v f",
+                 "qargi marshal handoff f $(echo --write) note.md", "qargi marshal handoff f `echo --write` note.md", "bash -c 'qargi marshal handoff f $(echo --write) x'",
+                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md",
+                 "echo --write note.md | xargs qargi marshal handoff f", "printf x | xargs -n2 qargi marshal handoff", "xargs qargi marshal handoff f < args.txt",
+                 "cat args | xargs bash lib/marshal.sh handoff f", "echo x | xargs -I{} qargi marshal handoff f"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+        res = self.bash("qargi marshal handoff f --write note.md")
+        self.assertIn("handoff --write writes a file", res.stderr)
+
+    def test_the_other_marshal_verbs_are_still_refused_with_handoff_named_as_a_read(self):
+        res = self.bash("qargi marshal claim f")
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("only status, check and handoff without --write are", res.stderr)
+        self.assertEqual(self.bash("qargi marshal handoffs f").returncode, 2)
+        self.assertEqual(self.bash("qargi marshal Handoff f").returncode, 2)
 
     def test_feature_verbs_that_write_the_marshal_are_refused_however_they_are_run(self):
         """feature start, finish and verify create, finish and renew the lead's record (marshal_start, marshal_finish and the

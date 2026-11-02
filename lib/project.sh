@@ -4,7 +4,9 @@
 # branch, push policy, model, packages, skills; memory stores; budget).
 # Stored under the user's config directory, never in a repository.
 #
-#   project.sh template NAME              print an answers file with defaults
+#   project.sh template NAME              print an answers file with defaults (models.provider is there as an empty string: there is no
+#                                         default provider, so set it to a provider's name before the pack verbs, skill accept and
+#                                         marshal handoff can serve the project; `project validate` reports it while it is empty)
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string)
@@ -18,7 +20,8 @@
 #                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
 #                                         branch or file, never pushes; refused (exit 2) when dirty, detached, empty, unattached
 #                                         or in a member run
-#   project.sh show NAME | list | validate FILE
+#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
+#                                         change the exit status, so storing and the flows after it work as before)
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
 # pushes. The "coordinator" and "agent" policies below are designed but not built, so
@@ -220,6 +223,14 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
+# no_provider FILE [NAME]: prints the finding and returns 0 when the answers name no provider (models.provider missing, not a string or blank:
+# the same rule as provider.py project_provider). Never an error: a project without one is stored and used as before, but the verbs that
+# need a provider (packs apply/check --target, packs link/unlink, skill accept, marshal handoff) refuse it with exit 2.
+no_provider() {
+  jq -e '(if (.models | type) == "object" then .models.provider else null end) as $p | ($p | type) != "string" or ($p | test("^\\s*$"))' "$1" >/dev/null 2>&1 || return 1
+  echo "finding: models.provider is not set and there is no default provider: qargi project set ${2:-$(jq -r '.project // "NAME"' "$1")} models.provider PROVIDER (qargi provider list)"
+}
+
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
@@ -231,6 +242,7 @@ case $verb in
         build: {base: "@dispatcher", push: {mode: "none"}, model: $t.build.model, effort: $t.build.effort, apt: [], skills: []},
         write: {base: "gh-pages", push: {mode: "none"}, model: $t.write.model, effort: $t.write.effort, apt: [], skills: ["pdf"]}
       },
+      models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
   init)
@@ -244,6 +256,7 @@ case $verb in
     [ ! -e "$PROJ_DIR/$n.json" ] || [ -n "$force" ] || die "project $n is already initialised (--force to replace)"
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
+    no_provider "$PROJ_DIR/$n.json" || true
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model)/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
@@ -299,6 +312,7 @@ PY
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
       echo "project $n stored in $PROJ_DIR/$n.json"
+      no_provider "$PROJ_DIR/$n.json" || true
     fi
     if [ -n "$dep" ]; then echo; python3 -I "$lib/methodology.py" deployment "$meth" "$dep"; fi
     echo; echo "next: create the repository on your host and push (git remote add origin URL; git push -u origin ${long// / })"
@@ -343,6 +357,17 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
+    # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
+    plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" 2>/dev/null </dev/null) || pv=''
+    while IFS= read -r sd; do
+      [ -n "$sd" ] || continue
+      rs=$(jq -r .found.path <<<"$det")/$sd
+      if [ -d "$rs" ] && [ ! -L "$rs" ]; then
+        ns=$(find "$rs" -mindepth 2 -maxdepth 2 -name SKILL.md -type f | wc -l)
+        if [ "$ns" -gt 0 ]; then echo "repo has its own $sd ($ns skill$([ "$ns" -eq 1 ] || echo s)): qargi packs link $n offers to use the library's instead and shows which are new"; fi
+      fi
+    done < <(python3 -I "$plib/provider.py" skills-dirs $pv 2>/dev/null </dev/null)
     qs=$(jq -r --arg st "$stored" 'if $st == "" then .questions[] else empty end' <<<"$det")
     if [ -n "$qs" ]; then echo; echo "questions:"; sed 's/^/  - /' <<<"$qs"; fi
     echo
@@ -353,6 +378,7 @@ PY
     fi
     if [ -z "$APPROVED" ]; then
       echo "stored answers would be:"; jq . <<<"$ans"
+      no_provider /dev/stdin "$n" <<<"$ans" || true   # attach does not guess a provider and stores none
       echo "plan token: $tok   (store with: qargi project attach $dir --plan $tok --approved \"...\"${force:+ --force})"
       exit 0
     fi
@@ -362,7 +388,8 @@ PY
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
     mv "$f" "$sf"; chmod 600 "$sf"
     audit_log "project:attach" "$n"
-    echo "project $n stored in $sf (approved: $APPROVED)";;
+    echo "project $n stored in $sf (approved: $APPROVED)"
+    no_provider "$sf" || true;;
   adopt)
     # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
     n=${1:-}; shift || true; valid_project "$n" || die "adopt needs the name of an attached project (qargi project list)"
@@ -421,6 +448,6 @@ PY
     echo "$n: $path = $val (applies to the next provision; use 'instances budget' for a live deployment)";;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
-  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f";;
+  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
   *) die "usage: project.sh template|init|new|attach|adopt|set|show|list|validate ...";;
 esac

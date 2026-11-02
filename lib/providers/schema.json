@@ -72,6 +72,38 @@
         "reserved_names": {"type": "array", "items": {"type": "string"}, "description": "names the provider's local agent runtime already uses; a member may not take them"}
       }
     },
+    "layout": {
+      "description": "Optional. Where the provider keeps skills, agents, settings and memory for a local session, and how a session is launched. Every field is a string or null; null (or no layout at all) means the provider does not support that facility, and the qargi verb that needs it refuses with exit 3: provider NAME has no FACILITY: what it would have done. A leading ~ is the user's home and is expanded when the layout is read; every other path is relative to the project's checkout.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_skills_dir": {"type": ["string", "null"], "description": "skills directory inside a checkout, relative (a render of the packs has the same path inside the render directory)"},
+        "user_skills_dir": {"type": ["string", "null"], "description": "the user's skills directory, ~/..."},
+        "project_agents_dir": {"type": ["string", "null"], "description": "agent definitions inside a checkout, relative"},
+        "user_agents_dir": {"type": ["string", "null"], "description": "the user's agent definitions, ~/..."},
+        "settings_files": {
+          "type": ["array", "null"],
+          "description": "the settings files a session reads, lowest scope first; user paths start with ~/, the others are relative to the checkout",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scope", "path"],
+            "properties": {"scope": {"enum": ["user", "project", "project-local"]}, "path": {"type": "string"}}
+          }
+        },
+        "exclusion": {
+          "type": ["object", "null"],
+          "description": "how a settings file switches a skill off: a JSON object under file_key maps the skill name to off_value. Needs settings_files",
+          "additionalProperties": false,
+          "required": ["file_key", "off_value"],
+          "properties": {"file_key": {"type": "string"}, "off_value": {"type": "string"}}
+        },
+        "memory_dir": {"type": ["string", "null"], "description": "the provider's own memory directory for a checkout; {checkout_key} is replaced by the key below"},
+        "checkout_key": {"enum": ["nonalnum-dash", null], "description": "the rule that turns a checkout's absolute path into {checkout_key}: nonalnum-dash replaces every character that is not a letter or digit by -"},
+        "render_target": {"type": ["string", "null"], "description": "the --target name the provider's packs renderer answers to (qargi packs apply|check --target NAME)"},
+        "session_launch": {"type": ["string", "null"], "description": "the command that starts a session on a render; {render} is the render directory. A group in [...] is kept only when the file named by its last word exists"}
+      }
+    },
     "adapter": {"type": ["string", "null"], "description": "the executable that serves the provider, as a path under the tool root (lib/providers/NAME/adapter); it is called as adapter VERB with a JSON request on stdin. null for none: the provider has no adapter, and what needs one is refused"}
   },
   "$defs": {
