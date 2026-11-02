@@ -74,6 +74,9 @@ Signing key: the one credential a member may not even read is the lead's signing
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
+Residual for marshal handoff: xargs in front of it is refused (its arguments come from standard input), but other ways to build a command line the
+guard does not parse (a shell loop that reads a file, `parallel`, a script written earlier) are not seen; the redirect form `... < args` into a
+loop is accepted as residual, and `qargi local verify` and the lead's review of the output are what catch a note written by a member.
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
@@ -605,7 +608,7 @@ def bash_skill_refusal(command, here, depth):
             continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
-        why = skill_verb(prog, rest)
+        why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]))
         if why:
             return why
         inner = shell_string(prog, rest) if depth < 3 else None
@@ -632,8 +635,9 @@ def shell_string(prog, rest):
     return None
 
 
-def skill_verb(prog, rest):
-    """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None."""
+def skill_verb(prog, rest, via_xargs=False):
+    """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
+    stands before the program, so its arguments come from standard input, where --write could be."""
     words = [t for t in rest if not t.startswith("-")]
     name = prog
     if prog not in SCRIPTS:
@@ -677,6 +681,9 @@ def skill_verb(prog, rest):
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
     if area == "marshal" and verb in MARSHAL_SIGNING:
         return MarshalReason("qargi marshal %s %s and is not available to an agent (only status, check and handoff without --write are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
+    if area == "marshal" and verb == "handoff" and via_xargs:
+        return MarshalReason("qargi marshal handoff through xargs takes arguments the guard cannot read (one could be --write, which writes a file) and is not available to an agent; %s"
+                             % MARSHAL_NOTE)
     if area == "marshal" and verb == "handoff" and any(t == "--write" or t.startswith("--write=") or ("--write".startswith(t) and len(t) > 2 and t.startswith("--"))
                                                        or "$" in t or "`" in t for t in rest):
         return MarshalReason("qargi marshal handoff --write writes a file (or takes an argument it cannot read from a variable) and is not available to an agent (handoff without --write, status and check are); %s"

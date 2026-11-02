@@ -661,7 +661,9 @@ class Marshal(unittest.TestCase):
         cmds += ["qargi marshal handoff f '--write' note.md", "qargi marshal handoff f \"--write\" note.md", "qargi marshal handoff f $OPT note.md",
                  "qargi marshal handoff f ${OPT:---json}", "qargi marshal handoff f `echo --json`", "v=handoff; qargi marshal $v f",
                  "qargi marshal handoff f $(echo --write) note.md", "qargi marshal handoff f `echo --write` note.md", "bash -c 'qargi marshal handoff f $(echo --write) x'",
-                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md"]
+                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md",
+                 "echo --write note.md | xargs qargi marshal handoff f", "printf x | xargs -n2 qargi marshal handoff", "xargs qargi marshal handoff f < args.txt",
+                 "cat args | xargs bash lib/marshal.sh handoff f", "echo x | xargs -I{} qargi marshal handoff f"]
         for c in cmds:
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
