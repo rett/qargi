@@ -256,6 +256,10 @@ COMMANDS = {
             "resign": verb("Sign an unsigned open record (writes one more revision on top of it)", [("NAME", "none")], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                            desc=("Used when moving from advisory to strict. The plan shows the head, its lead and goal and its token covers exactly that head; it is refused for a lead other than the accepted one. "
                                  "Audited as marshal:resign. Not available in a member run.")),
+            "forget": verb("Drop this machine's accepted mark of a feature, so a stale mark stops reporting rollback detected", [("NAME", "none")], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
+                           desc=("Only with integrity advisory or strict, and only for a feature that has a mark. The plan shows the mark's revision and commit and its token covers both, so a mark that moved since is refused. "
+                                 "After it the next record found for the feature is trusted on first sight again and a rollback against the old revision is no longer detected; the refs on the remote are not touched. "
+                                 "Audited as marshal:forget. Not available in a member run.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
         },

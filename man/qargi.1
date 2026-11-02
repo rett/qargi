@@ -1593,6 +1593,28 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RS
 .TP
+.BI "forget " "NAME"
+Drop this machine's accepted mark of a feature, so a stale mark stops reporting rollback detected.
+.br
+Only with integrity advisory or strict, and only for a feature that has a mark. The plan shows the mark's revision and commit and its token covers both, so a mark that moved since is refused. After it the next record found for the feature is trusted on first sight again and a rollback against the old revision is no longer detected; the refs on the remote are not touched. Audited as marshal:forget. Not available in a member run.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the first run.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
 .B disable
 Switch back to the local records; the refs already on the remote stay (audited as marshal:disable).
 .br
