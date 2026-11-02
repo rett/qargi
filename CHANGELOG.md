@@ -15,7 +15,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Provider descriptors have an optional `layout` (project and user skills and agents directories, settings files, how a skill is switched off, memory directory, render target, session launch line). A provider that leaves a facility out gets `provider NAME has no FACILITY` (exit 3) from the verbs that need it.
 
 ### Changed
-- A project's provider is `models.provider`; the new pack verbs refuse a project without one (exit 2, `set one with qargi project set P models.provider NAME`) instead of assuming Claude. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
+- A project's provider is `models.provider`; every verb that takes `--target` (`packs apply`, `packs check`), `packs link` and `unlink`, `skill accept` and `marshal handoff` exit 2 when the project has no provider (`set one with qargi project set P models.provider NAME`) instead of assuming Claude; a name that is not a project says `no such project`. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
 
 ## [0.2.0] - 2026-11-02
 
