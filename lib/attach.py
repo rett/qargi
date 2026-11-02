@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Attach qargi to an existing repository without changing it.
 
-  attach.py detect DIR [--name N] [--methodology M]    print JSON: what was found, the draft answers, the gaps, the questions
+  attach.py detect DIR [--name N] [--methodology M] [--provider P]    print JSON: what was found, the draft answers, the gaps, the questions
   attach.py adopt-plan PROJECT ANSWERS [--methodology M]   print JSON: the safe gaps `qargi project adopt` would close (reads only)
   attach.py adopt-apply PROJECT ANSWERS < PLAN          create what that plan lists (stdin is the plan adopt-plan printed)
 
 detect only reads DIR (files and `git` queries). The draft answers are what `qargi project init` would store; the gaps are what
 the chosen methodology has that the repository lacks (`qargi project adopt` closes the safe ones, as a branch to review); the
-questions are the facts it could not determine. Nothing is written by detect or adopt-plan, and nothing about the project goes
+questions are the facts it could not determine. There is no default provider: models.provider (and the roles' models, which are the provider's)
+is in the draft only when --provider names one; otherwise a question says so. Nothing is written by detect or adopt-plan, and nothing about the project goes
 into its repository.
 
 adopt-apply writes exactly two kinds of thing: local branches that did not exist (git branch, never -f), and one commit of
@@ -168,7 +169,7 @@ def changelog_info(d):
     return {}
 
 
-def detect(d, name=None, methodology="gitflow"):
+def detect(d, name=None, methodology="gitflow", provider=None):
     d = os.path.realpath(d)
     top = git(d, "rev-parse", "--show-toplevel")
     if not top:
@@ -202,17 +203,30 @@ def detect(d, name=None, methodology="gitflow"):
         questions.append("repo.long_lived: no master, main, trunk or develop branch was found; name the branches no agent may touch")
     if not cmd:
         questions.append("test_command: no test command was recognised; name the command that runs the whole suite")
-    default_model = PV.load("claude")["tiers"]["balanced"]   # a project that is not stored yet has the default provider
+    # there is no default provider: the models are the named provider's, or the roles name none and a question says why
+    default_model = None
+    if provider:
+        try:
+            default_model = PV.load(provider)["tiers"]["balanced"]
+        except PV.ProviderError as e:
+            raise SystemExit("qargi: --provider: %s" % e)
+    else:
+        questions.append("models.provider: no provider was named, so none is stored and the roles' models are not set; set them after the provider is chosen "
+                         "(qargi project attach --provider NAME, or qargi project set %s models.provider NAME)" % pname)
     roles = {}
     for r, cfg in (m.get("roles") or {}).items():
         base = cfg.get("base", "@dispatcher")
-        roles[r] = {"base": base, "push": {"mode": "none"}, "model": default_model, "effort": "high" if r in ("build", "test") else "medium", "apt": [], "skills": []}
+        roles[r] = {"base": base, "push": {"mode": "none"}, "effort": "high" if r in ("build", "test") else "medium", "apt": [], "skills": []}
+        if default_model:
+            roles[r]["model"] = default_model
     answers = {
         "schema": 1, "project": pname, "methodology": methodology,
         "repo": {"url": https_url(remote) if remote else "https://github.com/OWNER/REPO", "path": dpath, "credential_file": "",
                  "long_lived": long_lived or ["master", "develop"]},
         "roles": roles, "memory": {"memory_store": "", "reference_store": ""}, "budget_cents": 500,
     }
+    if provider:
+        answers["models"] = {"provider": provider}
     if cmd:
         answers["test_command"] = cmd
     gaps = []
@@ -400,16 +414,18 @@ def main(argv):
             sys.exit(2)
         return
     if len(argv) < 2 or argv[0] != "detect":
-        raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M]")
-    d, name, meth, i = argv[1], None, "gitflow", 2
+        raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M] [--provider P]")
+    d, name, meth, prov, i = argv[1], None, "gitflow", None, 2
     while i < len(argv):
         if argv[i] == "--name" and i + 1 < len(argv):
             name, i = argv[i + 1], i + 2
         elif argv[i] == "--methodology" and i + 1 < len(argv):
             meth, i = argv[i + 1], i + 2
+        elif argv[i] == "--provider" and i + 1 < len(argv):
+            prov, i = argv[i + 1], i + 2
         else:
             raise SystemExit("qargi: unknown option %s" % argv[i])
-    print(json.dumps(detect(d, name, meth), indent=2, sort_keys=True))
+    print(json.dumps(detect(d, name, meth, prov), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

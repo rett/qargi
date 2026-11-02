@@ -282,9 +282,9 @@ case $verb in
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
     n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
-    meth=gitflow dir='' url='' dep='' force='' PLAN_ARG='' APPROVED='' PARAMS=()
+    meth=gitflow dir='' url='' dep='' force='' prov='' PLAN_ARG='' APPROVED='' PARAMS=()
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) meth=$2; shift 2;; --dir) dir=$2; shift 2;; --url) url=$2; shift 2;; --deployment) dep=$2; shift 2;;
+      case $1 in --methodology) meth=$2; shift 2;; --dir) dir=$2; shift 2;; --url) url=$2; shift 2;; --deployment) dep=$2; shift 2;; --provider) prov=${2:-}; shift 2;;
         --param) PARAMS+=(--param "$2"); shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
@@ -295,18 +295,20 @@ case $verb in
     if [ -e "$dir" ]; then [ -d "$dir" ] && [ -z "$(ls -A "$dir")" ] || die "$dir exists and is not an empty directory"; fi
     files=$(python3 -I "$lib/methodology.py" files "$meth" --param "project=$n" "${PARAMS[@]}") || exit 1
     if [ -n "$dep" ]; then python3 -I "$lib/methodology.py" deployment "$meth" "$dep" >/dev/null || exit 1; fi
+    [ -z "$prov" ] || python3 -I "$lib/provider.py" show "$prov" >/dev/null || exit 1   # --provider names a provider that has a descriptor, before anything is created
     [ ! -e "$PROJ_DIR/$n.json" ] || die "project $n is already initialised (qargi project show $n)"
     long=$(python3 -I - "$lib" "$meth" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
 PY
     ) || exit 1
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$(jq -S -c . <<<"$files")" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$(jq -S -c . <<<"$files")" | plan_token)
     echo "new project $n with the $meth methodology at $dir"
     echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
     echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"
     if [ -n "$url" ]; then echo "  qargi answers stored for $url (outside the repository)"; else echo "  no --url: the answers are stored later, when the remote exists: qargi project attach $dir --url URL"; fi
     echo "  deployment: ${dep:-not chosen (see below)}"
+    echo "  provider: ${prov:-not chosen (none is stored; set one with qargi project set $n models.provider NAME)}"
     echo
     if [ -z "$APPROVED" ]; then
       python3 -I "$lib/methodology.py" deployment "$meth"
@@ -328,7 +330,7 @@ PY
     audit_log "project:new" "$n"
     echo "created $dir (on $last, $(git -C "$dir" rev-parse --short HEAD))"
     if [ -n "$url" ]; then
-      det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth") || exit 1
+      det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" ${prov:+--provider "$prov"}) || exit 1
       f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
@@ -340,13 +342,13 @@ PY
     echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
   attach)
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
-    dir=. name='' meth=gitflow url='' force='' PLAN_ARG='' APPROVED=''
+    dir=. name='' meth=gitflow url='' force='' prov='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --name) name=$2; shift 2;; --methodology) meth=$2; shift 2;; --url) url=$2; shift 2;; --force) force=1; shift;;
+      case $1 in --name) name=$2; shift 2;; --methodology) meth=$2; shift 2;; --url) url=$2; shift 2;; --force) force=1; shift;; --provider) prov=${2:-}; shift 2;;
         --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
     done
     export PLAN_ARG   # need_plan reads it
-    det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth") || exit 1
+    det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth" ${prov:+--provider "$prov"}) || exit 1
     [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     n=$(jq -r .answers.project <<<"$det")
     valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
@@ -362,6 +364,12 @@ PY
         | (if $urlgiven != "" or $f.remote != "" then .repo.url = $d.repo.url else . end)
         | (if ($f.long_lived | length) > 0 then .repo.long_lived = $d.repo.long_lived else . end)
         | (if $d.test_command then .test_command = $d.test_command else . end)' "$sf")
+      # a stored project keeps its provider: --provider only fills in one that is not set, never replaces one (qargi project set does that)
+      if [ -n "$prov" ]; then
+        sp=$(jq -r '.models.provider // "" | strings | gsub("^\\s+|\\s+$"; "")' "$sf" 2>/dev/null) || sp=''
+        [ -z "$sp" ] || [ "$sp" = "$prov" ] || die "project $n is stored with the provider '$sp'; --provider does not replace it (qargi project set $n models.provider NAME)"
+        ans=$(jq -c --arg p "$prov" '.models = ((.models // {}) | if type == "object" then . else {} end) + {provider: $p}' <<<"$ans")
+      fi
     fi
     tok=$(jq -S -c . <<<"$ans" | plan_token)
     jq -r '"project \(.answers.project) from \(.found.path)\nread from: \(.found.ref | if . == "" then "no commit" else . end) (\(.found.ref_why); the checked-out branch is \(.found.current_branch | if . == "" then "none" else . end), the working tree is not read)\nmethodology: \(.methodology)\nremote (origin as read): \(.found.remote // "none")" + (if (.found.remote // "") != "" and .found.url != .found.remote then "\nrepo.url (normalised to https, no .git, no credentials): \(.found.url)" else "" end) + "\nlong-lived branches: \(.answers.repo.long_lived | join(", "))\nversion: \(.found.version.file // "not found") \(.found.version.value // "")\ntags: \(.found.tags.count) (\(.found.tags.pattern | if . == "" then "no semantic pattern" else . end))\nchangelog: \(.found.changelog.file // "none")\ntest command: \(.found.test_command | if . == "" then "not found" else . end)\nCI workflows: \(.found.ci_workflows | if length == 0 then "none" else join(", ") end)"' <<<"$det"
