@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-02T08:45:39Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-02T09:09:52Z",
- "finished_at": null,
+ "finished_at": "2026-11-02T09:14:50Z",
  "updated_by": "rett@arc",
- "rev": 5,
- "updated_at": "2026-11-02T09:09:52Z",
+ "rev": 6,
+ "updated_at": "2026-11-02T09:14:50Z",
  "feature": "gaps2",
  "project": "qargi"
 }
