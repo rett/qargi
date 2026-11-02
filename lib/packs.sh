@@ -10,11 +10,11 @@
 # gets every pack linked at a scope that reaches it, unless the project answers disable it for
 # that role (roles.<role>.packs_off). There is no precedence to learn: names cannot collide.
 #
-#   packs.sh skill|tool new     NAME
-#   packs.sh skill|tool import  SOURCE [--name N] [--ref REF] [--path SUB] [--plan TOKEN --approved "..."]
+#   packs.sh skill|tool new     NAME --compatible LIST
+#   packs.sh skill|tool import  SOURCE --compatible LIST [--name N] [--ref REF] [--path SUB] [--plan TOKEN --approved "..."]
 #   packs.sh skill|tool list    [PROJECT [ROLE]]
 #   packs.sh skill|tool show    NAME
-#   packs.sh skill|tool seal    NAME [--plan TOKEN --approved "..."]    approve the current content (after you edited it)
+#   packs.sh skill|tool seal    NAME [--compatible LIST] [--plan TOKEN --approved "..."]    approve the current content (after you edited it)
 #   packs.sh skill|tool link    NAME --scope S [--project P] [--role R]      unlink: the same
 #   packs.sh skill|tool enable|disable PROJECT ROLE NAME                     (role-level opt-out)
 #   packs.sh skill accept PROJECT NAME [--user] [--plan TOKEN --approved "..."]   accept a skill a session loads that qargi does not manage
@@ -32,6 +32,11 @@
 #                                                                       (the plan also lists the skills a session would load)
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
+# Every pack declares which providers can use it, compatible_providers: runtime names, family names, or the single word "any"
+# (--compatible LIST: comma separated, or a JSON array). It is kept in the pack's record and covered by the content hash, so it is
+# approved with the content and a change of it is drift. A pack that does not declare it fails its review. A pack that declares a list
+# the project's provider is not on is skipped for that project, with a note that says so (lib/packs_compat.py), never attached silently.
+#
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
 # hashed and approved before it is stored, and any later change fails `check` and provisioning
 # until it is reviewed again.
@@ -39,7 +44,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -51,6 +56,7 @@ while [ $# -gt 0 ]; do
     --approved) APPROVED=$2; shift 2;;
     --plan) PLAN_ARG=$2; shift 2;;
     --asked) ASKED=$2; shift 2;;
+    --compatible) [ $# -ge 2 ] || die "--compatible needs a list: any, or runtime or family names separated by commas"; COMPAT_ARG=$2; shift 2;;
     --target) TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
@@ -61,6 +67,7 @@ while [ $# -gt 0 ]; do
 done
 export PLAN_ARG ASKED
 PROVPY=$(dirname "$(readlink -f "$0")")/provider.py
+COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
 
 # The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
 # field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
@@ -88,17 +95,42 @@ mkdir -p "$PACKS/skills" "$PACKS/tools"; [ -f "$LINKS" ] || echo '{"links":[]}' 
 
 item_path() { if [ "$1" = skill ]; then echo "$PACKS/skills/$2"; else echo "$PACKS/tools/$2.json"; fi; }
 record_of() { if [ -d "$1" ]; then echo "$1/.pack.json"; else echo "${1%.json}.pack.json"; fi; }
-content_hash() {
-  if [ -d "$1" ]; then (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
-  else sha256sum < "$1" | cut -c1-16; fi
+compat_of() { # path -> the compatible_providers of the pack's record as compact sorted JSON; empty when the record has none
+  jq -cS '.compatible_providers | select(. != null) | if type == "array" then unique else . end' "$(record_of "$1")" 2>/dev/null
 }
-write_record() { # path kind source
-  jq -n --arg k "$2" --arg src "$3" --arg h "$(content_hash "$1")" --arg t "$(now)" '{kind:$k, source:$src, sha256:$h, stored:$t}' > "$(record_of "$1")"
+compat_parse() { # LIST (names separated by commas, or a JSON array) -> compact, sorted JSON on stdout; status 1 and the problem on stderr
+  local j why
+  case $1 in
+    '['*) j=$(jq -cS 'if type == "array" then unique else . end' <<<"$1" 2>/dev/null) || j=$1;;
+    *) j=$(jq -nc --arg s "$1" '$s | split(",") | map(gsub("^ +| +$"; "")) | unique');;
+  esac
+  why=$(python3 -I "$COMPATPY" valid "$j") || { echo "compatible_providers: $why" >&2; return 1; }
+  printf '%s\n' "$j"
+}
+compat_need() { # the --compatible of a verb that makes a pack: parsed, or the verb ends
+  [ -n "${COMPAT_ARG:-}" ] || die "$VERB needs --compatible LIST: the providers that can use this pack, runtime or family names separated by commas, or any (it is kept with the pack and approved with its content)"
+  compat_parse "$COMPAT_ARG" || exit 1
+}
+# The content hash of a pack: its files, and compatible_providers (given as the second argument, else the record's own; a pack with no
+# declaration hashes as its files alone, and fails its review). The hash is what approval stores, so the declaration is approved with the content.
+content_hash() { # path [compat-json]
+  local h c
+  if [ -d "$1" ]; then h=$(cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+  else h=$(sha256sum < "$1" | cut -c1-16); fi
+  if [ $# -ge 2 ]; then c=$2; else c=$(compat_of "$1"); fi
+  if [ -z "$c" ]; then echo "$h"; else printf '%s\ncompatible_providers=%s\n' "$h" "$c" | sha256sum | cut -c1-16; fi
+}
+write_record() { # path kind source compat-json
+  jq -n --arg k "$2" --arg src "$3" --arg h "$(content_hash "$1" "$4")" --arg t "$(now)" --argjson c "$4" \
+    '{kind:$k, source:$src, sha256:$h, stored:$t, compatible_providers:$c}' > "$(record_of "$1")"
 }
 
 # What a reviewer needs to see before trusting a pack; prints findings, returns 1 on a FAIL.
-review() { # kind path
-  local p=$2 rc=0 n size
+review() { # kind path [compat-json]: the declaration is the third argument while the pack has no record yet (import, seed), else the record's
+  local p=$2 rc=0 n size c cw
+  if [ $# -ge 3 ]; then c=$3; else c=$(compat_of "$p"); fi
+  if cw=$(python3 -I "$COMPATPY" valid "$c"); then echo "compatible_providers: $(jq -r 'join(", ")' <<<"$c")"
+  else echo "FAIL: compatible_providers: $cw"; rc=1; fi
   if [ "$1" = skill ]; then
     [ -f "$p/SKILL.md" ] || { echo "FAIL: no SKILL.md"; return 1; }
     head -1 "$p/SKILL.md" | grep -qx -- '---' || { echo "FAIL: SKILL.md has no front matter"; rc=1; }
@@ -144,6 +176,32 @@ effective() { # project role -> "kind:name" lines
     | unique | map(select(. as $x | ($off | index($x)) | not)) | .[]' "$LINKS"
 }
 
+# The packs of effective() that the project's provider can use. SURFACES is local, cloud or local,cloud (a pack is used when its
+# declaration matches the runtime of at least one of them). CP_OK gets the kind:name lines to attach, CP_SKIP one "kind<TAB>name<TAB>why"
+# per pack the project's provider cannot use. Only a pack that DECLARES a list the provider is not on is skipped: a pack in the links
+# that is missing from the library, or does not declare compatible_providers, or changed since it was approved (the declaration is
+# part of the approved content), stays in CP_OK so that it fails loudly where it is used (its review, its drift check), and "any"
+# needs no provider at all.
+compat_filter() { # project role surfaces
+  local e k n P c why rc want
+  CP_OK=(); CP_SKIP=()
+  while read -r e; do
+    [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n"); c=''
+    [ ! -e "$P" ] || c=$(compat_of "$P")
+    if [ -n "$c" ] && [ "$c" != '["any"]' ]; then
+      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
+      [ -z "$want" ] || [ "$want" = "$(content_hash "$P" 2>/dev/null)" ] || { CP_OK+=("$e"); continue; }
+      rc=0; why=$(python3 -I "$COMPATPY" check "$1" "$3" "$c" --conf "$DA_CONF") || rc=$?
+      if [ "$rc" = 1 ]; then CP_SKIP+=("$k"$'\t'"$n"$'\t'"$why"); continue; fi
+    fi
+    CP_OK+=("$e")
+  done < <(effective "$1" "$2")
+}
+skip_say() { # prefix: one line per CP_SKIP entry
+  local x k n why
+  for x in ${CP_SKIP[@]+"${CP_SKIP[@]}"}; do IFS=$'\t' read -r k n why <<<"$x"; echo "$1skipped $k $n: $why"; done
+}
+
 link_args() { # validates --scope/--project/--role, prints the link as JSON
   case $SCOPE in
     user) jq -nc --arg k "$1" '{pack:$k, scope:"user"}';;
@@ -161,26 +219,36 @@ set_off() { # project role json-array
 
 # Claude Code target: the facts only this script knows (links, review, hashes) go to packs_claude.py as one JSON file.
 cc_inputs() { # project outfile
-  local prj=$1 out=$2 roles r e k n P want rv rows
+  local prj=$1 out=$2 roles r e k n P want rv rows cpj x why
   [ -f "$DA_CONF/projects/$prj.json" ] || die "no stored answers for project '$prj'"
   roles=$(jq -r '.roles | keys[]' "$DA_CONF/projects/$prj.json" | grep -vx lead)
-  rows=$(for r in $roles; do effective "$prj" "$r" | sed "s/^/$r /"; done)
+  # the render is for the local surface; a pack the provider of that surface cannot use is left out and noted (skipped)
+  : > "$out.skips"; rows=''
+  for r in $roles; do
+    compat_filter "$prj" "$r" local
+    for e in ${CP_OK[@]+"${CP_OK[@]}"}; do rows+="$r $e"$'\n'; done
+    for x in ${CP_SKIP[@]+"${CP_SKIP[@]}"}; do
+      IFS=$'\t' read -r k n why <<<"$x"
+      jq -nc --arg k "$k" --arg n "$n" --arg w "$why" --arg r "$r" '{kind:$k,name:$n,why:$w,role:$r}' >> "$out.skips"
+    done
+  done
   : > "$out.rows"
   while read -r r e; do
     [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
     if [ -e "$P" ]; then
-      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
+      want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null); cpj=$(compat_of "$P")
       # an unreadable file makes the pack fail its review (and keeps sha256sum's complaints off the screen)
       if [ -z "$(find "$P" ! -readable -print -quit 2>/dev/null)" ] && review "$k" "$P" >/dev/null 2>&1; then rv=true; else rv=false; fi
-      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P" 2>/dev/null)" --arg a "$want" --argjson rv "$rv" --arg r "$r" \
-        '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r}' >> "$out.rows"
-    else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r}' >> "$out.rows"; fi
+      jq -nc --arg k "$k" --arg n "$n" --arg p "$P" --arg h "$(content_hash "$P" 2>/dev/null)" --arg a "$want" --argjson rv "$rv" --arg r "$r" --argjson c "${cpj:-null}" \
+        '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r,compatible_providers:$c}' >> "$out.rows"
+    else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r,compatible_providers:null}' >> "$out.rows"; fi
   done <<<"$rows"
-  jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" '
+  jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" --slurpfile sk "$out.skips" '
     {project:$p, provider:$v, state:$s, home:$h, checkout:$c,
      packs: (group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, path:.[0].path, sha256:.[0].sha256, approved:.[0].approved,
-                                              review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
-  rm -f "$out.rows"
+                                              review_ok:.[0].review_ok, exists:.[0].exists, compatible_providers:.[0].compatible_providers, roles:(map(.role)|unique)})),
+     skipped: ($sk | group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, why:.[0].why, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
+  rm -f "$out.rows" "$out.skips"
 }
 # The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the script finds the directories (scan) and
 # hashes them with strict_hash (links, modes and empty directories count; content_hash is the library's approval hash and does not see
@@ -302,6 +370,7 @@ cl_main() { # verb: link|unlink
   # the same per-project lock as the render's apply; without a render directory there is nothing to race with
   if [ -d "$RDIR" ] && [ ! -L "$RDIR" ]; then cc_lock "$prj"; fi
   cl_inputs "$prj" "$CC_W/in.json"
+  jq -r '.skipped[]? | "skipped \(.kind) \(.name): \(.why)"' "$CC_W/in.json"
   python3 -I "$PY" plan "$1" "$CC_W/in.json" "$CC_W/token" || exit 1
   # the plan is shown with what a session would load now (a drifted skill is not a reason to stop here: it only informs)
   [ -n "$APPROVED" ] || au_report "$CC_W/in.json" "$CC_W" || true
@@ -376,15 +445,16 @@ if [ "$KIND" = packs ]; then
     render)
       PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; OUT=${ARGS[2]:-}; [ -n "$OUT" ] || die "render needs PROJECT ROLE OUTDIR"
       rm -rf "$OUT"; mkdir -p "$OUT/skills"; : > "$OUT/custom_skills.txt"; echo '[]' > "$OUT/mcp.json"
-      while read -r e; do
-        [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
+      compat_filter "$PRJ" "$ROL" cloud; skip_say "note: " >&2   # the cloud render is for the project's cloud provider
+      for e in ${CP_OK[@]+"${CP_OK[@]}"}; do
+        k=${e%%:*}; n=${e#*:}; P=$(item_path "$k" "$n")
         [ -e "$P" ] || die "attached pack $e is not in the library"
         review "$k" "$P" >/dev/null || die "attached pack $e fails its review (qargi $k check $PRJ $ROL)"
         want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null)
         { [ -z "$want" ] || [ "$want" = "$(content_hash "$P")" ]; } || die "attached pack $e changed since it was approved (drift); review it and re-import"
         if [ "$k" = skill ]; then cp -r "$P" "$OUT/skills/$n"; rm -f "$OUT/skills/$n/.pack.json"; echo "$n" >> "$OUT/custom_skills.txt"
         else jq -c --slurpfile t "$P" '. + $t' "$OUT/mcp.json" > "$OUT/mcp.json.tmp" && mv "$OUT/mcp.json.tmp" "$OUT/mcp.json"; fi
-      done < <(effective "$PRJ" "$ROL")
+      done
       # The lead's GitHub tool, when the project grants a cloud push: a fixed allowlist, read tools and
       # branch/commit/pull-request writes unattended, merges asked of the person, nothing destructive.
       if [ "$ROL" = lead ] && [ "$(jq -r '.lead.push.cloud // "none"' "$DA_CONF/projects/$PRJ.json" 2>/dev/null)" = branches ]; then
@@ -405,13 +475,15 @@ if [ "$KIND" = packs ]; then
       [ -f "$SHIP/baseline.json" ] || die "no baseline packs shipped at $SHIP"
       jq -e '.schema == 1 and (.packs | type == "array")' "$SHIP/baseline.json" >/dev/null 2>&1 || die "$SHIP/baseline.json is not a baseline manifest"
       SRC="qargi-baseline $(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
-      ST=() PL=() NOTE=''   # ST: "name|status|hs|old" in manifest order; PL: add/update plan lines
-      while IFS=$'\t' read -r k n; do
+      ST=() PL=() NOTE='' CMP=()   # ST: "name|status|hs|old" in manifest order; PL: add/update plan lines; CMP: the declaration of each, in the same order
+      cmp_of() { local x; for x in "${CMP[@]}"; do [ "${x%% *}" != "$1" ] || { jq -r 'join(",")' <<<"${x#* }"; return; }; done; }
+      while IFS=$'\t' read -r k n c; do
         [ "$k" = skill ] || die "the baseline manifest names a $k pack ($n); only skills are shipped"
         valid_slug "$n" || die "the baseline manifest names '$n', not a pack name"
+        { c=$(jq -cS 'if type == "array" then unique else . end' <<<"$c" 2>/dev/null) && python3 -I "$COMPATPY" valid "$c" >/dev/null; } || die "the baseline manifest gives the pack $n no valid compatible_providers (a list of runtime or family names, or [\"any\"])"
         D=$SHIP/skills/$n; [ -f "$D/SKILL.md" ] || die "the shipped pack $n is missing at $D"
-        review skill "$D" >/dev/null 2>&1 || die "the shipped pack $n fails its review (qargi skill show cannot reach it; run it through review by hand)"
-        hs=$(content_hash "$D"); P=$PACKS/skills/$n; old=''
+        review skill "$D" "$c" >/dev/null 2>&1 || die "the shipped pack $n fails its review (qargi skill show cannot reach it; run it through review by hand)"
+        hs=$(content_hash "$D" "$c"); P=$PACKS/skills/$n; old=''; CMP+=("$n $c")
         if [ -e "$PACKS/tools/$n.json" ]; then
           st=belongs
         elif [ ! -e "$P" ]; then st=add
@@ -426,14 +498,14 @@ if [ "$KIND" = packs ]; then
           esac
         fi
         ST+=("$n|$st|$hs|$old")
-      done < <(jq -r '.packs[] | [.kind, .name] | @tsv' "$SHIP/baseline.json")
+      done < <(jq -r '.packs[] | [.kind, .name, (.compatible_providers | tojson)] | @tsv' "$SHIP/baseline.json")
       for e in "${ST[@]}"; do
         IFS='|' read -r n st hs old <<<"$e"
         case $st in
-          add) PL+=("$(printf '%-8s skill %s (content %s)' add "$n" "$hs")");;
+          add) PL+=("$(printf '%-8s skill %s (content %s)  compatible_providers %s' add "$n" "$hs" "$(cmp_of "$n")")");;
           update)
             lk=$(jq -r --arg k "skill:$n" '[.links[] | select(.pack==$k) | .scope + (if .project then ":"+.project else "" end) + (if .role then "/"+.role else "" end)] | join(", ")' "$LINKS")
-            PL+=("$(printf '%-8s skill %s (content %s -> %s; links: %s)' update "$n" "$old" "$hs" "${lk:-none}")");;
+            PL+=("$(printf '%-8s skill %s (content %s -> %s; links: %s)  compatible_providers %s' update "$n" "$old" "$hs" "${lk:-none}" "$(cmp_of "$n")")");;
         esac
         # lines shown whatever the mode: what stays as it is
         case $st in
@@ -443,10 +515,10 @@ if [ "$KIND" = packs ]; then
         esac
       done
       seed_one() { # name hs: stage, swap in, write the record
-        local n=$1 hs=$2 stage=$PACKS/skills/.seed-$1
+        local n=$1 hs=$2 stage=$PACKS/skills/.seed-$1 x
         rm -rf "$stage"; cp -r "$SHIP/skills/$n" "$stage"; rm -f "$stage/.pack.json"
         rm -rf "${PACKS:?}/skills/$n"; mv "$stage" "$PACKS/skills/$n"
-        write_record "$PACKS/skills/$n" skill "$SRC"
+        write_record "$PACKS/skills/$n" skill "$SRC" "$(for x in "${CMP[@]}"; do [ "${x%% *}" != "$n" ] || echo "${x#* }"; done)"
         jq --arg s "$hs" '. + {shipped:$s}' "$PACKS/skills/$n/.pack.json" > "$PACKS/skills/$n/.pack.json.tmp" && mv "$PACKS/skills/$n/.pack.json.tmp" "$PACKS/skills/$n/.pack.json"
       }
       if [ -n "$INSTALL" ]; then
@@ -502,16 +574,22 @@ if [ "$KIND" = packs ]; then
       }
       if [ -z "$LN" ]; then
         echo "enabled for $PRJ/$ROL (qargi packs load NAME --role $ROL --project $PRJ prints one):"
-        while read -r e; do
-          [ -n "$e" ] || continue; k=${e%%:*}; n=${e#*:}; vet "$k" "$n"
+        compat_filter "$PRJ" "$ROL" local,cloud; skip_say "  "
+        for e in ${CP_OK[@]+"${CP_OK[@]}"}; do
+          k=${e%%:*}; n=${e#*:}; vet "$k" "$n"
           if [ "$k" = skill ]; then d=$(sed -n 's/^description: *//p' "$P/SKILL.md" | head -1); echo "  skill $n: ${d:-no description}"
           else echo "  tool  $n (MCP server; not loaded into a session by this verb)"; fi
-        done < <(effective "$PRJ" "$ROL")
+        done
         exit 0
       fi
       printf '%s\n' "$LN" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || die "load: not a pack name: $LN"
-      e=$(effective "$PRJ" "$ROL" | grep -x -E "(skill|tool):$(printf '%s' "$LN" | sed 's/[.]/\\./g')" | head -1)
-      [ -n "$e" ] || die "load: $LN is not enabled for $PRJ/$ROL (link it, or see: qargi packs load --role $ROL --project $PRJ)"
+      compat_filter "$PRJ" "$ROL" local,cloud
+      e=$(printf '%s\n' ${CP_OK[@]+"${CP_OK[@]}"} | grep -x -E "(skill|tool):$(printf '%s' "$LN" | sed 's/[.]/\\./g')" | head -1)
+      if [ -z "$e" ]; then
+        sk=$(skip_say '' | grep -E "^skipped (skill|tool) $(printf '%s' "$LN" | sed 's/[.]/\\./g'): " | head -1)
+        [ -z "$sk" ] || die "load: $LN is linked but skipped for $PRJ/$ROL: ${sk#skipped * "$LN": }; it is not loaded"
+        die "load: $LN is not enabled for $PRJ/$ROL (link it, or see: qargi packs load --role $ROL --project $PRJ)"
+      fi
       k=${e%%:*}; vet "$k" "$LN"
       if [ "$k" = skill ]; then
         echo "== skill $LN (approved library content; files beside it: $P)"; cat "$P/SKILL.md"
@@ -570,15 +648,17 @@ TEMPLATE_TOOL='{"name":"NAME","url":"https://mcp.example.invalid/","vault_ids":[
 case "$VERB" in
   new)
     NAME=${NAME:-${ARGS[0]:-}}; valid_slug "$NAME" || die "new needs a NAME (lower-case letters, digits, -)"
+    COMPAT=$(compat_need) || exit 1
     P=$(item_path "$KIND" "$NAME"); [ ! -e "$P" ] || die "$NAME already exists in the library (names are unique)"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME is already used by another pack (skills and tools share one namespace)"
     if [ "$KIND" = skill ]; then
       mkdir -p "$P"; printf -- '---\nname: %s\ndescription: <when to use this skill, in one or two sentences>\n---\n\n# %s\n\n<the instructions the agent follows>\n' "$NAME" "$NAME" > "$P/SKILL.md"
     else printf '%s\n' "${TEMPLATE_TOOL//NAME/$NAME}" | jq . > "$P"; fi
-    write_record "$P" "$KIND" created; audit_log "$KIND-new" "$NAME"
-    echo "created $KIND $NAME: $P"; echo "edit it, then link it: qargi $KIND link $NAME --scope S ...";;
+    write_record "$P" "$KIND" created "$COMPAT"; audit_log "$KIND-new" "$NAME"
+    echo "created $KIND $NAME: $P (compatible_providers: $(jq -r 'join(", ")' <<<"$COMPAT"))"; echo "edit it, then link it: qargi $KIND link $NAME --scope S ...";;
   import)
     SRC=${ARGS[0]:-}; [ -n "$SRC" ] || die "import needs a SOURCE (a directory or file, or an https git URL)"
+    COMPAT=$(compat_need) || exit 1   # before anything is fetched: the declaration is part of what is approved
     T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; SRCREC=$SRC
     if [[ $SRC == https://* ]]; then
       git clone -q --depth 1 ${REF:+--branch "$REF"} "$SRC" "$T/repo" </dev/null 2>/dev/null || die "could not clone $SRC"
@@ -595,11 +675,11 @@ case "$VERB" in
     valid_slug "$NAME" || die "cannot work out a valid name; pass --name"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME already exists in the library (names are unique; pass --name or remove the old one)"
     echo "== review of $KIND $NAME from $SRCREC"
-    review "$KIND" "$T/stage" || { echo "refused: fix the source first" >&2; exit 1; }
-    TOK=$(content_hash "$T/stage")
+    review "$KIND" "$T/stage" "$COMPAT" || { echo "refused: fix the source first" >&2; exit 1; }
+    TOK=$(content_hash "$T/stage" "$COMPAT")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (store it with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
     need_token "$TOK"; audit_log "$KIND-import" "$NAME from $SRCREC"
-    P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC"
+    P=$(item_path "$KIND" "$NAME"); mv "$T/stage" "$P"; write_record "$P" "$KIND" "$SRCREC" "$COMPAT"
     echo "stored $KIND $NAME (content $TOK); link it to a scope to attach it";;
   list)
     PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}
@@ -607,18 +687,23 @@ case "$VERB" in
       [ -e "$f" ] || continue; case $f in *.pack.json) continue;; esac; n=$(basename "$f" .json); mark=''
       [ -z "$PRJ" ] || [ -z "$ROL" ] || { effective "$PRJ" "$ROL" | grep -qx "$KIND:$n" && mark='  [attached to '$PRJ/$ROL']'; }
       lk=$(jq -r --arg k "$KIND:$n" '[.links[] | select(.pack==$k) | .scope + (if .project then ":"+.project else "" end) + (if .role then "/"+.role else "" end)] | join(", ")' "$LINKS")
-      echo "$n   links: ${lk:-none}$mark"
+      cl=$(compat_of "$f"); cl=$(jq -r 'if type == "array" then join(", ") elif . == null then "NOT DECLARED" else "invalid" end' <<<"${cl:-null}" 2>/dev/null || echo invalid)
+      echo "$n   links: ${lk:-none}   compatible: $cl$mark"
     done;;
   show)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     echo "path: $P"; jq . "$(record_of "$P")" 2>/dev/null; jq -r --arg k "$KIND:$NAME" '.links[] | select(.pack==$k) | "link: " + tostring' "$LINKS"; review "$KIND" "$P" || true;;
   seal)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
-    echo "== review of $KIND $NAME"; review "$KIND" "$P" || { echo "refused: fix it first" >&2; exit 1; }
-    TOK=$(content_hash "$P")
+    # the declaration is approved with the content: --compatible changes it, else the record's stands, and a pack with none must be given one
+    if [ -n "$COMPAT_ARG" ]; then COMPAT=$(compat_parse "$COMPAT_ARG") || exit 1
+    else COMPAT=$(compat_of "$P"); [ -n "$COMPAT" ] || die "$NAME declares no compatible_providers; seal it with --compatible LIST (the providers that can use it: runtime or family names separated by commas, or any)"; fi
+    echo "== review of $KIND $NAME"; review "$KIND" "$P" "$COMPAT" || { echo "refused: fix it first" >&2; exit 1; }
+    cur=$(compat_of "$P"); [ -z "$COMPAT_ARG" ] || [ "$COMPAT" = "$cur" ] || echo "compatible_providers changes: ${cur:-(none)} -> $COMPAT"
+    TOK=$(content_hash "$P" "$COMPAT")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (approve this content with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
     need_token "$TOK"; audit_log "$KIND-seal" "$NAME $TOK"
-    src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src"; echo "sealed $KIND $NAME (content $TOK)";;
+    src=$(jq -r '.source // "created"' "$(record_of "$P")" 2>/dev/null); write_record "$P" "$KIND" "$src" "$COMPAT"; echo "sealed $KIND $NAME (content $TOK)";;
   link|unlink)
     NAME=${ARGS[0]:-}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     L=$(link_args "$KIND:$NAME")
@@ -637,16 +722,22 @@ case "$VERB" in
     if [ "$VERB" = disable ]; then new=$(jq -c --arg e "$KIND:$N" '. + [$e] | unique' <<<"$cur")
     else new=$(jq -c --arg e "$KIND:$N" 'map(select(. != $e))' <<<"$cur"); fi
     set_off "$PRJ" "$ROL" "$new"; audit_log "$KIND-$VERB" "$PRJ $ROL $N"; echo "$PRJ/$ROL packs_off: $new";;
-  effective) effective "${ARGS[0]:-}" "${ARGS[1]:-}" | grep "^$KIND:" | sed "s/^$KIND://";;
+  effective)
+    # what the role gets: the packs its project's provider can use (on the local or the cloud surface), then, as "skipped KIND NAME: why", the ones it cannot
+    compat_filter "${ARGS[0]:-}" "${ARGS[1]:-}" local,cloud
+    printf '%s\n' ${CP_OK[@]+"${CP_OK[@]}"} | grep "^$KIND:" | sed "s/^$KIND://"
+    skip_say '' | grep "^skipped $KIND " || true;;
   check)
     PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; rc=0; any=''
-    while read -r e; do
+    compat_filter "$PRJ" "$ROL" local,cloud
+    skip_say '' | grep "^skipped $KIND " | sed 's/^skipped /skip /' || true
+    for e in ${CP_OK[@]+"${CP_OK[@]}"}; do
       [ "${e%%:*}" = "$KIND" ] || continue; any=1; n=${e#*:}; P=$(item_path "$KIND" "$n")
       if [ ! -e "$P" ]; then echo "FAIL $e: linked but not in the library"; rc=1; continue; fi
       want=$(jq -r '.sha256 // ""' "$(record_of "$P")" 2>/dev/null); have=$(content_hash "$P")
       if [ -n "$want" ] && [ "$want" != "$have" ]; then echo "FAIL $e: content changed since it was approved (drift: $want -> $have); review it and re-import"; rc=1; fi
       if out=$(review "$KIND" "$P" 2>&1); then echo "ok   $e"; else echo "$out" | grep -E '^FAIL' | sed "s/^/$e: /"; rc=1; fi
-    done < <(effective "$PRJ" "$ROL")
+    done
     [ -n "$any" ] || echo "no $KIND packs reach $PRJ/$ROL"
     exit $rc;;
   remove)
