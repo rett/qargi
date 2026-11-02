@@ -12,7 +12,7 @@ DA=./bin/qargi
 R=$T/repo
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha "$R"
 D=$T/s/claude/alpha
 
@@ -158,5 +158,60 @@ mv "$T/render.gone" "$D"
 
 # --- a project name that is not one
 $DA packs link '../x' >/dev/null 2>&1 && no "a bad project name was accepted" || ok "a bad project name is refused"
+# --- a provider whose layout differs: every path comes from its descriptor, and a missing facility is a refusal (exit 3)
+# A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
+# has its own render target, and no renderer: the render is made by hand.
+TOOL=$T/tool; mkdir -p "$TOOL"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+FX=$TOOL/bin/qargi
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" lib/providers/claude.json > "$TOOL/lib/providers/$1.json"; }
+mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"'
+mkprov noskills '.layout.project_skills_dir = null'
+mkprov unverified '.capabilities.skills.local.verified_on = null'
+mkprov notarget '.layout.render_target = null'
+R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
+projp() { proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"; }
+projp beta agentx
+fl() { $FX packs link beta "$@"; }
+fu() { $FX packs unlink beta "$@"; }
+D2=$T/s/agentx/beta
+out=$(fl 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "there is no render of beta yet" <<<"$out" && grep -q "packs apply --target agentx-render beta first" <<<"$out" && ! grep -q "claude" <<<"$out" && ok "another provider: the missing render is refused and the message names its render target" || no "agentx no-render: rc=$rc $out"
+mkdir -p "$D2/.agent/skills"; cp -r "$T/c/packs/skills/s-all" "$D2/.agent/skills/s-all"
+out=$(fl); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && grep -q "link:   $R2/.agent/skills" <<<"$out" && grep -q "target: $D2/.agent/skills" <<<"$out" && ! grep -q "\.claude" <<<"$out" && ok "another provider: the plan names the link and the render under the provider's own directories" || no "agentx plan: $out"
+grep -q "git does not ignore .agent/skills" <<<"$out" && grep -q "^    .agent/skills$" <<<"$out" && ok "another provider: the exclude hint names its skills directory" || no "agentx hint: $out"
+out=$(fl --plan "$tok" --approved go)
+[ -L "$R2/.agent/skills" ] && [ "$(readlink "$R2/.agent/skills")" = "$D2/.agent/skills" ] && [ ! -e "$R2/.claude" ] && ok "another provider: apply links .agent/skills and creates no .claude" || no "agentx apply: $out; $(ls -a "$R2")"
+out=$(fl); grep -q "^already linked: $R2/.agent/skills" <<<"$out" && ok "another provider: linking again says already linked" || no "agentx again: $out"
+fu --plan "$(fu | tok_of)" --approved go >/dev/null; [ ! -e "$R2/.agent/skills" ] && [ -d "$D2/.agent/skills/s-all" ] && ok "another provider: unlink removes only the link" || no "agentx unlink"
+mkdir -p "$R2/.agent/skills/own"; printf -- '---\nname: own\ndescription: Use for own.\n---\n' > "$R2/.agent/skills/own/SKILL.md"
+out=$(fl); grep -qE "^ +new +own" <<<"$out" && grep -q "moves the directory to $R2/.agent/skills.qargi-backup" <<<"$out" && ok "another provider: a real skills directory is classified and backed up beside itself" || no "agentx real dir: $out"
+rm -rf "$R2/.agent"
+
+projp gamma noskills; out=$($FX packs link gamma 2>&1); rc=$?
+[ "$rc" = 3 ] && [ "$out" = "qargi: provider noskills has no project skills directory: link the checkout's skills directory to the render" ] && ok "a provider with no project skills directory: link is refused with exit 3 and the degrade text" || no "noskills link: rc=$rc $out"
+out=$($FX packs unlink gamma 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "^qargi: provider noskills has no project skills directory: " <<<"$out" && ok "unlink is refused the same way" || no "noskills unlink: rc=$rc $out"
+[ ! -e "$R2/.claude" ] && [ ! -e "$R2/.agent" ] && ok "a refused verb writes nothing" || no "noskills wrote"
+projp delta unverified; out=$($FX packs link delta 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "^qargi: provider unverified has no skills support on the local surface: " <<<"$out" && ok "a provider whose skills capability is not verified: link is refused with exit 3" || no "unverified: rc=$rc $out"
+projp eps notarget; out=$($FX packs check --target claude-code eps 2>&1); rc=$?
+[ "$rc" = 3 ] && [ "$out" = "qargi: provider notarget has no packs render target: render the project's packs for a local session" ] && ok "a provider with no render target: packs check --target is refused with exit 3" || no "notarget check: rc=$rc $out"
+out=$($FX packs apply --target claude-code beta 2>&1); rc=$?
+[ "$rc" != 0 ] && [ "$rc" != 3 ] && grep -q "^qargi: --target is agentx-render for provider agentx" <<<"$out" && ok "another provider's render target is the one --target accepts" || no "wrong target: rc=$rc $out"
+out=$($FX packs apply --target agentx-render beta 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "^qargi: provider agentx has no packs renderer for target agentx-render: " <<<"$out" && ok "a render target nothing renders is refused with exit 3" || no "no renderer: rc=$rc $out"
+out=$($DA packs check --target claude-code alpha 2>&1); [ -n "$out" ] && ok "claude keeps answering to --target claude-code" || no "claude target"
+# there is no default provider: answers without models.provider are refused with exit 2 and the fix, by every verb that needs one
+jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+for v in "packs link alpha" "packs unlink alpha" "packs check --target claude-code alpha" "packs apply --target claude-code alpha"; do
+  out=$($DA $v 2>&1); rc=$?
+  [ "$rc" = 2 ] && [ "$out" = "qargi: project alpha has no provider: set one with qargi project set alpha models.provider NAME" ] && ok "no models.provider: $v is refused with exit 2" || no "no provider ($v): rc=$rc $out"
+done
+jq '.models = {provider: "nosuch"}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+out=$($DA packs link alpha 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "unknown provider 'nosuch'" <<<"$out" && ok "a provider with no descriptor is refused like any unknown provider" || no "unknown provider: rc=$rc $out"
+
 rm -rf "$T"
 exit $fail
