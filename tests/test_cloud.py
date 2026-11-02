@@ -70,6 +70,16 @@ class T(unittest.TestCase):
         self.q("cloud", "unset", "alpha")
         self.assertIn("no cloud binding", self.q("cloud", "show", "alpha").stdout)
 
+    def test_only_set_takes_profile_and_workspace_id(self):
+        self.q("cloud", "set", "alpha", "--profile", "qargi", "--workspace-id", WS)
+        for verb in ("show", "check", "login", "unset"):
+            for opts in (["--profile", "qargi"], ["--workspace-id", WS]):
+                r = self.q("cloud", verb, "alpha", *opts)
+                self.assertEqual(r.returncode, 2, (verb, opts, r.stdout, r.stderr))
+                self.assertIn("--profile and --workspace-id belong to `qargi cloud set`", r.stderr)
+        self.assertIn(WS, self.q("cloud", "show", "alpha").stdout)                  # the refused unset left the binding alone
+        self.assertFalse([l for l in self.calls() if "login" in l])
+
     def test_check(self):
         self.q("cloud", "set", "alpha", "--profile", "qargi", "--workspace-id", WS)
         self.assertEqual(self.q("cloud", "check", "alpha").returncode, 0)
