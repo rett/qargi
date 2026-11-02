@@ -826,6 +826,7 @@ COMMANDS = {
                          examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
             "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
                           [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
+                           opt("--project", "the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider)", "PROJECT", "project"),
                            opt("--apply", "apply the plan the token names"), PLAN,
                            opt("--asked", "the request, in your words, for this migration; needed when the plan changes cloud resources", "REQUEST")],
                           examples=["qargi migrate roles", "qargi migrate roles --member-names build=forge,write=scribe",

@@ -71,6 +71,8 @@ n=$(wc -l < "$T/s/audit.log"); lk --plan x --approved y >/dev/null; [ "$n" = "$(
 
 # the check note
 $DA packs check --target claude-code alpha 2>&1 | grep -q "^note: repo .claude/skills is not linked" && no "check notes a linked checkout" || ok "check says nothing when the checkout is linked"
+out=$($DA packs check --target claude-code alpha 2>&1); rc=$?
+[ "$rc" = 0 ] && ! grep -q "shadowing" <<<"$out" && ok "a linked checkout is not shadowing its own render: check exits 0 with no shadowing" || no "linked check: rc=$rc $out"
 
 # --- unlink: only the symlink goes
 out=$(ul); tok=$(tok_of <<<"$out")
