@@ -68,7 +68,7 @@ class Unsupported(ProviderError):
     """The provider has no such facility (a null layout field, or a capability that is not verified): exit status 3."""
 
 
-NON_PROVIDERS = ("schema", "adapter-schema")   # JSON files in lib/providers/ that describe descriptors and adapters; they are not providers
+NON_PROVIDERS = ("schema", "schema-2", "adapter-schema")   # JSON files in lib/providers/ that describe descriptors and adapters; they are not providers
 
 
 def schema():
@@ -141,7 +141,7 @@ def _show(v):
 
 def _check(v, s, root, path, out):
     """Validate v against the schema node s, appending (path, message) to out. Supports type, enum, const, pattern, format
-    date, required, properties, additionalProperties false, items, minItems, uniqueItems and a local $ref."""
+    date, required, properties, minProperties, additionalProperties false, items, minItems, minLength, uniqueItems and a local $ref."""
     if "$ref" in s:
         node = root
         for part in s["$ref"].lstrip("#/").split("/"):
@@ -165,8 +165,12 @@ def _check(v, s, root, path, out):
         out.append((path, "%s is not a date (YYYY-MM-DD)" % _show(v)))
     if "pattern" in s and isinstance(v, str) and not re.search(s["pattern"], v):
         out.append((path, "%s does not match %s" % (_show(v), s["pattern"])))
+    if "minLength" in s and isinstance(v, str) and len(v) < s["minLength"]:
+        out.append((path, "is shorter than %d character%s" % (s["minLength"], "" if s["minLength"] == 1 else "s")))
     if isinstance(v, dict):
         props = s.get("properties", {})
+        if len(v) < s.get("minProperties", 0):
+            out.append((path, "needs at least %d propert%s" % (s["minProperties"], "y" if s["minProperties"] == 1 else "ies")))
         for k in s.get("required", []):
             if k not in v:
                 if path in ("tier_detail", "tiers"):
@@ -228,7 +232,9 @@ def _layout_problems(lay):
 
 def validate(d, name=None):
     """Findings for a descriptor: schema violations and the rules a schema cannot state are "fail"; a missing verified_on
-    date is a "warn". name, when given, is the file name the provider must equal."""
+    date is a "warn". name, when given, is the file name the provider must equal. A document of schema 2 goes to validate2()."""
+    if isinstance(d, dict) and type(d.get("schema")) is int and d["schema"] == 2:
+        return validate2(d, name)
     sch = schema()
     raw = []
     _check(d, sch, sch, "", raw)
@@ -276,6 +282,175 @@ def validate(d, name=None):
             elif isinstance(cell, dict) and "verified_on" in cell and cell["verified_on"] is None:
                 tail = " (counts as not supported)" if cell.get("value") in ("yes", "partial") else ""
                 out.append(("warn", "capabilities.%s.%s.verified_on: not verified%s" % (c, s, tail)))
+    return out
+
+
+# ---- schema 2 ---------------------------------------------------------------------------------------------------------
+
+KINDS = ("provider", "catalog")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def schema2():
+    with open(os.path.join(PROVIDERS, "schema-2.json")) as f:
+        return json.load(f)
+
+
+def capabilities2():
+    """The capability names of schema 2: the eight of schema 1 and the six that came with it."""
+    return tuple(schema2()["$defs"]["provider"]["properties"]["capabilities"]["properties"])
+
+
+def _inside(v):
+    """A path inside the checkout: relative, not empty, no ..  (the paths of a definition are data, never trusted)."""
+    return isinstance(v, str) and bool(v) and not v.startswith(("/", "~")) and ".." not in v.split("/")
+
+
+def _in_home(v):
+    return isinstance(v, str) and v.startswith("~/") and ".." not in v.split("/")
+
+
+def _tier_problems(pattern, tiers, prefix, pat_path):
+    """The rules of a tier map a schema cannot state: the pattern compiles, every model matches it, every tier resolves."""
+    bad, rx = [], None
+    if isinstance(pattern, str):
+        try:
+            rx = re.compile(pattern)
+        except re.error as e:
+            bad.append("%s: not a regular expression (%s)" % (pat_path, e))
+    if not isinstance(tiers, dict):
+        return bad
+    for slot, row in tiers.items():
+        if rx and isinstance(row, dict) and isinstance(row.get("model"), str) and not rx.search(row["model"]):
+            bad.append("%s%s.model: '%s' does not match pattern %s" % (prefix, slot, row["model"], pattern))
+    for t in TIERS:
+        if t not in tiers and "*" not in tiers:
+            bad.append("%s: tier '%s' resolves to no model (give it or '*')" % (prefix.rstrip("."), t))
+    return bad
+
+
+def _models_problems(m):
+    if not isinstance(m, dict):
+        return []
+    has_ref = "catalog" in m
+    inline = [k for k in ("pattern", "tiers", "effort") if k in m]
+    if has_ref and inline:
+        return ["models: a catalog reference and inline models are two forms; give one"]
+    if has_ref:
+        return [] if "use" in m else ["models: a catalog reference needs use (alias or id)"]
+    if "use" in m:
+        return ["models: use belongs to a catalog reference"]
+    if not ("pattern" in m or "tiers" in m):
+        return ["models: needs a catalog reference or inline models (pattern and tiers)"]
+    bad = [] if "tiers" in m else ["models: inline models need tiers"]
+    bad += [] if "pattern" in m else ["models: inline models need pattern"]
+    return bad or _tier_problems(m["pattern"], m["tiers"], "models.tiers.", "models.pattern")
+
+
+def _path_problem(label, v, user_ok, inside_ok=True):
+    """None, or why the path v of a definition is refused: a checkout path is relative with no .., a user path starts with ~/."""
+    if not isinstance(v, str):
+        return None
+    if _in_home(v) and user_ok:
+        return None
+    if _inside(v) and inside_ok:
+        return None
+    if user_ok and not inside_ok:
+        return "%s: '%s' does not start with ~/" % (label, v)
+    return "%s: '%s' is not a path inside the checkout (relative, no ..)" % (label, v)
+
+
+EXCLUSION_NEEDS = {"settings-key": ("files", "pointer", "shape", "off"), "config-list": ("file", "format", "pointer", "match", "off"),
+                   "deny-list": ("file", "format", "pointer")}
+
+
+def _exclusion_problems(label, ex, settings_scopes):
+    if not isinstance(ex, dict) or ex.get("form") not in EXCLUSION_NEEDS:
+        return []
+    need = EXCLUSION_NEEDS[ex["form"]]
+    if any(k not in ex for k in need):
+        return ["%s: form %s needs %s" % (label, ex["form"], ", ".join(need[:-1]) + " and " + need[-1])]
+    bad = []
+    if ex["form"] != "settings-key":
+        p = _path_problem(label + ".file", ex.get("file"), True)
+        bad += [p] if p else []
+    for sc in ex.get("files") or []:
+        if sc not in settings_scopes:
+            bad.append("%s.files: scope '%s' is not among resources.settings.files" % (label, sc))
+    return bad
+
+
+def _resource_problems(res):
+    """The rules of the resources a schema cannot state (the types are the schema's): project paths stay inside the checkout, user
+    paths start with ~/, {checkout_key} needs a rule, an exclusion has the keys its form reads."""
+    if not isinstance(res, dict):
+        return []
+    bad = []
+
+    def add(p):
+        if p:
+            bad.append(p)
+    st = res.get("settings") if isinstance(res.get("settings"), dict) else {}
+    scopes = {f.get("scope") for f in st.get("files") or [] if isinstance(f, dict)}
+    for kind in ("skills", "agents"):
+        r = res.get(kind)
+        if not isinstance(r, dict):
+            continue
+        add(_path_problem("resources.%s.project_dir" % kind, r.get("project_dir"), False))
+        add(_path_problem("resources.%s.user_dir" % kind, r.get("user_dir"), True, inside_ok=False))
+        bad += _exclusion_problems("resources.%s.exclusion" % kind, r.get("exclusion"), scopes)
+    ins = res.get("instructions")
+    if isinstance(ins, dict):
+        for i, n in enumerate(ins.get("project_file") or []):
+            if not isinstance(n, str) or not n or "/" in n or n in (".", ".."):
+                bad.append("resources.instructions.project_file[%d]: '%s' is not a plain file name" % (i, n))
+        add(_path_problem("resources.instructions.user_file", ins.get("user_file"), True, inside_ok=False))
+    mcp = res.get("mcp")
+    if isinstance(mcp, dict):
+        add(_path_problem("resources.mcp.file", mcp.get("file"), True))
+    for i, f in enumerate(st.get("files") or []):
+        if isinstance(f, dict) and isinstance(f.get("path"), str):
+            lab = "resources.settings.files[%d].path" % i
+            if f.get("scope") == "user":
+                if not _in_home(f["path"]):
+                    bad.append("%s: the user file '%s' does not start with ~/" % (lab, f["path"]))
+            else:
+                add(_path_problem(lab, f["path"], False))
+    mem = res.get("memory")
+    if isinstance(mem, dict) and isinstance(mem.get("user_dir"), str):
+        add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
+        if "{checkout_key}" in mem["user_dir"] and mem.get("checkout_key") is None:
+            bad.append("resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
+    return bad
+
+
+def validate2(d, name=None):
+    """validate() for a document of schema 2: the node of schema-2.json for its kind, then the rules a schema cannot state. name, when
+    given, is the file (or directory) name the definition must carry."""
+    sch = schema2()
+    raw = []
+    _check(d, {"type": "object", "required": ["schema", "kind"], "properties": {"schema": {"const": 2}, "kind": {"enum": list(KINDS)}}},
+           sch, "", raw)
+    kind = d.get("kind")
+    if kind not in KINDS:
+        return [("fail", _msg(p, m)) for p, m in raw]
+    raw = []
+    _check(d, {"$ref": sch["kinds"][kind]}, sch, "", raw)
+    out = [("fail", _msg(p, m)) for p, m in raw]
+    key = "provider" if kind == "provider" else "family"
+    if name is not None and isinstance(d.get(key), str) and d[key] != name:
+        out.append(("fail", "%s '%s' differs from the file name '%s'" % (key, d[key], name)))
+    if kind == "catalog":
+        out += [("fail", m) for m in _tier_problems(d.get("pattern"), d.get("tiers"), "tiers.", "pattern")]
+        return out
+    out += [("fail", m) for m in _models_problems(d.get("models"))]
+    out += [("fail", m) for m in _resource_problems(d.get("resources"))]
+    ad = d.get("adapter")
+    if isinstance(ad, str) and (not ad or os.path.isabs(ad) or ad.startswith("~") or ".." in ad.split("/")):
+        out.append(("fail", "adapter: '%s' is not a path inside the definition's directory" % ad))
+    for c, c_cell in (d.get("capabilities") or {}).items() if isinstance(d.get("capabilities"), dict) else ():
+        if isinstance(c_cell, dict) and c_cell.get("value") in ("yes", "partial") and not c_cell.get("verified_on"):
+            out.append(("warn", "capabilities.%s.verified_on: not verified (counts as not supported until verified)" % c))
     return out
 
 
