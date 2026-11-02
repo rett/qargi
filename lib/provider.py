@@ -55,6 +55,9 @@ Usage: provider.py list
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
                                          name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
+       provider.py migrate NAME --dry-run [--as local=X,cloud=Y]
+                                         prints the schema 2 documents of a schema 1 descriptor (an object, or an array when it is split
+                                         into a catalog and one runtime per surface); notes on stderr; writes nothing
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import copy
 import hashlib
@@ -373,6 +376,52 @@ def upgrade_v1(d):
             doc["session"] = {"launch": lay.get("session_launch"), "render_target": lay.get("render_target")}
         out[s] = doc
     return out
+
+
+def migrate(d, names=None, today=None):
+    """(documents, notes): a schema 1 descriptor as schema 2 documents. A pure function: nothing is read or written.
+    A descriptor for one surface becomes one runtime with inline models. A descriptor for two surfaces is split into a catalog of its
+    family (the descriptor's name; version: the latest date a tier was verified, else today) and one runtime per surface, named
+    NAME-local and NAME-cloud unless names={"local": X, "cloud": Y} says otherwise, each referencing the catalog (local passes the
+    alias when every tier has one, cloud the id). The notes say what a conversion cannot decide for itself."""
+    if _is2(d):
+        raise ProviderError("provider '%s' is already schema 2" % d.get("provider"))
+    bad = [m for lvl, m in validate(d, d.get("provider") if isinstance(d, dict) else None) if lvl == "fail"]
+    if bad:
+        raise ProviderError("provider '%s' breaks schema 1, fix that first (qargi provider check): %s" % (d.get("provider") if isinstance(d, dict) else "?", bad[0]))
+    name = d["provider"]
+    docs = upgrade_v1(d)
+    notes = []
+    ad = d.get("adapter")
+    if isinstance(ad, str) and not ad.startswith("lib/providers/%s/" % name):
+        notes.append("the adapter %s is outside lib/providers/%s/, so it is not carried over; a definition's adapter lives in its own directory" % (ad, name))
+    out = []
+    if len(docs) == 1:
+        doc = next(iter(docs.values()))
+        doc["description"] = "%s on the %s surface, migrated from schema 1" % (name, doc["surface"])
+        out.append(doc)
+    else:
+        names = dict({"local": name + "-local", "cloud": name + "-cloud"}, **(names or {}))
+        dates = [r["verified_on"] for r in d["tier_detail"].values() if r.get("verified_on")]
+        out.append({"schema": 2, "kind": "catalog", "family": name, "description": "the models of %s, migrated from schema 1" % name,
+                    "version": max(dates) if dates else today or datetime.now().strftime("%Y-%m-%d"), "pattern": d["model_pattern"],
+                    "tiers": copy.deepcopy(d["tier_detail"]), "effort": copy.deepcopy(d["effort"])})
+        for s, doc in docs.items():
+            doc["provider"] = names[s]
+            doc["family"] = name
+            doc["description"] = "%s on the %s surface, migrated from schema 1" % (name, s)
+            doc["models"] = {"catalog": name, "use": "alias" if s == "local" and all(r.get("alias") for r in d["tier_detail"].values()) else "id"}
+            out.append(doc)
+        if any(x.get("adapter") for x in out):
+            notes.append("the adapter serves both surfaces and both new definitions name it; split it by surface into each definition's directory")
+    for doc in out:
+        key = doc.get("provider") or doc.get("family")
+        if not NAME_RE.match(key) or len(key) > 40:
+            raise ProviderError("'%s' is not a usable name (lower case letters, digits and -, at most 40 characters)" % key)
+        problems = [m for lvl, m in validate2(doc, key) if lvl == "fail"]
+        if problems:
+            raise ProviderError("the conversion of '%s' is not a valid schema 2 document: %s" % (name, problems[0]))
+    return out, notes
 
 
 def _legacy_view(e, docs, root, library):
@@ -1316,6 +1365,33 @@ def cmd_check(name):
     return 0
 
 
+def cmd_migrate(args):
+    """migrate NAME --dry-run [--as local=X,cloud=Y]: print the schema 2 documents of a schema 1 descriptor. One document is printed as
+    an object, several as an array. Nothing is written; the gated write is not built."""
+    opts, pos, i = {}, [], 0
+    while i < len(args):
+        if args[i] == "--as" and i + 1 < len(args):
+            opts["as"], i = args[i + 1], i + 2
+        elif args[i] == "--dry-run":
+            opts["dry"], i = True, i + 1
+        else:
+            pos.append(args[i])
+            i += 1
+    names = dict(part.partition("=")[::2] for part in opts["as"].split(",")) if "as" in opts else {}
+    if len(pos) != 1 or pos[0].startswith("--") or ("as" in opts and (set(names) != set(SURFACES) or not all(names.values()))):
+        print("usage: qargi provider migrate NAME --dry-run [--as local=NAME,cloud=NAME]", file=sys.stderr)
+        return 2
+    raw = _read(_entry(pos[0]))
+    if not opts.get("dry"):
+        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form", file=sys.stderr)
+        return 2
+    docs, notes = migrate(raw, names or None)
+    for n in notes:
+        print("qargi: note: " + n, file=sys.stderr)
+    print(json.dumps(docs[0] if len(docs) == 1 else docs, indent=2))
+    return 0
+
+
 def cmd_layout(name, field, would, home):
     lay = layout(name, home=home)
     if field is None:
@@ -1355,7 +1431,7 @@ def cmd_of(args):
 
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S]")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -1382,6 +1458,8 @@ def main(argv):
             return 0
         if verb == "of":
             return cmd_of(rest)
+        if verb == "migrate":
+            return cmd_migrate(rest)
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):

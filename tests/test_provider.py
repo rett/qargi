@@ -1535,5 +1535,152 @@ class V2Cli(CliBase):
         self.assertEqual(self.run_cli("require-barrier", "fakecli", "local")[0], 2)
 
 
+class Migrate(V2Tree):
+    """migrate(): a schema 1 descriptor as schema 2 documents (a pure function); `provider migrate NAME --dry-run` prints them."""
+
+    def one_surface(self, surface="local"):
+        d = descriptor()
+        d["surfaces"] = [surface]
+        for row in d["capabilities"].values():
+            for other in [x for x in P.SURFACES if x != surface]:
+                row.pop(other, None)
+        d["adapter"] = None
+        if surface != "local":
+            d.pop("layout")
+        return d
+
+    def test_a_single_surface_descriptor_becomes_one_runtime_with_inline_models(self):
+        docs, notes = P.migrate(self.one_surface(), today="2026-11-02")
+        self.assertEqual(len(docs), 1)
+        d = docs[0]
+        self.assertEqual((d["schema"], d["kind"], d["provider"], d["family"], d["surface"]), (2, "provider", "claude", None, "local"))
+        self.assertEqual(d["models"], {"pattern": CLAUDE["model_pattern"], "tiers": CLAUDE["tier_detail"], "effort": CLAUDE["effort"]})
+        self.assertEqual(d["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["local"])
+        self.assertEqual(d["resources"]["skills"]["project_dir"], ".claude/skills")
+        self.assertEqual(d["agents"], {"reserved_names": CLAUDE["local"]["reserved_names"]})
+        self.assertEqual(d["session"], {"launch": CLAUDE["layout"]["session_launch"], "render_target": "claude-code"})
+        self.assertIn("migrated from schema 1", d["description"])
+        self.assertEqual(fails(d, "claude"), [])
+        self.assertEqual(notes, [])
+
+    def test_a_cloud_only_descriptor_has_no_local_resources(self):
+        docs, _ = P.migrate(self.one_surface("cloud"))
+        self.assertEqual((docs[0]["surface"], docs[0]["resources"], docs[0]["agents"]), ("cloud", {}, None))
+        self.assertEqual(fails(docs[0], "claude"), [])
+
+    def test_a_descriptor_for_two_surfaces_is_split_into_a_catalog_and_two_runtimes(self):
+        docs, notes = P.migrate(CLAUDE, today="2026-11-02")
+        cat, loc, cld = docs
+        self.assertEqual((cat["kind"], cat["family"], cat["version"]), ("catalog", "claude", "2026-11-02"))
+        self.assertEqual((cat["pattern"], cat["tiers"], cat["effort"]), (CLAUDE["model_pattern"], CLAUDE["tier_detail"], CLAUDE["effort"]))
+        self.assertEqual((loc["provider"], loc["surface"], loc["family"], loc["models"]), ("claude-local", "local", "claude", {"catalog": "claude", "use": "alias"}))
+        self.assertEqual((cld["provider"], cld["surface"], cld["family"], cld["models"]), ("claude-cloud", "cloud", "claude", {"catalog": "claude", "use": "id"}))
+        self.assertEqual(cld["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["cloud"])
+        self.assertEqual((cld["resources"], cld["agents"]), ({}, None))
+        self.assertEqual((loc["adapter"], cld["adapter"]), ("adapter", "adapter"))
+        self.assertTrue(any("adapter serves both surfaces" in n for n in notes))
+        for doc, name in zip(docs, ("claude", "claude-local", "claude-cloud")):
+            self.assertEqual(fails(doc, name), [], name)
+
+    def test_names_and_the_catalog_version(self):
+        d = descriptor()
+        d["tier_detail"]["deep"]["verified_on"] = "2026-10-30"
+        d["tier_detail"]["fast"]["verified_on"] = "2026-10-12"
+        docs, _ = P.migrate(d, names={"local": "claude-code", "cloud": "claude-platform"}, today="2026-11-02")
+        self.assertEqual([x.get("provider") or x["family"] for x in docs], ["claude", "claude-code", "claude-platform"])
+        self.assertEqual(docs[0]["version"], "2026-10-30")                    # the latest date a tier was verified, else the day of the conversion
+        with self.assertRaises(P.ProviderError):
+            P.migrate(d, names={"local": "Bad_Name"})
+
+    def test_the_migrated_definitions_mean_what_the_descriptor_meant(self):
+        docs, _ = P.migrate(CLAUDE, today="2026-11-02")
+        cat, loc, cld = docs
+        self.put_catalog(cat["family"], cat)
+        self.put("claude-local", loc)
+        self.put("claude-cloud", cld)
+        self.put("claude", dict(CLAUDE, provider="claude"))
+        kw = self.kw(state=self.state)
+        for surface, new in (("local", "claude-local"), ("cloud", "claude-cloud")):
+            for c in P.capabilities():
+                self.assertEqual(P.effective(new, surface, c, **kw), P.effective("claude", surface, c, **kw), (surface, c))
+            m = P.models_of(new, **self.kw())
+            self.assertEqual({t: m["tiers"][t]["model"] for t in P.TIERS}, CLAUDE["tiers"])
+            self.assertEqual(m["effort"], CLAUDE["effort"])
+        lay = P.layout("claude-local", home="/h", **self.kw())
+        self.assertEqual(lay, P.layout("claude", home="/h", **self.kw()))
+        self.assertEqual(P.resolve_runtime("claude", "local", **self.kw()), "claude")
+
+    def test_an_adapter_outside_the_descriptors_directory_is_dropped_with_a_note(self):
+        d = self.one_surface()
+        d["adapter"] = "lib/providers/other/adapter"
+        docs, notes = P.migrate(d)
+        self.assertIsNone(docs[0]["adapter"])
+        self.assertTrue(any("lib/providers/other/adapter" in n and "outside" in n for n in notes))
+
+    def test_a_descriptor_that_breaks_schema_1_or_is_schema_2_is_refused(self):
+        d = descriptor()
+        d["extra"] = 1
+        with self.assertRaises(P.ProviderError) as cm:
+            P.migrate(d)
+        self.assertIn("breaks schema 1", str(cm.exception))
+        with self.assertRaises(P.ProviderError) as cm:
+            P.migrate(runtime())
+        self.assertIn("is already schema 2", str(cm.exception))
+
+    def test_migrate_does_not_change_its_input(self):
+        d = descriptor()
+        P.migrate(d)
+        self.assertEqual(d, CLAUDE)
+
+
+class MigrateCli(CliBase):
+    def listing(self):
+        return sorted(os.path.join(dp, f) for dp, _, fs in os.walk(self.copy) for f in fs if "__pycache__" not in dp)
+
+    def test_dry_run_prints_the_documents_and_writes_nothing(self):
+        before = self.listing()
+        rc, out, err = self.run_cli("migrate", "claude", "--dry-run")
+        self.assertEqual(rc, 0)
+        docs = json.loads(out)
+        self.assertEqual([(d["kind"], d.get("provider") or d["family"]) for d in docs], [("catalog", "claude"), ("provider", "claude-local"), ("provider", "claude-cloud")])
+        self.assertIn("qargi: note: the adapter serves both surfaces", err)
+        self.assertEqual(self.listing(), before)
+
+    def test_as_names_the_two_runtimes(self):
+        rc, out, _ = self.run_cli("migrate", "claude", "--dry-run", "--as", "local=claude-code,cloud=claude-platform")
+        self.assertEqual(rc, 0)
+        self.assertEqual([d.get("provider") for d in json.loads(out)], [None, "claude-code", "claude-platform"])
+        self.assertEqual(self.run_cli("migrate", "claude", "--dry-run", "--as", "local=x")[0], 2)
+
+    def test_one_document_is_printed_as_an_object(self):
+        d = descriptor()
+        d["provider"] = "solo"
+        d["surfaces"] = ["cloud"]
+        for row in d["capabilities"].values():
+            row.pop("local", None)
+        d.pop("layout")
+        d["adapter"] = None
+        self.put("solo", d)
+        rc, out, _ = self.run_cli("migrate", "solo", "--dry-run")
+        self.assertEqual(rc, 0)
+        self.assertEqual((json.loads(out)["provider"], json.loads(out)["surface"]), ("solo", "cloud"))
+
+    def test_without_dry_run_the_write_is_not_built_and_changes_nothing(self):
+        before = self.listing()
+        rc, out, err = self.run_cli("migrate", "claude")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("migrate writes through a plan and your approval, which is not built yet; use --dry-run", err)
+        self.assertEqual(self.listing(), before)
+
+    def test_unknown_and_schema_2_and_usage(self):
+        self.assertEqual(self.run_cli("migrate", "nope", "--dry-run")[0], 1)
+        self.put("two", runtime("two"))
+        rc, _, err = self.run_cli("migrate", "two", "--dry-run")
+        self.assertEqual(rc, 1)
+        self.assertIn("provider 'two' is already schema 2", err)
+        self.assertEqual(self.run_cli("migrate")[0], 2)
+        self.assertEqual(self.run_cli("migrate", "claude", "extra", "--dry-run")[0], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
