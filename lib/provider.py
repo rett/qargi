@@ -16,7 +16,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   require(name, field, would)          the layout field, or Unsupported (a ProviderError): "provider NAME has no FACILITY: WOULD"
   require_skills(name, would)          the same refusal when the skills capability is not yes or partial (verified) on local
   memory_dir(name, checkout) / checkout_key(rule, path) / launch_line(name, render)
-                                       the layout's templates filled in; project_provider(answers) the project's provider name
+                                       the layout's templates filled in
+  project_provider(answers, project)   models.provider of the project's answers; there is no default: NoProvider (exit 2)
 Every function that reads a descriptor takes root= (the providers directory) for tests; the default is beside this file.
 
 Usage: provider.py list
@@ -37,7 +38,9 @@ Usage: provider.py list
        provider.py require-skills NAME [--would TEXT]
                                          exit 3 with that refusal unless the provider supports skills on the local surface
        provider.py launch NAME RENDER    the command that starts a session on the render directory RENDER (exit 3: none)
-Exit status 3 is the degrade refusal: the provider does not support what the verb needs."""
+       provider.py of PROJECT [--conf DIR]
+                                         prints the project's provider (models.provider); exit 2 when it names none
+Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import json
 import os
 import re
@@ -54,6 +57,10 @@ TIERS = ("fast", "balanced", "deep", "frontier")
 
 class ProviderError(Exception):
     pass
+
+
+class NoProvider(ProviderError):
+    """The project's answers name no provider (models.provider): exit status 2. There is no default provider."""
 
 
 class Unsupported(ProviderError):
@@ -350,11 +357,19 @@ def require_skills(name, would, root=None):
         raise Unsupported("provider %s has no skills support on the local surface: %s" % (name, would))
 
 
-def project_provider(answers):
-    """The provider name of a project's stored answers (models.provider), claude when there is none or it is not a name."""
+def project_provider(answers, project):
+    """The provider of a project: models.provider of its stored answers. There is no default: absent or empty is NoProvider (exit
+    2). A name with no descriptor is refused later, by load(), like any unknown provider."""
     models = answers.get("models") if isinstance(answers, dict) else None
     p = models.get("provider") if isinstance(models, dict) else None
-    return p if isinstance(p, str) and NAME_RE.match(p) else "claude"
+    if not isinstance(p, str) or not p.strip():
+        raise NoProvider("project %s has no provider: set one with qargi project set %s models.provider NAME" % (project, project))
+    return p.strip()
+
+
+def provider_of(project, conf=None):
+    """project_provider() of the stored answers of a project (NoProvider when it has none or they cannot be read)."""
+    return project_provider(project_answers(project, conf), project)
 
 
 def checkout_key(rule, path):
@@ -582,7 +597,7 @@ def cmd_layout(name, field, would, home):
 
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -603,6 +618,10 @@ def main(argv):
             return cmd_effective(rest[0], rest[1], rest[2])
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
             return cmd_require_barrier(rest[0], rest[1], rest[3] if len(rest) == 4 else None)
+        if verb == "of":
+            if len(rest) in (1, 3) and (len(rest) == 1 or rest[1] == "--conf"):
+                print(provider_of(rest[0], rest[2] if len(rest) == 3 else None))
+                return 0
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):
@@ -622,6 +641,9 @@ def main(argv):
     except Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 3
+    except NoProvider as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 2
     except ProviderError as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
