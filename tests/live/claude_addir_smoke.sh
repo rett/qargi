@@ -32,7 +32,7 @@ jq -n '{schema:1,project:"smoke",repo:{url:"https://github.com/example/x",path:"
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
   memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$QARGI_CONF/projects/smoke.json"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
-"$DA" skill new "$PROBE" >/dev/null
+"$DA" skill new "$PROBE" --compatible any >/dev/null
 sed -i "s/^description: .*/description: Use when asked about the qargi probe; it only exists to prove that skills are loaded./" "$QARGI_CONF/packs/skills/$PROBE/SKILL.md"
 t=$("$DA" skill seal "$PROBE" | tok_of); "$DA" skill seal "$PROBE" --plan "$t" --approved "live smoke" >/dev/null
 "$DA" skill link "$PROBE" --scope project --project smoke >/dev/null

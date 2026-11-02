@@ -132,7 +132,7 @@ mk4() { ./bin/qargi local prepare --repo "$T/r4" --base main --slug "$1" --scrat
 tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 out=$(mk4 w0); [ ! -s "$T/err" ] && ok "no render: prepare prints no warning" || no "no render: $(cat "$T/err")"
 Q=./bin/qargi
-$Q skill new s-w >/dev/null; sed -i "s/^description: .*/description: Use for s-w./" "$T/c/packs/skills/s-w/SKILL.md"
+$Q skill new s-w --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for s-w./" "$T/c/packs/skills/s-w/SKILL.md"
 $Q skill seal s-w --plan "$($Q skill seal s-w | tokof)" --approved test >/dev/null
 $Q skill link s-w --scope project --project alpha >/dev/null
 $Q packs apply --target claude-code alpha --plan "$($Q packs apply --target claude-code alpha | tokof)" --approved test >/dev/null

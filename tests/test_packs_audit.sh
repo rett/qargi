@@ -24,7 +24,7 @@ proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https:
 proj alpha "$R"; proj beta "$R"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
-mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
+mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 # the strict content hash of a directory (links, executable bits, empty directories, nested .pack.json): what accepted.json records
 chash() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1] + "/lib"); import packs_audit as A; print(A.strict_hash(sys.argv[2]))' "$ROOT" "$1"; }
 # a skill directory that is not in the library

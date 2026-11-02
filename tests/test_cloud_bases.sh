@@ -173,7 +173,7 @@ $DA provision plan gamma-build 2>&1 | grep -q '^plan token: [0-9a-f]\{12\}' && o
 sealit() { local t; t=$($DA skill seal "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA skill seal "$1" --plan "$t" --approved test >/dev/null; }
 for pair in sk-build:build sk-write:write sk-review:review sk-audit:audit; do
   n=${pair%%:*}; r=${pair##*:}
-  $DA skill new "$n" >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
+  $DA skill new "$n" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
   $DA skill link "$n" --scope user-role --role "$r" >/dev/null 2>&1 || no "link $n"
 done
 
