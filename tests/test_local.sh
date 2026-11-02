@@ -124,7 +124,7 @@ git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
 mkdir -p "$T/c/projects"
 jq -n --arg p "$T/r4" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:$p,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
+  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
 mk4() { ./bin/qargi local prepare --repo "$T/r4" --base main --slug "$1" --scratch "$T" 2>"$T/err"; }
 tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 out=$(mk4 w0); [ ! -s "$T/err" ] && ok "no render: prepare prints no warning" || no "no render: $(cat "$T/err")"

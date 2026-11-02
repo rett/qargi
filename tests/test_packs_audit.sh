@@ -16,7 +16,7 @@ R=$T/repo
 CS=$R/.claude/skills; ACC=$T/c/packs/accepted.json
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha "$R"; proj beta "$R"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
@@ -234,6 +234,63 @@ guard "qargi packs check --target claude-code alpha" >/dev/null && ok "the membe
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
+
+# --- a provider with another layout: the places, the settings files and the exclusion key come from its descriptor
+# A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills and ~/.agent/skills, reads three settings files
+# of its own and hides a skill with {"skills_off": {NAME: "hidden"}}; nouser has no user skills directory and no way to hide a skill.
+TOOL=$T/tool; mkdir -p "$TOOL"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+FX=$TOOL/bin/qargi
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" lib/providers/claude.json > "$TOOL/lib/providers/$1.json"; }
+mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = "~/.agent/skills" | .layout.render_target = "agentx-render"
+  | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project",path:".agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}]
+  | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
+mkprov nouser '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = null | .layout.exclusion = null'
+R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
+for pr in "beta agentx" "gamma nouser"; do set -- $pr
+  proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"
+  mk "$T/s/$2/$1/.agent/skills" rendered
+done
+mk "$R2/.agent/skills" cmine; mk "$HOME/.agent/skills" umine2; mk "$R2/.claude/skills" claude-checkout; mk "$HOME/.claude/skills" claude-user
+mk "$R2/.agent/skills" hid-a; mk "$R2/.agent/skills" hid-b; mk "$R2/.agent/skills" hid-c; mk "$R2/.agent/skills" off-wrongvalue
+mkdir -p "$HOME/.agent"
+printf '{"skills_off": {"hid-a": "hidden", "off-wrongvalue": "off"}}\n' > "$HOME/.agent/settings.json"
+printf '{"skills_off": {"hid-b": "hidden"}}\n' > "$R2/.agent/settings.json"
+printf '{"skills_off": {"hid-c": "hidden"}}\n' > "$R2/.agent/settings.local.json"
+mkdir -p "$R2/.claude"; printf '{"skillOverrides": {"cmine": "off"}}\n' > "$R2/.claude/settings.json"
+fchk() { $FX packs link "${1:-beta}" 2>&1; }
+out=$(fchk); rc=$?
+fst() { sed -n '/^skills a session would load:/,$p' <<<"$out" | sed -n "s/^ *\\([a-z]*\\) \\+$1  (.*/\\1/p"; }
+[ "$rc" = 0 ] && grep -q "^skills a session would load:" <<<"$out" && ok "another provider: the plan carries the section of the skills a session would load" || no "agentx section: rc=$rc $out"
+[ "$(fst cmine)" = unmanaged ] && grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ok "another provider: its project skills directory is the checkout place" || no "agentx cmine: $out"
+[ "$(fst umine2)" = unmanaged ] && grep -qE "^ +unmanaged +umine2  \(user, " <<<"$out" && ok "another provider: its user skills directory is the user place" || no "agentx umine2: $out"
+[ "$(fst rendered)" = unmanaged ] && grep -qE "^ +unmanaged +rendered  \(render, " <<<"$out" && ok "another provider: the render is read under its own state directory and skills directory" || no "agentx rendered: $out"
+[ -z "$(fst claude-checkout)" ] && [ -z "$(fst claude-user)" ] && ok "another provider: the skills of Claude Code's directories are not listed" || no "agentx listed claude dirs: $out"
+for n in hid-a hid-b hid-c; do [ "$(fst "$n")" = excluded ] && ok "another provider: $n is excluded by its settings file and key" || no "agentx $n: $(grep -E " $n  " <<<"$out")"; done
+grep -q "excluded .*hid-a  (.*off in $HOME/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-b  (.*off in $R2/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-c  (.*off in $R2/.agent/settings.local.json)" <<<"$out" && ok "another provider: the line names the settings file of its scope" || no "agentx settings names: $out"
+[ "$(fst off-wrongvalue)" = unmanaged ] && ok "another provider: only its own off value hides a skill" || no "agentx off value: $(grep -E ' off-wrongvalue  ' <<<"$out")"
+[ "$(fst cmine)" = unmanaged ] && ok "another provider: the settings key of Claude Code hides nothing" || no "agentx claude key"
+grep -q "hidden by skills_off" <<<"$out" && ok "another provider: the legend names its exclusion key" || no "agentx legend: $out"
+out=$($FX skill accept beta cmine 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^accept plan for beta: skill cmine" <<<"$out" && grep -q "at:    $R2/.agent/skills/cmine" <<<"$out" && ok "another provider: skill accept finds the skill in its directory" || no "agentx accept: rc=$rc $out"
+out=$($FX skill accept beta claude-checkout 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "no skill named claude-checkout is visible" <<<"$out" && grep -q "qargi packs check --target agentx-render beta lists them" <<<"$out" && ok "another provider: the message names its render target" || no "agentx accept hint: rc=$rc $out"
+out=$($FX skill accept beta hid-a 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "it is hidden (off in $HOME/.agent/settings.json)" <<<"$out" && ok "another provider: an excluded skill is not accepted" || no "agentx accept hidden: rc=$rc $out"
+out=$(fchk gamma)
+grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ! grep -q "umine2" <<<"$out" && grep -q "note: provider nouser has no user skills directory: user-level skills are not listed" <<<"$out" && ok "a provider with no user skills directory: no user place, and a note" || no "nouser: $out"
+grep -q "note: provider nouser has no way to switch a skill off in a settings file" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ok "a provider with no exclusion: nothing is reported excluded, and a note" || no "nouser exclusion: $out"
+jq '.layout.project_skills_dir = null' "$TOOL/lib/providers/nouser.json" > "$T/p.tmp" && mv "$T/p.tmp" "$TOOL/lib/providers/nouser.json"
+out=$($FX skill accept gamma cmine 2>&1); rc=$?
+[ "$rc" = 3 ] && [ "$out" = "qargi: provider nouser has no project skills directory: audit the skills a session would load" ] && ok "a provider with no project skills directory: the audit is refused with exit 3 and the degrade text" || no "nouser audit: rc=$rc $out"
+mkprov noskills2 '.capabilities.skills.local.value = "no"'
+proj delta "$R2"; jq '.models = {provider: "noskills2"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+out=$($FX skill accept delta cmine 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "^qargi: provider noskills2 has no skills support on the local surface: " <<<"$out" && ok "a provider without skills support: the audit is refused with exit 3" || no "noskills2: rc=$rc $out"
+out=$($DA skill accept alpha nothing 2>&1); [ "$?" != 3 ] && ok "claude is not refused" || no "claude refused"
+jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+out=$($DA skill accept alpha mine 2>&1); rc=$?
+[ "$rc" = 2 ] && [ "$out" = "qargi: project alpha has no provider: set one with qargi project set alpha models.provider NAME" ] && ok "no models.provider: the audit is refused with exit 2 and the fix" || no "no provider: rc=$rc $out"
 
 rm -rf "$T"
 exit $fail
