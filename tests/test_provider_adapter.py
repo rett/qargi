@@ -453,18 +453,24 @@ class Derived(Tree):
     def test_attach_proposes_the_balanced_model_of_the_descriptor(self):
         repo = os.path.join(self.tmp, "widget")
         subprocess.run(["git", "init", "-q", repo], check=True)
-        def detect():
-            r = subprocess.run([sys.executable, "-I", os.path.join(self.tool, "lib", "attach.py"), "detect", repo, "--name", "widget", "--methodology", "gitflow"],
+        def detect(*extra):
+            r = subprocess.run([sys.executable, "-I", os.path.join(self.tool, "lib", "attach.py"), "detect", repo, "--name", "widget", "--methodology", "gitflow", *extra],
                                capture_output=True, text=True, env=self.env)
             self.assertEqual(r.returncode, 0, r.stderr)
             return json.loads(r.stdout)
-        models = {r["model"] for r in detect()["answers"]["roles"].values()}
+        # no --provider: no provider is guessed, so no model and no models key are proposed
+        a = detect()["answers"]
+        self.assertNotIn("models", a)
+        self.assertTrue(all("model" not in r for r in a["roles"].values()))
+        a = detect("--provider", "claude")["answers"]
+        self.assertEqual(a["models"], {"provider": "claude"})
+        models = {r["model"] for r in a["roles"].values()}
         self.assertEqual(models, {"claude-sonnet-5-5"})
         def mutate(d):
             d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
             d["tiers"]["balanced"] = "claude-sonnet-9-9"
         self.descriptor(mutate)
-        self.assertEqual({r["model"] for r in detect()["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
+        self.assertEqual({r["model"] for r in detect("--provider", "claude")["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
 
     def test_provision_defaults_to_the_balanced_model_of_the_projects_provider(self):
         a, _ = self.answers("claude")

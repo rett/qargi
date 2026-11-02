@@ -174,6 +174,58 @@ out=$("$DA" start fk-review --asked "start the review" 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeprov --surface cloud --no-barrier --project fk' <<<"$out" && ! grep -qi claude <<<"$out"; } && ok "start: the fake provider's barrier refusal names it, never claude" || no "start fake review: rc=$rc $out"
 out=$("$DA" start fk-worker --asked "start" 2>&1); rc=$?; [ "$rc" = 0 ] && ok "start: a worker of the fake provider starts" || no "start fake worker: rc=$rc $out"
 
+# --- project attach and new: --provider is stored only when given, and the roles' models are the named provider's
+git init -q -b main "$T/att" && git -C "$T/att" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+git -C "$T/att" remote add origin https://github.com/example/att.git
+out=$("$DA" project attach "$T/att" --name att 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out"; } && ok "attach without --provider: the finding line is printed" || no "attach no provider: rc=$rc $out"
+noclaude "attach without --provider names no claude" "$out"
+grep -q 'after the provider is chosen' <<<"$out" && ok "and it says the models are set after the provider is chosen" || no "no 'after the provider is chosen' in: $out"
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+"$DA" project attach "$T/att" --name att --plan "$tok" --approved "go" >/dev/null 2>&1
+jq -e 'has("models") | not' "$T/c/projects/att.json" >/dev/null && jq -e '[.roles[] | has("model")] | any | not' "$T/c/projects/att.json" >/dev/null && ok "attach without --provider stores no models key and no role model" || no "stored: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
+"$DA" project validate att >/dev/null 2>&1 && ok "and the stored answers validate" || no "validate att"
+"$DA" project set att models.provider claude >/dev/null 2>&1 && ok "project set models.provider works on them (no role model is needed)" || no "set provider on att"
+"$DA" project set att models.provider fakeprov >/dev/null 2>&1; "$DA" project validate att >/dev/null 2>&1 && ok "and a provider can be changed" || no "change provider"
+rm -f "$T/c/projects/att.json"
+
+out=$("$DA" project attach "$T/att" --name att --provider claude 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q '^finding:' <<<"$out" && grep -q '"provider": "claude"' <<<"$out"; } && ok "attach --provider claude: the plan shows it and there is no finding" || no "attach claude plan: rc=$rc $out"
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+"$DA" project attach "$T/att" --name att --provider claude --plan "$tok" --approved "go" >/dev/null 2>&1
+{ [ "$(jq -r .models.provider "$T/c/projects/att.json")" = claude ] && jq -e '[.roles[].model] | all(. == "claude-sonnet-5-5")' "$T/c/projects/att.json" >/dev/null; } && ok "attach --provider claude stores models.provider and claude's models" || no "stored claude: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
+rm -f "$T/c/projects/att.json"
+out=$("$DA" project attach "$T/att" --name att --provider fakeprov 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+"$DA" project attach "$T/att" --name att --provider fakeprov --plan "$tok" --approved "go" >/dev/null 2>&1
+{ [ "$(jq -r .models.provider "$T/c/projects/att.json")" = fakeprov ] && jq -e '[.roles[].model] | all(. == "fake-m-1")' "$T/c/projects/att.json" >/dev/null; } && ok "attach --provider fakeprov stores it and its models" || no "stored fake: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
+noclaude "attach --provider fakeprov names no claude" "$out"
+out=$("$DA" project attach "$T/att" --name att --provider nosuch 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q "unknown provider 'nosuch'" <<<"$out"; } && ok "attach --provider with no descriptor is refused" || no "attach nosuch: rc=$rc $out"
+out=$("$DA" project attach "$T/att" --name att --provider claude --force 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+[ "$?" = 0 ] && out2=$("$DA" project attach "$T/att" --name att --provider claude --force --plan "$tok" --approved go 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q "stored with the provider 'fakeprov'" <<<"$out$out2"; } && ok "attach --force --provider does not replace a stored provider" || no "force replaced: rc=$rc $out $out2"
+[ "$(jq -r .models.provider "$T/c/projects/att.json")" = fakeprov ] && ok "and the stored provider is unchanged" || no "provider changed"
+# a stored project with no provider: --force --provider fills it in
+jq 'del(.models)' "$T/c/projects/att.json" > "$T/a.tmp" && mv "$T/a.tmp" "$T/c/projects/att.json"
+out=$("$DA" project attach "$T/att" --name att --provider fakeprov --force 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+"$DA" project attach "$T/att" --name att --provider fakeprov --force --plan "$tok" --approved go >/dev/null 2>&1
+[ "$(jq -r .models.provider "$T/c/projects/att.json")" = fakeprov ] && ok "attach --force --provider fills in a provider that is not set" || no "force fill: $(jq -c .models "$T/c/projects/att.json")"
+
+# project new: the plan names the provider (or says none is chosen), a descriptor-less one is refused before anything is made
+out=$("$DA" project new nw --dir "$T/nw" --provider nosuch 2>&1); rc=$?
+{ [ "$rc" = 1 ] && [ ! -e "$T/nw" ]; } && ok "new --provider with no descriptor is refused before anything is made" || no "new nosuch: rc=$rc $out"
+out=$("$DA" project new nw --dir "$T/nw" --url https://github.com/example/nw 2>&1)
+grep -q 'provider: not chosen' <<<"$out" && ok "new: the plan says no provider is chosen" || no "new plan: $out"
+noclaude "new without --provider names no claude" "$out"
+out=$("$DA" project new nw --dir "$T/nw" --url https://github.com/example/nw --provider fakeprov 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+grep -q 'provider: fakeprov' <<<"$out" && ok "new --provider: the plan names it" || no "new plan fake: $out"
+"$DA" project new nw --dir "$T/nw" --url https://github.com/example/nw --plan "$tok" --approved "go" >/dev/null 2>&1 && no "a plan without the provider was approved for the other options" || ok "new: the token covers the provider"
+out=$("$DA" project new nw --dir "$T/nw" --url https://github.com/example/nw --provider fakeprov --plan "$tok" --approved go 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ "$(jq -r .models.provider "$T/c/projects/nw.json")" = fakeprov ] && ! grep -q '^finding:' <<<"$out"; } && ok "new --provider stores it with --url" || no "new stored: rc=$rc $out"
+out=$("$DA" project new nx --dir "$T/nx" --url https://github.com/example/nx 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+out=$("$DA" project new nx --dir "$T/nx" --url https://github.com/example/nx --plan "$tok" --approved go 2>&1); rc=$?
+{ [ "$rc" = 0 ] && jq -e 'has("models") | not' "$T/c/projects/nx.json" >/dev/null && grep -q '^finding: models.provider is not set' <<<"$out"; } && ok "new without --provider stores no models key and prints the finding" || no "new no provider: rc=$rc $out"
+
 # --- project validate: no provider skips the provider's checks (the finding stays, the exit status does not change); an unknown one is a finding
 v() { jq "$1" "$T/np.json" > "$T/v.json"; "$DA" project validate "$T/v.json" 2>&1; }
 out=$(v '.roles.build.model = "any-model-1"'); rc=$?

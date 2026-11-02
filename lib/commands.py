@@ -95,7 +95,8 @@ COMMANDS = {
                         [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
-                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"), PLAN, APPROVED],
+                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
+                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours."),
@@ -104,6 +105,7 @@ COMMANDS = {
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
                             opt("--url", "the repository URL, when it has no origin remote", "URL"),
+                            opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
                             PLAN, APPROVED, opt("--force", "replace the detected answers, keep the rest")],
                            desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
@@ -111,7 +113,8 @@ COMMANDS = {
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
                                  "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
-                                 "cannot (the roles' models and effort, cloud, memory, budget).")),
+                                 "cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
