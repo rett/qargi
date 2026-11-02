@@ -25,6 +25,7 @@
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
 #   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
 #   packs.sh packs check --target claude-code PROJECT                                  drift of that render (read only)
+#   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's .claude/skills a symlink to that render, or undo it
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
@@ -59,7 +60,7 @@ case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <ver
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
   skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed) unset QARGI_NESTED;;
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
@@ -209,8 +210,47 @@ cc_main() { # verb: apply|check
   exit 0
 }
 
+# packs link|unlink: CHECKOUT/.claude/skills as a symbolic link to the render of the Claude Code target. The shell gathers the
+# facts only it knows (the content hashes of a real .claude/skills' skills and of the library packs of the same names), packs_link.py
+# classifies, plans and acts. Same gating as cc_main: no --approved prints the token; apply re-plans and needs the token to match.
+cl_inputs() { # project outfile: the Claude Code inputs plus the skills of a real checkout .claude/skills
+  local prj=$1 out=$2 co sk d n h lh kids='[]'
+  cc_inputs "$prj" "$out.cc"
+  co=$(jq -r .checkout "$out.cc"); sk=$co/.claude/skills
+  if [ -n "$co" ] && [ -d "$co/.claude" ] && [ ! -L "$co/.claude" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
+    while IFS= read -r -d '' d; do
+      [ -f "$d/SKILL.md" ] || continue
+      n=$(basename "$d"); h=$(content_hash "$d" 2>/dev/null) || h=''
+      if [ -d "$PACKS/skills/$n" ]; then lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null) || lh=''; else lh=null; fi
+      kids=$(jq -c --arg n "$n" --arg h "$h" --arg l "$lh" '. + [{name:$n, hash:$h, lib:(if $l == "null" then null else $l end)}]' <<<"$kids")
+    done < <(find "$sk" -mindepth 1 -maxdepth 1 -type d -print0)
+  fi
+  jq --argjson k "$kids" '. + {kids:$k}' "$out.cc" > "$out"; rm -f "$out.cc"
+}
+cl_main() { # verb: link|unlink
+  local prj=${ARGS[0]:-} PY tok
+  [ -n "$prj" ] || die "packs $1 needs PROJECT"
+  valid_project "$prj" || die "not a project name: $prj"
+  PY=$(dirname "$(readlink -f "$0")")/packs_link.py
+  CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
+  # the same per-project lock as packs apply --target claude-code; without a render directory there is nothing to race with
+  if [ -d "$DA_STATE/claude" ] && [ ! -L "$DA_STATE/claude" ]; then cc_lock "$prj"; fi
+  cl_inputs "$prj" "$CC_W/in.json"
+  python3 -I "$PY" plan "$1" "$CC_W/in.json" "$CC_W/token" || exit 1
+  [ -s "$CC_W/token" ] || exit 0   # already linked: no plan, no token
+  tok=$(cat "$CC_W/token")
+  if [ -z "$APPROVED" ]; then
+    echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
+  fi
+  need_token "$tok"
+  audit_log "packs-$1" "$prj $tok"
+  python3 -I "$PY" apply "$1" "$CC_W/in.json" "$tok" || exit 1
+  exit 0
+}
+
 if [ "$KIND" = packs ]; then
   case $VERB:$TARGET in
+    link:*|unlink:*) cl_main "$VERB";;
     apply:claude-code|check:claude-code) cc_main "$VERB";;
     apply:|apply:managed-agents) ;;
     apply:*|check:*) die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code";;
@@ -403,7 +443,7 @@ if [ "$KIND" = packs ]; then
       nv=$(ant beta:deployments retrieve --deployment-id "$did" </dev/null 2>/dev/null | jq .agent.version)
       json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$INST" --argjson v "$nv"
       echo "applied; the deployment now pins agent v$nv";;
-    *) die "usage: packs.sh packs render|load|apply ...";;
+    *) die "usage: packs.sh packs render|load|apply|link|unlink|check|seed ...";;
   esac
   exit 0
 fi
