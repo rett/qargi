@@ -17,6 +17,8 @@
 #   packs.sh skill|tool seal    NAME [--plan TOKEN --approved "..."]    approve the current content (after you edited it)
 #   packs.sh skill|tool link    NAME --scope S [--project P] [--role R]      unlink: the same
 #   packs.sh skill|tool enable|disable PROJECT ROLE NAME                     (role-level opt-out)
+#   packs.sh skill accept PROJECT NAME [--user] [--plan TOKEN --approved "..."]   accept a skill a session loads that qargi does not manage
+#   packs.sh skill unaccept PROJECT NAME [--user] [--plan TOKEN --approved "..."] take the acceptance back
 #   packs.sh skill|tool effective PROJECT ROLE       what the role gets
 #   packs.sh skill|tool check   PROJECT ROLE         review, drift and missing packs of that role
 #   packs.sh skill|tool remove  NAME                 refused while linked
@@ -35,7 +37,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-INSTALL='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+INSTALL='' USER_SCOPE='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -49,6 +51,7 @@ while [ $# -gt 0 ]; do
     --asked) ASKED=$2; shift 2;;
     --target) TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
+    --user) USER_SCOPE=1; shift;;
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
@@ -59,7 +62,7 @@ case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <ver
 # (QARGI_NESTED) has not approved this change, so the write verbs never honour it and the token is always required.
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
-  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
+  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|skill:accept|skill:unaccept|\
   tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
@@ -276,6 +279,53 @@ cl_main() { # verb: link|unlink
   python3 -I "$PY" apply "$1" "$CC_W/in.json" "$tok" || exit 1
   exit 0
 }
+
+# skill accept|unaccept: the owner's record, in accepted.json, of a skill a session loads that qargi does not manage (see the
+# audit above). Gated like packs link: the plan prints the review of the skill and a token over scope, name and content hash,
+# and apply re-plans and needs the token to match. The --approved text is stored with the record, not verified. One lock
+# for the file, since the acceptances of every project share it; the script writes it atomically, mode 600.
+ac_main() { # verb: accept|unaccept
+  local prj=${ARGS[0]:-} name=${ARGS[1]:-} scope=project who tok hash real shown AUPY ACC rec
+  [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
+  [ -n "$prj" ] && [ -n "$name" ] || die "skill $1 needs PROJECT NAME"
+  valid_project "$prj" || die "not a project name: $prj"
+  printf '%s' "$name" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || die "not a skill name: $name"
+  [ -z "$USER_SCOPE" ] || scope=user
+  who=$scope; [ "$scope" = user ] || who=project:$prj
+  AUPY=$(dirname "$(readlink -f "$0")")/packs_audit.py; ACC=$PACKS/accepted.json
+  CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
+  exec 8>"$ACC.lock" || die "cannot open the lock file $ACC.lock"
+  flock 8 || die "cannot lock $ACC.lock"
+  if [ "$1" = accept ]; then
+    cc_inputs "$prj" "$CC_W/cc.json"
+    au_inputs "$CC_W/cc.json" "$CC_W/au.json" || exit 1
+    python3 -I "$AUPY" target "$CC_W/au.json" "$name" "$scope" "$CC_W/target.json" || exit 1
+    hash=$(jq -r .hash "$CC_W/target.json"); real=$(jq -r .real "$CC_W/target.json"); shown=$(jq -r .path "$CC_W/target.json")
+    echo "== review of skill $name at $shown"
+    review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
+    tok=$(printf 'skill-accept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
+  else
+    rec=$(python3 -I "$AUPY" acceptance "$ACC" "$scope" "$prj" "$name") || exit 1
+    hash=$(jq -r .sha256 <<<"$rec")
+    echo "unaccept plan for $prj: remove the acceptance of skill $name ($who, content $hash)"
+    echo "  accepted at $(jq -r '.at // "?"' <<<"$rec") from $(jq -r '.path // "?"' <<<"$rec"), approved: $(jq -r '.approved // ""' <<<"$rec")"
+    echo "  the skill itself is not touched; qargi lists it as unmanaged again."
+    tok=$(printf 'skill-unaccept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
+  fi
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
+  need_token "$tok"
+  audit_log "skill-$1" "$prj $name $hash $who $tok"
+  if [ "$1" = accept ]; then
+    python3 -I "$AUPY" store accept "$ACC" "$scope" "$prj" "$name" "$hash" "$shown" "$APPROVED" "$(now)" || exit 1
+    echo "accepted skill $name (content $hash) for $([ "$scope" = user ] && echo every project || echo "project $prj"); qargi skill unaccept $prj $name${USER_SCOPE:+ --user} undoes it"
+  else
+    python3 -I "$AUPY" store unaccept "$ACC" "$scope" "$prj" "$name" || exit 1
+    echo "unaccepted skill $name ($who)"
+  fi
+  exit 0
+}
+
+case $VERB in accept|unaccept) ac_main "$VERB";; esac
 
 if [ "$KIND" = packs ]; then
   case $VERB:$TARGET in
@@ -565,5 +615,5 @@ case "$VERB" in
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     [ "$(jq -r --arg k "$KIND:$NAME" '[.links[] | select(.pack==$k)] | length' "$LINKS")" = 0 ] || die "$NAME is linked; unlink it from every scope first (qargi $KIND show $NAME)"
     audit_log "$KIND-remove" "$NAME"; rm -rf "$P" "$(record_of "$P")"; echo "removed $KIND $NAME";;
-  *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...";;
+  *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...; skill accept|unaccept PROJECT NAME";;
 esac
