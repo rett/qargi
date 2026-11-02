@@ -34,10 +34,11 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
     directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
-    read of a protected path stays allowed), ~/.claude/skills, ~/.claude/agents, ~/.claude/plugins, the installed copy of the tool (the tool_root in install.json:
-    the skills there are linked from ~/.claude/skills), and any .claude/skills or .claude/agents directory
-    outside the run's clone (a project's installed ones). Inside the clone, found from the nearest `qargi local
-    prepare` run directory, .claude/skills is the work product and stays writable; the path is resolved first, so a
+    read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
+    the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
+    installed ones: .claude/skills and .claude/agents), ~/.claude/plugins, and the installed copy of the tool (the tool_root in install.json:
+    the skills there are linked from ~/.claude/skills). Inside the clone, found from the nearest `qargi local
+    prepare` run directory, a project directory such as .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
@@ -336,6 +337,35 @@ def conf_dirs(P, home):
     return (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(), os.path.join(home, ".config", "qargi"))
 
 
+_RESOURCE_DIRS = []
+
+
+def resource_dirs():
+    """(project, user): the skills and agents directories that the resources of every provider definition name (the shipped ones and the
+    library's, every surface). project: tuples of path components (".claude/skills" is (".claude", "skills")), found anywhere in a path;
+    user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below ~/) is left out. Read once
+    per call of the hook. A definition that cannot be read is an error, so the call is refused: with no list of what to protect, the
+    guard cannot say that a write is safe."""
+    if not _RESOURCE_DIRS:
+        provider = _provider()
+        home = os.path.expanduser("~")
+        project, user = [], []
+        for name in provider.names():
+            for surface in provider.surfaces_of(name):
+                res = provider.definition(name, surface).get("resources")
+                for kind in ("skills", "agents"):
+                    r = res.get(kind) if isinstance(res, dict) else None
+                    r = r if isinstance(r, dict) else {}
+                    d, u = r.get("project_dir"), r.get("user_dir")
+                    comps = tuple(c for c in os.path.normpath(d).split("/") if c not in ("", ".")) if isinstance(d, str) and d else ()
+                    if comps and not d.startswith(("/", "~")) and ".." not in comps and comps not in project:
+                        project.append(comps)
+                    if isinstance(u, str) and u.startswith("~/") and len(u) > 2 and os.path.join(home, u[2:]) not in user:
+                        user.append(os.path.join(home, u[2:]))
+        _RESOURCE_DIRS.append((project, user))
+    return _RESOURCE_DIRS[0]
+
+
 def protected_roots():
     """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -345,7 +375,9 @@ def protected_roots():
     # libraries, which stay as a backup after `qargi migrate home`
     # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
     # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
-    roots = {os.path.join(home, ".claude", "skills"), os.path.join(home, ".claude", "agents"), os.path.join(home, ".claude", "plugins")}
+    # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one
+    # of Claude Code is kept here.
+    roots = set(resource_dirs()[1]) | {os.path.join(home, ".claude", "plugins")}
     # (the live configuration directory is one of these: QARGI_CONF, QARGI_HOME/config or ~/.qargi/config)
     for conf in conf_dirs(P, home):
         roots.update(os.path.join(conf, name) for name in ("packs", "credentials", "install.json"))
@@ -537,9 +569,9 @@ def in_clone(full):
 
 def protected(full, destructive=False):
     """The protected location a real path belongs to, or None. A destructive command (rm, mv) also reaches a directory
-    that holds one. A project's own .claude/skills is found by its two path components, wherever the project is; the
-    repository's `skills/` directory is not protected, nor is anything inside the run's clone (see in_clone) unless it
-    resolves into a named root."""
+    that holds one. A project's own skills and agents directories (.claude/skills and .claude/agents for Claude Code; resource_dirs
+    has the others) are found by their path components, wherever the project is; the repository's `skills/` directory is not
+    protected, nor is anything inside the run's clone (see in_clone) unless it resolves into a named root."""
     for r in protected_roots():
         if inside(full, r) or (destructive and inside(r, full)):
             return r
@@ -549,11 +581,13 @@ def protected(full, destructive=False):
     if in_clone(full):          # after the named roots: a link in the clone that leads to one was resolved and is denied above
         return None
     parts = full.split(os.sep)
-    for sub in ("skills", "agents"):          # a project's installed skills and member definitions (the latter hold the hook that guards a member)
-        if any(parts[k] == ".claude" and parts[k + 1] == sub for k in range(len(parts) - 1)):
-            return ".claude/" + sub
-        if destructive and os.path.basename(full) == ".claude" and os.path.isdir(os.path.join(full, sub)):
-            return ".claude/" + sub
+    for comps in resource_dirs()[0]:          # a project's installed skills and member definitions (the latter hold the hook that guards a member)
+        n = len(comps)
+        if any(tuple(parts[k:k + n]) == comps for k in range(len(parts) - n + 1)):
+            return "/".join(comps)
+        # a destructive command on a directory above one of them: rm -rf .claude, with .claude/skills in it
+        if destructive and any(tuple(parts[-m:]) == comps[:m] and os.path.isdir(os.path.join(full, *comps[m:])) for m in range(1, n)):
+            return "/".join(comps)
     return None
 
 
