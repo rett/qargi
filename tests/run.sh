@@ -58,6 +58,7 @@ run bash tests/test_packs.sh
 run bash tests/test_packs_seed.sh
 run bash tests/test_packs_claude.sh
 run bash tests/test_packs_link.sh
+run bash tests/test_packs_audit.sh
 run bash tests/test_packs_claude_hostile.sh
 run bash tests/test_review.sh
 run bash tests/test_marshal.sh
