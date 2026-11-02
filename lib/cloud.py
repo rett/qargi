@@ -170,6 +170,8 @@ def main(argv):
     if verb in ("show", "check", "login", "unset", "set"):
         opts, pos, i = {}, [], 0
         while i < len(rest):
+            if rest[i] in ("--profile", "--workspace-id") and verb != "set":
+                die("--profile and --workspace-id belong to `qargi cloud set`", 2)
             if rest[i] in ("--profile", "--workspace-id") and i + 1 < len(rest):
                 opts[rest[i]] = rest[i + 1]
                 i += 2
