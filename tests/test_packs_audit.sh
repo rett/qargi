@@ -25,7 +25,8 @@ proj alpha "$R"; proj beta "$R"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
 mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
-chash() { (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
+# the strict content hash of a directory (links, executable bits, empty directories, nested .pack.json): what accepted.json records
+chash() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1] + "/lib"); import packs_audit as A; print(A.strict_hash(sys.argv[2]))' "$ROOT" "$1"; }
 # a skill directory that is not in the library
 mk() { mkdir -p "$1/$2"; printf -- '---\nname: %s\ndescription: Use for %s.\n---\n\nbody\n' "$2" "$2" > "$1/$2/SKILL.md"; }
 chk() { $DA packs check --target claude-code "${1:-alpha}" 2>&1; }
@@ -247,6 +248,30 @@ mkdir -p "$T/it's a repo"; proj quoted "$T/it's a repo"; mk "$T/it's a repo/.cla
 line=$($DA packs check --target claude-code quoted 2>&1 | sed -n 's/^ *to keep it in the library: qargi skill import //p')
 eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo/.claude/skills/mine2" ] && ok "a checkout path with a quote and a space is shell-quoted in the offer" || no "path quoting: $line"
 rm -rf "$T/it's a repo" "$T/c/projects/quoted.json" "$US/user "*; rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine
+
+# --- qargi, accepted and drifted are decided on the whole tree, not on the regular files alone
+mkskill s-strict; rm -rf "$CS"; mkdir -p "$CS"; cp -r "$T/c/packs/skills/s-strict" "$CS/s-strict"; rm -f "$CS/s-strict/.pack.json"; mkdir -p "$CS/s-strict/refs"; echo r > "$CS/s-strict/refs/r.md"
+cp -r "$CS/s-strict/refs" "$T/c/packs/skills/s-strict/"; seal s-strict
+[ "$(st s-strict)" = qargi ] && ok "a copy of an approved pack, without its record, is qargi" || no "plain copy: $(line s-strict)"
+chmod +x "$CS/s-strict/refs/r.md"; [ "$(st s-strict)" = unmanaged ] && ok "an executable bit makes the copy unmanaged" || no "mode: $(line s-strict)"
+chmod -x "$CS/s-strict/refs/r.md"; [ "$(st s-strict)" = qargi ] && ok "(and qargi again once it is back)" || no "mode back: $(line s-strict)"
+ln -s r.md "$CS/s-strict/refs/lnk"; [ "$(st s-strict)" = unmanaged ] && ok "a symbolic link inside makes the copy unmanaged" || no "symlink: $(line s-strict)"
+rm "$CS/s-strict/refs/lnk"; mkdir "$CS/s-strict/empty"; [ "$(st s-strict)" = unmanaged ] && ok "an empty directory makes the copy unmanaged" || no "empty dir: $(line s-strict)"
+rmdir "$CS/s-strict/empty"; echo '{}' > "$CS/s-strict/refs/.pack.json"; [ "$(st s-strict)" = unmanaged ] && ok "a .pack.json below the top level makes the copy unmanaged" || no "nested record: $(line s-strict)"
+rm "$CS/s-strict/refs/.pack.json"; echo '{}' > "$CS/s-strict/.pack.json"; [ "$(st s-strict)" = unmanaged ] && ok "a .pack.json at the top of the copy in the checkout makes it unmanaged" || no "top record: $(line s-strict)"
+rm "$CS/s-strict/.pack.json"; [ "$(st s-strict)" = qargi ] && ok "(qargi again)" || no "qargi again: $(line s-strict)"
+mk "$CS" acc-strict; printf '#!/bin/sh\n' > "$CS/acc-strict/run.sh"; chmod 644 "$CS/acc-strict/run.sh"
+out=$(ac alpha acc-strict); tok=$(tok_of <<<"$out"); ac alpha acc-strict --plan "$tok" --approved ok >/dev/null
+[ "$(st acc-strict)" = accepted ] && jq -e --arg h "$(chash "$CS/acc-strict")" '.projects.alpha["acc-strict"].sha256 == $h' "$ACC" >/dev/null && ok "an acceptance records the strict hash" || no "accept strict: $(line acc-strict); $(cat "$ACC")"
+for step in "chmod +x $CS/acc-strict/run.sh|an executable bit" "chmod -x $CS/acc-strict/run.sh|(back)" "ln -s run.sh $CS/acc-strict/lnk|a symbolic link" "rm $CS/acc-strict/lnk|(back)" \
+            "mkdir $CS/acc-strict/empty|an empty directory" "rmdir $CS/acc-strict/empty|(back)" "echo {} > $CS/acc-strict/.pack.json|a top-level .pack.json" "rm $CS/acc-strict/.pack.json|(back)" \
+            "mkdir -p $CS/acc-strict/d; echo {} > $CS/acc-strict/d/.pack.json|a nested .pack.json"; do
+  eval "${step%%|*}"; want=drifted; case ${step#*|} in "(back)") want=accepted;; esac
+  [ "$(st acc-strict)" = "$want" ] && ok "accepted skill: ${step#*|} -> $want" || no "accepted skill after ${step#*|}: $(line acc-strict)"
+  case ${step#*|} in "a nested .pack.json") rm -rf "$CS/acc-strict/d";; esac
+done
+chk >/dev/null; rc=$?; [ "$rc" = 0 ] && [ "$(st acc-strict)" = accepted ] && ok "(accepted again, and check passes)" || no "accepted again: rc=$rc $(line acc-strict)"
+rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine; rm -f "$ACC"
 
 # --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
 mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi

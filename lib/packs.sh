@@ -182,21 +182,21 @@ cc_inputs() { # project outfile
                                               review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
   rm -f "$out.rows"
 }
-# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the shell finds the directories (scan),
-# hashes them with content_hash, adds the library's record of the same name and the acceptances file, and the script judges.
-au_inputs() { # ccinputs outfile: the render inputs plus every visible skill with its content hash
-  local cc=$1 out=$2 skills='[]' line n real h lib lh la
+# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the script finds the directories (scan) and
+# hashes them with strict_hash (links, modes and empty directories count; content_hash is the library's approval hash and does not see
+# them), the shell adds the library's approval of the same name and the acceptances file, and the script judges.
+au_inputs() { # ccinputs outfile: the render inputs plus every visible skill (scan hashes it with strict_hash) and the library's approval of its name
+  local cc=$1 out=$2 skills='[]' line n lh la lib
   python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" scan "$cc" "$out.scan" || return 1
   while IFS= read -r line; do
-    n=$(jq -r .name <<<"$line"); real=$(jq -r .real <<<"$line")
-    h=$(content_hash "$real" 2>/dev/null </dev/null) || h=''
+    n=$(jq -r .name <<<"$line")
     lib=null
     if [ -d "$PACKS/skills/$n" ] && [ ! -L "$PACKS/skills/$n" ]; then
       lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null </dev/null) || lh=''
       la=$(jq -r '.sha256 // ""' "$(record_of "$PACKS/skills/$n")" 2>/dev/null) || la=''
       lib=$(jq -nc --arg h "$lh" --arg a "$la" '{hash:$h, approved:$a}')
     fi
-    skills=$(jq -c --argjson e "$line" --arg h "$h" --argjson l "$lib" '. + [$e + {hash:$h, lib:$l}]' <<<"$skills")
+    skills=$(jq -c --argjson e "$line" --argjson l "$lib" '. + [$e + {lib:$l}]' <<<"$skills")
   done < <(jq -c '.[]' "$out.scan")
   jq --argjson s "$skills" --arg a "$PACKS/accepted.json" '. + {skills:$s, accepted:$a}' "$cc" > "$out"
   rm -f "$out.scan"
@@ -275,15 +275,14 @@ cc_main() { # verb: apply|check
 # packs of the same names), packs_link.py
 # classifies, plans and acts. Same gating as cc_main: no --approved prints the token; apply re-plans and needs the token to match.
 cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
-  local prj=$1 out=$2 co sk d n h lh kids='[]'
+  local prj=$1 out=$2 co sk d n kids='[]'
   cc_inputs "$prj" "$out.cc"
   co=$(jq -r .checkout "$out.cc"); sk=$co/$(python3 -I "$PROVPY" layout "$PROV" project_skills_dir)
   if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
     while IFS= read -r -d '' d; do
       [ -f "$d/SKILL.md" ] || continue
-      n=$(basename "$d"); h=$(content_hash "$d" 2>/dev/null) || h=''
-      if [ -d "$PACKS/skills/$n" ]; then lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null) || lh=''; else lh=null; fi
-      kids=$(jq -c --arg n "$n" --arg h "$h" --arg l "$lh" '. + [{name:$n, hash:$h, lib:(if $l == "null" then null else $l end)}]' <<<"$kids")
+      n=$(basename "$d")
+      kids=$(jq -c --arg n "$n" --argjson l "$([ -d "$PACKS/skills/$n" ] && echo true || echo false)" '. + [{name:$n, in_library:$l}]' <<<"$kids")
     done < <(find "$sk" -mindepth 1 -maxdepth 1 -type d -print0)
   fi
   jq --argjson k "$kids" '. + {kids:$k}' "$out.cc" > "$out"; rm -f "$out.cc"

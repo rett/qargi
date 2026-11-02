@@ -14,9 +14,16 @@ This audit lists every skill with exactly one state:
   excluded    switched off in one of the provider's settings files, as its layout says (hidden from the session, never a finding)
   unmanaged   anything else
 
-Called by packs.sh, which holds the facts only the shell knows (the content hash of a skill directory, the library) in an inputs file:
+Content is compared with strict_hash(), not with the shell's content_hash (the hash the library's approvals and the renders record,
+which sees regular files only and drops a .pack.json at any depth): strict_hash covers symbolic links (path and target), the
+executable bit of a file, empty directories and every .pack.json but the library pack's own record (the top-level one, skipped when
+the library pack is hashed). A skill that differs in any of those is not the library pack, and an acceptance covers exactly this
+content. The library's approval itself is still the shell's: lib.approved == lib.hash says the pack was not edited since it was approved.
+
+Called by packs.sh, which holds the facts only the shell knows (the library) in an inputs file:
   {project, provider, state, home, checkout, accepted, skills:[{name, where[], shown, real, hash, lib:{hash,approved}|null}]}
-  (`scan` finds the skill directories, the shell hashes them, `report` and `target` judge them.)
+  (`scan` finds the skill directories and hashes them with strict_hash, `report` and `target` judge them; lib.hash and lib.approved
+  are the shell's content hash of the library pack and the one recorded when it was approved.)
 
   packs_audit.py scan   INPUTS OUT                     write the visible skill directories as JSON
   packs_audit.py report INPUTS                         print the section; exit 1 when a skill is drifted
@@ -28,10 +35,12 @@ Settings files are only ever read. accepted.json is written atomically (temporar
 member run (a directory `qargi local prepare` made, at or above the working directory) and writes only <conf>/packs/accepted.json,
 the configuration directory being the environment's (paths.conf(), as the shell's DA_CONF): another FILE is refused.
 """
+import hashlib
 import json
 import os
 import re
 import shlex
+import stat
 import sys
 import tempfile
 
@@ -93,6 +102,55 @@ def places(inp):
     return out
 
 
+def strict_hash(path, skip_record=False):
+    """The strict content hash of the directory path (16 hex digits), or "" when something in it cannot be read. One line per entry,
+    sorted by path and encoded as JSON (so no name can fake another line): a symbolic link as its target (it is never followed), a
+    regular file as its sha256 and whether any executable bit is set, an empty directory as itself, anything else (a socket, a
+    device) by its type. The mode bits other than the executable one, owners and times are not part of it. skip_record leaves out
+    the top-level .pack.json: the library pack's record of its own approval, which is not part of the skill."""
+    h = hashlib.sha256()
+
+    def add(*rec):
+        h.update((json.dumps(rec, ensure_ascii=True) + "\n").encode())
+
+    def walk(d, rel):
+        names = sorted(os.listdir(d))
+        if not names and rel:
+            add("D", rel)
+        for n in names:
+            r = rel + "/" + n if rel else n
+            if skip_record and r == ".pack.json":
+                continue
+            full = os.path.join(d, n)
+            st = os.lstat(full)
+            if stat.S_ISLNK(st.st_mode):
+                add("L", r, os.readlink(full))
+            elif stat.S_ISDIR(st.st_mode):
+                walk(full, r)
+            elif stat.S_ISREG(st.st_mode):
+                f = hashlib.sha256()
+                with open(full, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        f.update(chunk)
+                add("F", r, bool(st.st_mode & 0o111), f.hexdigest())
+            else:
+                add("O", r, stat.S_IFMT(st.st_mode))
+
+    try:
+        walk(path, "")
+    except OSError:
+        return ""
+    return h.hexdigest()[:16]
+
+
+def library_hash(name, conf=None):
+    """strict_hash of the library pack of that name (without its record), or None when the library has no such directory."""
+    d = os.path.join(conf or paths.conf(), "packs", "skills", name)
+    if not os.path.isdir(d) or os.path.islink(d):
+        return None
+    return strict_hash(d, skip_record=True)
+
+
 def scan(inp):
     """The skill directories (a directory with SKILL.md, symbolic links to directories followed) of the three places. The same
     directory reached twice (the checkout's link to the render) is one entry that names both places."""
@@ -109,6 +167,8 @@ def scan(inp):
                 e = found.setdefault((n, real), {"name": n, "where": [], "shown": p, "real": real})
                 if label not in e["where"]:
                     e["where"].append(label)
+    for e in found.values():
+        e["hash"] = strict_hash(e["real"])
     return [found[k] for k in sorted(found)]
 
 
@@ -202,7 +262,7 @@ def states(inp):
         e = dict(e)
         h, lib, n = e.get("hash") or "", e.get("lib"), e["name"]
         recs = recorded(acc, inp["project"], n)
-        if h and lib and lib.get("approved") and lib["approved"] == lib.get("hash") == h:
+        if h and lib and lib.get("approved") and lib["approved"] == lib.get("hash") and library_hash(n) == h:
             e["state"], e["detail"] = "qargi", "library pack"
         elif any(under(e["real"], r) for r in roots):
             e["state"], e["detail"] = "qargi", "shipped with qargi"
