@@ -81,7 +81,7 @@ elif [ -f "$PCFG" ] && is_base "$ROLE"; then
 elif [ -f "$PCFG" ]; then
   jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (qargi project show $PROJECT)"
   cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
-  MODEL=${MODEL:-$(cfg '.roles[$r].model')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
+  MODEL=${MODEL:-$(cfg '.roles[$r].model // ""')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
   [ -n "$APT_SET" ] || APT=$(cfg '.roles[$r].apt | join(" ")')
   BUDGET=${BUDGET:-$(cfg '.budget_cents')}; SKILLS=$(cfg '.roles[$r].skills | join(" ")')
   MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
@@ -94,9 +94,9 @@ TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
   ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
 fi
-if [ -z "$MODEL" ]; then   # the balanced model of the project's provider (models.provider, default claude)
-  _prov=claude; [ ! -f "$PCFG" ] || _prov=$(jq -r '.models.provider // "claude" | tostring' "$PCFG" 2>/dev/null) || _prov=claude
-  printf '%s' "$_prov" | grep -Eq '^[a-z][a-z0-9-]*$' && [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
+if [ -z "$MODEL" ]; then   # the balanced model of the project's provider (models.provider; no default, a project with none is refused with exit 2)
+  _prov=$(project_provider "$PROJECT") || exit $?
+  [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
   MODEL=$(jq -r '.tiers.balanced' "$here/providers/$_prov.json")
 fi
 if is_base "$ROLE"; then EFFORT=${EFFORT:-medium}; fi   # a base runs the balanced tier at medium effort until a session overrides it
