@@ -9,6 +9,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.2.0] - 2026-11-02
 
 ### Added
+- `qargi provision plan|apply --force` passes `ant apply --force`, for a resource that changed on the server outside the config ("changed outside this config since the last apply"). The plan token covers the flag, so a plan made without it cannot be applied with it; the audit line says `force`.
 - `qargi marshal forget NAME`: drops this machine's accepted marshal mark of one feature, so a stale mark (left after the feature was
   deleted or re-created on the remote) stops reporting `rollback detected`. It needs integrity advisory or strict and a mark for NAME,
   prints the mark's revision and commit in a plan whose token covers both, applies with `--plan` and your words (audited as

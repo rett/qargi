@@ -22,6 +22,8 @@ printf '%s\n' "$*" >> "$FAKE/ant.log"
 case $1 in
   beta:deployments) if [ "${2:-}" = run ]; then echo '{"session_id":"sesn_1"}'; else echo '{}'; fi;;
   beta:sessions) echo '{"status":"idle","budget":{"max_list_cost":{"amount":"500"}}}';;
+  apply) while [ $# -gt 0 ]; do [ "$1" = --lock-file ] && lock=$2; shift; done   # a real apply records what it created
+         case " $* " in *' --dry-run '*) ;; *) [ -z "${lock:-}" ] || echo '{"resources":{"deployment-standby":{"id":"depl_P"}}}' > "$lock";; esac;;
 esac
 exit 0
 EOS
@@ -207,5 +209,36 @@ $DA provision plan --project gamma --role build >/dev/null 2>&1; [ "$(ls "$PD/ga
 out=$($DA provision apply gamma-worker --asked "provision the worker" --approved go --plan 000000000000 2>&1); rc=$?
 grep -qi 'plan' <<<"$out" && ! grep -q 'not enabled' <<<"$out" && [ $rc != 0 ] && ok "apply of a base reaches the plan-token check (a wrong token is refused)" || no "worker apply: rc=$rc $out"
 grep -q 'apply --yes' "$FAKE/ant.log" && no "ant apply ran on a wrong token" || ok "and nothing was created"
+
+# --- provision --force: ant apply --force overwrites what changed outside the config; the plan token covers it
+PA=(--memory-store mem_1 --reference-store ref_1)
+: > "$FAKE/ant.log"
+out=$($DA provision plan gamma-worker "${PA[@]}" 2>&1); rc=$?
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+[ $rc = 0 ] && [ -n "$tok" ] && ok "force: a plan without --force prints a token" || no "plain plan (rc=$rc): $out"
+grep -q 'apply --dry-run' "$FAKE/ant.log" && ! grep -q -- '--force' "$FAKE/ant.log" && ! grep -q -- '--force' <<<"$out" && ok "force: without --force the plan says nothing of it and ant never sees it" || no "plain plan shows force: $(cat "$FAKE/ant.log")"
+: > "$FAKE/ant.log"
+out=$($DA provision plan gamma-worker "${PA[@]}" --force 2>&1); rc=$?
+ftok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+[ $rc = 0 ] && grep -q 'apply --dry-run -v --force ' "$FAKE/ant.log" && ok "force: plan --force passes --force to ant apply --dry-run" || no "force plan (rc=$rc): $(cat "$FAKE/ant.log")"
+grep -qF -- "--force: the server's copy of any resource changed outside this config will be overwritten with this config" <<<"$out" && ok "force: the plan says what --force does" || no "force plan line: $out"
+[ -n "$ftok" ] && [ "$ftok" != "$tok" ] && ok "force: the token of a forced plan differs from the plain one" || no "tokens: '$tok' '$ftok'"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go --plan "$tok" 2>&1); rc=$?
+[ $rc != 0 ] && grep -qi 'plan' <<<"$out" && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force refuses the token of a plan without --force" || no "force apply with a plain token (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --asked "provision the worker" --approved go --plan "$ftok" 2>&1); rc=$?
+[ $rc != 0 ] && grep -qi 'plan' <<<"$out" && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply without --force refuses the token of a forced plan" || no "plain apply with a force token (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force still needs --plan" || no "force apply without a plan (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --plan "$ftok" 2>&1); rc=$?
+[ $rc != 0 ] && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force still needs --approved" || no "force apply without approval (rc=$rc): $out"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go --plan "$ftok" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'apply --yes --force ' "$FAKE/ant.log" && ok "force: the right token is accepted and ant apply gets --force" || no "force apply (rc=$rc): $out $(cat "$FAKE/ant.log")"
+grep -q 'provision-apply' "$T/s/audit.log" && [ "$(jq -r 'select(.verb=="provision-apply") | .detail' "$T/s/audit.log" | tail -1)" = "gamma-worker force" ] && ok "force: the audit line says force" || no "audit: $(grep provision-apply "$T/s/audit.log" | tail -1)"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --asked "provision the worker" --approved go --plan "$tok" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'apply --yes ' "$FAKE/ant.log" && ! grep -q -- '--force' "$FAKE/ant.log" && ok "force: without --force apply is as before and ant never sees it" || no "plain apply (rc=$rc): $out $(cat "$FAKE/ant.log")"
+[ "$(jq -r 'select(.verb=="provision-apply") | .detail' "$T/s/audit.log" | tail -1)" = "gamma-worker" ] && ok "force: and the audit line is unchanged" || no "plain audit line"
 
 [ $fail = 0 ] && echo "cloud bases tests passed" || { echo "cloud bases tests FAILED"; exit 1; }
