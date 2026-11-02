@@ -1411,7 +1411,7 @@ def main(argv):
     p.add_argument('--remote')
     p.add_argument('--show', action="store_true")
     p.add_argument('--expect-head', dest="expect_head")
-    a = p.parse_args(argv)
+    a = p.parse_intermixed_args(argv)   # NAME comes after the options: Python before 3.13 would take an empty optional positional too early
     if a.verb not in ("status", "check") and not a.name:
         return usage_exit("%s needs a feature NAME" % a.verb)
     try:

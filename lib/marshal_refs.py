@@ -503,7 +503,7 @@ def main(argv):
     p.add_argument('--remote', default="origin")
     p.add_argument('--words', default="")
     p.add_argument('--integrity', choices=MODES)
-    a = p.parse_args(argv)
+    a = p.parse_intermixed_args(argv)   # the optional verb may follow the options (Python before 3.13 needs this)
     if a.cmd == "member-check":
         if in_member_run():
             print("qargi: marshal %s is not available in a member run: a member never changes the marshal, enables or disables it or pushes; the lead does" % clean(a.verb), file=sys.stderr)
