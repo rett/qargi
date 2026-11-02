@@ -78,6 +78,24 @@ recorded, not verified: it is not proof that a person agreed.
   (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
   read only.
   The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or writable render files and a bad manifest.
+- **Repo link:** `qargi packs link PROJECT` (plan token, then `--plan TOKEN --approved "..."`) makes the
+  checkout's skills directory a symbolic link to the render, so a session there loads the project's
+  packs with no `--add-dir`. A real directory is moved to `skills.qargi-backup` (never deleted) and the
+  plan lists its skills as same, differs or new; offer `skill import` and `skill link` for the new ones.
+  `packs unlink PROJECT` undoes it. Git-tracked skills, a foreign link and a symlinked parent are
+  refused. `.claude` is not tracked, so each worktree needs its own link. A project must name its
+  provider (`models.provider`); there is no default. A local member never runs these verbs. If a link
+  stops half way, the message says where the skills are; `packs unlink PROJECT` moves a backup back
+  when its link is gone.
+- **Unmanaged skills:** `packs check --target ...` ends with every skill a session would load, as
+  `qargi`, `accepted`, `drifted`, `excluded` or `unmanaged`. Show the person the `unmanaged` ones.
+  `qargi skill accept PROJECT NAME [--user]` records one they want (name and content hash; the plan
+  shows the import review); `skill unaccept` removes it. An accepted skill that changes is `drifted`
+  and fails `check`. To switch a skill off without removing it the person sets the provider's
+  exclusion in their settings (for Claude Code `skillOverrides`); qargi only reads those files.
+  For an `unmanaged` skill the section prints the line to add, as text built from the provider's
+  layout (`to hide it instead: {"skillOverrides": {"NAME": "off"}} in <settings file>`), and never
+  writes it.
 - `qargi skill|tool check PROJECT ROLE` reviews and drift-checks what reaches a role.
   `remove NAME` is refused while the pack is linked.
 

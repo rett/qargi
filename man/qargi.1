@@ -60,7 +60,7 @@ The answers are the repository, its long\-lived branches, the roles that exist (
 .BI "template " "NAME"
 Print an answers file with defaults.
 .br
-Edit it, then store it with init.
+Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not.
 .RE
 .RS
 .TP
@@ -759,7 +759,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi skill
 Create or import skills and attach them by scope.
 .PP
-Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project and role), user\-role, project, or project\-role. Imported content is shown, hashed and approved before it is stored, and any later change is drift until you seal it again. Only you, with the person present, change a skill: a local member's guard refuses the verbs new, import, seal, remove, link, unlink, enable and disable, and writes in the pack library, and QARGI_NESTED does not stand in for the plan token of import and seal.
+Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project and role), user\-role, project, or project\-role. Imported content is shown, hashed and approved before it is stored, and any later change is drift until you seal it again. Only you, with the person present, change a skill: a local member's guard refuses the verbs new, import, seal, remove, link, unlink, accept, unaccept, enable and disable, and writes in the pack library, and QARGI_NESTED does not stand in for the plan token of import and seal.
 .RS
 .TP
 .BI "new " "NAME"
@@ -886,6 +886,50 @@ Review, drift and missing packs of a role.
 Delete a pack.
 .br
 Refused while it is linked.
+.RE
+.RS
+.TP
+.BI "accept " "[PROJECT] NAME"
+Accept a skill a session loads that qargi does not manage.
+.br
+Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; see qargi packs check) and applies only to one that is unmanaged or drifted. Without \-\-plan it prints the same review as skill import (files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With \-\-plan and \-\-approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with \-\-user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local member's guard refuses it.
+.RS
+.TP
+.B \-\-user
+record it for every project instead of this one.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "unaccept " "[PROJECT] NAME"
+Remove the acceptance of a skill.
+.br
+Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such acceptance in that scope.
+.RS
+.TP
+.B \-\-user
+record it for every project instead of this one.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
 .RE
 .TP
 .B qargi tool
@@ -1101,10 +1145,45 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 Check a Claude Code render for drift (read only).
 .br
 Needs \-\-target claude\-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from the library copy (even when the manifest was edited with it), a changed file mode, a group\- or world\-writable render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.
+It ends with a section, skills a session would load, that gives every skill a session opened in the checkout would load one state: qargi (a library pack with approved content, or a skill shipped with qargi), accepted (skill accept), drifted (accepted, but its content changed: this exits 1), excluded (switched off in the provider's settings; qargi only reads them) or unmanaged (everything else, shown with what to do about it; this does not change the exit status). When the checkout's skills directory is not linked to the render it adds a note naming packs link.
 .RS
 .TP
 .BI "\-\-target " "TARGET"
 claude\-code renders for a local Claude Code session; managed\-agents (the default for apply) is the cloud update.
+.RE
+.RE
+.RS
+.TP
+.BI "link " "[PROJECT]"
+Make the project's checkout load its packs by itself.
+.br
+The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render made by packs apply \-\-target. Without \-\-approved it prints the plan, the skills a session would load, and a plan token; apply with \-\-plan TOKEN \-\-approved. If the directory is absent it creates the link; if it is already that link it says so and exits 0. It refuses a link to anywhere else, a symlinked parent, a checkout that is not the top of a git work tree, a missing render, and files tracked by git. If it is a real directory the plan lists each skill in it as same, differs or new against the library and offers skill import and skill link for the new ones; apply then moves the directory to the backup name (skills.qargi\-backup beside it) and links, so skills not imported stop loading until they are. Nothing is deleted. If git does not ignore the path it prints the line to add to .git/info/exclude and never edits that file. A provider that has no such directory is refused (exit 3). Every verb that takes \-\-target (packs apply, packs check), packs link and unlink, skill accept and marshal handoff exit 2 when the project has no provider (qargi project set P models.provider NAME). A local member's guard refuses it.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "unlink " "[PROJECT]"
+Undo packs link.
+.br
+Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token and approval as link; nothing else is deleted.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP
@@ -1621,6 +1700,33 @@ the plan token printed by the first run.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "handoff " "[NAME]"
+Print the note a fresh session starts from, built only from stored facts.
+.br
+Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. Per feature it has the tip, whether the whole\-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). Output is capped at 16 KiB. \-\-write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi\-session skill says what to do with the note.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-as " "ID"
+act as this lead identity (default: the session id in QARGI_LEAD, else user@host).
+.RE
+.RS
+.TP
+.BI "\-\-write " "FILE"
+write the note to this new file (mode 600) instead of printing it.
+.RE
+.RS
+.TP
+.B \-\-json
+print the same facts as one JSON object.
 .RE
 .RE
 .RS

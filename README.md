@@ -243,7 +243,7 @@ Signing cannot stop someone with push access from deleting a ref; it makes forge
 
 ## Skills and command
 
-Nine skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
+Ten skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
@@ -256,6 +256,7 @@ Nine skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dis
 | `/qargi-verify` | the coordinator's procedure for verifying and applying returned patches |
 | `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
 | `/qargi-team` | a team on one task: a lead coordinating members for build, write and review; led by this session, a cloud lead, or a lead started in the console |
+| `/qargi-session` | the lead's handoff to a fresh session: `qargi marshal handoff` writes the note from stored state, the new session reports what it believes before it does anything |
 
 ## Skills and tools in a local Claude Code session
 
@@ -268,6 +269,8 @@ claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
 ```
 
 (the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing.
+
+To load the render without typing the launch line, `qargi packs link PROJECT` makes the repository's `.claude/skills` a symbolic link to it (plan token and approval as for apply): any session opened in that checkout then loads the project's packs. A real `.claude/skills` is moved to `skills.qargi-backup` (nothing is deleted) and `qargi packs unlink PROJECT` puts it back; `packs link` lists which of its skills are new to the library first, and `qargi skill import` brings them in. `.claude` is not tracked, so a new worktree needs its own link. `packs check` also lists every skill a session would load that qargi does not manage (`unmanaged`); `qargi skill accept PROJECT NAME` records one you want (for example a skill in `~/.claude/skills`) by name and content hash.
 
 The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from its pack name (or whose front matter is not closed or has two `name` keys), a skill and a tool with the same name, and a tool allowlist name with anything but letters, digits, `_`, `.` and `-`. Concurrent applies serialize on a lock (the second refuses if the render changed meanwhile), and the swap installs only the tree the token approved; the token also covers file modes. `check` also reports a rendered file that differs from the library copy, a mode change, a group- or world-writable render, a malformed manifest, and a manifest for another project or with role scoping other than advisory.
 

@@ -17,6 +17,8 @@
 #   packs.sh skill|tool seal    NAME [--plan TOKEN --approved "..."]    approve the current content (after you edited it)
 #   packs.sh skill|tool link    NAME --scope S [--project P] [--role R]      unlink: the same
 #   packs.sh skill|tool enable|disable PROJECT ROLE NAME                     (role-level opt-out)
+#   packs.sh skill accept PROJECT NAME [--user] [--plan TOKEN --approved "..."]   accept a skill a session loads that qargi does not manage
+#   packs.sh skill unaccept PROJECT NAME [--user] [--plan TOKEN --approved "..."] take the acceptance back
 #   packs.sh skill|tool effective PROJECT ROLE       what the role gets
 #   packs.sh skill|tool check   PROJECT ROLE         review, drift and missing packs of that role
 #   packs.sh skill|tool remove  NAME                 refused while linked
@@ -24,7 +26,10 @@
 #   packs.sh packs load [NAME] --role R [--project P]   what the role has enabled, or one pack's text (reads only)
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
 #   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
-#   packs.sh packs check --target claude-code PROJECT                                  drift of that render (read only)
+#   packs.sh packs check --target claude-code PROJECT                                  drift of that render, then the skills a session would load (read only)
+#                      (--target is the render target of the project's provider, layout.render_target in lib/providers/NAME.json)
+#   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's project skills directory a symlink to that render, or undo it
+#                                                                       (the plan also lists the skills a session would load)
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
@@ -34,7 +39,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-INSTALL='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -48,18 +53,32 @@ while [ $# -gt 0 ]; do
     --asked) ASKED=$2; shift 2;;
     --target) TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
+    --user) USER_SCOPE=1; shift;;
+    '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
 done
 export PLAN_ARG ASKED
+PROVPY=$(dirname "$(readlink -f "$0")")/provider.py
+
+# The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
+# field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
+prov_of() { # project: sets PROV (the project's models.provider; there is no default, none is exit 2) and RDIR (<state>/PROVIDER, where its renders live)
+  PROV=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF") || exit $?; RDIR=$DA_STATE/$PROV
+}
+prov_need() { # project would field...: prov_of, then the refusals above
+  local would=$2 f; prov_of "$1"; shift 2
+  python3 -I "$PROVPY" require-skills "$PROV" --would "$would" || exit $?
+  for f; do python3 -I "$PROVPY" layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
+}
 case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <verb> ...";; esac
 # Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): a caller that is itself approved
 # (QARGI_NESTED) has not approved this change, so the write verbs never honour it and the token is always required.
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
-  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed) unset QARGI_NESTED;;
+  skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|skill:accept|skill:unaccept|\
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
@@ -157,29 +176,50 @@ cc_inputs() { # project outfile
         '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r}' >> "$out.rows"
     else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r}' >> "$out.rows"; fi
   done <<<"$rows"
-  jq -s --arg p "$prj" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" '
-    {project:$p, state:$s, home:$h, checkout:$c,
+  jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" '
+    {project:$p, provider:$v, state:$s, home:$h, checkout:$c,
      packs: (group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, path:.[0].path, sha256:.[0].sha256, approved:.[0].approved,
                                               review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
   rm -f "$out.rows"
 }
-cc_launch() { # dir: the exact command that loads the render
-  local c="claude --add-dir $1"
-  [ ! -f "$1/mcp.json" ] || c="$c --mcp-config $1/mcp.json"
-  [ ! -f "$1/settings.json" ] || c="$c --settings $1/settings.json"
+# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the script finds the directories (scan) and
+# hashes them with strict_hash (links, modes and empty directories count; content_hash is the library's approval hash and does not see
+# them), the shell adds the library's approval of the same name and the acceptances file, and the script judges.
+au_inputs() { # ccinputs outfile: the render inputs plus every visible skill (scan hashes it with strict_hash) and the library's approval of its name
+  local cc=$1 out=$2 skills='[]' line n lh la lib
+  python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" scan "$cc" "$out.scan" || return 1
+  while IFS= read -r line; do
+    n=$(jq -r .name <<<"$line")
+    lib=null
+    if [ -d "$PACKS/skills/$n" ] && [ ! -L "$PACKS/skills/$n" ]; then
+      lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null </dev/null) || lh=''
+      la=$(jq -r '.sha256 // ""' "$(record_of "$PACKS/skills/$n")" 2>/dev/null) || la=''
+      lib=$(jq -nc --arg h "$lh" --arg a "$la" '{hash:$h, approved:$a}')
+    fi
+    skills=$(jq -c --argjson e "$line" --argjson l "$lib" '. + [$e + {lib:$l}]' <<<"$skills")
+  done < <(jq -c '.[]' "$out.scan")
+  jq --argjson s "$skills" --arg a "$PACKS/accepted.json" '. + {skills:$s, accepted:$a}' "$cc" > "$out"
+  rm -f "$out.scan"
+}
+au_report() { # ccinputs workdir: print the section; the status is 1 when a skill is drifted
+  if au_inputs "$1" "$2/au.json"; then python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" report "$2/au.json"
+  else echo "skills a session would load: cannot be listed"; return 0; fi
+}
+cc_launch() { # dir: the exact command that loads the render (the provider's session_launch)
+  local c; c=$(python3 -I "$PROVPY" launch "$PROV" "$1") || exit $?
   echo "launch: $c"
 }
 cc_cleanup() { # the temporary files, this run's staging directory and the lock file, whatever the exit
   local st
   if [ -n "${CC_W:-}" ]; then
     st=$(jq -r '.stage // empty' "$CC_W/token.stage" 2>/dev/null)
-    [ -z "$st" ] || [ "$(dirname "$st")" != "$DA_STATE/claude" ] || rm -rf "$st"
+    [ -z "$st" ] || [ "$(dirname "$st")" != "${RDIR:-}" ] || rm -rf "$st"
     rm -rf "$CC_W"
   fi
   [ -z "${CC_LK:-}" ] || rm -f "$CC_LK"
 }
-cc_lock() { # project: exclusive lock for plan+swap on claude/.PROJECT.lock; the file is removed at exit, so re-check the inode
-  CC_LK=$DA_STATE/claude/.$1.lock
+cc_lock() { # project: exclusive lock for plan+swap on PROVIDER/.PROJECT.lock; the file is removed at exit, so re-check the inode
+  CC_LK=$RDIR/.$1.lock
   while :; do
     [ ! -L "$CC_LK" ] || rm -f "$CC_LK"
     exec 9>"$CC_LK" || die "cannot open the lock file $CC_LK"
@@ -187,14 +227,40 @@ cc_lock() { # project: exclusive lock for plan+swap on claude/.PROJECT.lock; the
     [ /proc/self/fd/9 -ef "$CC_LK" ] && break
   done
 }
+# --target names the render target of the project's provider (layout.render_target); the renderer for it is dispatched here. The
+# only renderer is the Claude Code one (packs_claude.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
+rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
+  local rt='' pv
+  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
+  echo "--target is ${rt:-the render target of the provider of the project} (or managed-agents / none for a cloud instance); check needs --target ${rt:-that target}"
+}
+rt_main() { # verb: apply|check with --target
+  local prj=${ARGS[0]:-} rt
+  [ -n "$TARGET" ] || die "$(rt_say "$prj")"
+  [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
+  prov_of "$prj"
+  rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
+  [ "$TARGET" = "$rt" ] || die "--target is $rt for provider $PROV (or managed-agents / none for a cloud instance); check needs --target $rt"
+  case $rt:$PROV in
+    claude-code:claude) cc_main "$1";;
+    *) echo "qargi: provider $PROV has no packs renderer for target $rt: render the project's packs for a local session" >&2; exit 3;;
+  esac
+}
 cc_main() { # verb: apply|check
   local prj=${ARGS[0]:-} PY tok live
-  [ -n "$prj" ] || die "$1 --target claude-code needs PROJECT"
+  [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
   PY=$(dirname "$(readlink -f "$0")")/packs_claude.py
   CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
   cc_inputs "$prj" "$CC_W/in.json"
-  live=$DA_STATE/claude/$prj
-  if [ "$1" = check ]; then python3 -I "$PY" check "$CC_W/in.json"; exit $?; fi
+  live=$RDIR/$prj
+  if [ "$1" = check ]; then
+    # read only: the section of the skills a session would load follows; only a drifted one adds to the exit status
+    local rc=0
+    prov_need "$prj" "list the skills a session would load" project_skills_dir
+    python3 -I "$PY" check "$CC_W/in.json" || rc=1
+    [ -n "$RENDER_ONLY" ] || au_report "$CC_W/in.json" "$CC_W" || rc=1
+    exit $rc
+  fi
   python3 -I "$PY" prep "$CC_W/in.json" || exit 1
   cc_lock "$prj"
   python3 -I "$PY" plan "$CC_W/in.json" "$CC_W/token" || exit 1
@@ -209,11 +275,102 @@ cc_main() { # verb: apply|check
   exit 0
 }
 
+# packs link|unlink: CHECKOUT/<project skills dir of the provider> as a symbolic link to the render of the provider's render
+# target. The shell gathers the facts only it knows (the content hashes of a real skills directory's skills and of the library
+# packs of the same names), packs_link.py
+# classifies, plans and acts. Same gating as cc_main: no --approved prints the token; apply re-plans and needs the token to match.
+cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
+  local prj=$1 out=$2 co sk d n kids='[]'
+  cc_inputs "$prj" "$out.cc"
+  co=$(jq -r .checkout "$out.cc"); sk=$co/$(python3 -I "$PROVPY" layout "$PROV" project_skills_dir)
+  if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
+    while IFS= read -r -d '' d; do
+      [ -f "$d/SKILL.md" ] || continue
+      n=$(basename "$d")
+      kids=$(jq -c --arg n "$n" --argjson l "$([ -d "$PACKS/skills/$n" ] && echo true || echo false)" '. + [{name:$n, in_library:$l}]' <<<"$kids")
+    done < <(find "$sk" -mindepth 1 -maxdepth 1 -type d -print0)
+  fi
+  jq --argjson k "$kids" '. + {kids:$k}' "$out.cc" > "$out"; rm -f "$out.cc"
+}
+cl_main() { # verb: link|unlink
+  local prj=${ARGS[0]:-} PY tok
+  [ -n "$prj" ] || die "packs $1 needs PROJECT"
+  valid_project "$prj" || die "not a project name: $prj"
+  PY=$(dirname "$(readlink -f "$0")")/packs_link.py
+  prov_need "$prj" "link the checkout's skills directory to the render" project_skills_dir
+  CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
+  # the same per-project lock as the render's apply; without a render directory there is nothing to race with
+  if [ -d "$RDIR" ] && [ ! -L "$RDIR" ]; then cc_lock "$prj"; fi
+  cl_inputs "$prj" "$CC_W/in.json"
+  python3 -I "$PY" plan "$1" "$CC_W/in.json" "$CC_W/token" || exit 1
+  # the plan is shown with what a session would load now (a drifted skill is not a reason to stop here: it only informs)
+  [ -n "$APPROVED" ] || au_report "$CC_W/in.json" "$CC_W" || true
+  [ -s "$CC_W/token" ] || exit 0   # already linked: no plan, no token
+  tok=$(cat "$CC_W/token")
+  if [ -z "$APPROVED" ]; then
+    echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
+  fi
+  need_token "$tok"
+  audit_log "packs-$1" "$prj $tok"
+  python3 -I "$PY" apply "$1" "$CC_W/in.json" "$tok" || exit 1
+  exit 0
+}
+
+# skill accept|unaccept: the owner's record, in accepted.json, of a skill a session loads that qargi does not manage (see the
+# audit above). Gated like packs link: the plan prints the review of the skill and a token over scope, name and content hash,
+# and apply re-plans and needs the token to match. The --approved text is stored with the record, not verified. One lock
+# for the file, since the acceptances of every project share it; the script writes it atomically, mode 600.
+ac_main() { # verb: accept|unaccept
+  local prj=${ARGS[0]:-} name=${ARGS[1]:-} scope=project who tok hash real shown AUPY ACC rec
+  [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
+  [ -n "$prj" ] && [ -n "$name" ] || die "skill $1 needs PROJECT NAME"
+  valid_project "$prj" || die "not a project name: $prj"
+  # [[ =~ ]] anchors at the end of the string; grep -E '$' would accept a trailing newline
+  { [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $name != *$'\n'* ]]; } || die "not a skill name: $name"
+  [ -z "$USER_SCOPE" ] || scope=user
+  who=$scope; [ "$scope" = user ] || who=project:$prj
+  [ "$1" != accept ] || prov_need "$prj" "audit the skills a session would load" project_skills_dir
+  AUPY=$(dirname "$(readlink -f "$0")")/packs_audit.py; ACC=$PACKS/accepted.json
+  CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
+  exec 8>"$ACC.lock" || die "cannot open the lock file $ACC.lock"
+  flock 8 || die "cannot lock $ACC.lock"
+  if [ "$1" = accept ]; then
+    cc_inputs "$prj" "$CC_W/cc.json"
+    au_inputs "$CC_W/cc.json" "$CC_W/au.json" || exit 1
+    python3 -I "$AUPY" target "$CC_W/au.json" "$name" "$scope" "$CC_W/target.json" || exit 1
+    hash=$(jq -r .hash "$CC_W/target.json"); real=$(jq -r .real "$CC_W/target.json"); shown=$(jq -r .path "$CC_W/target.json")
+    echo "== review of skill $name at $(printf '%s' "$shown" | tr -d '\000-\037\177')"
+    review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
+    tok=$(printf 'skill-accept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
+  else
+    rec=$(python3 -I "$AUPY" acceptance "$ACC" "$scope" "$prj" "$name") || exit 1
+    hash=$(jq -r .sha256 <<<"$rec")
+    echo "unaccept plan for $prj: remove the acceptance of skill $name ($who, content $hash)"
+    echo "  accepted at $(jq -r '.at // "?"' <<<"$rec") from $(jq -r '.path // "?"' <<<"$rec"), approved: $(jq -r '.approved // ""' <<<"$rec")"
+    echo "  the skill itself is not touched; qargi lists it as unmanaged again."
+    tok=$(printf 'skill-unaccept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
+  fi
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
+  need_token "$tok"
+  audit_log "skill-$1" "$prj $name $hash $who $tok"
+  if [ "$1" = accept ]; then
+    python3 -I "$AUPY" store accept "$ACC" "$scope" "$prj" "$name" "$hash" "$shown" "$APPROVED" "$(now)" || exit 1
+    echo "accepted skill $name (content $hash) for $([ "$scope" = user ] && echo every project || echo "project $prj"); qargi skill unaccept $prj $name${USER_SCOPE:+ --user} undoes it"
+  else
+    python3 -I "$AUPY" store unaccept "$ACC" "$scope" "$prj" "$name" || exit 1
+    echo "unaccepted skill $name ($who)"
+  fi
+  exit 0
+}
+
+case $VERB in accept|unaccept) ac_main "$VERB";; esac
+
 if [ "$KIND" = packs ]; then
   case $VERB:$TARGET in
-    apply:claude-code|check:claude-code) cc_main "$VERB";;
+    link:*|unlink:*) cl_main "$VERB";;
     apply:|apply:managed-agents) ;;
-    apply:*|check:*) die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code";;
+    apply:none) die "$(rt_say "${ARGS[0]:-}")";;
+    apply:*|check:*) rt_main "$VERB";;
   esac
   case $VERB in
     render)
@@ -326,7 +483,7 @@ if [ "$KIND" = packs ]; then
         seed_one "$n" "$hs"; echo "seeded skill $n (content $hs)"
       done
       for prj in $(printf '%s\n' $reached | sort -u); do
-        echo "next: qargi packs apply --target claude-code $prj"
+        rt=$(python3 -I "$PROVPY" layout "$(python3 -I "$PROVPY" of "$prj" --conf "$DA_CONF" 2>/dev/null)" render_target 2>/dev/null) && echo "next: qargi packs apply --target $rt $prj"
         [ ! -f "$REG" ] || jq -r --arg p "$prj" 'to_entries[] | select(.value.location=="cloud" and (.key | startswith($p + "-"))) | .key' "$REG" \
           | while read -r inst; do echo "next: qargi packs apply $inst"; done
       done
@@ -403,7 +560,7 @@ if [ "$KIND" = packs ]; then
       nv=$(ant beta:deployments retrieve --deployment-id "$did" </dev/null 2>/dev/null | jq .agent.version)
       json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$INST" --argjson v "$nv"
       echo "applied; the deployment now pins agent v$nv";;
-    *) die "usage: packs.sh packs render|load|apply ...";;
+    *) die "usage: packs.sh packs render|load|apply|link|unlink|check|seed ...";;
   esac
   exit 0
 fi
@@ -496,5 +653,5 @@ case "$VERB" in
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     [ "$(jq -r --arg k "$KIND:$NAME" '[.links[] | select(.pack==$k)] | length' "$LINKS")" = 0 ] || die "$NAME is linked; unlink it from every scope first (qargi $KIND show $NAME)"
     audit_log "$KIND-remove" "$NAME"; rm -rf "$P" "$(record_of "$P")"; echo "removed $KIND $NAME";;
-  *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...";;
+  *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...; skill accept|unaccept PROJECT NAME";;
 esac

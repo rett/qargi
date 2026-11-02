@@ -87,7 +87,7 @@ COMMANDS = {
                  "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
-            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init."),
+            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not."),
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
@@ -260,6 +260,14 @@ COMMANDS = {
                            desc=("Only with integrity advisory or strict, and only for a feature that has a mark. The plan shows the mark's revision and commit and its token covers both, so a mark that moved since is refused. "
                                  "After it the next record found for the feature is trusted on first sight again and a rollback against the old revision is no longer detected; the refs on the remote are not touched. "
                                  "Audited as marshal:forget. Not available in a member run.")),
+            "handoff": verb("Print the note a fresh session starts from, built only from stored facts", [("[NAME]", "none")],
+                            [PROJECT_OPT, AS_OPT, opt("--write", "write the note to this new file (mode 600) instead of printing it", "FILE", "file"), opt("--json", "print the same facts as one JSON object")],
+                            desc=("Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. "
+                                  "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
+                                  "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
+                                  "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
+                                  "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
+                                  "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
         },
@@ -341,7 +349,7 @@ COMMANDS = {
         "desc": ("Skills and tools share one library with globally unique names; a link attaches one at a scope: user (every project "
                  "and role), user-role, project, or project-role. Imported content is shown, hashed and approved before it is stored, and "
                  "any later change is drift until you seal it again. Only you, with the person present, change a skill: a local member's "
-                 "guard refuses the verbs new, import, seal, remove, link, unlink, enable and disable, and writes in the pack library, "
+                 "guard refuses the verbs new, import, seal, remove, link, unlink, accept, unaccept, enable and disable, and writes in the pack library, "
                  "and QARGI_NESTED does not stand in for the plan token of import and seal."),
         "scripts": ["packs.sh"],
         "verbs": "PACK",
@@ -387,7 +395,27 @@ COMMANDS = {
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
                                 "checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from "
                                 "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
-                                "render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.")),
+                                "render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.\n"
+                                "It ends with a section, skills a session would load, that gives every skill a session opened in the checkout would load one state: "
+                                "qargi (a library pack with approved content, or a skill shipped with qargi), accepted (skill accept), drifted (accepted, "
+                                "but its content changed: this exits 1), excluded (switched off in the provider's settings; qargi only reads them) or unmanaged "
+                                "(everything else, shown with what to do about it; this does not change the exit status). When the checkout's skills directory "
+                                "is not linked to the render it adds a note naming packs link.")),
+            "link": verb("Make the project's checkout load its packs by itself", [("PROJECT", "project")], [PLAN, APPROVED],
+                         desc=("The provider's project skills directory in the repository (for Claude Code .claude/skills) becomes a symbolic link to the render "
+                               "made by packs apply --target. Without --approved it prints the plan, the skills a session would load, and a plan token; apply with "
+                               "--plan TOKEN --approved. If the directory is absent it creates the link; if it is already that link it says so and exits 0. It refuses "
+                               "a link to anywhere else, a symlinked parent, a checkout that is not the top of a git work tree, a missing render, and files "
+                               "tracked by git. If it is a real directory the plan lists each skill in it as same, differs or new against the library and "
+                               "offers skill import and skill link for the new ones; apply then moves the directory to the backup name (skills.qargi-backup "
+                               "beside it) and links, so skills not imported stop loading until they are. Nothing is deleted. If git does not ignore the path "
+                               "it prints the line to add to .git/info/exclude and never edits that file. A provider that has no such directory is "
+                               "refused (exit 3). Every verb that takes --target (packs apply, packs check), packs link and unlink, skill accept and marshal handoff "
+                               "exit 2 when the project has no provider (qargi project set P models.provider NAME). A local member's guard refuses it.")),
+            "unlink": verb("Undo packs link", [("PROJECT", "project")], [PLAN, APPROVED],
+                           desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
+                                 "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
+                                 "and approval as link; nothing else is deleted.")),
         },
     },
     "start": {
@@ -900,8 +928,21 @@ PACK_VERBS = {
     "check": verb("Review, drift and missing packs of a role", [("PROJECT", "project"), ("ROLE", "role")]),
     "remove": verb("Delete a pack", [("NAME", "pack")], desc="Refused while it is linked."),
 }
-for _c in ("skill", "tool"):
-    COMMANDS[_c]["verbs"] = PACK_VERBS
+USER_OPT = opt("--user", "record it for every project instead of this one")
+SKILL_VERBS = dict(PACK_VERBS)
+SKILL_VERBS["accept"] = verb("Accept a skill a session loads that qargi does not manage", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+    desc=("Finds NAME among the skills a session opened in the project's checkout would load (the checkout, the render and the user's skills directory; "
+          "see qargi packs check) and applies only to one that is unmanaged or drifted. Without --plan it prints the same review as skill import "
+          "(files, scripts, URLs, network commands, secret findings) and a plan token that covers the scope, the name and the content hash. With "
+          "--plan and --approved it records the name, the content hash, the path and your words in the acceptances file, for this project or, with "
+          "--user, for every project, and writes an audit line. An accepted skill shows as accepted in packs check; if its content changes it shows "
+          "as drifted and packs check exits 1. qargi skills, excluded skills and skills already accepted are refused with the reason. A local "
+          "member's guard refuses it."))
+SKILL_VERBS["unaccept"] = verb("Remove the acceptance of a skill", [("PROJECT", "project"), ("NAME", "none")], [USER_OPT, PLAN, APPROVED],
+    desc=("Gated like accept. Removes only the record: the skill itself is not touched and shows as unmanaged again. Refused when there is no such "
+          "acceptance in that scope."))
+COMMANDS["skill"]["verbs"] = SKILL_VERBS
+COMMANDS["tool"]["verbs"] = PACK_VERBS
 
 TOPICS = {
     "concepts": ("The model in one page", [

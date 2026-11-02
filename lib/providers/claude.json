@@ -176,5 +176,21 @@
       "output-style-setup"
     ]
   },
+  "layout": {
+    "project_skills_dir": ".claude/skills",
+    "user_skills_dir": "~/.claude/skills",
+    "project_agents_dir": ".claude/agents",
+    "user_agents_dir": "~/.claude/agents",
+    "settings_files": [
+      {"scope": "user", "path": "~/.claude/settings.json"},
+      {"scope": "project", "path": ".claude/settings.json"},
+      {"scope": "project-local", "path": ".claude/settings.local.json"}
+    ],
+    "exclusion": {"file_key": "skillOverrides", "off_value": "off"},
+    "memory_dir": "~/.claude/projects/{checkout_key}/memory",
+    "checkout_key": "nonalnum-dash",
+    "render_target": "claude-code",
+    "session_launch": "claude --add-dir {render}[ --mcp-config {render}/mcp.json][ --settings {render}/settings.json]"
+  },
   "adapter": "lib/providers/claude/adapter"
 }
