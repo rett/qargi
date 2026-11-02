@@ -49,7 +49,9 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
-read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
+read-only role run there) is refused to a member, found like the skill verbs, and so is every other provider verb that changes the
+definitions (new, import, seal, remove, rename, enable, disable, attest, migrate, and any verb added later: only the ones in
+PROVIDER_READ, list, show, check, effective, require-barrier, skills-dirs, of, layout, require-skills and launch, stay allowed).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -123,6 +125,7 @@ SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marsha
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file)
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
+PROVIDER_READ = ("", "list", "show", "check", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
@@ -739,6 +742,8 @@ def skill_verb(prog, rest, via_xargs=False):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
+    if area == "provider" and verb not in PROVIDER_READ:
+        return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))

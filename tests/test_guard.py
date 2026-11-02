@@ -1530,5 +1530,40 @@ class RuntimeRender(unittest.TestCase):
         self.assertIn("the render of a project's skills and tools that Claude Code loads; it is managed by `qargi packs apply`", res.stderr)
 
 
+class ProviderVerbs(unittest.TestCase):
+    """The provider definitions are the user's: a member is refused every verb that changes them (new, import, seal, remove, rename,
+    enable, disable, attest, migrate and accept, and any verb that is added) and keeps the ones that only read."""
+    setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
+    call = Skills.call
+    LIFECYCLE = ("new fakecli", "import ./fakecli", "seal fakecli", "remove fakecli", "rename fakecli other", "enable fakecli --project p", "disable fakecli",
+                 "attest fakecli read_only_barrier --asked x", "migrate claude --dry-run", "migrate claude --as local=a,cloud=b", "unseal fakecli", "invented x")
+    FORMS = ("qargi provider %s", "/opt/q/bin/qargi provider %s", "sudo qargi provider %s", "cd src && qargi provider %s", "echo ok; qargi provider %s --approved go",
+             "bash -c 'qargi provider %s'", "eval 'qargi provider %s'", "echo $(qargi provider %s)", "env FOO=1 qargi provider %s", "timeout 5 qargi provider %s",
+             "bash lib/provider.sh %s", "python3 -I lib/provider.py %s", "./lib/provider.py %s", "/opt/q/lib/provider.py %s")
+
+    def test_refuses_the_lifecycle_verbs_in_every_form(self):
+        for v in self.LIFECYCLE:
+            for form in self.FORMS:
+                c = form % v
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi provider %s changes the provider definitions and is not available to an agent" % v.split()[0], r.stderr, c)
+                self.assertIn("qargi guard:", r.stderr)
+
+    def test_accept_keeps_its_own_sentence(self):
+        r = self.bash("qargi provider accept claude --surface cloud --no-barrier --asked x")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent", r.stderr)
+        self.assertNotIn("changes the provider definitions", r.stderr)
+
+    def test_lets_the_verbs_that_only_read_through(self):
+        for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider check claude", "qargi provider effective claude local skills",
+                  "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
+                  "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
+                  "echo qargi provider seal x", "grep -n 'provider migrate' lib/provider.py", "cat provider.sh"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+
 if __name__ == "__main__":
     unittest.main()
