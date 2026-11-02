@@ -526,6 +526,11 @@ attach this memory store instead of the project's.
 .BI "\-\-reference\-store " "ID"
 attach this reference store.
 .RE
+.RS
+.TP
+.B \-\-force
+overwrite what changed on the server outside this config since the last apply (ant apply \-\-force); the plan token covers it, so give it to plan and to apply.
+.RE
 .RE
 .RS
 .TP
@@ -557,6 +562,11 @@ the project, instead of NAME.
 .TP
 .BI "\-\-role " "ROLE"
 the role, or a base (worker, reviewer).
+.RE
+.RS
+.TP
+.B \-\-force
+overwrite what changed on the server outside this config since the last apply (ant apply \-\-force); the plan token covers it, so give it to plan and to apply.
 .RE
 .RE
 .RS
