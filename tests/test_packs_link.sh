@@ -22,7 +22,7 @@ D=$T/s/claude/alpha
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
-mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
+mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 lk() { $DA packs link alpha "$@"; }
 ul() { $DA packs unlink alpha "$@"; }
 lplan() { lk | tok_of; }
