@@ -1565,5 +1565,57 @@ class ProviderVerbs(unittest.TestCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
 
+class LibraryScripts(unittest.TestCase):
+    """lib/linker.py (the link engine: what a checkout loads its skills and agents from) and lib/render.py (the renderer of member
+    definitions, which can run the command a definition names) are qargi's own and are not available to a member when run directly. Their
+    names are common, so only the files of the tool are refused: a render.py or linker.py of a project, or of the clone a member works in, is
+    its work product."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    LIB = os.path.realpath(os.path.join(os.path.dirname(BIN), "..", "lib"))
+
+    def refused(self, c, text, **kw):
+        r = self.bash(c, **kw)
+        self.assertEqual(r.returncode, 2, (c, r.stderr))
+        self.assertIn(text, r.stderr, c)
+        self.assertIn("qargi guard:", r.stderr)
+
+    def test_refuses_the_tools_own_scripts_run_directly(self):
+        lib = self.LIB
+        render = "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
+        link = "qargi packs link changes a skill and is not available to an agent"
+        for c in ("python3 -I %s/render.py render spec.json def.json", "python3 %s/render.py render spec.json def.json", "%s/render.py render s d",
+                  "bash -c 'python3 -I %s/render.py render s d'", "env X=1 python3 %s/render.py render s d", "sudo python3 %s/render.py render s d",
+                  "echo $(python3 %s/render.py render s d)", "cd src && python3 %s/render.py render s d", "python3 %s/../lib/render.py render s d",
+                  "python3 %s/render.py"):
+            self.refused(c % lib, render)
+        for c in ("python3 -I %s/linker.py", "python3 %s/linker.py plan link in.json t", "%s/linker.py", "bash -c 'python3 %s/linker.py'", "sudo python3 -I %s/linker.py"):
+            self.refused(c % lib, link)
+        self.refused("python3 -I render.py render s d", render, cwd=lib)
+        self.refused("python3 -I linker.py", link, cwd=lib)
+        self.refused("cd %s && python3 render.py render s d" % lib, render)
+        self.refused("./render.py render s d", render, cwd=lib)
+        self.refused("python3 lib/render.py render s d", render, cwd=os.path.dirname(lib))
+        os.symlink(lib, os.path.join(self.clone, "tool-lib"))                     # a link in the clone to the tool's lib is followed
+        self.refused("python3 tool-lib/render.py render s d", render)
+
+    def test_refuses_the_installed_copy_too(self):
+        opt = os.path.join(self.t, "opt")
+        os.makedirs(os.path.join(opt, "lib"))
+        with open(os.path.join(self.conf, "install.json"), "w") as f:
+            json.dump({"tool_root": opt}, f)
+        self.refused("python3 -I %s/lib/render.py render s d" % opt, "lib/render.py is the renderer of member definitions")
+        self.refused("python3 %s/lib/linker.py" % opt, "qargi packs link changes a skill")
+        self.assertEqual(self.bash("python3 -I %s/other/render.py render s d" % opt).returncode, 0)
+
+    def test_a_script_of_the_same_name_that_is_not_the_tools_is_not_refused(self):
+        for c in ("python3 render.py render s d", "python3 -I lib/render.py render s d", "python3 scripts/linker.py", "./render.py", "python3 %s/proj/render.py" % self.t,
+                  "cd src && python3 ../tools/linker.py", "cat %s/render.py" % self.LIB, "grep -n def %s/linker.py" % self.LIB, "python3 -m unittest tests/test_render.py",
+                  "python3 -I %s/render_helpers.py" % self.LIB, "echo python3 %s/render.py" % self.LIB, "ls %s/linker.py" % self.LIB):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        r = self.bash("python3 -I lib/render.py render s d", cwd=self.proj)           # a project's own, with no lib of the tool
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

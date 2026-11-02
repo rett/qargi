@@ -28,7 +28,10 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     install, qargi packs apply|seed|link|unlink and qargi import (it restores the pack library). Read-only verbs (list, show, check,
     effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
-    verbs call: packs_link.py is packs link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff);
+    verbs call: packs_link.py is packs link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
+    linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
+    the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
+    copy count, found from the directory the command runs in);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
@@ -120,9 +123,11 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
-# marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file)
+# marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
+# linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
+OWN_ONLY = ("linker.py", "render.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "check", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
@@ -674,7 +679,7 @@ def bash_skill_refusal(command, here, depth):
             continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
-        why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]))
+        why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=here, exe=toks[i])
         if why:
             return why
         inner = shell_string(prog, rest) if depth < 3 else None
@@ -701,16 +706,32 @@ def shell_string(prog, rest):
     return None
 
 
-def skill_verb(prog, rest, via_xargs=False):
+def own_script(path, here):
+    """True when path, named from the directory here, is a file in the lib directory of this tool or of the installed copy (real paths)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import paths as P
+    installed = P.installed_tool_root()
+    libs = {os.path.dirname(os.path.realpath(os.path.abspath(__file__)))} | ({os.path.join(installed, "lib")} if installed else set())
+    return os.path.dirname(resolve(here, path)) in libs
+
+
+def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
-    stands before the program, so its arguments come from standard input, where --write could be."""
+    stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
+    in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
     words = [t for t in rest if not t.startswith("-")]
-    name = prog
+    name, script = prog, exe or prog
     if prog not in SCRIPTS:
         if (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
-            name, words = os.path.basename(words[0]), words[1:]
+            name, script, words = os.path.basename(words[0]), words[0], words[1:]
         else:
             return None
+    if name in OWN_ONLY and not own_script(script, here):
+        return None
+    if name == "linker.py":                              # the engine behind packs link and unlink: any use of it is the verb
+        words = ["packs", "link"]
+    if name == "render.py":
+        return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
     if name == "discover.py":
         words = ["discover"] + words
     if name == "cloud.py":
