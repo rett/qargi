@@ -39,7 +39,7 @@ Usage: provider.py list
                                          exit 3 with that refusal unless the provider supports skills on the local surface
        provider.py launch NAME RENDER    the command that starts a session on the render directory RENDER (exit 3: none)
        provider.py of PROJECT [--conf DIR]
-                                         prints the project's provider (models.provider); exit 2 when it names none
+                                         prints the project's provider (models.provider); exit 2 when it names none or there is no such project
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import json
 import os
@@ -368,8 +368,14 @@ def project_provider(answers, project):
 
 
 def provider_of(project, conf=None):
-    """project_provider() of the stored answers of a project (NoProvider when it has none or they cannot be read)."""
-    return project_provider(project_answers(project, conf), project)
+    """project_provider() of the stored answers of a project. A project with no stored answers is NoProvider too (exit 2), but says
+    so: "no such project 'X'" is not "project X has no provider", whose fix (qargi project set) would fail for a name that is not a project."""
+    if not project or not NAME_RE.match(project) or not os.path.lexists(os.path.join(conf or _conf(), "projects", project + ".json")):
+        raise NoProvider("no such project '%s'" % project)
+    answers = project_answers(project, conf)
+    if answers is None:
+        raise NoProvider("cannot read the stored answers of project '%s' (qargi project show %s)" % (project, project))
+    return project_provider(answers, project)
 
 
 def checkout_key(rule, path):

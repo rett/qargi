@@ -231,6 +231,11 @@ for v in "packs link alpha" "packs unlink alpha" "packs check --target claude-co
   out=$($DA $v 2>&1); rc=$?
   [ "$rc" = 2 ] && [ "$out" = "qargi: project alpha has no provider: set one with qargi project set alpha models.provider NAME" ] && ok "no models.provider: $v is refused with exit 2" || no "no provider ($v): rc=$rc $out"
 done
+# a project that does not exist is not "a project with no provider": the fix that text names would fail for it
+for v in "packs link nosuchproj" "packs unlink nosuchproj" "packs check --target claude-code nosuchproj" "packs apply --target claude-code nosuchproj" "skill accept nosuchproj x"; do
+  out=$($DA $v 2>&1); rc=$?
+  [ "$rc" = 2 ] && [ "$out" = "qargi: no such project 'nosuchproj'" ] && ok "no such project: $v is refused with exit 2 and says so" || no "no such project ($v): rc=$rc $out"
+done
 jq '.models = {provider: "nosuch"}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 out=$($DA packs link alpha 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "unknown provider 'nosuch'" <<<"$out" && ok "a provider with no descriptor is refused like any unknown provider" || no "unknown provider: rc=$rc $out"
