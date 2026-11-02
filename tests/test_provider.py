@@ -182,10 +182,10 @@ class Violations(unittest.TestCase):
         del d["effort"]
         self.one(d, "missing required property 'effort'")
 
-    def test_a_schema_version_other_than_1(self):
+    def test_a_schema_version_other_than_1_or_2(self):
         d = descriptor()
-        d["schema"] = 2
-        self.one(d, "schema: 2 is not the supported version 1")
+        d["schema"] = 3
+        self.one(d, "schema: 3 is not the supported version 1")
 
     def test_a_missing_capability_cell_for_a_listed_surface_warns(self):
         d = descriptor()
@@ -742,6 +742,166 @@ class LayoutCli(Cli):
         rc, _, err = self.run_cli("require-skills", "claude", "--would", "audit")
         self.assertEqual(rc, 3)
         self.assertIn("provider claude has no skills support on the local surface: audit", err)
+
+
+# ---- schema 2 ---------------------------------------------------------------------------------------------------------
+
+def tier(model, alias=None, verified_on=None):
+    return {"model": model, "alias": alias, "verified_on": verified_on, "source": "test"}
+
+
+def runtime(name="mylocal", **over):
+    """The smallest schema 2 runtime: one model for every tier, no effort control, run as a command."""
+    d = {"schema": 2, "kind": "provider", "provider": name, "family": None, "surface": "local",
+         "models": {"pattern": "^.+$", "tiers": {"*": tier("my-model")}, "effort": None},
+         "dispatch": {"mode": "command", "argv": [name, "run", "--model", "{model}"], "prompt": {"via": "stdin"}, "cwd": "{clone}",
+                      "output": {"format": "text"}},
+         "agents": None, "resources": {}, "barrier": {"kind": "none"}}
+    d.update(over)
+    return d
+
+
+def catalog(family="fam", **over):
+    d = {"schema": 2, "kind": "catalog", "family": family, "version": "2026-11-02", "pattern": "^fam-[a-z0-9.-]+$",
+         "tiers": {"fast": tier("fam-small", "small"), "balanced": tier("fam-mid", "mid"), "deep": tier("fam-big", "big"),
+                   "frontier": tier("fam-top", None)},
+         "effort": {"low": "low", "medium": "medium", "high": "high", "xhigh": None, "max": None}}
+    d.update(over)
+    return d
+
+
+def cell(value="yes", verified_on="2026-11-02", note="n"):
+    return {"value": value, "verified_on": verified_on, "source": "test", "note": note}
+
+
+class Schema2(unittest.TestCase):
+    """validate() of a schema 2 document: the node of schema-2.json for its kind, and the rules a schema cannot say."""
+
+    def one(self, d, needle, name=None):
+        f = fails(d, name or d.get("provider") or d.get("family"))
+        self.assertTrue(any(needle in m for m in f), "%r not in %r" % (needle, f))
+        return f
+
+    def test_the_smallest_runtime_is_valid_and_clean(self):
+        self.assertEqual(P.validate(runtime(), "mylocal"), [])
+
+    def test_a_catalog_is_valid_and_a_runtime_may_reference_it(self):
+        self.assertEqual(P.validate(catalog(), "fam"), [])
+        d = runtime("fam-cli", family="fam", models={"catalog": "fam", "use": "alias"})
+        self.assertEqual(fails(d, "fam-cli"), [])
+
+    def test_a_full_cloud_or_local_runtime_with_resources_is_valid(self):
+        res = {"skills": {"project_dir": ".fake/skills", "user_dir": "~/.fake/skills", "items": "dir-per-item", "entry": "SKILL.md",
+                          "format": "skill-md", "link": {"project": "dir-symlink", "user": "entry-symlinks"},
+                          "exclusion": {"form": "config-list", "file": "~/.fake/config.toml", "format": "toml", "pointer": "/skills/config",
+                                        "match": {"name": "{name}"}, "off": {"enabled": False}}},
+               "agents": {"project_dir": ".fake/agents", "user_dir": "~/.fake/agents", "items": "file-per-item", "ext": ".toml"},
+               "instructions": {"project_file": ["AGENTS.md"], "items": "single-file"},
+               "mcp": {"file": ".fake/mcp.json", "format": "json", "root_pointer": "/servers", "entry": {"command": "{command}"}, "permission_rule": None},
+               "settings": {"files": [{"scope": "user", "path": "~/.fake/settings.json", "format": "json"}, {"scope": "project", "path": ".fake/settings.json"}],
+                            "allow_pointer": "/allow"},
+               "memory": {"user_dir": "~/.fake/mem/{checkout_key}", "checkout_key": "sha256-16", "link": {"user": "dir-symlink"}}}
+        d = runtime("fakecli", resources=res, agents={"reserved_names": ["plan"], "tools": {"shell": "sh"}},
+                    capabilities={"skills": cell(), "headless_dispatch": cell("partial")}, session={"launch": "fake --dir {render}", "render_target": "fakecli"},
+                    adapter="adapter", adapter_verbs=["self-test"], barrier={"kind": "hook", "hook": {"input": "json-stdin"}})
+        self.assertEqual(fails(d, "fakecli"), [])
+
+    def test_an_unknown_or_unbuilt_kind_is_refused(self):
+        self.one(runtime(kind="extension"), "kind: 'extension' is not one of provider, catalog")
+        self.one(runtime(kind="widget"), "kind: 'widget' is not one of provider, catalog")
+        d = runtime()
+        del d["kind"]
+        self.one(d, "missing required property 'kind'")
+
+    def test_the_basic_violations(self):
+        self.one(runtime(extra=1), "extra: additional property is not allowed")
+        self.one(runtime(provider="Bad_Name"), "provider: 'Bad_Name' does not match")
+        self.one(runtime("other"), "provider 'other' differs from the file name 'mylocal'", "mylocal")
+        self.one(runtime(surface="both"), "surface: 'both' is not one of local, cloud")
+        self.one(runtime(family="Bad"), "family: 'Bad' does not match")
+        d = runtime()
+        del d["models"]
+        self.one(d, "missing required property 'models'")
+
+    def test_models_take_the_catalog_form_or_the_inline_form_not_both(self):
+        self.one(runtime(models={"catalog": "fam"}), "models: a catalog reference needs use (alias or id)")
+        both = {"catalog": "fam", "use": "id", "pattern": "^.+$", "tiers": {"*": tier("m")}, "effort": None}
+        self.one(runtime(models=both), "models: a catalog reference and inline models are two forms; give one")
+        self.one(runtime(models={}), "models: needs a catalog reference or inline models (pattern and tiers)")
+        self.one(runtime(models={"pattern": "^.+$"}), "models: inline models need tiers")
+        self.one(runtime(models={"tiers": {"*": tier("m")}}), "models: inline models need pattern")
+
+    def test_every_tier_must_resolve_and_match_the_pattern(self):
+        m = {"pattern": "^m-.*$", "tiers": {"fast": tier("m-a"), "deep": tier("m-b")}, "effort": None}
+        self.one(runtime(models=m), "models.tiers: tier 'balanced' resolves to no model (give it or '*')")
+        m["tiers"]["*"] = tier("m-c")
+        self.assertEqual(fails(runtime(models=m), "mylocal"), [])
+        m["tiers"]["*"] = tier("zzz")
+        self.one(runtime(models=m), "models.tiers.*.model: 'zzz' does not match pattern ^m-.*$")
+        self.one(runtime(models={"pattern": "([", "tiers": {"*": tier("m")}, "effort": None}), "models.pattern: not a regular expression")
+
+    def test_a_catalog_is_checked_like_inline_models(self):
+        c = catalog()
+        c["tiers"]["fast"]["model"] = "other-small"
+        self.one(c, "tiers.fast.model: 'other-small' does not match pattern", "fam")
+        del c["tiers"]["balanced"]
+        self.one(c, "tiers: tier 'balanced' resolves to no model", "fam")
+        self.one(catalog("other"), "family 'other' differs from the file name 'fam'", "fam")
+        self.one(catalog(version="02/11/2026"), "version: '02/11/2026' is not a date", "fam")
+
+    def test_capability_cells_are_flat_and_unverified_ones_warn(self):
+        d = runtime(capabilities={"skills": cell(), "mcp": cell("yes", None), "resume": {"value": "yes"}})
+        self.assertEqual(fails(d, "mylocal"), [])
+        w = warns(d, "mylocal")
+        self.assertEqual(sorted(m.split(":")[0] for m in w), ["capabilities.mcp.verified_on", "capabilities.resume.verified_on"])
+        self.assertTrue(all("counts as not supported" in m for m in w))
+        self.one(runtime(capabilities={"teleport": cell()}), "capabilities.teleport: unknown capability")
+        self.one(runtime(capabilities={"skills": {"value": "maybe"}}), "capabilities.skills.value: 'maybe' is not one of yes, partial, no")
+        self.one(runtime(capabilities={"skills": {"local": cell()}}), "capabilities.skills.local: additional property is not allowed")
+        self.assertEqual(warns(runtime(capabilities={"skills": {"value": "no"}}), "mylocal"), [])
+
+    def test_resource_paths_stay_inside_the_checkout_or_the_home(self):
+        def bad(res, needle):
+            self.one(runtime(resources=res), needle)
+        bad({"skills": {"project_dir": "../out"}}, "resources.skills.project_dir: '../out' is not a path inside the checkout")
+        bad({"skills": {"project_dir": "/abs"}}, "resources.skills.project_dir: '/abs' is not a path inside the checkout")
+        bad({"agents": {"user_dir": "rel/dir"}}, "resources.agents.user_dir: 'rel/dir' does not start with ~/")
+        bad({"settings": {"files": [{"scope": "user", "path": "rel"}]}}, "resources.settings.files[0].path: the user file 'rel' does not start with ~/")
+        bad({"settings": {"files": [{"scope": "project", "path": "~/x"}]}}, "resources.settings.files[0].path: '~/x' is not a path inside the checkout")
+        bad({"memory": {"user_dir": "/m"}}, "resources.memory.user_dir: '/m' does not start with ~/")
+        bad({"memory": {"user_dir": "~/m/{checkout_key}", "checkout_key": None}}, "resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
+        bad({"mcp": {"file": "../x.json"}}, "resources.mcp.file: '../x.json' is not a path inside the checkout")
+
+    def test_an_exclusion_form_needs_the_keys_that_form_reads(self):
+        def excl(e):
+            return {"skills": {"project_dir": ".s", "exclusion": e}}
+        self.one(runtime(resources=excl({"form": "settings-key", "pointer": "/o"})), "resources.skills.exclusion: form settings-key needs files, pointer, shape and off")
+        self.one(runtime(resources=excl({"form": "config-list", "file": "~/c.toml"})), "resources.skills.exclusion: form config-list needs file, format, pointer, match and off")
+        self.one(runtime(resources=excl({"form": "deny-list", "file": "~/c.json", "format": "json"})), "resources.skills.exclusion: form deny-list needs file, format and pointer")
+        key = {"form": "settings-key", "files": ["user", "project"], "pointer": "/o", "shape": "map", "off": "off"}
+        self.one(runtime(resources=excl(key)), "resources.skills.exclusion.files: scope 'user' is not among resources.settings.files")
+        res = excl(key)
+        res["settings"] = {"files": [{"scope": "user", "path": "~/s.json"}]}
+        self.one(runtime(resources=res), "resources.skills.exclusion.files: scope 'project' is not among resources.settings.files")
+        res["settings"]["files"].append({"scope": "project", "path": "s.json"})
+        self.assertEqual(fails(runtime(resources=res), "mylocal"), [])
+        for e in ({"form": "none"}, {"form": "adapter"}, None):
+            self.assertEqual(fails(runtime(resources=excl(e)), "mylocal"), [])
+
+    def test_the_adapter_is_a_path_inside_the_definitions_directory(self):
+        for ad in ("/usr/bin/x", "../x", "a/../../x"):
+            self.one(runtime(adapter=ad), "adapter: '%s' is not a path inside the definition's directory" % ad)
+        for ad in ("adapter", "bin/adapter", None):
+            self.assertEqual(fails(runtime(adapter=ad), "mylocal"), [])
+
+    def test_every_violation_is_reported_not_only_the_first(self):
+        self.assertGreaterEqual(len(fails(runtime(extra=1, surface="x", family="Bad"), "mylocal")), 3)
+
+    def test_a_schema_1_document_is_still_validated_as_schema_1(self):
+        self.assertEqual(fails(descriptor()), [])
+        d = descriptor()
+        d["models"] = {}
+        self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
 
 
 if __name__ == "__main__":
