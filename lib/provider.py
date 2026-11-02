@@ -109,7 +109,7 @@ def _conf():
         return os.environ.get("QARGI_CONF") or os.path.join(os.path.expanduser("~"), ".qargi", "config")
 
 
-def _state():
+def _state_dir():
     try:
         sys.path.insert(0, HERE)
         import paths
@@ -731,12 +731,47 @@ def validate2(d, name=None):
 
 # ---- capabilities -----------------------------------------------------------------------------------------------------
 
-def _backed(e, cell, capability):
-    """Is the claim of a capability cell backed? A shipped definition says so with verified_on."""
-    return bool(cell.get("verified_on"))
+VERIFIERS = ("conformance", "attest")
 
 
-def cap(name, surface, capability, root=None, library=None):
+def definition_hash(name, root=None, library=None):
+    """sha256 of the definition as it is now: its document and, when it references one, its catalog. A change to either changes the
+    hash, so a verification record made earlier no longer matches. (Extensions will join it when they exist.) ProviderError when the
+    catalog it references is missing."""
+    e = _entry(name, root, library)
+    raw = _read(e)
+    body = {"definition": raw}
+    if isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
+        body["catalog"] = catalog(raw["models"]["catalog"], root, library)
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def verification(name, state=None):
+    """The verification records of a library definition: STATE/providers/NAME/verified.json, {capability: {hash, by, at, note}}. {} when
+    there is none or it cannot be read."""
+    try:
+        with open(os.path.join(state or _state_dir(), "providers", name, "verified.json")) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def _backed(e, cell, capability, root, library, state):
+    """Is the claim of a capability cell backed? A shipped definition says so with verified_on. A library definition has a record that
+    names a verifier and carries the hash of the definition as it is now."""
+    if e["origin"] == "shipped":
+        return bool(cell.get("verified_on"))
+    rec = verification(e["name"], state).get(capability)
+    if not isinstance(rec, dict) or rec.get("by") not in VERIFIERS or not isinstance(rec.get("hash"), str):
+        return False
+    try:
+        return rec["hash"] == definition_hash(e["name"], root, library)
+    except ProviderError:
+        return False
+
+
+def cap(name, surface, capability, root=None, library=None, state=None):
     """yes, partial, no or unverified for one capability on one surface. A yes or partial that is not verified is unverified."""
     if surface not in SURFACES:
         raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
@@ -749,13 +784,13 @@ def cap(name, surface, capability, root=None, library=None):
     cell = _dict(doc.get("capabilities")).get(capability)
     if not isinstance(cell, dict) or cell.get("value") not in ("yes", "partial", "no"):
         return "no"
-    if cell["value"] != "no" and not _backed(e, cell, capability):
+    if cell["value"] != "no" and not _backed(e, cell, capability, root, library, state):
         return "unverified"
     return cell["value"]
 
 
-def effective(name, surface, capability, root=None, library=None):
-    v = cap(name, surface, capability, root, library)
+def effective(name, surface, capability, root=None, library=None, state=None):
+    v = cap(name, surface, capability, root, library, state)
     return "no" if v == "unverified" else v
 
 

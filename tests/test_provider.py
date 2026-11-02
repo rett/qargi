@@ -4,6 +4,7 @@ Hermetic: every changed descriptor is a copy in a temporary directory, never the
 Run: python3 tests/test_provider.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import copy, json, os, shutil, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
@@ -1100,6 +1101,100 @@ class Loader(V2Tree):
             json.dump(runtime("homecli"), f)
         self.assertIn("homecli", P.names())
         self.assertEqual(P.origin("homecli"), "library")
+
+
+class Verified(V2Tree):
+    """A capability counts when it is claimed and verified: shipped, verified_on; library, a record in state/providers/NAME/verified.json
+    whose hash is the hash of the definition as it is now."""
+
+    def setUp(self):
+        super().setUp()
+        self.lib = runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "mcp": cell("partial", None), "resume": cell("no", None)})
+        self.put_lib("libcli", self.lib)
+
+    def record(self, **cells):
+        os.makedirs(os.path.join(self.state, "providers", "libcli"), exist_ok=True)
+        with open(os.path.join(self.state, "providers", "libcli", "verified.json"), "w") as f:
+            json.dump(cells, f)
+
+    def good(self, by="conformance"):
+        return {"hash": P.definition_hash("libcli", **self.kw()), "by": by, "at": "2026-11-02T10:00:00Z", "note": "n"}
+
+    def eff(self, capability="skills"):
+        return P.effective("libcli", "local", capability, **self.kw(state=self.state))
+
+    def test_an_unverified_library_capability_is_demoted_even_with_a_date(self):
+        self.assertEqual(P.cap("libcli", "local", "skills", **self.kw(state=self.state)), "unverified")
+        self.assertEqual(self.eff("skills"), "no")
+        self.assertEqual(self.eff("mcp"), "no")
+
+    def test_a_record_with_the_hash_of_the_definition_verifies_it(self):
+        self.record(skills=self.good(), mcp=self.good("attest"))
+        self.assertEqual(P.cap("libcli", "local", "skills", **self.kw(state=self.state)), "yes")
+        self.assertEqual(self.eff("skills"), "yes")
+        self.assertEqual(self.eff("mcp"), "partial")                  # the record verifies; the claim stays partial, a date is not needed
+        self.assertEqual(self.eff("resume"), "no")
+
+    def test_a_record_binds_one_capability_only(self):
+        self.record(skills=self.good())
+        self.assertEqual(self.eff("skills"), "yes")
+        self.assertEqual(self.eff("mcp"), "no")
+
+    def test_a_record_with_a_stale_hash_is_demoted(self):
+        stale = dict(self.good(), hash="0" * 64)
+        self.record(skills=stale)
+        self.assertEqual(self.eff("skills"), "no")
+        self.assertEqual(P.cap("libcli", "local", "skills", **self.kw(state=self.state)), "unverified")
+
+    def test_a_record_goes_stale_when_the_definition_or_its_catalog_changes(self):
+        self.record(skills=self.good())
+        self.assertEqual(self.eff("skills"), "yes")
+        self.put_lib("libcli", dict(self.lib, description="changed"))
+        self.assertEqual(self.eff("skills"), "no")
+        self.put_catalog("fam")
+        self.put_lib("libcli", dict(self.lib, models={"catalog": "fam", "use": "id"}))
+        self.record(skills=self.good())
+        self.assertEqual(self.eff("skills"), "yes")
+        c = catalog("fam")
+        c["version"] = "2026-11-03"
+        self.put_catalog("fam", c)
+        self.assertEqual(self.eff("skills"), "no")
+
+    def test_a_malformed_record_verifies_nothing(self):
+        for rec in ({"skills": "yes"}, {"skills": dict(self.good(), by="me")}, {"skills": {"by": "conformance"}}, {"skills": dict(self.good(), hash=7)}, ["skills"]):
+            self.record(**rec) if isinstance(rec, dict) else self.record_raw(rec)
+            self.assertEqual(self.eff("skills"), "no", rec)
+        with open(os.path.join(self.state, "providers", "libcli", "verified.json"), "w") as f:
+            f.write("{")
+        self.assertEqual(self.eff("skills"), "no")
+
+    def record_raw(self, data):
+        with open(os.path.join(self.state, "providers", "libcli", "verified.json"), "w") as f:
+            json.dump(data, f)
+
+    def test_a_missing_catalog_leaves_the_definition_unverified_not_broken(self):
+        self.put_lib("libcli", dict(self.lib, models={"catalog": "gone", "use": "id"}))
+        self.record(skills={"hash": "0" * 64, "by": "conformance"})
+        self.assertEqual(self.eff("skills"), "no")
+
+    def test_a_shipped_definition_is_verified_by_its_date_and_needs_no_record(self):
+        self.put("fakecli", runtime("fakecli", capabilities={"skills": cell("yes", "2026-11-02"), "mcp": cell("yes", None)}))
+        kw = self.kw(state=self.state)
+        self.assertEqual(P.effective("fakecli", "local", "skills", **kw), "yes")
+        self.assertEqual(P.cap("fakecli", "local", "mcp", **kw), "unverified")
+        os.makedirs(os.path.join(self.state, "providers", "fakecli"))
+        with open(os.path.join(self.state, "providers", "fakecli", "verified.json"), "w") as f:
+            json.dump({"mcp": {"hash": P.definition_hash("fakecli", **self.kw()), "by": "attest"}}, f)
+        self.assertEqual(P.cap("fakecli", "local", "mcp", **kw), "unverified")          # a record is for the library; a shipped file is verified by its date
+
+    def test_require_skills_and_the_barrier_follow_the_record(self):
+        self.put_lib("libcli", dict(self.lib, capabilities={"skills": cell("yes", None), "read_only_barrier": cell("yes", None)}))
+        with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):             # the default state directory is QARGI_STATE
+            with self.assertRaises(P.Unsupported):
+                P.require_skills("libcli", "x", **self.kw())
+            self.record(skills=self.good(), read_only_barrier=self.good())
+            P.require_skills("libcli", "x", **self.kw())
+            self.assertEqual(P.require_barrier("libcli", "local", None, **self.kw())[0], "yes")
 
 
 if __name__ == "__main__":
