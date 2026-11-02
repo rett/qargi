@@ -339,7 +339,9 @@ done
 [ $good = 1 ] && [ "$(nall)" = "$n_all" ] && ok "member: mutating verbs, enable and disable exit 2 and run no git push or fetch" || { [ $good = 1 ] && no "SPEC member run: the shim logged $(( $(nall) - n_all )) git calls"; }
 [ -f "$EN" ] && [ "$(oref refs/qargi/features/mr1)" = none ] && ok "member: still enabled, nothing created" || no "member run changed something"
 n_all=$(nall); good=1
-for v in "status f1" "status --all" "status --all --brief" "status f1 --json" "check" "check f1"; do
+# check f1 is asked as its lead: for anyone else it refuses (exit 1) while alice's lease is live, and whether it is live then depended on how long the host
+# had been up (the lease runs on the real monotonic clock here), which made this fail on a freshly started CI machine
+for v in "status f1" "status --all" "status --all --brief" "status f1 --json" "check" "check f1 --as alice"; do
   # shellcheck disable=SC2086  # the words of a verb
   ( cd "$T/run/work" && XE a marshal $v ); rc=$?
   [ $rc = 0 ] || { good=0; no "SPEC member run: read verb 'marshal $v' must exit 0 from the cache (rc=$rc): $(out)"; }
