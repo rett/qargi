@@ -41,8 +41,10 @@ Provider: `qargi provider accept` (it records that the owner accepts a provider 
 read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
-    (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed;
-    any other verb, none, or one held in a variable is refused (fail closed);
+    (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
+    does handoff, which only reads, unless it is given --write (that makes a file, as only the lead's session may) or an argument
+    held in a variable (it could be --write); any other verb,
+    none, or one held in a variable is refused (fail closed);
   - the feature verbs that write the marshal: qargi feature start|finish|verify (start and finish create and finish the lead's record
     and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
     allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
@@ -89,6 +91,7 @@ import glob, json, os, re, shlex, sys
 
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
+HANDOFF_SUBST = re.compile(r"marshal(?:\.sh)?[\"']*\s+[\"']*handoff[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
 COPIERS = {"cp", "mv", "ln", "install", "rsync"}            # the last argument is the destination
@@ -106,7 +109,7 @@ MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                       
 MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
-MARSHAL_READ = ("status", "check")
+MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
@@ -562,6 +565,9 @@ def lead_refusal(prog, rest, pre):
 
 def bash_skill_refusal(command, here, depth):
     command = command.replace("\\\n", "")                # a line continuation joins the lines
+    if HANDOFF_SUBST.search(command):
+        return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
+                             % MARSHAL_NOTE)
     segs = SEGMENT.split(SUBST.sub(";", command))
     stack = []                                           # the directories pushd left behind
     for n, seg in enumerate(segs):
@@ -656,9 +662,12 @@ def skill_verb(prog, rest):
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
     if area == "marshal" and verb in MARSHAL_SIGNING:
-        return MarshalReason("qargi marshal %s %s and is not available to an agent (only status and check are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
+        return MarshalReason("qargi marshal %s %s and is not available to an agent (only status, check and handoff without --write are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
+    if area == "marshal" and verb == "handoff" and any(t == "--write" or t.startswith("--write=") or "$" in t or "`" in t for t in rest):
+        return MarshalReason("qargi marshal handoff --write writes a file (or takes an argument it cannot read from a variable) and is not available to an agent (handoff without --write, status and check are); %s"
+                             % MARSHAL_NOTE)
     if area == "marshal" and verb not in MARSHAL_READ:
-        return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status and check are); %s"
+        return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status, check and handoff without --write are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
     if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
