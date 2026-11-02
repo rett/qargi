@@ -353,7 +353,7 @@ class Barrier(Tree):
         self.assertEqual(rb("claude", "moon")[0], 1)
 
 
-class Cli(Tree):
+class CliBase(Tree):
     """The verbs, run from a copy of provider.py with its own providers/ (so a changed descriptor never touches lib/)."""
 
     def setUp(self):
@@ -375,6 +375,9 @@ class Cli(Tree):
         d["provider"] = name
         mutate(d)
         self.put(name, d)
+
+
+class Cli(CliBase):
 
     def test_list_has_one_line_per_provider_with_surfaces_and_state(self):
         rc, out, _ = self.run_cli("list")
@@ -1195,6 +1198,184 @@ class Verified(V2Tree):
             self.record(skills=self.good(), read_only_barrier=self.good())
             P.require_skills("libcli", "x", **self.kw())
             self.assertEqual(P.require_barrier("libcli", "local", None, **self.kw())[0], "yes")
+
+
+class Family(V2Tree):
+    """A name in models.provider is a runtime or a family; a family names exactly one runtime on a surface."""
+
+    def setUp(self):
+        super().setUp()
+        self.put("fam-cli", runtime("fam-cli", family="fam"))
+        self.put("fam-hosted", runtime("fam-hosted", family="fam", surface="cloud"))
+        self.put("solo", runtime("solo"))
+
+    def res(self, name, surface):
+        return P.resolve_runtime(name, surface, **self.kw())
+
+    def test_a_runtime_name_resolves_to_itself_on_the_surface_it_serves(self):
+        self.assertEqual(self.res("fam-cli", "local"), "fam-cli")
+        self.assertEqual(self.res("solo", "local"), "solo")
+
+    def test_a_family_name_matches_the_one_runtime_of_each_surface(self):
+        self.assertEqual(self.res("fam", "local"), "fam-cli")
+        self.assertEqual(self.res("fam", "cloud"), "fam-hosted")
+
+    def test_a_family_with_two_runtimes_on_a_surface_is_ambiguous_there_only(self):
+        self.put("fam-other", runtime("fam-other", family="fam"))
+        with self.assertRaises(P.Ambiguous) as cm:
+            self.res("fam", "local")
+        self.assertEqual(str(cm.exception), "the family 'fam' has more than one runtime on the local surface (fam-cli, fam-other); name one of them")
+        self.assertIsInstance(cm.exception, P.Refused)
+        self.assertEqual(self.res("fam", "cloud"), "fam-hosted")
+        self.assertEqual(self.res("fam-cli", "local"), "fam-cli")        # naming the runtime is never ambiguous
+
+    def test_a_library_runtime_joins_its_family(self):
+        self.put_lib("libcli", runtime("libcli", family="fam"))
+        with self.assertRaises(P.Ambiguous) as cm:
+            self.res("fam", "local")
+        self.assertIn("(fam-cli, libcli)", str(cm.exception))
+
+    def test_a_runtime_of_the_other_surface_and_an_unknown_name_are_refused(self):
+        with self.assertRaises(P.Refused) as cm:
+            self.res("fam-cli", "cloud")
+        self.assertEqual(str(cm.exception), "the provider fam-cli does not serve the cloud surface (it serves local)")
+        with self.assertRaises(P.Refused) as cm:
+            self.res("nope", "local")
+        self.assertEqual(str(cm.exception), "no runtime or family 'nope' for the local surface; available: fam, fam-cli, solo")
+        with self.assertRaises(P.Refused) as cm:
+            self.res("solo", "cloud")
+        self.assertIn("does not serve the cloud surface", str(cm.exception))
+
+    def test_a_clash_refuses_a_family_that_a_clashing_name_belongs_to_and_nothing_else(self):
+        self.put("dupe", runtime("dupe", family="other"))
+        self.put_lib("dupe", runtime("dupe", family="other"))
+        self.assertEqual(self.res("fam", "local"), "fam-cli")
+        with self.assertRaises(P.Clash):
+            self.res("other", "local")
+        with self.assertRaises(P.Clash):
+            self.res("dupe", "local")
+
+    def test_a_schema_1_provider_is_a_runtime_of_its_own_name_on_each_surface_it_lists(self):
+        self.put("claude", CLAUDE)
+        self.assertEqual((self.res("claude", "local"), self.res("claude", "cloud")), ("claude", "claude"))
+
+
+class PerSurface(V2Tree):
+    """provider_of(answers, surface): models.provider is one name or an object {local, cloud}; no default."""
+
+    def setUp(self):
+        super().setUp()
+        self.put("fam-cli", runtime("fam-cli", family="fam"))
+        self.put("fam-hosted", runtime("fam-hosted", family="fam", surface="cloud"))
+        self.put("solo", runtime("solo"))
+        self.put("claude", CLAUDE)
+
+    def of(self, provider, surface, project="p"):
+        return P.provider_of({"models": {"provider": provider}}, surface, project, **self.kw())
+
+    def test_the_object_form_names_a_runtime_or_a_family_per_surface(self):
+        self.assertEqual(self.of({"local": "solo", "cloud": "fam-hosted"}, "local"), "solo")
+        self.assertEqual(self.of({"local": "solo", "cloud": "fam-hosted"}, "cloud"), "fam-hosted")
+        self.assertEqual(self.of({"local": "fam", "cloud": "fam"}, "cloud"), "fam-hosted")
+
+    def test_the_string_form_is_a_runtime_or_a_family_resolved_for_the_surface(self):
+        self.assertEqual(self.of("solo", "local"), "solo")
+        self.assertEqual(self.of(" fam ", "local"), "fam-cli")
+        self.assertEqual(self.of("fam", "cloud"), "fam-hosted")
+        self.assertEqual(self.of("claude", "local"), "claude")
+        self.assertEqual(self.of("claude", "cloud"), "claude")
+
+    def test_a_string_that_resolves_through_its_family_comes_with_a_notice(self):
+        models = {"models": {"provider": "fam"}}
+        self.assertEqual(P.resolve_project(models, "local", "p", **self.kw()),
+                         ("fam-cli", "models.provider is the single name 'fam'; on the local surface it resolves to fam-cli through the family. "
+                                     "Name a runtime for each surface: qargi project set p models.provider.local fam-cli"))
+        for provider in ("solo", "claude"):
+            self.assertIsNone(P.resolve_project({"models": {"provider": provider}}, "local", "p", **self.kw())[1])
+        self.assertIsNone(P.resolve_project({"models": {"provider": {"local": "fam"}}}, "local", "p", **self.kw())[1])
+
+    def test_a_string_naming_a_runtime_of_the_other_surface_leaves_that_surface_unset(self):
+        with self.assertRaises(P.NoProvider) as cm:
+            self.of("solo", "cloud")
+        self.assertEqual(str(cm.exception), "project p has no cloud provider: its provider 'solo' does not serve that surface; "
+                                            "set one with qargi project set p models.provider.cloud NAME")
+        self.assertEqual(P.NoProvider.__mro__[1], P.ProviderError)
+
+    def test_an_unset_surface_is_no_provider_with_the_standard_message(self):
+        standard = "project p has no provider: set one with qargi project set p models.provider NAME"
+        for answers in ({}, None, {"models": {}}, {"models": {"provider": ""}}, {"models": {"provider": "  "}}, {"models": {"provider": 3}}, {"models": {"provider": None}}):
+            for surface in P.SURFACES:
+                with self.assertRaises(P.NoProvider, msg=repr(answers)) as cm:
+                    P.provider_of(answers, surface, "p", **self.kw())
+                self.assertEqual(str(cm.exception), standard)
+        for provider, surface in (({"local": "solo"}, "cloud"), ({}, "local"), ({"local": "solo", "cloud": " "}, "cloud"), ({"cloud": None}, "cloud")):
+            with self.assertRaises(P.NoProvider) as cm:
+                self.of(provider, surface)
+            self.assertEqual(str(cm.exception), "project p has no %s provider: set one with qargi project set p models.provider.%s NAME" % (surface, surface))
+
+    def test_an_unknown_surface_key_or_name_is_refused(self):
+        with self.assertRaises(P.Refused) as cm:
+            self.of({"local": "solo", "moon": "solo"}, "local")
+        self.assertEqual(str(cm.exception), "models.provider: unknown surface 'moon'; one of local, cloud")
+        with self.assertRaises(P.Refused):
+            self.of({"local": "nope"}, "local")
+        with self.assertRaises(P.ProviderError):
+            P.provider_of({"models": {"provider": "solo"}}, "moon", "p", **self.kw())
+
+    def test_the_earlier_calls_keep_working(self):
+        self.assertEqual(P.project_provider({"models": {"provider": "claude"}}, "p"), "claude")
+        self.assertEqual(P.project_provider({"models": {"provider": "fam"}}, "p"), "fam")            # a string is not resolved without a surface
+        self.assertEqual(P.project_provider({"models": {"provider": {"local": "solo", "cloud": "solo"}}}, "p", **self.kw()), "solo")
+        with self.assertRaises(P.Refused) as cm:
+            P.project_provider({"models": {"provider": {"local": "solo", "cloud": "fam-hosted"}}}, "p", **self.kw())
+        self.assertIn("names a runtime per surface", str(cm.exception))
+        self.assertEqual(P.project_provider({"models": {"provider": {"local": "fam"}}}, "p", "local", **self.kw()), "fam-cli")
+
+
+class PerSurfaceCli(CliBase):
+    def setUp(self):
+        super().setUp()
+        self.conf = os.path.join(self.tmp, "conf")
+        os.makedirs(os.path.join(self.conf, "projects"))
+        self.put("fam-cli", runtime("fam-cli", family="fam"))
+        self.put("fam-hosted", runtime("fam-hosted", family="fam", surface="cloud"))
+        self.put("fam-other", runtime("fam-other", family="fam", surface="cloud"))
+        for name, provider in (("str", "claude"), ("fam", "fam"), ("obj", {"local": "fam-cli"}), ("none", None), ("amb", {"cloud": "fam"})):
+            models = {} if provider is None else {"provider": provider}
+            with open(os.path.join(self.conf, "projects", name + ".json"), "w") as f:
+                json.dump({"project": name, "models": models}, f)
+
+    def of(self, project, *extra):
+        return self.run_cli("of", project, "--conf", self.conf, *extra)
+
+    def test_of_with_a_surface_resolves_and_prints_the_runtime(self):
+        self.assertEqual(self.of("str", "--surface", "cloud")[:2], (0, "claude\n"))
+        self.assertEqual(self.of("obj", "--surface", "local")[:2], (0, "fam-cli\n"))
+        rc, out, err = self.run_cli("of", "--surface", "local", "fam", "--conf", self.conf)
+        self.assertEqual((rc, out), (0, "fam-cli\n"))
+        self.assertEqual(err, "qargi: note: models.provider is the single name 'fam'; on the local surface it resolves to fam-cli through the family. "
+                              "Name a runtime for each surface: qargi project set fam models.provider.local fam-cli\n")
+
+    def test_of_exits_2_for_an_unset_surface_an_ambiguous_family_and_a_project_with_none(self):
+        rc, out, err = self.of("obj", "--surface", "cloud")
+        self.assertEqual((rc, out, err), (2, "", "qargi: project obj has no cloud provider: set one with qargi project set obj models.provider.cloud NAME\n"))
+        rc, out, err = self.of("none", "--surface", "local")
+        self.assertEqual((rc, out, err), (2, "", "qargi: project none has no provider: set one with qargi project set none models.provider NAME\n"))
+        rc, out, err = self.of("amb", "--surface", "cloud")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("more than one runtime on the cloud surface (fam-hosted, fam-other)", err)
+        self.assertEqual(self.of("absent", "--surface", "local")[0], 2)
+
+    def test_of_without_a_surface_is_what_it_was_and_refuses_the_object_form(self):
+        self.assertEqual(self.of("str")[:2], (0, "claude\n"))
+        rc, out, err = self.of("obj")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("names a runtime per surface", err)
+
+    def test_of_with_a_bad_surface_or_option_is_a_usage_error(self):
+        self.assertEqual(self.of("str", "--surface", "moon")[0], 2)
+        self.assertEqual(self.of("str", "--surface")[0], 2)
+        self.assertEqual(self.run_cli("of")[0], 2)
 
 
 if __name__ == "__main__":
