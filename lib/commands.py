@@ -163,7 +163,7 @@ COMMANDS = {
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "prefer that project's own members and read its profiles (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
-                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE"),
+                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort)")],
                         desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when it is registered; otherwise the first registered member of the role's class (shown as legacy). A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
@@ -256,6 +256,10 @@ COMMANDS = {
             "resign": verb("Sign an unsigned open record (writes one more revision on top of it)", [("NAME", "none")], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                            desc=("Used when moving from advisory to strict. The plan shows the head, its lead and goal and its token covers exactly that head; it is refused for a lead other than the accepted one. "
                                  "Audited as marshal:resign. Not available in a member run.")),
+            "forget": verb("Drop this machine's accepted mark of a feature, so a stale mark stops reporting rollback detected", [("NAME", "none")], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
+                           desc=("Only with integrity advisory or strict, and only for a feature that has a mark. The plan shows the mark's revision and commit and its token covers both, so a mark that moved since is refused. "
+                                 "After it the next record found for the feature is trusted on first sight again and a rollback against the old revision is no longer detected; the refs on the remote are not touched. "
+                                 "Audited as marshal:forget. Not available in a member run.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
         },
