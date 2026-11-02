@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Which skills would a Claude Code session opened in a project's checkout load, and who vouches for each?
+"""Which skills would a session of the project's provider, opened in the project's checkout, load, and who vouches for each?
 
-qargi manages the skills of its library and renders them for a project, but a session loads more than that: the skills in
-CHECKOUT/.claude/skills, in the render, and in ~/.claude/skills. This audit lists every one of them with exactly one state:
+qargi manages the skills of its library and renders them for a project, but a session loads more than that: the skills in the
+checkout's project skills directory, in the render, and in the user's skills directory. Where those are, which settings files hide
+a skill and under which key all come from the provider's layout (lib/providers/NAME.json, read through lib/provider.py); nothing
+here names a provider. A provider without a project skills directory, or without verified skills support, is refused with exit
+status 3; one without a user skills directory or a way to hide a skill is audited without those and the section says so.
+This audit lists every skill with exactly one state:
 
   qargi       a library pack with approved content and the same content hash, or a skill under the qargi install's skills/
   accepted    the owner accepted this name with this content (accepted.json)
   drifted     the owner accepted this name, but the content changed since (a finding)
-  excluded    set to "off" in skillOverrides of ~/.claude/settings.json, CHECKOUT/.claude/settings.json or settings.local.json
-              (hidden from the session, never a finding)
+  excluded    switched off in one of the provider's settings files, as its layout says (hidden from the session, never a finding)
   unmanaged   anything else
 
 Called by packs.sh, which holds the facts only the shell knows (the content hash of a skill directory, the library) in an inputs file:
-  {project, state, home, checkout, accepted, skills:[{name, where[], shown, real, hash, lib:{hash,approved}|null}]}
+  {project, provider, state, home, checkout, accepted, skills:[{name, where[], shown, real, hash, lib:{hash,approved}|null}]}
   (`scan` finds the skill directories, the shell hashes them, `report` and `target` judge them.)
 
   packs_audit.py scan   INPUTS OUT                     write the visible skill directories as JSON
@@ -29,6 +32,9 @@ import re
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import provider  # noqa: E402
+
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 PLACES = ("checkout", "render", "user")
 
@@ -43,15 +49,26 @@ def load(path):
         return json.load(fh)
 
 
+WOULD = "audit the skills a session would load"
+
+
+def layout(inp):
+    """The provider's layout (with ~ expanded for inp["home"]); exit 3 unless it can serve an audit."""
+    provider.require_skills(inp["provider"], WOULD)
+    provider.require(inp["provider"], "project_skills_dir", WOULD)
+    return provider.layout(inp["provider"], home=inp.get("home") or None)
+
+
 def places(inp):
     """[(label, directory)] of the three places a session would load skills from."""
+    lay = layout(inp)
     out = []
     co = inp.get("checkout") or ""
     if co and os.path.isabs(co) and os.path.isdir(co):
-        out.append(("checkout", os.path.join(co, ".claude", "skills")))
-    out.append(("render", os.path.join(os.path.abspath(inp["state"]), "claude", inp["project"], ".claude", "skills")))
-    if inp.get("home"):
-        out.append(("user", os.path.join(inp["home"], ".claude", "skills")))
+        out.append(("checkout", os.path.join(co, lay["project_skills_dir"])))
+    out.append(("render", os.path.join(os.path.abspath(inp["state"]), inp["provider"], inp["project"], lay["project_skills_dir"])))
+    if inp.get("home") and lay["user_skills_dir"]:
+        out.append(("user", lay["user_skills_dir"]))
     return out
 
 
@@ -94,28 +111,34 @@ def under(path, root):
 
 
 def read_settings(inp):
-    """({skill name: settings file that sets it to "off"}, [notes]). Missing files are fine; unreadable or malformed ones are noted."""
-    files = []
-    if inp.get("home"):
-        files.append(os.path.join(inp["home"], ".claude", "settings.json"))
+    """({skill name: settings file that switches it off}, [notes]). The files, the key and the off value are the provider's
+    (layout.settings_files, layout.exclusion). Missing files are fine; unreadable or malformed ones are noted."""
+    lay = layout(inp)
+    exc, off, notes = lay["exclusion"], {}, []
+    if not exc or not lay["settings_files"]:
+        return off, ["note: provider %s has no way to switch a skill off in a settings file: no skill is reported as excluded" % inp["provider"]]
+    key, off_value = exc["file_key"], exc["off_value"]
     co = inp.get("checkout") or ""
-    if co and os.path.isabs(co):
-        files += [os.path.join(co, ".claude", "settings.json"), os.path.join(co, ".claude", "settings.local.json")]
-    off, notes = {}, []
+    files = []
+    for sf in lay["settings_files"]:
+        if os.path.isabs(sf["path"]):
+            files.append(sf["path"])
+        elif co and os.path.isabs(co):
+            files.append(os.path.join(co, sf["path"]))
     for f in files:
         if not os.path.lexists(f):
             continue
         try:
             data = load(f)
-            ov = data.get("skillOverrides", {}) if isinstance(data, dict) else None
+            ov = data.get(key, {}) if isinstance(data, dict) else None
             if not isinstance(ov, dict):
-                raise ValueError("not an object" if ov is None else "skillOverrides is not an object")
+                raise ValueError("not an object" if ov is None else "%s is not an object" % key)
         except (OSError, ValueError) as e:
             why = e.strerror if isinstance(e, OSError) and e.strerror else str(e).split("\n")[0]
             notes.append("note: cannot read %s (%s): the skills it hides are unknown" % (f, why))
             continue
         for k, v in ov.items():
-            if v == "off":
+            if v == off_value:
                 off.setdefault(k, f)
     return off, notes
 
@@ -148,6 +171,8 @@ def recorded(acc, project, name):
 def states(inp):
     """(skills with a state, notes). Each skill: the scanned entry plus state, detail."""
     off, notes = read_settings(inp)
+    if not layout(inp)["user_skills_dir"]:
+        notes.append("note: provider %s has no user skills directory: user-level skills are not listed" % inp["provider"])
     acc, n2 = read_accepted(inp.get("accepted"))
     notes += n2
     roots = shipped_roots()
@@ -173,7 +198,7 @@ def states(inp):
 
 
 LEGEND = {"qargi": "managed by qargi", "accepted": "you accepted this content", "drifted": "accepted, but the content changed (a finding)",
-          "excluded": "hidden by skillOverrides", "unmanaged": "not managed or accepted by anyone"}
+          "excluded": "hidden by {key}", "unmanaged": "not managed or accepted by anyone"}
 
 
 def offers(inp, e):
@@ -210,7 +235,8 @@ def cmd_report(inp):
         print("  " + n)
     present = [s for s in LEGEND if any(e["state"] == s for e in sk)]
     if present:
-        print("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s]) for s in present))
+        exc = layout(inp)["exclusion"] or {}
+        print("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
     sys.exit(1 if any(e["state"] == "drifted" for e in sk) else 0)
 
 
@@ -220,7 +246,8 @@ def cmd_target(inp, name, scope, outfile):
     sk, _ = states(inp)
     ents = [e for e in sk if e["name"] == name]
     if not ents:
-        die("no skill named %s is visible to a session in %s (qargi packs check --target claude-code %s lists them)" % (name, inp["project"], inp["project"]))
+        target = layout(inp)["render_target"]
+        die("no skill named %s is visible to a session in %s%s" % (name, inp["project"], " (qargi packs check --target %s %s lists them)" % (target, inp["project"]) if target else ""))
     cand = [e for e in ents if e["state"] in ("unmanaged", "drifted")]
     if not cand:
         e = ents[0]
@@ -326,6 +353,11 @@ def main():
             cmd_store(a[1], a[2], a[3], a[4], a[5], a[6:])
         else:
             die("usage: packs_audit.py scan|report|target|acceptance|store ...")
+    except provider.Unsupported as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        sys.exit(3)
+    except provider.ProviderError as e:
+        die(str(e))
     except (OSError, ValueError) as e:
         die("%s: %s" % (getattr(e, "filename", None) or "error", getattr(e, "strerror", None) or e))
 
