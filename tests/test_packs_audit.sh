@@ -4,14 +4,18 @@
 # Offline, hermetic, with a fake HOME. Run: tests/test_packs_audit.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+ROOT=$PWD
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
+# the verbs that change a checkout refuse inside a member run (a directory `qargi local prepare` made, at or above the working directory), and this
+# test may itself run in one: work from the temporary directory
+cd "$T" || exit 1
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s HOME=$T/h
 US=$HOME/.claude/skills
 mkdir -p "$T/c/projects" "$T/s" "$US"
-DA=./bin/qargi
+DA=$ROOT/bin/qargi
 R=$T/repo
 CS=$R/.claude/skills; ACC=$T/c/packs/accepted.json
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
@@ -21,7 +25,8 @@ proj alpha "$R"; proj beta "$R"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
 mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
-chash() { (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
+# the strict content hash of a directory (links, executable bits, empty directories, nested .pack.json): what accepted.json records
+chash() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1] + "/lib"); import packs_audit as A; print(A.strict_hash(sys.argv[2]))' "$ROOT" "$1"; }
 # a skill directory that is not in the library
 mk() { mkdir -p "$1/$2"; printf -- '---\nname: %s\ndescription: Use for %s.\n---\n\nbody\n' "$2" "$2" > "$1/$2/SKILL.md"; }
 chk() { $DA packs check --target claude-code "${1:-alpha}" 2>&1; }
@@ -40,9 +45,9 @@ out=$(chk); rc=$?
 grep -q "^skills a session would load:" <<<"$out" && ok "check ends with the section of the skills a session would load" || no "no section: $out"
 [ "$(st s-all)" = qargi ] && grep -qE "^ +qargi +s-all  \(render, [0-9a-f]{12}" <<<"$out" && ok "a rendered library pack is qargi, with its place and a content hash prefix" || no "s-all: $(line s-all)"
 [ "$rc" = 0 ] && ok "a clean check still exits 0" || no "check status $rc: $out"
-ln -s "$PWD/skills/qargi-flow" "$US/qargi-flow"
+ln -s "$ROOT/skills/qargi-flow" "$US/qargi-flow"
 [ "$(st qargi-flow)" = qargi ] && ok "a symlink into the qargi install's skills is qargi" || no "shipped: $(line qargi-flow)"
-cp -r "$PWD/skills/qargi-flow" "$US/qargi-copy"
+cp -r "$ROOT/skills/qargi-flow" "$US/qargi-copy"
 [ "$(st qargi-copy)" = unmanaged ] && ok "a plain copy of a shipped skill is not the shipped skill" || no "copy: $(line qargi-copy)"
 rm -rf "$US/qargi-copy"
 # a library pack whose approved content differs from the directory that carries its name
@@ -59,6 +64,8 @@ out=$(chk); rc=$?
 [ "$(st mine)" = unmanaged ] && grep -qE "^ +unmanaged +mine  \(checkout, [0-9a-f]{12}" <<<"$out" && ok "a checkout skill nobody manages is unmanaged" || no "mine: $(line mine)"
 grep -q "qargi skill import $CS/mine" <<<"$out" && grep -q "qargi skill link mine --scope project --project alpha" <<<"$out" && grep -q "qargi skill accept alpha mine" <<<"$out" && ok "an unmanaged checkout skill gets the import, link and accept offer" || no "offer: $out"
 [ "$(st umine)" = unmanaged ] && grep -q "qargi skill accept alpha umine --user" <<<"$out" && ok "an unmanaged user skill is listed, with the user-scope accept offer" || no "umine: $(line umine)"
+grep -q "to hide it instead: *{\"skillOverrides\": {\"mine\": \"off\"}} in $R/.claude/settings.local.json" <<<"$out" && grep -q "to hide it instead: *{\"skillOverrides\": {\"umine\": \"off\"}} in $HOME/.claude/settings.json" <<<"$out" \
+  && ok "an unmanaged skill gets the line that would switch it off, as text: the provider's key, in the unshared project file or the user file" || no "hide offer: $out"
 grep -q "^  legend: .*unmanaged: " <<<"$out" && ok "the section ends with a legend of the states shown" || no "legend: $out"
 [ "$rc" = 0 ] && ok "unmanaged skills do not change the exit status" || no "unmanaged made check fail ($rc)"
 # a symbolic link to a skill directory elsewhere is followed
@@ -231,6 +238,64 @@ for c in "qargi skill accept alpha mine" "qargi skill unaccept alpha mine --user
 done
 guard "qargi packs check --target claude-code alpha" >/dev/null && ok "the member guard allows the read-only check" || no "the guard refused check"
 
+# --- names and paths that come from the checkout and the home directory are not trusted in the offers
+rm -rf "$CS"; mkdir -p "$CS"; mk "$CS" fine
+mk "$CS" 'evil $(touch PWNED)'; mk "$CS" 'bt `touch PWNED`'; mk "$CS" "$(printf 'nl\nline')"; mk "$CS" "$(printf 'esc\033[31mred')"; mk "$US" 'user $(touch PWNED)'
+out=$(chk)
+[ "$(grep -c 'skipped: unusual name' <<<"$out")" = 5 ] && ok "an unusual name is marked 'skipped: unusual name', in the checkout and in the user directory" || no "skipped count: $out"
+! grep -E 'qargi skill (import|link|accept) ' <<<"$out" | grep -qE 'evil|PWNED|bt |nl|esc|user \$' && grep -qE "qargi skill accept alpha fine\$" <<<"$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
+! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "the section prints no control character" || no "control characters in the section"
+[ ! -e "$T/PWNED" ] && [ ! -e PWNED ] && ok "(nothing was run)" || no "a name was executed"
+mkdir -p "$T/it's a repo"; proj quoted "$T/it's a repo"; mk "$T/it's a repo/.claude/skills" mine2
+line=$($DA packs check --target claude-code quoted 2>&1 | sed -n 's/^ *to keep it in the library: qargi skill import //p')
+eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo/.claude/skills/mine2" ] && ok "a checkout path with a quote and a space is shell-quoted in the offer" || no "path quoting: $line"
+rm -rf "$T/it's a repo" "$T/c/projects/quoted.json" "$US/user "*; rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine
+
+# --- qargi, accepted and drifted are decided on the whole tree, not on the regular files alone
+mkskill s-strict; rm -rf "$CS"; mkdir -p "$CS"; cp -r "$T/c/packs/skills/s-strict" "$CS/s-strict"; rm -f "$CS/s-strict/.pack.json"; mkdir -p "$CS/s-strict/refs"; echo r > "$CS/s-strict/refs/r.md"
+cp -r "$CS/s-strict/refs" "$T/c/packs/skills/s-strict/"; seal s-strict
+[ "$(st s-strict)" = qargi ] && ok "a copy of an approved pack, without its record, is qargi" || no "plain copy: $(line s-strict)"
+chmod +x "$CS/s-strict/refs/r.md"; [ "$(st s-strict)" = unmanaged ] && ok "an executable bit makes the copy unmanaged" || no "mode: $(line s-strict)"
+chmod -x "$CS/s-strict/refs/r.md"; [ "$(st s-strict)" = qargi ] && ok "(and qargi again once it is back)" || no "mode back: $(line s-strict)"
+ln -s r.md "$CS/s-strict/refs/lnk"; [ "$(st s-strict)" = unmanaged ] && ok "a symbolic link inside makes the copy unmanaged" || no "symlink: $(line s-strict)"
+rm "$CS/s-strict/refs/lnk"; mkdir "$CS/s-strict/empty"; [ "$(st s-strict)" = unmanaged ] && ok "an empty directory makes the copy unmanaged" || no "empty dir: $(line s-strict)"
+rmdir "$CS/s-strict/empty"; echo '{}' > "$CS/s-strict/refs/.pack.json"; [ "$(st s-strict)" = unmanaged ] && ok "a .pack.json below the top level makes the copy unmanaged" || no "nested record: $(line s-strict)"
+rm "$CS/s-strict/refs/.pack.json"; echo '{}' > "$CS/s-strict/.pack.json"; [ "$(st s-strict)" = unmanaged ] && ok "a .pack.json at the top of the copy in the checkout makes it unmanaged" || no "top record: $(line s-strict)"
+rm "$CS/s-strict/.pack.json"; [ "$(st s-strict)" = qargi ] && ok "(qargi again)" || no "qargi again: $(line s-strict)"
+mk "$CS" acc-strict; printf '#!/bin/sh\n' > "$CS/acc-strict/run.sh"; chmod 644 "$CS/acc-strict/run.sh"
+out=$(ac alpha acc-strict); tok=$(tok_of <<<"$out"); ac alpha acc-strict --plan "$tok" --approved ok >/dev/null
+[ "$(st acc-strict)" = accepted ] && jq -e --arg h "$(chash "$CS/acc-strict")" '.projects.alpha["acc-strict"].sha256 == $h' "$ACC" >/dev/null && ok "an acceptance records the strict hash" || no "accept strict: $(line acc-strict); $(cat "$ACC")"
+for step in "chmod +x $CS/acc-strict/run.sh|an executable bit" "chmod -x $CS/acc-strict/run.sh|(back)" "ln -s run.sh $CS/acc-strict/lnk|a symbolic link" "rm $CS/acc-strict/lnk|(back)" \
+            "mkdir $CS/acc-strict/empty|an empty directory" "rmdir $CS/acc-strict/empty|(back)" "echo {} > $CS/acc-strict/.pack.json|a top-level .pack.json" "rm $CS/acc-strict/.pack.json|(back)" \
+            "mkdir -p $CS/acc-strict/d; echo {} > $CS/acc-strict/d/.pack.json|a nested .pack.json"; do
+  eval "${step%%|*}"; want=drifted; case ${step#*|} in "(back)") want=accepted;; esac
+  [ "$(st acc-strict)" = "$want" ] && ok "accepted skill: ${step#*|} -> $want" || no "accepted skill after ${step#*|}: $(line acc-strict)"
+  case ${step#*|} in "a nested .pack.json") rm -rf "$CS/acc-strict/d";; esac
+done
+chk >/dev/null; rc=$?; [ "$rc" = 0 ] && [ "$(st acc-strict)" = accepted ] && ok "(accepted again, and check passes)" || no "accepted again: rc=$rc $(line acc-strict)"
+rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine; rm -f "$ACC"
+
+# --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
+mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi
+PYA="python3 -I $ROOT/lib/packs_audit.py"
+tok=$(ac alpha mine | tok_of); [ -n "$tok" ] || no "setup: an accept plan"
+out=$(cd "$T/run/out" && "$DAA" skill accept alpha mine --plan "$tok" --approved x 2>&1) && no "a member run accepted a skill" || { grep -q "member run" <<<"$out" && ok "skill accept refuses in a member run" || no "member accept message: $out"; }
+[ ! -e "$ACC" ] && ok "a refused accept in a member run writes nothing" || no "member run wrote accepted.json"
+out=$(cd "$T/run/out" && $PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z 2>&1) && no "packs_audit.py store wrote in a member run" || { grep -q "member run" <<<"$out" && [ ! -e "$ACC" ] && ok "packs_audit.py store refuses in a member run, whatever calls it" || no "direct member store: $out"; }
+out=$($PYA store accept "$T/elsewhere.json" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z 2>&1) && no "store wrote a file that is not the environment's accepted.json" || { grep -q "written to $ACC only" <<<"$out" && [ ! -e "$T/elsewhere.json" ] && ok "store writes only <conf>/packs/accepted.json" || no "foreign file message: $out"; }
+$PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z >/dev/null 2>&1 && jq -e '.projects.alpha.mine.sha256' "$ACC" >/dev/null && ok "(store of the environment's file still works outside a member run)" || no "plain direct store failed"
+rm -f "$ACC"
+
+# --- text a hand-edited accepted.json puts in the unaccept plan has no control character; a name is a name only in full
+jq -n '{user:{},projects:{alpha:{evil:{sha256:"0123456789abcdef", path:"/p\u001b[31mred", approved:"ok\n== forged line\u0007", at:"t\u0000x"}}}}' > "$ACC"
+out=$(ua alpha evil); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && [ "$(grep -c '^== forged' <<<"$out")" = 0 ] && grep -q "approved: ok== forged line" <<<"$out" \
+  && ok "the unaccept plan prints the stored path, time and approval without control characters" || no "unaccept control characters: $out"
+rm -f "$ACC"
+out=$(ac alpha $'mine\n' 2>&1) && no "accepted a skill name with a trailing newline" || { grep -q "^qargi: not a skill name: mine" <<<"$out" && ok "a skill name with a trailing newline is not a skill name (shell)" || no "newline name (shell): $out"; }
+out=$(echo '{}' > "$T/empty.json"; python3 -I "$ROOT/lib/packs_audit.py" target "$T/empty.json" $'mine\n' project "$T/t.json" 2>&1) && no "target accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && ok "a skill name with a trailing newline is not a skill name (script)" || no "newline name (script): $out"; }
+out=$(python3 -I "$ROOT/lib/packs_audit.py" store accept "$ACC" project alpha $'mine\n' aaaaaaaaaaaaaaaa x y z 2>&1) && no "store accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && [ ! -e "$ACC" ] && ok "store refuses it too" || no "newline name (store): $out"; }
+
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
@@ -239,9 +304,9 @@ chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && o
 # A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills and ~/.agent/skills, reads three settings files
 # of its own and hides a skill with {"skills_off": {NAME: "hidden"}}; nouser has no user skills directory and no way to hide a skill.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" lib/providers/claude.json > "$TOOL/lib/providers/$1.json"; }
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
 mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = "~/.agent/skills" | .layout.render_target = "agentx-render"
   | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project",path:".agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}]
   | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
@@ -265,6 +330,8 @@ fst() { sed -n '/^skills a session would load:/,$p' <<<"$out" | sed -n "s/^ *\\(
 [ "$(fst cmine)" = unmanaged ] && grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ok "another provider: its project skills directory is the checkout place" || no "agentx cmine: $out"
 [ "$(fst umine2)" = unmanaged ] && grep -qE "^ +unmanaged +umine2  \(user, " <<<"$out" && ok "another provider: its user skills directory is the user place" || no "agentx umine2: $out"
 [ "$(fst rendered)" = unmanaged ] && grep -qE "^ +unmanaged +rendered  \(render, " <<<"$out" && ok "another provider: the render is read under its own state directory and skills directory" || no "agentx rendered: $out"
+grep -q "to hide it instead: *{\"skills_off\": {\"cmine\": \"hidden\"}} in $R2/.agent/settings.local.json" <<<"$out" && grep -q "to hide it instead: *{\"skills_off\": {\"umine2\": \"hidden\"}} in $HOME/.agent/settings.json" <<<"$out" \
+  && ok "another provider: the line to switch a skill off uses its key, its off value and its settings files" || no "agentx hide offer: $out"
 [ -z "$(fst claude-checkout)" ] && [ -z "$(fst claude-user)" ] && ok "another provider: the skills of Claude Code's directories are not listed" || no "agentx listed claude dirs: $out"
 for n in hid-a hid-b hid-c; do [ "$(fst "$n")" = excluded ] && ok "another provider: $n is excluded by its settings file and key" || no "agentx $n: $(grep -E " $n  " <<<"$out")"; done
 grep -q "excluded .*hid-a  (.*off in $HOME/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-b  (.*off in $R2/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-c  (.*off in $R2/.agent/settings.local.json)" <<<"$out" && ok "another provider: the line names the settings file of its scope" || no "agentx settings names: $out"
@@ -279,6 +346,7 @@ out=$($FX skill accept beta hid-a 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "it is hidden (off in $HOME/.agent/settings.json)" <<<"$out" && ok "another provider: an excluded skill is not accepted" || no "agentx accept hidden: rc=$rc $out"
 out=$(fchk gamma)
 grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ! grep -q "umine2" <<<"$out" && grep -q "note: provider nouser has no user skills directory: user-level skills are not listed" <<<"$out" && ok "a provider with no user skills directory: no user place, and a note" || no "nouser: $out"
+! grep -q "to hide it" <<<"$out" && ok "a provider with no exclusion: no line to switch a skill off" || no "nouser hide offer: $out"
 grep -q "note: provider nouser has no way to switch a skill off in a settings file" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ok "a provider with no exclusion: nothing is reported excluded, and a note" || no "nouser exclusion: $out"
 jq '.layout.project_skills_dir = null' "$TOOL/lib/providers/nouser.json" > "$T/p.tmp" && mv "$T/p.tmp" "$TOOL/lib/providers/nouser.json"
 out=$($FX skill accept gamma cmine 2>&1); rc=$?

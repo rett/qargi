@@ -14,9 +14,16 @@ This audit lists every skill with exactly one state:
   excluded    switched off in one of the provider's settings files, as its layout says (hidden from the session, never a finding)
   unmanaged   anything else
 
-Called by packs.sh, which holds the facts only the shell knows (the content hash of a skill directory, the library) in an inputs file:
+Content is compared with strict_hash(), not with the shell's content_hash (the hash the library's approvals and the renders record,
+which sees regular files only and drops a .pack.json at any depth): strict_hash covers symbolic links (path and target), the
+executable bit of a file, empty directories and every .pack.json but the library pack's own record (the top-level one, skipped when
+the library pack is hashed). A skill that differs in any of those is not the library pack, and an acceptance covers exactly this
+content. The library's approval itself is still the shell's: lib.approved == lib.hash says the pack was not edited since it was approved.
+
+Called by packs.sh, which holds the facts only the shell knows (the library) in an inputs file:
   {project, provider, state, home, checkout, accepted, skills:[{name, where[], shown, real, hash, lib:{hash,approved}|null}]}
-  (`scan` finds the skill directories, the shell hashes them, `report` and `target` judge them.)
+  (`scan` finds the skill directories and hashes them with strict_hash, `report` and `target` judge them; lib.hash and lib.approved
+  are the shell's content hash of the library pack and the one recorded when it was approved.)
 
   packs_audit.py scan   INPUTS OUT                     write the visible skill directories as JSON
   packs_audit.py report INPUTS                         print the section; exit 1 when a skill is drifted
@@ -24,23 +31,46 @@ Called by packs.sh, which holds the facts only the shell knows (the content hash
   packs_audit.py acceptance FILE SCOPE PROJECT NAME    print one stored acceptance as JSON, or exit 1
   packs_audit.py store accept|unaccept FILE SCOPE PROJECT NAME [HASH PATH APPROVED AT]   the only writer of accepted.json
 
-Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600.
+Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600. `store` refuses in a
+member run (a directory `qargi local prepare` made, at or above the working directory) and writes only <conf>/packs/accepted.json,
+the configuration directory being the environment's (paths.conf(), as the shell's DA_CONF): another FILE is refused.
 """
+import hashlib
 import json
 import os
 import re
+import shlex
+import stat
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import marshal_refs  # noqa: E402  (in_member_run)
+import paths  # noqa: E402
 import provider  # noqa: E402
 
-NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
 PLACES = ("checkout", "render", "user")
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean(s):
+    """s without control characters: names and paths come from the checkout, the render and the home directory."""
+    return CTRL_RE.sub("", s) if isinstance(s, str) else str(s)
+
+
+def say(text=""):
+    """print text with the control characters removed from every line (the newlines between lines stay)."""
+    print("\n".join(clean(line) for line in text.split("\n")))
+
+
+def q(s):
+    """A word safe to paste into a shell: control characters out, then quoted."""
+    return shlex.quote(clean(s))
 
 
 def die(msg):
-    print("qargi: " + msg, file=sys.stderr)
+    print("qargi: " + clean(msg), file=sys.stderr)
     sys.exit(1)
 
 
@@ -72,6 +102,55 @@ def places(inp):
     return out
 
 
+def strict_hash(path, skip_record=False):
+    """The strict content hash of the directory path (16 hex digits), or "" when something in it cannot be read. One line per entry,
+    sorted by path and encoded as JSON (so no name can fake another line): a symbolic link as its target (it is never followed), a
+    regular file as its sha256 and whether any executable bit is set, an empty directory as itself, anything else (a socket, a
+    device) by its type. The mode bits other than the executable one, owners and times are not part of it. skip_record leaves out
+    the top-level .pack.json: the library pack's record of its own approval, which is not part of the skill."""
+    h = hashlib.sha256()
+
+    def add(*rec):
+        h.update((json.dumps(rec, ensure_ascii=True) + "\n").encode())
+
+    def walk(d, rel):
+        names = sorted(os.listdir(d))
+        if not names and rel:
+            add("D", rel)
+        for n in names:
+            r = rel + "/" + n if rel else n
+            if skip_record and r == ".pack.json":
+                continue
+            full = os.path.join(d, n)
+            st = os.lstat(full)
+            if stat.S_ISLNK(st.st_mode):
+                add("L", r, os.readlink(full))
+            elif stat.S_ISDIR(st.st_mode):
+                walk(full, r)
+            elif stat.S_ISREG(st.st_mode):
+                f = hashlib.sha256()
+                with open(full, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        f.update(chunk)
+                add("F", r, bool(st.st_mode & 0o111), f.hexdigest())
+            else:
+                add("O", r, stat.S_IFMT(st.st_mode))
+
+    try:
+        walk(path, "")
+    except OSError:
+        return ""
+    return h.hexdigest()[:16]
+
+
+def library_hash(name, conf=None):
+    """strict_hash of the library pack of that name (without its record), or None when the library has no such directory."""
+    d = os.path.join(conf or paths.conf(), "packs", "skills", name)
+    if not os.path.isdir(d) or os.path.islink(d):
+        return None
+    return strict_hash(d, skip_record=True)
+
+
 def scan(inp):
     """The skill directories (a directory with SKILL.md, symbolic links to directories followed) of the three places. The same
     directory reached twice (the checkout's link to the render) is one entry that names both places."""
@@ -88,6 +167,8 @@ def scan(inp):
                 e = found.setdefault((n, real), {"name": n, "where": [], "shown": p, "real": real})
                 if label not in e["where"]:
                     e["where"].append(label)
+    for e in found.values():
+        e["hash"] = strict_hash(e["real"])
     return [found[k] for k in sorted(found)]
 
 
@@ -181,7 +262,7 @@ def states(inp):
         e = dict(e)
         h, lib, n = e.get("hash") or "", e.get("lib"), e["name"]
         recs = recorded(acc, inp["project"], n)
-        if h and lib and lib.get("approved") and lib["approved"] == lib.get("hash") == h:
+        if h and lib and lib.get("approved") and lib["approved"] == lib.get("hash") and library_hash(n) == h:
             e["state"], e["detail"] = "qargi", "library pack"
         elif any(under(e["real"], r) for r in roots):
             e["state"], e["detail"] = "qargi", "shipped with qargi"
@@ -202,46 +283,67 @@ LEGEND = {"qargi": "managed by qargi", "accepted": "you accepted this content", 
 
 
 def offers(inp, e):
+    """The commands that would deal with a skill, as text to paste: every name and path quoted. A name that is not a pack name gets
+    none ("skipped: unusual name"): it could not be imported or accepted by name, and its text is the repository's, not ours."""
     p, n = inp["project"], e["name"]
-    if e["state"] == "drifted":
-        return ["    review it, then accept the new content: qargi skill accept %s %s%s" % (p, n, "" if "checkout" in e["where"] else " --user")]
-    if e["state"] != "unmanaged":
+    if e["state"] not in ("drifted", "unmanaged"):
         return []
+    if not NAME_RE.fullmatch(n):
+        return ["    skipped: unusual name (no command is offered for it)"]
+    if e["state"] == "drifted":
+        return ["    review it, then accept the new content: qargi skill accept %s %s%s" % (q(p), q(n), "" if "checkout" in e["where"] else " --user")]
     out = []
     if "checkout" in e["where"]:
         lib = e.get("lib")
         if lib is None:
-            out += ["    to keep it in the library: qargi skill import %s" % e["shown"],
-                    "                               qargi skill link %s --scope project --project %s" % (n, p)]
+            out += ["    to keep it in the library: qargi skill import %s" % q(e["shown"]),
+                    "                               qargi skill link %s --scope project --project %s" % (q(n), q(p))]
         else:
-            out += ["    a library pack of this name has other content or is not approved: qargi skill show %s" % n]
-        out += ["    or accept it as it is:      qargi skill accept %s %s" % (p, n)]
+            out += ["    a library pack of this name has other content or is not approved: qargi skill show %s" % q(n)]
+        out += ["    or accept it as it is:      qargi skill accept %s %s" % (q(p), q(n))]
     else:
-        out += ["    to accept it as it is: qargi skill accept %s %s --user" % (p, n)]
-    return out
+        out += ["    to accept it as it is: qargi skill accept %s %s --user" % (q(p), q(n))]
+    return out + hide_offer(inp, e)
+
+
+def hide_offer(inp, e):
+    """The line the person adds to a settings file to switch the skill off, as text only (qargi never writes a settings file): the key
+    and the off value are the provider's exclusion, the file one of its settings files, the unshared one of the checkout for a checkout
+    skill and the user's for a user skill. Nothing for a provider that cannot hide a skill."""
+    lay = layout(inp)
+    exc, files = lay["exclusion"], lay["settings_files"] or []
+    if not exc or not files:
+        return []
+    co = inp.get("checkout") or ""
+    for scope in (("project-local", "project", "user") if "checkout" in e["where"] else ("user",)):
+        for f in files:
+            if f["scope"] == scope and (os.path.isabs(f["path"]) or (co and os.path.isabs(co))):
+                path = f["path"] if os.path.isabs(f["path"]) else os.path.join(co, f["path"])
+                return ["    to hide it instead:         %s in %s" % (json.dumps({exc["file_key"]: {e["name"]: exc["off_value"]}}), clean(path))]
+    return []
 
 
 def cmd_report(inp):
     sk, notes = states(inp)
-    print("skills a session would load:")
+    say("skills a session would load:")
     if not sk:
-        print("  (none)")
+        say("  (none)")
     for e in sk:
         extra = ["+".join(e["where"]), (e.get("hash") or "unreadable")[:12]] + ([e["detail"]] if e["detail"] else [])
-        print("  %-9s %s  (%s)" % (e["state"], e["name"], ", ".join(extra)))
+        say("  %-9s %s  (%s)" % (e["state"], clean(e["name"]), clean(", ".join(extra))))
         for o in offers(inp, e):
-            print(o)
+            say(o)
     for n in notes:
-        print("  " + n)
+        say("  " + clean(n))
     present = [s for s in LEGEND if any(e["state"] == s for e in sk)]
     if present:
         exc = layout(inp)["exclusion"] or {}
-        print("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
+        say("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
     sys.exit(1 if any(e["state"] == "drifted" for e in sk) else 0)
 
 
 def cmd_target(inp, name, scope, outfile):
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         die("not a skill name: " + name)
     sk, _ = states(inp)
     ents = [e for e in sk if e["name"] == name]
@@ -262,12 +364,12 @@ def cmd_target(inp, name, scope, outfile):
     if not e.get("hash"):
         die("cannot read the content of %s" % e["shown"])
     t = {"name": name, "hash": e["hash"], "path": e["shown"], "real": e["real"], "where": e["where"], "state": e["state"], "scope": scope}
-    print("accept plan for %s: skill %s (%s, content %s)" % (inp["project"], name, e["state"], e["hash"]))
-    print("  at:    %s" % e["shown"])
-    print("  scope: %s" % ("every project (--user)" if scope == "user" else "project " + inp["project"]))
+    say("accept plan for %s: skill %s (%s, content %s)" % (clean(inp["project"]), name, e["state"], e["hash"]))
+    say("  at:    %s" % clean(e["shown"]))
+    say("  scope: %s" % ("every project (--user)" if scope == "user" else "project " + inp["project"]))
     if e["state"] == "drifted":
-        print("  %s" % e["detail"])
-    print("  accepting records this name and content so that qargi stops reporting it; qargi does not manage the skill, and a later change drifts.")
+        say("  %s" % clean(e["detail"]))
+    say("  accepting records this name and content so that qargi stops reporting it; qargi does not manage the skill, and a later change drifts.")
     with open(outfile, "w") as fh:
         json.dump(t, fh)
 
@@ -315,12 +417,18 @@ def cmd_acceptance(path, scope, project, name):
     r = table(read_for_write(path), scope, project, False).get(name)
     if not isinstance(r, dict):
         die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
-    print(json.dumps(r))
+    # the text fields are printed by the shell in the unaccept plan: no control character (a newline would forge a line of the plan)
+    print(json.dumps({k: clean(v) if k in ("path", "approved", "at") else v for k, v in r.items()}))
 
 
 def cmd_store(verb, path, scope, project, name, rest):
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         die("not a skill name: " + name)
+    if marshal_refs.in_member_run():
+        die("skill %s is not available in a member run: only the lead's session records which skills are accepted; nothing was changed" % verb)
+    mine = os.path.join(os.path.abspath(paths.conf()), "packs", "accepted.json")
+    if os.path.abspath(path) != mine:
+        die("the acceptances are written to %s only, not to %s; nothing was changed" % (mine, path))
     data = read_for_write(path)
     if verb == "accept":
         h, p, approved, at = (rest + ["", "", "", ""])[:4]

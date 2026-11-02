@@ -180,6 +180,35 @@ class Skills(unittest.TestCase):
         for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "./lib/packs.sh packs link p", "bash lib/packs.sh skill accept p x", "./lib/packs.sh skill unaccept p x --user", "bash lib/packs.sh packs unlink p", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
+    def test_refuses_the_helper_scripts_of_the_link_and_accept_verbs_run_directly(self):
+        """packs_link.py (packs link|unlink), packs_audit.py store (skill accept|unaccept) and marshal_handoff.py --write are what the shell
+        verbs call; run directly with a hand-made inputs file they would skip the plan token and the audit line."""
+        direct = ("python3 -I lib/packs_link.py apply link in.json 0123456789ab", "python3 -I lib/packs_link.py plan unlink in.json t",
+                  "python3 lib/packs_link.py apply link in.json \"$(cat t)\"", "./lib/packs_link.py apply link in.json x", "bash -c 'python3 -I lib/packs_link.py apply unlink in.json x'",
+                  "cd lib && python3 -I packs_link.py apply link ../in.json x", "/opt/q/lib/packs_link.py plan link in.json t",
+                  "python3 -I lib/packs_audit.py store accept acc.json project p x 0123456789ab /r/x why 2026-01-01T00:00:00Z",
+                  "python3 -I lib/packs_audit.py store unaccept acc.json user p x", "python3 -I lib/packs_audit.py store $v acc.json user p x",
+                  "python3 -I lib/packs_audit.py $(echo store) accept acc.json user p x", "env X=1 python3 /opt/q/lib/packs_audit.py store accept a.json user p x h")
+        for c in direct:
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("changes a skill and is not available to an agent", r.stderr)
+        self.assertIn("qargi packs link", self.bash("python3 -I lib/packs_link.py apply link in.json t").stderr)
+        self.assertIn("qargi packs unlink", self.bash("python3 -I lib/packs_link.py apply unlink in.json t").stderr)
+        self.assertIn("qargi skill accept", self.bash("python3 -I lib/packs_audit.py store accept a.json user p x h").stderr)
+        self.assertIn("qargi skill unaccept", self.bash("python3 -I lib/packs_audit.py store unaccept a.json user p x").stderr)
+        for c in ("python3 -I lib/packs_audit.py report in.json", "python3 -I lib/packs_audit.py acceptance acc.json project p x",
+                  "python3 -I lib/packs_audit.py scan in.json out.json", "python3 -I lib/packs_audit.py target in.json x project out.json",
+                  "cat lib/packs_link.py", "grep -n store lib/packs_audit.py", "python3 -I lib/marshal_handoff.py --state s --conf c --project p f"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+        for c in ("python3 -I lib/marshal_handoff.py --state s --conf c --project p --write note.md", "python3 lib/marshal_handoff.py --write=note.md --state s",
+                  "python3 lib/marshal_handoff.py --wr note.md --state s", "python3 lib/marshal_handoff.py --w note.md", "./lib/marshal_handoff.py --project p $OPT note.md",
+                  "python3 lib/marshal_handoff.py --project p $(echo --write) note.md", "python3 lib/marshal_handoff.py --project p `echo --write` n"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("the lead changes the marshal; report it in your task output", r.stderr)
+
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
                      "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",
@@ -632,7 +661,9 @@ class Marshal(unittest.TestCase):
         cmds += ["qargi marshal handoff f '--write' note.md", "qargi marshal handoff f \"--write\" note.md", "qargi marshal handoff f $OPT note.md",
                  "qargi marshal handoff f ${OPT:---json}", "qargi marshal handoff f `echo --json`", "v=handoff; qargi marshal $v f",
                  "qargi marshal handoff f $(echo --write) note.md", "qargi marshal handoff f `echo --write` note.md", "bash -c 'qargi marshal handoff f $(echo --write) x'",
-                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md"]
+                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md",
+                 "echo --write note.md | xargs qargi marshal handoff f", "printf x | xargs -n2 qargi marshal handoff", "xargs qargi marshal handoff f < args.txt",
+                 "cat args | xargs bash lib/marshal.sh handoff f", "echo x | xargs -I{} qargi marshal handoff f"]
         for c in cmds:
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))

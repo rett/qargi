@@ -510,9 +510,17 @@ def render_json(F):
 
 # ---- --write -------------------------------------------------------------------------------------------------------
 
-def write_refusal(path, conf, state):
+def in_member_run(*where):
+    """True when the current directory, the shell's $PWD (a link may lead elsewhere), or any of the paths given (the file to write, the
+    repository) is at or below a directory `qargi local prepare` made: a member's run. The working directory alone is not enough: a
+    member can `cd` out of its run, or name a file elsewhere."""
+    R = ms().refs_mod()
+    return any(R.in_member_run(w) for w in (None, os.environ.get("PWD") or None) + tuple(w for w in where if w))
+
+
+def write_refusal(path, conf, state, repo=""):
     """Why the note may not be written to path, or None."""
-    if ms().refs_mod().in_member_run():
+    if in_member_run(os.path.dirname(os.path.abspath(path)) or ".", repo):
         return "marshal handoff --write is not available in a member run: a member returns its findings in its task output"
     if os.path.lexists(path):
         return "%s exists already: --write never overwrites; choose a new file" % path
@@ -547,7 +555,7 @@ def write_note(path, text):
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
     # describe; --state, --conf, --repo and --ttl are only passed by lib/marshal.sh
-    p = argparse.ArgumentParser(prog="marshal_handoff.py")
+    p = argparse.ArgumentParser(prog="marshal_handoff.py", allow_abbrev=False)   # no --wri for --write: the guard reads the option by its full name
     p.add_argument("name", nargs="?")
     p.add_argument('--state', required=True)
     p.add_argument('--conf', required=True)
@@ -561,7 +569,7 @@ def main(argv):
     M = ms()
     try:
         if a.write:
-            why = write_refusal(a.write, a.conf, a.state)
+            why = write_refusal(a.write, a.conf, a.state, a.repo)
             if why:
                 raise M.Refuse(why)
         F = collect(a, a.name)

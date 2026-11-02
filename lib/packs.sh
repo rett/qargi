@@ -39,7 +39,7 @@
 
 PACKS=$DA_CONF/packs; LINKS=$PACKS/links.json
 KIND=${1:-}; VERB=${2:-}; shift 2 || true
-INSTALL='' USER_SCOPE='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
+INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --scope) SCOPE=$2; shift 2;;
@@ -54,6 +54,7 @@ while [ $# -gt 0 ]; do
     --target) TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
+    '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
     --*) die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
@@ -181,21 +182,21 @@ cc_inputs() { # project outfile
                                               review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
   rm -f "$out.rows"
 }
-# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the shell finds the directories (scan),
-# hashes them with content_hash, adds the library's record of the same name and the acceptances file, and the script judges.
-au_inputs() { # ccinputs outfile: the render inputs plus every visible skill with its content hash
-  local cc=$1 out=$2 skills='[]' line n real h lib lh la
+# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the script finds the directories (scan) and
+# hashes them with strict_hash (links, modes and empty directories count; content_hash is the library's approval hash and does not see
+# them), the shell adds the library's approval of the same name and the acceptances file, and the script judges.
+au_inputs() { # ccinputs outfile: the render inputs plus every visible skill (scan hashes it with strict_hash) and the library's approval of its name
+  local cc=$1 out=$2 skills='[]' line n lh la lib
   python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" scan "$cc" "$out.scan" || return 1
   while IFS= read -r line; do
-    n=$(jq -r .name <<<"$line"); real=$(jq -r .real <<<"$line")
-    h=$(content_hash "$real" 2>/dev/null </dev/null) || h=''
+    n=$(jq -r .name <<<"$line")
     lib=null
     if [ -d "$PACKS/skills/$n" ] && [ ! -L "$PACKS/skills/$n" ]; then
       lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null </dev/null) || lh=''
       la=$(jq -r '.sha256 // ""' "$(record_of "$PACKS/skills/$n")" 2>/dev/null) || la=''
       lib=$(jq -nc --arg h "$lh" --arg a "$la" '{hash:$h, approved:$a}')
     fi
-    skills=$(jq -c --argjson e "$line" --arg h "$h" --argjson l "$lib" '. + [$e + {hash:$h, lib:$l}]' <<<"$skills")
+    skills=$(jq -c --argjson e "$line" --argjson l "$lib" '. + [$e + {lib:$l}]' <<<"$skills")
   done < <(jq -c '.[]' "$out.scan")
   jq --argjson s "$skills" --arg a "$PACKS/accepted.json" '. + {skills:$s, accepted:$a}' "$cc" > "$out"
   rm -f "$out.scan"
@@ -228,9 +229,14 @@ cc_lock() { # project: exclusive lock for plan+swap on PROVIDER/.PROJECT.lock; t
 }
 # --target names the render target of the project's provider (layout.render_target); the renderer for it is dispatched here. The
 # only renderer is the Claude Code one (packs_claude.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
+rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
+  local rt='' pv
+  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
+  echo "--target is ${rt:-the render target of the provider of the project} (or managed-agents / none for a cloud instance); check needs --target ${rt:-that target}"
+}
 rt_main() { # verb: apply|check with --target
   local prj=${ARGS[0]:-} rt
-  [ -n "$TARGET" ] || die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code"
+  [ -n "$TARGET" ] || die "$(rt_say "$prj")"
   [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
   prov_of "$prj"
   rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
@@ -252,7 +258,7 @@ cc_main() { # verb: apply|check
     local rc=0
     prov_need "$prj" "list the skills a session would load" project_skills_dir
     python3 -I "$PY" check "$CC_W/in.json" || rc=1
-    au_report "$CC_W/in.json" "$CC_W" || rc=1
+    [ -n "$RENDER_ONLY" ] || au_report "$CC_W/in.json" "$CC_W" || rc=1
     exit $rc
   fi
   python3 -I "$PY" prep "$CC_W/in.json" || exit 1
@@ -274,15 +280,14 @@ cc_main() { # verb: apply|check
 # packs of the same names), packs_link.py
 # classifies, plans and acts. Same gating as cc_main: no --approved prints the token; apply re-plans and needs the token to match.
 cl_inputs() { # project outfile: the render inputs plus the skills of a real project skills directory in the checkout
-  local prj=$1 out=$2 co sk d n h lh kids='[]'
+  local prj=$1 out=$2 co sk d n kids='[]'
   cc_inputs "$prj" "$out.cc"
   co=$(jq -r .checkout "$out.cc"); sk=$co/$(python3 -I "$PROVPY" layout "$PROV" project_skills_dir)
   if [ -n "$co" ] && [ -d "$(dirname "$sk")" ] && [ ! -L "$(dirname "$sk")" ] && [ -d "$sk" ] && [ ! -L "$sk" ]; then
     while IFS= read -r -d '' d; do
       [ -f "$d/SKILL.md" ] || continue
-      n=$(basename "$d"); h=$(content_hash "$d" 2>/dev/null) || h=''
-      if [ -d "$PACKS/skills/$n" ]; then lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null) || lh=''; else lh=null; fi
-      kids=$(jq -c --arg n "$n" --arg h "$h" --arg l "$lh" '. + [{name:$n, hash:$h, lib:(if $l == "null" then null else $l end)}]' <<<"$kids")
+      n=$(basename "$d")
+      kids=$(jq -c --arg n "$n" --argjson l "$([ -d "$PACKS/skills/$n" ] && echo true || echo false)" '. + [{name:$n, in_library:$l}]' <<<"$kids")
     done < <(find "$sk" -mindepth 1 -maxdepth 1 -type d -print0)
   fi
   jq --argjson k "$kids" '. + {kids:$k}' "$out.cc" > "$out"; rm -f "$out.cc"
@@ -320,7 +325,8 @@ ac_main() { # verb: accept|unaccept
   [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
   [ -n "$prj" ] && [ -n "$name" ] || die "skill $1 needs PROJECT NAME"
   valid_project "$prj" || die "not a project name: $prj"
-  printf '%s' "$name" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || die "not a skill name: $name"
+  # [[ =~ ]] anchors at the end of the string; grep -E '$' would accept a trailing newline
+  { [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $name != *$'\n'* ]]; } || die "not a skill name: $name"
   [ -z "$USER_SCOPE" ] || scope=user
   who=$scope; [ "$scope" = user ] || who=project:$prj
   [ "$1" != accept ] || prov_need "$prj" "audit the skills a session would load" project_skills_dir
@@ -333,7 +339,7 @@ ac_main() { # verb: accept|unaccept
     au_inputs "$CC_W/cc.json" "$CC_W/au.json" || exit 1
     python3 -I "$AUPY" target "$CC_W/au.json" "$name" "$scope" "$CC_W/target.json" || exit 1
     hash=$(jq -r .hash "$CC_W/target.json"); real=$(jq -r .real "$CC_W/target.json"); shown=$(jq -r .path "$CC_W/target.json")
-    echo "== review of skill $name at $shown"
+    echo "== review of skill $name at $(printf '%s' "$shown" | tr -d '\000-\037\177')"
     review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
     tok=$(printf 'skill-accept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
   else
@@ -363,7 +369,7 @@ if [ "$KIND" = packs ]; then
   case $VERB:$TARGET in
     link:*|unlink:*) cl_main "$VERB";;
     apply:|apply:managed-agents) ;;
-    apply:none) die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code";;
+    apply:none) die "$(rt_say "${ARGS[0]:-}")";;
     apply:*|check:*) rt_main "$VERB";;
   esac
   case $VERB in
