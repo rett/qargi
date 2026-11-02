@@ -320,7 +320,8 @@ ac_main() { # verb: accept|unaccept
   [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
   [ -n "$prj" ] && [ -n "$name" ] || die "skill $1 needs PROJECT NAME"
   valid_project "$prj" || die "not a project name: $prj"
-  printf '%s' "$name" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$' || die "not a skill name: $name"
+  # [[ =~ ]] anchors at the end of the string; grep -E '$' would accept a trailing newline
+  { [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $name != *$'\n'* ]]; } || die "not a skill name: $name"
   [ -z "$USER_SCOPE" ] || scope=user
   who=$scope; [ "$scope" = user ] || who=project:$prj
   [ "$1" != accept ] || prov_need "$prj" "audit the skills a session would load" project_skills_dir
@@ -333,7 +334,7 @@ ac_main() { # verb: accept|unaccept
     au_inputs "$CC_W/cc.json" "$CC_W/au.json" || exit 1
     python3 -I "$AUPY" target "$CC_W/au.json" "$name" "$scope" "$CC_W/target.json" || exit 1
     hash=$(jq -r .hash "$CC_W/target.json"); real=$(jq -r .real "$CC_W/target.json"); shown=$(jq -r .path "$CC_W/target.json")
-    echo "== review of skill $name at $shown"
+    echo "== review of skill $name at $(printf '%s' "$shown" | tr -d '\000-\037\177')"
     review skill "$real" || echo "note: the review has FAIL findings; accepting takes the skill as it is, qargi does not store or change it"
     tok=$(printf 'skill-accept|%s|%s|%s' "$who" "$name" "$hash" | plan_token)
   else

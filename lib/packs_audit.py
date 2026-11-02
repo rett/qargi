@@ -49,7 +49,7 @@ import marshal_refs  # noqa: E402  (in_member_run)
 import paths  # noqa: E402
 import provider  # noqa: E402
 
-NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
 PLACES = ("checkout", "render", "user")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -326,7 +326,7 @@ def cmd_report(inp):
 
 
 def cmd_target(inp, name, scope, outfile):
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         die("not a skill name: " + name)
     sk, _ = states(inp)
     ents = [e for e in sk if e["name"] == name]
@@ -400,11 +400,12 @@ def cmd_acceptance(path, scope, project, name):
     r = table(read_for_write(path), scope, project, False).get(name)
     if not isinstance(r, dict):
         die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
-    print(json.dumps(r))
+    # the text fields are printed by the shell in the unaccept plan: no control character (a newline would forge a line of the plan)
+    print(json.dumps({k: clean(v) if k in ("path", "approved", "at") else v for k, v in r.items()}))
 
 
 def cmd_store(verb, path, scope, project, name, rest):
-    if not NAME_RE.match(name):
+    if not NAME_RE.fullmatch(name):
         die("not a skill name: " + name)
     if marshal_refs.in_member_run():
         die("skill %s is not available in a member run: only the lead's session records which skills are accepted; nothing was changed" % verb)
