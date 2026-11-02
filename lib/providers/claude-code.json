@@ -1,0 +1,129 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "claude-code",
+  "family": "claude",
+  "surface": "local",
+  "description": "Claude Code, the local command-line runtime: members are agent files in .claude/agents, skills load from .claude/skills, a PreToolUse hook holds a read-only member",
+  "models": {
+    "catalog": "claude",
+    "use": "alias"
+  },
+  "capabilities": {
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "dispatch",
+      "note": "Agent tool model parameter overrides the definition; verified by a dispatch"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "Agent tool effort parameter",
+      "note": "not yet verified to take effect"
+    },
+    "fixed_tool_allowlist_per_agent": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "agents/member.md",
+      "note": "tools: in the member definition"
+    },
+    "read_only_barrier": {
+      "value": "partial",
+      "verified_on": "2026-10-31",
+      "source": "lib/guard.py",
+      "note": "PreToolUse hook; shell writes are caught heuristically, local verify is the backstop"
+    },
+    "session_budget_ceiling": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/session.sh",
+      "note": "local runs have no cost"
+    },
+    "memory_stores": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/memory.sh",
+      "note": "memory stores are a cloud feature"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/packs.sh",
+      "note": "skills load from .claude/skills"
+    },
+    "mcp": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "lib/packs.sh",
+      "note": "rendered by packs, not end-to-end tested"
+    }
+  },
+  "resources": {
+    "skills": {
+      "project_dir": ".claude/skills",
+      "user_dir": "~/.claude/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {
+        "project": "dir-symlink",
+        "user": "none"
+      },
+      "exclusion": {
+        "form": "settings-key",
+        "files": ["user", "project", "project-local"],
+        "pointer": "/skillOverrides",
+        "shape": "map",
+        "off": "off"
+      }
+    },
+    "agents": {
+      "project_dir": ".claude/agents",
+      "user_dir": "~/.claude/agents",
+      "items": "file-per-item",
+      "ext": ".md",
+      "link": {
+        "project": "none",
+        "user": "none"
+      }
+    },
+    "settings": {
+      "files": [
+        {"scope": "user", "path": "~/.claude/settings.json", "format": "json"},
+        {"scope": "project", "path": ".claude/settings.json", "format": "json"},
+        {"scope": "project-local", "path": ".claude/settings.local.json", "format": "json"}
+      ],
+      "allow_pointer": null
+    },
+    "memory": {
+      "user_dir": "~/.claude/projects/{checkout_key}/memory",
+      "checkout_key": "nonalnum-dash",
+      "link": {
+        "user": "dir-symlink"
+      }
+    }
+  },
+  "agents": {
+    "reserved_names": [
+      "general-purpose",
+      "explore",
+      "plan",
+      "statusline-setup",
+      "claude-code-guide",
+      "claude",
+      "output-style-setup"
+    ]
+  },
+  "dispatch": {
+    "mode": "in-session"
+  },
+  "barrier": {
+    "kind": "adapter"
+  },
+  "session": {
+    "launch": "claude --add-dir {render}[ --mcp-config {render}/mcp.json][ --settings {render}/settings.json]",
+    "render_target": "claude-code"
+  },
+  "adapter": null
+}
