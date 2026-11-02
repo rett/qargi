@@ -16,6 +16,12 @@ The `map` renderer, from data (see render_map):
                                     {path, content, sha256, inputs_hash, notes}; the content has been read back and equals the
                                     mapped values, or RenderError. definition is the neutral agent definition (name, description,
                                     abilities, class write|read-only, tier, effort, tools, body, ...), spec the renderer's data.
+The `command` renderer, the escape hatch (render_command): an executable text file, run with the definition and the spec as
+JSON on stdin, no shell, a timeout, a fixed small environment, a temporary directory as cwd; its stdout is the file. qargi does
+not decide whether to trust the executable (the caller approves it and checks its hash); this module refuses a path outside the
+root it is given, anything that is not a regular, executable UTF-8 text file, and output that is not UTF-8 text.
+  render(definition, spec, root=None, resolver=None, extra=None, timeout=None)     either engine, by spec["engine"]
+Usage: python3 lib/render.py render SPEC.json DEF.json     prints the result as JSON (a command is relative to the spec's directory)
 Values: text, True/False, ints within 64 bits, lists, maps with text keys; None in json and yaml; finite floats in json only.
 Anything else is a RenderError naming the value, never a silent change. Text may not hold NUL or other control characters in a
 text file or a markdown body (a table, a map value or a key can: it is escaped).
@@ -24,8 +30,16 @@ Everything raises RenderError.
 """
 import hashlib
 import json
+import os
 import re
+import selectors
+import shutil
+import signal
+import stat
+import subprocess
 import sys
+import tempfile
+import time
 import tomllib
 
 FORMATS = ("markdown-frontmatter", "yaml", "toml", "json", "text")
@@ -983,15 +997,7 @@ def _map_fields(ns, spec, resolve, log, notes):
     return mapped
 
 
-def render_map(definition, spec, resolver=None, extra=None):
-    """Render the neutral definition through the map spec. resolver(kind, value, definition) turns a tier into a native model
-    and an effort into the runtime's own, or returns None when it cannot; without one the spec's `resolve` tables are used.
-    extra (JSON) is anything else the render depends on, such as the hash of the effective runtime definition; it goes into
-    inputs_hash. Returns {path, content, sha256, inputs_hash, notes}."""
-    ns = _check_definition(definition)
-    _check_spec(spec)
-    fmt = spec["format"]
-    log, notes = [], []
+def _resolve_fn(resolver, spec, definition, log):
     base = resolver or (table_resolver(spec["resolve"]) if "resolve" in spec else None)
 
     def resolve(kind, value):
@@ -1006,7 +1012,19 @@ def render_map(definition, spec, resolver=None, extra=None):
         canonical_json(out, "the resolver's answer")
         log.append([kind, value, out])
         return out
+    return resolve
 
+
+def render_map(definition, spec, resolver=None, extra=None):
+    """Render the neutral definition through the map spec. resolver(kind, value, definition) turns a tier into a native model
+    and an effort into the runtime's own, or returns None when it cannot; without one the spec's `resolve` tables are used.
+    extra (JSON) is anything else the render depends on, such as the hash of the effective runtime definition; it goes into
+    inputs_hash. Returns {path, content, sha256, inputs_hash, notes}."""
+    ns = _check_definition(definition)
+    _check_spec(spec)
+    fmt = spec["format"]
+    log, notes = [], []
+    resolve = _resolve_fn(resolver, spec, definition, log)
     mapped = _map_fields(ns, spec, resolve, log, notes)
     body = None
     if fmt in ("markdown-frontmatter", "text"):
@@ -1030,3 +1048,269 @@ def render_map(definition, spec, resolver=None, extra=None):
     path = render_path(spec["path"], ns)
     inputs = canonical_json({"engine": "map", "version": ENGINE_VERSION, "definition": definition, "spec": spec, "resolved": log, "extra": extra})
     return {"path": path, "content": content, "sha256": sha256_text(content), "inputs_hash": sha256_text(inputs), "notes": notes}
+
+
+# ---------------------------------------------------------------- the command renderer
+#
+# spec = {"engine": "command", "command": ["renderers/agent", "arg", ...], "path": "{name}.md",
+#         "format": one of FORMATS (optional: json and toml are parsed, markdown must have front matter),
+#         "timeout": seconds (optional), "resolve": {...} (optional tables, as for the map engine)}
+# stdin:  {"definition": ..., "spec": ..., "resolved": {"model": .., "effort": ..}}   resolved is {} without a resolver
+# stdout: the file, UTF-8 text.
+
+DEFAULT_TIMEOUT = 30
+MAX_TIMEOUT = 120
+MAX_SCRIPT = 1024 * 1024                     # a renderer is a script, not a program: larger files are not read
+MAX_STDIN = 4 * 1024 * 1024
+MAX_STDERR = 64 * 1024
+CHILD_PATH = "/usr/local/bin:/usr/bin:/bin"
+CHILD_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "HOME", "TMPDIR", "TZ")
+_CMD_KEYS = {"engine", "command", "path", "format", "timeout", "resolve"}
+
+
+def _check_executable(arg0, root):
+    """(real path, sha256 of its bytes) of the file arg0 names: inside root, regular, executable, UTF-8 text."""
+    if not isinstance(arg0, str) or not arg0 or "\x00" in arg0:
+        _fail("command: the executable must be a path")
+    if os.path.isabs(arg0):
+        cand = arg0
+    elif root is None:
+        _fail("command: %r is relative and no root was given to resolve it in" % arg0)
+    else:
+        cand = os.path.join(root, arg0)
+    real = os.path.realpath(cand)
+    if root is not None:
+        base = os.path.realpath(root).rstrip("/")
+        if real != base and not real.startswith(base + "/"):
+            _fail("command: %r is outside the allowed root" % arg0)
+    try:
+        fd = os.open(real, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as e:
+        _fail("command: cannot open %r: %s" % (arg0, e.strerror))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            _fail("command: %r is not a regular file" % arg0)
+        if not st.st_mode & 0o111:
+            _fail("command: %r is not executable" % arg0)
+        if st.st_size > MAX_SCRIPT:
+            _fail("command: %r is larger than %d KiB, so it is not a script" % (arg0, MAX_SCRIPT // 1024))
+        data = b""
+        while len(data) <= MAX_SCRIPT:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        os.close(fd)
+    if len(data) > MAX_SCRIPT:
+        _fail("command: %r is larger than %d KiB, so it is not a script" % (arg0, MAX_SCRIPT // 1024))
+    if b"\x00" in data:
+        _fail("command: %r is not text (it holds a NUL byte)" % arg0)
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        _fail("command: %r is not text (it is not valid UTF-8)" % arg0)
+    return real, hashlib.sha256(data).hexdigest()
+
+
+def _check_command_spec(spec):
+    if not isinstance(spec, dict):
+        _fail("spec: must be a map")
+    canonical_json(spec, "spec")
+    if set(spec) - _CMD_KEYS:
+        _fail("spec: unknown key %s" % ", ".join(sorted(set(spec) - _CMD_KEYS)))
+    if spec.get("engine") != "command":
+        _fail("spec: the engine is %r, not command" % spec.get("engine"))
+    cmd = spec.get("command")
+    if not (isinstance(cmd, list) and cmd and all(isinstance(a, str) and "\x00" not in a for a in cmd)):
+        _fail("spec: command is a list of text (the executable and its arguments), not a shell line")
+    if not isinstance(spec.get("path"), str) or not spec["path"]:
+        _fail("spec: path must be a non-empty template")
+    if "format" in spec and spec["format"] not in FORMATS:
+        _fail("spec: format must be one of %s" % ", ".join(FORMATS))
+    t = spec.get("timeout")
+    if t is not None and (isinstance(t, bool) or not isinstance(t, (int, float)) or not t > 0):
+        _fail("spec: timeout is a number of seconds above 0")
+    res = spec.get("resolve", {})
+    if not isinstance(res, dict) or not all(isinstance(v, dict) for v in res.values()):
+        _fail("spec: resolve is a map of kind to a table")
+
+
+def _kill(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _run(args, data, cwd, env, timeout):
+    """Run args without a shell, feed data to its stdin and return (status, stdout bytes, stderr bytes). Stdout is capped at
+    MAX_BYTES, the run at timeout seconds; the whole process group is killed on either."""
+    try:
+        proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env, shell=False,
+                                close_fds=True, start_new_session=True)
+    except OSError as e:
+        _fail("command: cannot run %r: %s" % (args[0], e.strerror or e))
+    out, err = bytearray(), bytearray()
+    sent = 0
+    sel = selectors.DefaultSelector()
+    try:
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            os.set_blocking(f.fileno(), False)
+        sel.register(proc.stdin, selectors.EVENT_WRITE, "in")
+        sel.register(proc.stdout, selectors.EVENT_READ, "out")
+        sel.register(proc.stderr, selectors.EVENT_READ, "err")
+        deadline = time.monotonic() + timeout
+
+        def drop(f):
+            sel.unregister(f)
+            f.close()
+
+        if not data:
+            drop(proc.stdin)
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                _fail("command: timed out after %g seconds" % timeout)
+            for key, _ in sel.select(left):
+                f = key.fileobj
+                if key.data == "in":
+                    try:
+                        sent += os.write(f.fileno(), data[sent:sent + 65536])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        drop(f)
+                        continue
+                    if sent >= len(data):
+                        drop(f)
+                    continue
+                try:
+                    chunk = os.read(f.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    drop(f)
+                elif key.data == "out":
+                    out += chunk
+                    if len(out) > MAX_BYTES:
+                        _fail("command: the output is larger than %d KiB" % (MAX_BYTES // 1024))
+                elif len(err) < MAX_STDERR:
+                    err += chunk[:MAX_STDERR - len(err)]
+        try:
+            status = proc.wait(timeout=max(deadline - time.monotonic(), 0.01))
+        except subprocess.TimeoutExpired:
+            _fail("command: timed out after %g seconds" % timeout)
+        return status, bytes(out), bytes(err)
+    finally:
+        if proc.poll() is None:
+            _kill(proc)
+            proc.wait()
+        sel.close()
+        for f in (proc.stdin, proc.stdout, proc.stderr):
+            if not f.closed:
+                f.close()
+
+
+def _tail(b):
+    t = b.decode("utf-8", "replace").strip()
+    t = "".join(c if c == "\n" or (ord(c) >= 0x20 and ord(c) != 0x7f) else "?" for c in t)
+    return " / ".join(t.splitlines())[-400:]
+
+
+def _check_format(fmt, content):
+    if fmt == "json":
+        parse_json(content)
+    elif fmt == "toml":
+        parse_toml(content)
+    elif fmt == "markdown-frontmatter":
+        lines = content.split("\n")
+        if lines[0] != "---" or "---" not in lines[1:]:
+            _fail("markdown-frontmatter: the output does not start with a front matter block")
+
+
+def render_command(definition, spec, root=None, resolver=None, extra=None, timeout=None):
+    """Run the command renderer. root: the directory the executable must be in (a relative command is relative to it);
+    timeout: the caller's upper bound in seconds. Returns {path, content, sha256, inputs_hash, notes}; inputs_hash covers the
+    definition, the spec, what the resolver said, extra and the sha256 of the executable."""
+    ns = _check_definition(definition)
+    _check_command_spec(spec)
+    path = render_path(spec["path"], ns)
+    real, script_hash = _check_executable(spec["command"][0], root)
+    limit = min(spec.get("timeout", DEFAULT_TIMEOUT), MAX_TIMEOUT, timeout if timeout is not None else MAX_TIMEOUT)
+    log = []
+    resolved = {}
+    if resolver is not None or "resolve" in spec:
+        resolve = _resolve_fn(resolver, spec, definition, log)
+        for kind, value in (("model", definition.get("model") or definition.get("tier")), ("effort", definition.get("effort"))):
+            if not _missing(value):
+                resolved[kind] = resolve(kind, value)
+    data = canonical_json({"definition": definition, "spec": spec, "resolved": resolved}).encode("utf-8")
+    if len(data) > MAX_STDIN:
+        _fail("command: the input is larger than %d MiB" % (MAX_STDIN // (1024 * 1024)))
+    cwd = tempfile.mkdtemp(prefix="qargi-render.")
+    try:
+        env = {"PATH": CHILD_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "HOME": cwd, "TMPDIR": cwd, "TZ": "UTC"}
+        status, out, err = _run([real] + spec["command"][1:], data, cwd, env, limit)
+    finally:
+        shutil.rmtree(cwd, True)
+    if status != 0:
+        _fail("command: %r exited with %s%s" % (spec["command"][0], "status %d" % status if status > 0 else "killed by signal %d" % -status,
+                                                 ": " + _tail(err) if err.strip() else ""))
+    if b"\x00" in out:
+        _fail("command: the output holds a NUL byte (text only)")
+    try:
+        content = out.decode("utf-8")
+    except UnicodeDecodeError:
+        _fail("command: the output is not valid UTF-8")
+    if not content.strip():
+        _fail("command: the output is empty (nothing was rendered)")
+    if "format" in spec:
+        _check_format(spec["format"], content)
+    inputs = canonical_json({"engine": "command", "version": ENGINE_VERSION, "definition": definition, "spec": spec, "resolved": log,
+                             "extra": extra, "executable": script_hash})
+    return {"path": path, "content": content, "sha256": sha256_text(content), "inputs_hash": sha256_text(inputs), "notes": []}
+
+
+def render(definition, spec, root=None, resolver=None, extra=None, timeout=None):
+    """Either engine, by spec["engine"] (map by default)."""
+    if not isinstance(spec, dict):
+        _fail("spec: must be a map")
+    engine = spec.get("engine", "map")
+    if engine == "map":
+        return render_map(definition, spec, resolver=resolver, extra=extra)
+    if engine == "command":
+        return render_command(definition, spec, root=root, resolver=resolver, extra=extra, timeout=timeout)
+    _fail("spec: unknown engine %r (map or command)" % (engine,))
+
+
+# ---------------------------------------------------------------- command line (internal: the tests and `provider check` use it)
+
+USAGE = "usage: python3 lib/render.py render SPEC.json DEF.json"
+
+
+def _load(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        _fail("cannot read %s: %s" % (path, e))
+
+
+def main(argv):
+    if len(argv) != 4 or argv[1] != "render":
+        print(USAGE, file=sys.stderr)
+        return 2
+    try:
+        spec = _load(argv[2])
+        result = render(_load(argv[3]), spec, root=os.path.dirname(os.path.abspath(argv[2])))
+    except RenderError as e:
+        print("render: %s" % e, file=sys.stderr)
+        return 1
+    sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
