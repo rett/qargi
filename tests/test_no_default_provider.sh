@@ -129,6 +129,19 @@ out=$("$DA" agent refresh ul 2>&1); rc=$?
 out=$(QARGI_PROJECT=np "$DA" agent refresh ul 2>&1); refuses "agent refresh: the project in effect has no provider: refused" "$?" "$out" np
 out=$(QARGI_PROJECT=cl "$DA" agent refresh ul 2>&1); rc=$?; { [ "$rc" = 0 ] && grep -q 'current' <<<"$out"; } && ok "agent refresh: the project in effect names claude" || no "user-level refresh with a project: rc=$rc $out"
 
+# --- provision plan: the model default comes from the project's provider (the answers here name no role model)
+mdl() { sed -n '/^model:/,/^[a-z]/p' "$T/s/provision/$1-build/agents/$1-build/agent.md" 2>/dev/null | tr -d '\n'; }   # the model block of the rendered agent
+out=$("$DA" provision plan --project np --role build 2>&1); refuses "provision plan: no model, and the project has no provider: refused" "$?" "$out" np
+grep -q 'apply' "$FAKE/ant.log" 2>/dev/null && no "ant was asked to apply" || ok "and the cloud was not asked"
+out=$("$DA" provision plan --project nosuch --role build 2>&1); rc=$?
+{ [ "$rc" != 0 ] && ! grep -qi claude <<<"$out"; } && ok "provision plan: a project that is not stored is refused, with no claude in the message" || no "provision plan nosuch: rc=$rc $out"
+out=$("$DA" provision plan --project cl --role build 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'claude-sonnet-5-5' <<<"$(mdl cl)"; } && ok "provision plan: claude, the balanced model" || no "provision claude: rc=$rc [$(mdl cl)] $(head -5 <<<"$out")"
+out=$("$DA" provision plan --project fk --role build 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q 'fake-m-1' <<<"$(mdl fk)"; } && ok "provision plan: the fake provider's balanced model" || no "provision fake: rc=$rc [$(mdl fk)] $(head -5 <<<"$out")"
+out=$("$DA" provision plan --project np --role build --model fake-m-1 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "provision plan: a model given on the command line needs no provider lookup" || no "np with --model: rc=$rc $out"
+
 # --- local prepare: a read-only role needs the project's provider for its barrier
 prep() { # repo slug role
   "$DA" local prepare --repo "$1" --base main --slug "$2" --scratch "$T/scr" --role "$3" 2>&1
