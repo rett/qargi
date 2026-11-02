@@ -306,6 +306,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the manual page no longer name them. `install.sh --user` removes the leftover links to them.
 
 ### Fixed
+- `qargi canon audit` now attributes a session of a cloud base (`<project>-worker`, `<project>-reviewer`) to the role recorded in the local
+  session tracker, so its cross-role writes are reported; a session it cannot attribute is counted once in a NOTE line, not guessed.
 - `qargi cloud show|check|login|unset` now refuse `--profile` and `--workspace-id` (only `set` takes them) instead of ignoring them;
   `qargi agent for --surface` completes `local` and `cloud`; the test that keeps the help in step with the scripts now also covers
   `lib/provider.sh`.
