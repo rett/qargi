@@ -63,6 +63,7 @@ run bash tests/test_packs_claude_hostile.sh
 run bash tests/test_review.sh
 run bash tests/test_marshal.sh
 run bash tests/test_marshal_flow.sh
+run bash tests/test_marshal_handoff.sh
 run bash tests/test_marshal_refs.sh
 run bash tests/test_marshal_sign.sh
 run python3 tests/test_marshal_sign_unit.py
