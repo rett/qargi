@@ -125,5 +125,6 @@
     "launch": "claude --add-dir {render}[ --mcp-config {render}/mcp.json][ --settings {render}/settings.json]",
     "render_target": "claude-code"
   },
-  "adapter": null
+  "adapter": "adapter",
+  "adapter_verbs": ["resolve", "dispatch-local", "barrier-check"]
 }

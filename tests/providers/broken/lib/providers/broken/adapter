@@ -13,7 +13,7 @@ It is correct unless $CONFORMANCE_BROKEN names a fault, one of
   nonote       an effort with no control gives null and no note               (case 2)
   nodef        the read-only definition carries no barrier                    (case 9)
 Unset or anything else: no fault. It serves resolve itself from its own descriptor, hands dispatch-local and barrier-check
-to the real claude adapter of the checkout, and serves the cloud verbs through $QARGI_TRANSPORT. Never ship it."""
+to the claude-code adapter of the checkout, and serves the cloud verbs through $QARGI_TRANSPORT. Never ship it."""
 import json
 import os
 import subprocess
@@ -38,7 +38,7 @@ def descriptor():
 
 def real_adapter():
     tool = os.environ.get("CONFORMANCE_TOOL") or os.path.join(HERE, "..", "..", "..")   # tests/providers/broken
-    return os.path.realpath(os.path.join(tool, "..", "..", "..", "lib", "providers", "claude", "adapter"))
+    return os.path.realpath(os.path.join(tool, "..", "..", "..", "lib", "providers", "claude-code", "adapter"))
 
 
 def real(verb, raw):

@@ -67,5 +67,6 @@
   "barrier": {
     "kind": "none"
   },
-  "adapter": null
+  "adapter": "adapter",
+  "adapter_verbs": ["resolve", "start-session"]
 }
