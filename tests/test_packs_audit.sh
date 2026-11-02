@@ -210,6 +210,19 @@ tok=$(ac alpha mine | tok_of)
 out=$(ac alpha mine --plan "$tok" --approved x 2>&1) && no "wrote over a damaged accepted.json" || { grep -q "cannot be read" <<<"$out" && [ "$(cat "$ACC")" = garbage ] && ok "a damaged accepted.json is refused and left as it is" || no "damaged msg: $out"; }
 rm -f "$ACC"
 
+# --- packs link: the plan prints the same section; the apply does not, and nothing in it changes the status
+rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine
+out=$($DA packs link alpha 2>&1); rc=$?
+grep -q "^link plan for alpha" <<<"$out" && grep -q "^skills a session would load:" <<<"$out" && grep -qE "^ +unmanaged +mine  \(checkout, " <<<"$out" && grep -qE "^ +qargi +s-all  \(render, " <<<"$out" && ok "the link plan lists the skills a session would load" || no "link plan: $out"
+[ "$rc" = 0 ] && [ -n "$(tok_of <<<"$out")" ] && [ "$(grep -n '^skills a session' <<<"$out" | cut -d: -f1)" -lt "$(grep -n '^plan token' <<<"$out" | cut -d: -f1)" ] && ok "the section comes before the token line" || no "section order: $out"
+tok=$(tok_of <<<"$out")
+out=$($DA packs link alpha --plan "$tok" --approved go 2>&1)
+grep -q "^linked: " <<<"$out" && ! grep -q "skills a session would load" <<<"$out" && ok "the link apply does not print the section" || no "link apply: $out"
+out=$($DA packs link alpha 2>&1)
+grep -q "^already linked" <<<"$out" && grep -qE "^ +qargi +s-all  \(checkout\+render, " <<<"$out" && ok "once linked, the render's skills are one entry that names both places" || no "linked section: $out"
+[ "$(st mine)" = "" ] && ok "(the real directory moved to the backup: its skills no longer load)" || no "mine still listed: $(line mine)"
+$DA packs unlink alpha --plan "$($DA packs unlink alpha | tok_of)" --approved go >/dev/null
+
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
