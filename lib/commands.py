@@ -571,6 +571,11 @@ COMMANDS = {
                           desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
+            "migrate": verb("Print the schema 2 form of a schema 1 descriptor (read only)", [("NAME", "none")],
+                            [opt("--dry-run", "required for now: print the documents and write nothing"),
+                             opt("--as", "name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME", "SURFACES")],
+                            desc="One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. "
+                                 "Notes go to stderr. The written form (a plan and your approval) is not built yet, so without --dry-run it exits 2."),
         },
     },
     "noticed": {
