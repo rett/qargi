@@ -10,13 +10,17 @@
 #   marshal.sh key init [--principal P] [--plan TOKEN --approved WORDS]   make this machine's signing key
 #   marshal.sh signers add --line L | remove P | list [--project P] [--plan TOKEN --approved WORDS]   who is trusted to sign
 #   marshal.sh resign NAME [--project P] [--plan TOKEN --approved WORDS]   sign an unsigned open record
+#   marshal.sh forget NAME [--project P] [--plan TOKEN --approved WORDS]   drop this machine's accepted mark of NAME (integrity on)
 # enable without options prints the plan and a plan token; applying is --plan TOKEN --approved WORDS (audit line
 # marshal:enable). The switch is the file $DA_STATE/marshal/PROJECT.enabled, written by marshal_refs.py, never a project
 # answer (project set refuses marshal.* but marshal.ttl). enable and disable, like every verb that changes a record, are
 # refused (exit 2) inside a member run. So are key, signers add|remove, enable --integrity and resign, which are owner verbs too:
 # key init, signers add|remove and enable print a plan and a plan token first and apply with --plan TOKEN --approved WORDS (audit
 # lines marshal:key-init, marshal:signers, marshal:enable); resign prints the head, the lead and the goal of the record it would sign and
-# a plan token that covers them, and applies with --plan TOKEN --approved WORDS (marshal:resign). The signing key is the
+# a plan token that covers them, and applies with --plan TOKEN --approved WORDS (marshal:resign). forget is an owner verb of the same kind: it
+# drops the accepted high-water mark ($DA_STATE/features/.accepted-PROJECT.json) of one feature, so that a stale mark (left after the feature
+# was deleted or re-created on the remote) stops reporting "rollback detected"; the plan prints the rev and the oid of the mark, the token
+# covers both, applying a changed mark is refused (marshal:forget); with integrity off, or with no mark for NAME, it exits 2. The signing key is the
 # file $DA_CONF/credentials/marshal_ed25519 (mode 600, made by key init, never overwritten, never in an argument list, the audit log
 # or the tracker); the trusted signers are the file $DA_STATE/marshal/PROJECT.signers; the mode is the field integrity of the
 # switch file (default off). A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
@@ -107,7 +111,8 @@ marshal_main() {
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
        qargi marshal signers add --line L | remove PRINCIPAL [--project P] [--plan TOKEN --approved WORDS] | list [--project P]
-       qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]"
+       qargi marshal resign NAME [--project P] [--plan TOKEN --approved WORDS]
+       qargi marshal forget NAME [--project P] [--plan TOKEN --approved WORDS]"
   local name='' PROJ='' as='' all='' brief='' json='' history='' nofetch='' want sub='' line='' principal='' integ=''
   local -a opt=()
   case $verb in
@@ -115,14 +120,14 @@ marshal_main() {
     signers) sub=${1:-}; case $sub in add|remove|list) shift;; *) echo "qargi: $usage" >&2; exit 2;; esac;;
   esac
   case $verb in
-    enable|disable|key|resign) python3 -I "$MARSHAL_LIB/marshal_refs.py" member-check "$verb" || exit $?;;
+    enable|disable|key|resign|forget) python3 -I "$MARSHAL_LIB/marshal_refs.py" member-check "$verb" || exit $?;;
     signers) [ "$sub" = list ] || python3 -I "$MARSHAL_LIB/marshal_refs.py" member-check "signers $sub" || exit $?;;
   esac
   case $verb in
     enable) want=' --project --plan --approved --integrity ';;
     key) want=' --principal --plan --approved ';;
     signers) want=' --project --line --plan --approved ';;
-    resign) want=' --project --plan --approved ';;
+    resign|forget) want=' --project --plan --approved ';;
     disable) want=' --project --plan --approved ';;
     claim) want=' --project --as --goal ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
@@ -148,7 +153,7 @@ marshal_main() {
           --line) line=$2;;
           --principal) principal=$2;;
           --integrity) integ=$2;;
-          --plan) case $verb in enable|key|signers|resign|disable) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
+          --plan) case $verb in enable|key|signers|resign|forget|disable) PLAN_ARG=$2; export PLAN_ARG;; *) opt+=("$1" "$2");; esac;;
           *) opt+=("$1" "$2");;
         esac
         shift 2;;
@@ -272,6 +277,26 @@ marshal_main() {
     marshal_py "$PROJ" resign "$name" --approved "$APPROVED" '--expect-head' "$rhead" || rrc=$?
     if [ "$rrc" = 0 ]; then audit_log "marshal:resign" "$PROJ $name"; fi
     exit "$rrc"
+  fi
+  if [ "$verb" = forget ]; then
+    # the mark is this machine's own file; the plan shows it (rev and oid) and the token covers both, so a mark that moved since the plan is
+    # another plan. The drop re-checks the mark under the lock the marshal's own writes take.
+    local fmk=$DA_STATE/features/.accepted-$PROJ.json fint fshow frev foid ftok frc=0
+    fint=$(jq -r '.integrity // "off"' "$DA_STATE/marshal/$PROJ.enabled" 2>/dev/null) || fint=off
+    case $fint in advisory|strict) ;; *) echo "qargi: marshal forget needs integrity advisory or strict on this machine: with integrity off no mark is kept or checked (integrity is $fint for $PROJ)" >&2; exit 2;; esac
+    fshow=$(python3 -I "$MARSHAL_LIB/marshal_sign.py" hw show --file "$fmk" --name "$name") || exit $?
+    frev=$(sed -n 's/^rev //p' <<<"$fshow"); foid=$(sed -n 's/^oid //p' <<<"$fshow")
+    ftok=$(printf 'marshal forget %s %s rev=%s oid=%s' "$PROJ" "$name" "$frev" "$foid" | plan_token)
+    if [ -z "${APPROVED:-}" ] && [ -z "${PLAN_ARG:-}" ]; then
+      echo "would drop this machine's accepted mark of $name (rev $frev, oid $foid): the next record of $name found on the remote is trusted on first sight again, and a rollback of $name is no longer detected against rev $frev; only the mark of $name goes, the refs on the remote stay as they are"
+      echo "plan token: $ftok   (apply with: qargi marshal forget $name --project $PROJ --plan $ftok --approved \"...\")"
+      exit 0
+    fi
+    [ -n "${APPROVED:-}" ] || die "forget needs --approved WORDS (the owner's words): it drops the accepted mark of $name on this machine; run it without options for the plan"
+    need_plan "$ftok"
+    python3 -I "$MARSHAL_LIB/marshal_sign.py" hw drop --file "$fmk" --name "$name" --rev "$frev" --oid "$foid" --lock "$DA_STATE/features/.refs-$PROJ.lock" || frc=$?
+    if [ "$frc" = 0 ]; then audit_log "marshal:forget" "$PROJ $name rev=$frev oid=$foid"; echo "marshal of $PROJ: forgot the accepted mark of $name (rev $frev)"; fi
+    exit "$frc"
   fi
   if [ "$verb" = disable ]; then
     # disable removes the switch file, and the integrity setting with it: while that is advisory or strict it is an approved step

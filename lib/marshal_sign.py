@@ -30,7 +30,7 @@ Command line (the shell and the tests; python3 -I, standard library only):
   signers add --file F --line L | remove --file F --principal P | list --file F
   payload --project P --feature F --kind features|done --rev N [--parent OID] [--lead ID] --record FILE   the bytes to sign
 Exit status 2: the call itself is wrong (message on stderr)."""
-import argparse, getpass, hashlib, json, os, re, shutil, signal, socket, stat, subprocess, sys, tempfile
+import argparse, fcntl, getpass, hashlib, json, os, re, shutil, signal, socket, stat, subprocess, sys, tempfile
 
 NS = 'qargi-marshal'
 PAYLOAD_V = 1
@@ -544,6 +544,36 @@ def _no_float(x):
     raise ValueError('a float has no canonical form here')
 
 
+def _cli_hw(a):
+    """`hw show` prints the mark of a feature ("rev R" and "oid O"); `hw drop --rev R --oid O` drops it, but only while it still is that
+    mark (under the lock the marshal's own writes take, when --lock is given). Both exit 2 when there is no mark."""
+    try:
+        _mark_args(a.name, 0, '0' * 40)
+        if a.op == 'drop':
+            if a.rev is None or a.oid is None:
+                raise SignError('hw drop needs --rev and --oid: the mark that was shown')
+            _mark_args(a.name, a.rev, a.oid)
+    except ValueError as e:
+        raise SignError(str(e))
+    lk = open(a.lock, 'a') if a.lock else None
+    try:
+        if lk is not None:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+        cur = hw_load(a.file).get(a.name)
+        if cur is None:
+            raise SignError('there is no accepted mark for %s' % a.name)
+        if a.op == 'show':
+            sys.stdout.write('rev %d\noid %s\n' % (cur[0], cur[1]))
+        else:
+            if cur != [a.rev, a.oid]:
+                raise SignError('the accepted mark of %s changed since the plan (now rev %d, oid %s): run the plan again' % (a.name, cur[0], cur[1]))
+            hw_drop(a.file, a.name)
+    finally:
+        if lk is not None:
+            lk.close()
+    return 0
+
+
 def _cli(argv):
     ap = argparse.ArgumentParser(prog='marshal_sign.py', description='Signed marshal records (see the module text).')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -563,6 +593,13 @@ def _cli(argv):
     sn.add_argument('--file', required=True)
     sn.add_argument('--line')
     sn.add_argument('--principal')
+    hw = sub.add_parser('hw')
+    hw.add_argument('op', choices=('show', 'drop'))
+    hw.add_argument('--file', required=True)
+    hw.add_argument('--name', required=True)
+    hw.add_argument('--rev', type=int)
+    hw.add_argument('--oid')
+    hw.add_argument('--lock')
     pl = sub.add_parser('payload')
     pl.add_argument('--project', required=True)
     pl.add_argument('--feature', required=True)
@@ -595,6 +632,8 @@ def _cli(argv):
         else:
             for p, t, key in signers_list(a.file):
                 out.write(('%s %s %s\n' % (p, t, key)).encode('ascii'))
+    elif a.cmd == 'hw':
+        return _cli_hw(a)
     else:
         try:
             rec = json.loads(_read_regular(a.record).decode('utf-8'), parse_float=_no_float)
