@@ -103,19 +103,23 @@ split_instance() {
   fi
 }
 
-# The provider a project uses (models.provider in its answers, default claude); no project, or no answers, is claude.
+# project_provider PROJECT: prints the provider the project uses (models.provider in its answers). There is no default: a project
+# with no provider, an unknown project or none at all is refused by lib/provider.py `of`, which prints the one message
+# (qargi: project P has no provider: set one with qargi project set P models.provider NAME) and exits 2. Run in $(...) the helper
+# cannot end its caller, so every caller propagates the status:  prov=$(project_provider "$p") || exit $?
 project_provider() { # project-or-empty
-  local f=$DA_CONF/projects/${1:-}.json p=claude
-  if [ -n "${1:-}" ] && [ -f "$f" ]; then p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude; fi
-  printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || p=claude
+  local p
+  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of "${1:-}" --conf "$DA_CONF" </dev/null) || return $?
+  printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   echo "$p"
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
 # that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
 barrier_guard() {
-  local rc=0
-  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$(project_provider "${2:-}")" "$1" ${2:+--project "$2"} || rc=$?
+  local rc=0 prov
+  prov=$(project_provider "${2:-}") || exit $?   # no default provider: a project with none is refused here (exit 2)
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$prov" "$1" ${2:+--project "$2"} || rc=$?
   [ "$rc" = 0 ] || exit "$rc"
 }
 

@@ -74,6 +74,50 @@ noclaude() { # name output: the output does not name claude (CLAUDE.md, a file o
   if sed 's/CLAUDE\.md//g' <<<"$2" | grep -qi claude; then no "$1 names claude: $2"; else ok "$1"; fi
 }
 
+# --- the helper and the python side
+out=$(python3 -I "$TOOL/lib/provider.py" of np --conf "$T/c" 2>&1); refuses "provider of: a project with none" "$?" "$out" np
+out=$(python3 -I "$TOOL/lib/provider.py" of nosuch --conf "$T/c" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ "$out" = "qargi: no such project 'nosuch'" ]; } && ok "provider of: an unknown project says so" || no "unknown project: rc=$rc $out"
+out=$(python3 -I "$TOOL/lib/provider.py" of "" --conf "$T/c" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'pass --project NAME' <<<"$out"; } && ok "provider of: no project at all says to pass --project" || no "no project: rc=$rc $out"
+( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c
+  p=$(project_provider cl) && [ "$p" = claude ] && q=$(project_provider fk) && [ "$q" = fakeprov ] ) 2>/dev/null && ok "project_provider prints the named provider" || no "project_provider on named providers"
+out=$( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c; project_provider np 2>&1 ); refuses "project_provider: a project with none is refused" "$?" "$out" np
+out=$( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c; project_provider 2>&1 ); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'pass --project NAME' <<<"$out"; } && ok "project_provider: no project is refused" || no "project_provider with no project: rc=$rc $out"
+
+# --- local prepare: a read-only role needs the project's provider for its barrier
+prep() { # repo slug role
+  "$DA" local prepare --repo "$1" --base main --slug "$2" --scratch "$T/scr" --role "$3" 2>&1
+}
+out=$(prep "$T/repo-np" rv1 review); refuses "local prepare --role review: a project with none is refused" "$?" "$out" np
+[ -z "$(ls "$T/scr")" ] && ok "and no run directory was made" || no "run dir made: $(ls "$T/scr")"
+git init -q -b main "$T/repo-none" && git -C "$T/repo-none" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+out=$(prep "$T/repo-none" rv2 review); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'no stored project has this repository' <<<"$out" && ! grep -qi claude <<<"$out"; } && ok "local prepare --role review: a repository of no project is refused" || no "repo of no project: rc=$rc $out"
+out=$(prep "$T/repo-cl" rv3 review); rc=$?; { [ "$rc" = 0 ] && grep -q 'partial read-only barrier on local' <<<"$out"; } && ok "local prepare --role review: claude passes with its note" || no "review claude: rc=$rc $out"
+out=$(prep "$T/repo-fk" rv4 review); rc=$?; [ "$rc" = 0 ] && ok "local prepare --role review: the fake provider passes" || no "review fake: rc=$rc $out"
+out=$(prep "$T/repo-np" b1 build); rc=$?; [ "$rc" = 0 ] && ok "a write role needs no provider: prepare goes on" || no "build prepare: rc=$rc $out"
+
+# --- the cloud starts: an instance of a read-only role (the barrier) and a session of a base (the request)
+inst() { jq -n --arg d "$1" '{location:"cloud",deployment_id:$d,environment_id:"env_01",agent:{id:"agent_01",version_pinned:3,model:"x",effort:"high"}}'; }
+jq -n --argjson i "$(inst depl_1)" '{"np-review":$i,"cl-review":$i,"fk-review":$i,"np-worker":$i,"cl-worker":$i,"fk-worker":$i,"np-reviewer":$i,"cl-reviewer":$i}' > "$T/c/instances.json"
+: > "$FAKE/ant.log"
+out=$("$DA" start np-review --asked "start the review" 2>&1); refuses "start: a read-only instance of a project with none is refused" "$?" "$out" np
+out=$("$DA" start np-reviewer --role review --asked "start" 2>&1); refuses "start: a reviewer base of a project with none is refused" "$?" "$out" np
+out=$(QARGI_DRY_RUN=1 "$DA" start np-worker --role build --asked "start the build base" 2>&1); refuses "start: a worker base of a project with none is refused before the request is built" "$?" "$out" np
+grep -q 'sessions create\|deployments run' "$FAKE/ant.log" && no "a session was created" || ok "and no session was created"
+# the session request is built by the adapter of the project's provider: claude and the fake one (the copies have the cloud overrides verified)
+for p in cl fk; do
+  out=$(QARGI_DRY_RUN=1 "$DA" start "$p-worker" --role build --asked "start the build base" 2>&1); rc=$?
+  { [ "$rc" = 0 ] && jq -e '.agent.type == "agent_with_overrides"' <<<"$out" >/dev/null; } && ok "start: a worker base session of $p is built (dry run)" || no "start base $p: rc=$rc $(head -c 400 <<<"$out")"
+done
+out=$("$DA" start cl-review --asked "start the review" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'qargi provider accept claude --surface cloud --no-barrier --project cl' <<<"$out"; } && ok "start: claude names itself in the barrier refusal (it has no cloud barrier)" || no "start claude review: rc=$rc $out"
+out=$("$DA" start fk-review --asked "start the review" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'qargi provider accept fakeprov --surface cloud --no-barrier --project fk' <<<"$out" && ! grep -qi claude <<<"$out"; } && ok "start: the fake provider's barrier refusal names it, never claude" || no "start fake review: rc=$rc $out"
+out=$("$DA" start fk-worker --asked "start" 2>&1); rc=$?; [ "$rc" = 0 ] && ok "start: a worker of the fake provider starts" || no "start fake worker: rc=$rc $out"
+
 # --- project validate: no provider skips the provider's checks (the finding stays, the exit status does not change); an unknown one is a finding
 v() { jq "$1" "$T/np.json" > "$T/v.json"; "$DA" project validate "$T/v.json" 2>&1; }
 out=$(v '.roles.build.model = "any-model-1"'); rc=$?
