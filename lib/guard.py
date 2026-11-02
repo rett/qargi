@@ -8,7 +8,9 @@ Two layers. The hook protocol (HOOK PROTOCOL below) is data: where in the hook's
 directory are, which tool names are a shell, a write or a read, and how a refusal is given back (exit status and stream, or JSON on
 standard output). It turns the hook's input into a neutral Call(kind, name, command, path, cwd) and a refusal into the hook's answer.
 The decisions (judge and everything it calls) see only the Call. The data of the runtime that qargi was built for is CLAUDE_HOOK, used
-when the hook command names no provider; `--provider NAME` reads it from the definition of that provider instead.
+when the hook command names no provider; `--provider NAME` reads it from the barrier.hook of that provider's local definition instead
+(the shipped ones and the library's), and a provider whose definition has no usable hook data refuses every call, in the plain way (exit 2,
+reason on stderr), since it has no other. A refusal, a failure and an unknown class are given back in the provider's way.
 
 Publishing: git push, gh, ssh, scp, sftp, and changing a remote.
 
@@ -191,6 +193,14 @@ def read_class(argv):
         return ""
     k = argv.index("--class")
     return argv[k + 1] if k + 1 < len(argv) else None
+
+
+def read_provider(argv):
+    """The provider the hook command line names with --provider NAME: None when it names none, "" when the name is missing."""
+    if "--provider" not in argv:
+        return None
+    k = argv.index("--provider")
+    return argv[k + 1] if k + 1 < len(argv) else ""
 
 
 CLASS = ""
@@ -855,6 +865,77 @@ def refuse(hook, reason):
     return deny["exit"]
 
 
+HOOK_KEYS = ("input", "tool_pointer", "command_pointer", "cwd_pointer", "path_pointers", "tool_names", "deny", "allow")
+
+
+class HookError(Exception):
+    """The hook protocol of a provider cannot be used."""
+
+
+def _provider():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import provider                                       # here, not at the top: an import failure is then a refusal (see main)
+    return provider
+
+
+def _is_pointer(v):
+    return isinstance(v, str) and v.startswith("/") and len(v) > 1
+
+
+def _is_exit(v):
+    return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255
+
+
+def hook_problem(h):
+    """What is wrong with hook protocol data (the barrier.hook of a definition), or None. A guard that misreads a call would pass it, so
+    data that does not say everything the guard reads, or says more, is not used."""
+    if not isinstance(h, dict):
+        return "barrier.hook is not an object"
+    for k in sorted(set(h) - set(HOOK_KEYS)):
+        return "barrier.hook.%s is not a key of the hook protocol" % k
+    if h.get("input") != "json-stdin":
+        return "barrier.hook.input must be \"json-stdin\""
+    for k in ("tool_pointer", "command_pointer") + (("cwd_pointer",) if "cwd_pointer" in h else ()):
+        if not _is_pointer(h.get(k)):
+            return "barrier.hook.%s must be a JSON pointer (it starts with /)" % k
+    pp = h.get("path_pointers", [])
+    lists = pp if isinstance(pp, dict) else {"": pp}
+    if not (isinstance(pp, (list, dict)) and set(lists) <= set(KINDS) | {""}
+            and all(isinstance(v, list) and all(_is_pointer(p) for p in v) for v in lists.values())):
+        return "barrier.hook.path_pointers must be a list of JSON pointers, or a map of %s to such lists" % "/".join(KINDS)
+    names = h.get("tool_names")
+    if not (isinstance(names, dict) and set(names) <= set(KINDS) and all(isinstance(v, list) and all(isinstance(n, str) for n in v) for v in names.values())):
+        return "barrier.hook.tool_names must be a map of %s to lists of tool names" % "/".join(KINDS)
+    seen = [n for v in names.values() for n in v]
+    for n in sorted(set(seen)):
+        if seen.count(n) > 1:
+            return "barrier.hook.tool_names: the tool %s is listed twice" % n
+    deny = h.get("deny")
+    if not (isinstance(deny, dict) and _is_exit(deny.get("exit")) and (("stdout" in deny) != ("stream" in deny))
+            and set(deny) <= {"exit", "stream", "stdout"} and (deny.get("stream") in ("stderr", "stdout") if "stream" in deny else isinstance(deny["stdout"], dict))):
+        return "barrier.hook.deny must be {exit, stream: stderr|stdout} or {exit, stdout: {...}}"
+    if not (isinstance(h.get("allow"), dict) and set(h["allow"]) == {"exit"} and _is_exit(h["allow"]["exit"])):
+        return "barrier.hook.allow must be {exit: N}"
+    return None
+
+
+def hook_of(name):
+    """The hook protocol data of the local definition of a provider. HookError when there is none or it is not usable."""
+    provider = _provider()
+    try:
+        d = provider.definition(name, "local")
+    except provider.ProviderError as e:
+        raise HookError(str(e))
+    barrier = d.get("barrier") if isinstance(d.get("barrier"), dict) else {}
+    if barrier.get("kind") != "hook":
+        raise HookError("provider %s has no hook barrier (its barrier is %s), so there is no hook protocol to read"
+                        % (name, repr(barrier["kind"]) if barrier.get("kind") else "not described"))
+    why = hook_problem(barrier.get("hook"))
+    if why:
+        raise HookError("the hook protocol of provider %s cannot be used: %s" % (name, why))
+    return barrier["hook"]
+
+
 # --- the decisions
 
 def judge(call):
@@ -886,6 +967,16 @@ def decide(hook):
 def main():
     global CLASS
     hook = CLAUDE_HOOK
+    name = read_provider(sys.argv[1:])
+    if name is not None:                                  # the provider's protocol; one that cannot be read refuses (in the plain way: there is no other)
+        try:
+            if not name:
+                raise HookError("--provider needs the name of a provider")
+            hook = hook_of(name)
+        except Exception as e:
+            print("qargi guard: cannot use the hook protocol of provider %s (%s); refusing every call until the hook command or the definition is fixed." % (name or "?", e),
+                  file=sys.stderr)
+            return 2
     cls = read_class(sys.argv[1:])
     if cls not in CLASSES:
         return refuse(hook, "qargi guard: unknown class %r in the hook command; refusing every call until the member is refreshed." % cls)
