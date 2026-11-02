@@ -65,7 +65,26 @@ chkm "accept_no_barrier extra field" ".models.accept_no_barrier.cloud=($ACC + {e
 chkm "accept_no_barrier empty by"   ".models.accept_no_barrier.cloud=($ACC | .by=\"\")" 'models.accept_no_barrier.cloud.by: '
 chkm "accept_no_barrier bad time"   ".models.accept_no_barrier.cloud=($ACC | .at=\"yesterday\")" 'models.accept_no_barrier.cloud.at: '
 chkm "accept_no_barrier empty reason" ".models.accept_no_barrier.cloud=($ACC | .reason=\"\")" 'models.accept_no_barrier.cloud.reason: '
+# models.provider: the template has it, empty (there is no default provider); validate reports an empty or missing one as a finding
+# line and still exits 0, so storing and every flow after it work as before
+jq -e '.models.provider == ""' <<<"$base" >/dev/null && echo "ok   the template has models.provider as an empty string" || { echo "FAIL template models.provider"; fail=1; }
+fnd() { # name jq-filter wanted(yes|no): does validate print the models.provider finding, with exit 0?
+  local f=$T/a.json out rc; jq "$2" <<<"$base" > "$f"
+  out=$($DA project validate "$f" 2>&1); rc=$?
+  local has=no; grep -qx 'finding: models.provider is not set and there is no default provider: qargi project set demo models.provider PROVIDER (qargi provider list)' <<<"$out" && has=yes
+  if [ "$rc" = 0 ] && [ "$has" = "$3" ] && { [ "$3" = yes ] || ! grep -q '^finding:' <<<"$out"; }; then echo "ok   $1"
+  else echo "FAIL $1 (exit $rc, finding wanted: $3; got: $out)"; fail=1; fi
+}
+fnd "validate: the template's empty provider is a finding"   '.'                         yes
+fnd "validate: no models at all is a finding"                'del(.models)'              yes
+fnd "validate: models without a provider is a finding"       '.models={}'                yes
+fnd "validate: a blank provider is a finding"                '.models.provider="  "'     yes
+fnd "validate: a provider that is not a string is a finding" '.models.provider=3'        yes
+fnd "validate: a provider named is no finding"               '.models.provider="claude"' no
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
+out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
+out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
+$DA project set demo models.provider claude >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
@@ -76,4 +95,12 @@ for k in marshal.backend marshal.ttl.x marshal; do
   v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
   msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
 done
+# attach does not guess a provider and stores none; it says so, in the plan and after storing, and the stored answers still validate
+AR=$T/arepo; git init -q -b main "$AR"; echo x > "$AR/README"; git -C "$AR" -c user.name=t -c user.email=t@example.net add -A
+git -C "$AR" -c user.name=t -c user.email=t@example.net commit -q -m one
+out=$($DA project attach "$AR" --name provless --url https://github.com/example/provless 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+grep -q '^finding: models.provider is not set and there is no default provider: qargi project set provless models.provider PROVIDER' <<<"$out" && echo "ok   the attach plan says no provider is set" || { echo "FAIL attach plan finding: $out"; fail=1; }
+out=$($DA project attach "$AR" --name provless --url https://github.com/example/provless --plan "$tok" --approved go 2>&1)
+grep -q '^finding: models.provider is not set' <<<"$out" && [ "$(jq -r '.models.provider // "none"' $T/c/projects/provless.json)" = none ] && echo "ok   attach stores no models.provider and says so" || { echo "FAIL attach stores a provider: $out"; fail=1; }
+$DA project validate provless >/dev/null 2>&1 && echo "ok   the stored answers of an attached project validate" || { echo "FAIL attached project does not validate"; fail=1; }
 exit $fail
