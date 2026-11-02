@@ -1,0 +1,4 @@
+{
+  "class": "write",
+  "description": "Change the code of a project (with its tests, manual page, help, completion and changelog) in your own clone and return the series as patches."
+}

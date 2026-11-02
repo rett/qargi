@@ -138,8 +138,11 @@ case $verb in
     done;;
   audit)
     # Isolation between roles is by convention; the memory version history makes it auditable:
-    # a session titled <project>-<role>-... that wrote under another role's folder is reported.
+    # a session titled <project>-<role>-... that wrote under another role's folder is reported. A session of a cloud base is
+    # titled <project>-worker-... or <project>-reviewer-...: its role is the one in the local tracker row of the session id
+    # (read-only). A session with no row, or a row without a role, is not attributed and is counted in one NOTE at the end.
     bad=0
+    declare -A unattr=()
     for k in $kinds; do
       store=$(store_of "$k"); [ -n "$store" ] || continue
       echo "== $k store $store"
@@ -150,10 +153,12 @@ case $verb in
           t=$(ant beta:sessions retrieve --session-id "$sid" </dev/null 2>/dev/null | jq -r '.title // ""')
           r=${t#"$PROJECT"-}; r=${r%%-*}
           case $r in dev) r="build";; docs) r="write";; esac   # sessions titled before the roles were named by ability
+          if is_base "$r"; then r=$(jq -r --arg s "$sid" '.[$s].role // empty' "$TRK" 2>/dev/null) || r=''; fi
           role_of[$sid]=$r
         fi
         want=$(printf '%s' "$path" | sed -n 's#^/roles/\([^/]*\)/.*#\1#p')
         r=${role_of[$sid]}
+        [ -z "$want" ] || [ -n "$r" ] || unattr[$sid]=1
         if [ -n "$want" ] && [ -n "$r" ] && [ "$want" != "$r" ] && printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$r"; then
           echo "CROSS-ROLE: session $sid (role $r) $op $path"; bad=1
         fi
@@ -162,6 +167,7 @@ case $verb in
       unset role_of
     done
     [ "$bad" = 0 ] && echo "no cross-role writes found"
+    [ "${#unattr[@]}" = 0 ] || echo "NOTE: ${#unattr[@]} session(s) could not be attributed to a role"
     exit $bad;;
   promote)
     [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || die "promote needs --kind K --path /roles/R/..."

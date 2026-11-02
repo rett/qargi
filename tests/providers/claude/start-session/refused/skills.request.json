@@ -1,0 +1,1 @@
+{"surface":"cloud","role":"worker","profile":"build","model":"sonnet","effort":"high","system":"s","agent_id":"agent_1","agent_version":1,"environment_id":"env_1","skills":[{"type":"custom","skill_id":"skill_1"}]}

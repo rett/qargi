@@ -48,7 +48,7 @@ brief() {
     esac
     [ -n "$mdone" ] || die "member $m has no DONE check: give one in the project's teams.$team.done.$m"
     scope=$(jq -r --arg t "$team" --arg r "$m" '(.teams[$t].scopes[$r] // []) | if length == 0 then "none" else join(", ") end' "$f")
-    printf -- '- role: %s\n  ABILITY: %s — load skill qargi-%s\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  RUN_DIR: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
+    printf -- '- role: %s\n  ROLE: %s (the instructions are in your system prompt)\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  RUN_DIR: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
   done
 }
 

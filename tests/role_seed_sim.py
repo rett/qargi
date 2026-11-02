@@ -2,6 +2,7 @@
 """Simulation: a new project's empty stores reach the canon, a role's seed files are added
 (as `canon seed-role` does), and `canon check` must report no problems.
 Usage: role_seed_sim.py ROLE"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, subprocess, sys, tempfile
 role = sys.argv[1]
 here = os.path.dirname(os.path.abspath(__file__))

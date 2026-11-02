@@ -66,6 +66,15 @@ if [ -f "$PCFG" ] && [ "$ROLE" = lead ]; then
     [ -n "$mi" ] && [ "$(jq -r .location <<<"$mi")" = cloud ] || die "the team needs a registered cloud instance $PROJECT-$m: provision it first (qargi provision plan $PROJECT-$m)"
     MEMBERS+="    - {type: agent, id: $(jq -r .agent.id <<<"$mi"), version: $(jq -r '.agent.version_pinned // .agent.version' <<<"$mi")}"$'\n'
   done
+elif [ -f "$PCFG" ] && is_base "$ROLE"; then
+  # a base (worker, reviewer) needs no roles.<base> entry: it takes the project's budget and stores, and the skills of its class;
+  # an entry, when the project has one, sets the model, effort and packages like any role's
+  cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
+  MODEL=${MODEL:-$(cfg '.roles[$r].model // ""')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort // ""')}
+  [ -n "$APT_SET" ] || APT=$(cfg '(.roles[$r].apt // []) | join(" ")')
+  BUDGET=${BUDGET:-$(cfg '.budget_cents')}
+  SKILLS=$(jq -r --arg r "$ROLE" --argjson abil "$(class_abilities "$ROLE" "$PCFG")" '[(.roles[$r].skills // [])[], ($abil[] as $a | (.roles[$a].skills // [])[])] | unique | join(" ")' "$PCFG")
+  MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
 elif [ -f "$PCFG" ]; then
   jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (qargi project show $PROJECT)"
   cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
@@ -82,9 +91,17 @@ TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
   ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
 fi
-MODEL=${MODEL:-claude-sonnet-5-5}; EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
+if [ -z "$MODEL" ]; then   # the balanced model of the project's provider (models.provider, default claude)
+  _prov=claude; [ ! -f "$PCFG" ] || _prov=$(jq -r '.models.provider // "claude" | tostring' "$PCFG" 2>/dev/null) || _prov=claude
+  printf '%s' "$_prov" | grep -Eq '^[a-z][a-z0-9-]*$' && [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
+  MODEL=$(jq -r '.tiers.balanced' "$here/providers/$_prov.json")
+fi
+if is_base "$ROLE"; then EFFORT=${EFFORT:-medium}; fi   # a base runs the balanced tier at medium effort until a session overrides it
+EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
 case $BUDGET in ''|*[!0-9]*) die "--budget CENTS must be a whole number";; esac
 case $NETWORKING in unrestricted|limited) ;; *) die "--networking unrestricted|limited";; esac
+# a read-only role needs a read-only barrier on the cloud surface, or the project's recorded acceptance that there is none
+[ "$(instance_class "$ROLE")" != read-only ] || barrier_guard cloud "$PROJECT"
 ant_ok
 
 # Project-level stores: attach the ones that exist, create the others.
@@ -105,6 +122,22 @@ W=$DA_STATE/provision/$NAME
 D=$W/agents/$NAME
 LOCK=$W/claude-lock.json
 
+# The packs of a base: the union of what the packs render gives each ability of its class (a pack linked to several of them
+# is attached once; a pack one ability opted out of stays out of that ability's share only).
+render_class_packs() { # outdir
+  local out=$1 a one n
+  mkdir -p "$out/skills"; : > "$out/custom_skills.txt"; echo '[]' > "$out/mcp.json"
+  for a in $(jq -r '.[]' <<<"$(class_abilities "$ROLE" "$PCFG")"); do
+    one=$W/packs-out-$a; rm -rf "$one"
+    "$here/packs.sh" packs render "$PROJECT" "$a" "$one" || die "an attached skill or tool failed its review (ability $a)"
+    for n in $(cat "$one/custom_skills.txt"); do
+      grep -qx -- "$n" "$out/custom_skills.txt" || { cp -r "$one/skills/$n" "$out/skills/$n"; echo "$n" >> "$out/custom_skills.txt"; }
+    done
+    jq -c -s '(.[0] + .[1]) | unique_by(.name)' "$out/mcp.json" "$one/mcp.json" > "$out/mcp.tmp" && mv "$out/mcp.tmp" "$out/mcp.json"
+    rm -rf "$one"
+  done
+}
+
 render() {
   local apt_list pip_list go_list sys
   # YAML flow list from the space-separated package names
@@ -112,7 +145,8 @@ render() {
   pip_list="[$(printf '%s' "$ENV_PIP" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   go_list="[$(printf '%s' "$ENV_GO" | xargs -n1 2>/dev/null | paste -sd, - | sed 's/,/, /g')]"
   mkdir -p "$D"
-  rm -rf "$W/packs-out"; "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"
+  rm -rf "$W/packs-out"
+  if is_base "$ROLE"; then render_class_packs "$W/packs-out"; else "$here/packs.sh" packs render "$PROJECT" "$ROLE" "$W/packs-out" || die "an attached skill or tool failed its review"; fi
   sys=$(agent_prompt "$ROLE" "$PROJECT") || die "could not build the system prompt of $ROLE"
   python3 -I - "$TPL" "$D" "$NAME" "$MODEL" "$EFFORT" "$apt_list" "$NETWORKING" "$BUDGET" "$sys" "$PROJECT" "${MEMID:+x}" "${REFID:+x}" "$SKILLS" "$W/packs-out" "$(res_name agent)" "$(res_name environment)" "$(res_name deployment)" "$MEMBERS" "$ROLE" "$ENV_REF" "$pip_list" "$go_list" "$TOOLS_OFF" <<'EOF'
 import sys, pathlib
@@ -192,7 +226,7 @@ case $verb in
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
       cur=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config') || die "cannot read the shared environment $ENVID"
-      lst() { printf '%s' "$1" | xargs -n1 2>/dev/null | jq -R . | jq -sc 'unique'; }
+      lst() { printf '%s' "$1" | xargs -r -n1 2>/dev/null | jq -R . | jq -sc 'unique'; }
       new=$(jq -c --argjson a "$(lst "$ENV_APT")" --argjson p "$(lst "$ENV_PIP")" --argjson g "$(lst "$ENV_GO")" \
         '.packages.apt = ((.packages.apt // []) + $a | unique) | .packages.pip = ((.packages.pip // []) + $p | unique) | .packages.go = ((.packages.go // []) + $g | unique)' <<<"$cur")
       if [ "$new" != "$(jq -c . <<<"$cur")" ]; then
@@ -209,7 +243,7 @@ case $verb in
     if [ -n "$refstore" ] && [ -n "$store" ]; then
       # ant apply attaches a referenced store read-write; the reference store must be read-only.
       arr=$(jq -nc --arg r "$store" --arg f "$refstore" '[
-        {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs."},
+        {type:"memory_store", memory_store_id:$r, access:"read_write", instructions:"Recipes: verified how-to facts. Read README.md first, load what the task needs. Write only under roles/<role>/."},
         {type:"memory_store", memory_store_id:$f, access:"read_only", instructions:"Development reference (rules, workflow, conventions, architecture). Read README.md first, then load only what the task needs. Read-only."}]')
       ant beta:deployments update --deployment-id "$dep" --resource "$arr" >/dev/null 2>&1 \
         || die "could not set the stores' access on the deployment; fix it before running a session"
@@ -220,6 +254,7 @@ case $verb in
     fi
     if [ -n "$newstores" ]; then canonise; fi
     "$here/registry.sh" init --location cloud --deployment "$dep" --name "$NAME" --no-session --asked "$ASKED"
+    prompt_record "$NAME"   # the agent was created with the prompt rendered above: remember its hash
     echo "provisioned $NAME: deployment $dep (approved: $APPROVED)";;
   add-reference)
     need_asked; audit_log provision-add-reference "$NAME"

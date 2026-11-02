@@ -4,28 +4,37 @@
 
 - `master` holds released versions only; every release is a tag.
 - `develop` is the integration branch.
-- Work happens on `feature/<name>` branches started with
-  `git flow feature start <name>` and finished with
-  `git flow feature finish <name>` (merge into `develop`).
-- A release is `git flow release start <version>`, final checks and the
-  `VERSION` and `CHANGELOG.md` update on the release branch, then
-  `git flow release finish <version>`. Fixes to a released version use
-  `git flow hotfix`.
+- Work happens on `feature/<name>` branches, with every merge `--no-ff`. Use
+  the `qargi feature` commands, which follow the git-flow model: `qargi feature
+  start <name>`, `qargi feature merge <name> <branch>` for each verified task,
+  and `qargi feature finish <name>` (merge into `develop`, after
+  `qargi feature verify <name>` passed the whole suite).
+- A release is `qargi release start <version>`; the `VERSION` and
+  `CHANGELOG.md` update is its first commit, then `qargi release verify
+  <version>` and `qargi release finish <version>`. Fixes to a released version
+  use `qargi release start <version> --hotfix`.
 - Tags are the bare version number, for example `0.1.0`.
 
 ## Layout
 
 `bin/qargi` is the single command; `lib/` holds the scripts behind it;
-`skills/qargi-*` are the skills (each a short guide that calls the command; four of
-them, `qargi-build`, `qargi-write`, `qargi-review` and `qargi-test`, define the
-abilities); `agents/member.md` is the one member definition `qargi agent add`
+`skills/qargi-*` are the skills (each a short guide that calls the command; the
+abilities are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
+gets with its task block); `agents/member.md` is the one member definition `qargi agent add`
 renders under the names users choose; `provision/` the resource and memory
-templates; `examples/` sample repository profiles.
+templates; `examples/` sample repository profiles; `packs/` the baseline packs shipped
+with qargi (`baseline.json` and `skills/<name>/SKILL.md`).
+
+To add a baseline pack, write `packs/skills/<name>/SKILL.md` with front matter of
+two keys, `name` (the directory name) and `description`, and portable text that names
+no qargi verb, then list it in `packs/baseline.json`. The packs test checks both: every
+directory is listed and the reverse, and each pack passes the library's review.
 
 ## Tests
 
-`tests/run.sh` runs everything (reconciler, project validator, local never-push barrier,
-guard, members, the role migration, role seeds, shellcheck). It needs no API access and no private data.
+`tests/run.sh` runs everything, and its list of tests and the linter is the inventory. It needs no API access and no private data.
+
+Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 
 ## Changing the canon
 
@@ -55,3 +64,12 @@ Every user-visible change adds a line under `## [Unreleased]` in
 `shellcheck -S warning`. Commit messages state what changed and why; no
 private hostnames, addresses, usernames, home paths or credentials appear in
 the repository or its history.
+
+## Adding a provider
+
+1. Write `lib/providers/NAME.json` to the schema (`qargi provider show claude` is the example). Give every model id the `verified_on` date and `source` from the vendor's own current model list; never write an id from memory. Set each capability per surface and leave `verified_on` null where you have not tested it.
+2. Write the adapter, `lib/providers/NAME/adapter` (or set `"adapter": null` for a descriptor that is data only). Implement only the verbs the descriptor supports; the others exit 3.
+3. Add a stub transport and fixtures under `tests/providers/NAME/` and run `bash tests/conformance.sh NAME` until it is clean.
+4. Run `qargi provider check NAME` until it is clean, and read what it says degrades.
+5. If the read-only barrier is not supported on a surface, say so in the descriptor. A person accepts it per project with `qargi provider accept`; do not default it on.
+6. Add a CHANGELOG entry, and run one scratch session on the real provider with the owner's approval before relying on any unverified capability.

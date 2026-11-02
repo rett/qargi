@@ -14,6 +14,10 @@ One pair per project:
 | `<project>-memory` | memory | read-write | verified how-to facts, role history |
 | `<project>-reference` | reference | read-only | curated rules, workflow, conventions |
 
+A project may hold several memory-kind stores, called tiers; structural files repeat per tier, a note lives in one; see `qargi memory tiers`.
+
+A note moves between tiers only by an explicit `qargi memory move`, never by copying it by hand: the note is written into the target tier with its origin in `Sources:`, its index row follows it, and the original goes to `/_archive/<date>/` of the first tier, so a note stays in one tier and nothing is deleted.
+
 Both stores share one shape: `shared/` for what every role needs, and
 `roles/<role>/` for what only that role loads.
 
@@ -26,7 +30,14 @@ Both stores share one shape: `shared/` for what every role needs, and
 /roles/<role>/...          that role's files
 /_conflicts/<date>/...     content the reconciler could not place without losing
                            something; a curator resolves it, then deletes it
+/_archive/<date>/...       optional: notes `qargi memory split` moved out of the store;
+                           the Sources: line records where each came from, and
+                           `qargi memory merge` moves them back
 ```
+
+`/_archive/` is tolerated, not required, and does not change the canon version:
+`canon check` accepts it and warns about a note there that lacks the `archived from`
+segment on its `Sources:` line.
 
 Memory store, inside `shared/` and each role: `sandbox/<topic>.md`,
 `repos/<repo>/{INDEX.md,setup,gates,pitfalls}/<topic>.md`, and for roles
@@ -109,19 +120,22 @@ runs it, and so does `qargi memory lint`.
 ## Role rules
 
 - The role is the ability of the task: named in a cloud agent's prompt, and in a
-  member's task block (`ABILITY: build`). An agent loads `/README.md`,
+  member's task block (`ROLE: build (class write)`). An agent loads `/README.md`,
   `/shared/INDEX.md` and `/roles/<its role>/INDEX.md`, then only what the task
-  needs, and never reads or writes under another role's folder.
+  needs, and never reads or writes under another role's folder. `shared/` is written only by
+  promotion (`qargi canon promote`) or by the person; an agent proposes.
 - Roles come from the fixed list (`build`, `review`, `write`, `test`, plus `lead`) and from the
   project's stored answers. A role folder for a role the project does not use is a
-  deviation.
+  deviation. A cloud base agent (`<project>-worker`, `<project>-reviewer`) is not a role: it
+  runs the role named for each session.
 - This isolation is hygiene, not a trust boundary: a store mounts whole, so an agent can
   read or write another role's folder if it ignores its instructions. If a role must be
   truly separate, give it its own stores.
-- It is by convention and made auditable, not enforced: It is made auditable,
-  not enforced: `qargi canon audit` reads the memory version history and
-  reports a session titled for one role (`<project>-<role>-<task>`) writing under
-  another role's folder.
+- It is by convention and made auditable, not enforced: `qargi canon audit`
+  reads the memory version history and reports a session titled for one role
+  (`<project>-<role>-<task>`) writing under another role's folder. It reads the
+  role from the session title, so a base session (`<project>-worker-<task>`) is
+  not attributed to a role yet.
 - Promote content that turns out to serve every role with `qargi canon
   promote`; never copy it.
 
@@ -129,9 +143,8 @@ runs it, and so does `qargi memory lint`.
 
 Per role, `canon/layout.json` lists the Anthropic skills the agent carries (`pdf`
 for write) and the custom skills the tool ships for that role. The ability itself
-is defined by the skill `qargi-<role>` (qargi-build, qargi-write, qargi-review,
-qargi-test): a member loads it when the task block names the ability, and a cloud
-agent carries its text in the prompt. The project's stored
+is defined by the role text, `roles/<role>/ROLE.md`, not by a skill: a member gets it
+with its task block, and a cloud agent carries it in the prompt. The project's stored
 answers choose among them and `qargi provision` attaches them to the agent.
 Checking an existing agent's skills against its role is not done by the
 reconciler yet; the layout manifest is where that will read from.

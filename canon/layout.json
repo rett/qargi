@@ -19,6 +19,9 @@
     "roles",
     "_conflicts"
   ],
+  "tolerated": [
+    "_archive"
+  ],
   "role_index": "INDEX.md",
   "skills": {
     "build": {

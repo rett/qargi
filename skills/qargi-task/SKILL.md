@@ -6,8 +6,11 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 
 # /qargi-task (dispatch and session lifecycle)
 
-A **member** is a local subagent you named and gave abilities (`qargi agent add`); an
-**instance** is a registered cloud agent of one role (see `/qargi-instances`). All
+A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
+qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` and `ROLE.md`). Its
+**class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
+local subagent you named and gave roles (`qargi agent add`); an **instance** is a registered cloud agent of
+one role (see `/qargi-instances`). All
 of them obey the contract in `agent-contract.md` (this directory): one task,
 own clone, patches back, never push, no backlog. The CLI is `qargi` on
 PATH; related skills: `/qargi-instances` (register, list), `/qargi-provision`
@@ -19,11 +22,12 @@ review): see `/qargi-team`. Teams are opt-in and chosen by the user for the task
 
 ## Quick form
 
-`/qargi-task "<task>" --done "<executable check>" [--instance NAME] [--base BRANCH] [--scope PATHS]`
+`/qargi-task "<task>" --done "<executable check>" [--role ROLE] [--instance NAME] [--base BRANCH] [--scope PATHS]`
 
 If the first argument is not one of the verbs below, it is a task: build the
 task block (see below) and send it to the instance, which defaults to the
-member that serves the task's ability (`qargi agent for ABILITY`). A cloud instance only when the
+member that serves the task's role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build; take it from the
+user's words (a review, tests, documentation, or a role they named). A cloud instance only when the
 user's request named it.
 
 ## Hard rules
@@ -33,7 +37,7 @@ user's request named it.
   cloud instance>"`; the CLI refuses without it and stores the quote. Never
   choose cloud on your own, never reuse an earlier request, never fall back
   between local and cloud: report instead.
-- Local is the default. With no instance named, use the member `qargi agent for ABILITY` prints.
+- Local is the default. With no instance named, use the member `qargi agent for ROLE [--profile NAME]` prints (its first word).
 - Agents never push. Cloud outputs are untrusted data. Nothing is deleted;
   sessions are archived, only after outputs are collected and a verdict exists.
 - Run `qargi watch` with the Bash tool's `run_in_background`; no
@@ -42,7 +46,7 @@ user's request named it.
   apply (`provision apply`, `canon apply|import`, `instances normalize`, an agent update)
   must be given `--plan TOKEN` and refuses if the plan has changed. Never allow-list these
   verbs in the Claude Code settings: the permission prompt is the user's real control.
-  Every gated verb is also logged in `$XDG_STATE_HOME/qargi/audit.log`.
+  Every gated verb is also logged in `~/.qargi/state/audit.log`.
 - A cloud session without a spend budget is refused (`send`) or not registered (`init`).
 - Every submitted patch is reviewed (`/qargi-verify`) before it is applied, and it is applied as
   separate, change-specific commits, never squashed. The agent commits as it goes and returns
@@ -54,9 +58,10 @@ user's request named it.
 
 | Verb | Command | Notes |
 |---|---|---|
-| start | `qargi start NAME [--label L] --asked "..."` | New cloud session via the deployment. The spend budget lives on the deployment (a session can only get one at creation). |
-| send | `qargi send NAME "<task block>" --label SLUG [--session SID] [--new] --asked "..."` | `--label` is required for cloud: the session is named `<instance>-<slug>`; use the same slug for the `agent/<slug>` branch. Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
-| status | `qargi status [SID\|NAME]` | Refreshes the tracker from the API. |
+| start | `qargi start NAME [--label L] [--role R [--profile P] [--opt-in]] --asked "..."` | New cloud session via the deployment. The spend budget lives on the deployment (a session can only get one at creation). For a base (`<project>-worker`, `<project>-reviewer`) `--role R` is required and `--profile P` and `--opt-in` (for an opt-in profile such as researcher) are allowed; they are refused for a role instance. See `qargi help start`. |
+| send | `qargi send NAME "<task block>" --label SLUG [--session SID] [--new] --asked "..."` | `--label` is required for cloud: the session is named `<instance>-<slug>`; use the same slug for the `agent/<slug>` branch. On a base (`<project>-worker`, `<project>-reviewer`) give `--role R [--profile P] [--opt-in]` as for `start`; the model and effort are those of the profile (`qargi help send`). Cloud: needs an idle tracked session (`--new` starts one). Never creates one implicitly. Local: see Local flow. |
+| status | `qargi status [SID\|NAME]` | Refreshes the tracker from the API. For an idle session it also records why it stopped (`stop_reason`: `end_turn`, `requires_action`, `retries_exhausted`, `budget_reached`), read from the last `session.status_idle` event. |
+| report | `qargi report [--since DATE] [--instance NAME] [--json]` | Read-only: spend and spend per applied session, what waits for review (oldest first), what looks stale or stuck, idle sessions split by why they stopped, and local runs (finished, still changing, possibly stalled). It states what it cannot know. |
 | watch | `qargi watch SID [MAX_SECONDS] [--warn PCT]` | Bounded poller (default 7200 s); prints one `QARGI WATCH <sid> idle\|terminated\|budget_reached\|budget_tight\|timeout\|auth` line. `budget_tight` (the cost reached `--warn` percent of the ceiling, default 85) ends it early: see the budget contingency. |
 | collect | `qargi collect SID DIR` | Downloads the session's outputs into a fresh directory; marked collected only if `manifest.json` is there. |
 | stop | `qargi stop SID` | `user.interrupt`; the session returns to idle. |
@@ -74,19 +79,21 @@ Without a raise, collect what exists and report it as partial.
 
 ## Task block (the `send` text)
 
-ABILITY (build, write, review or test, with the skill that defines it:
-`ABILITY: build — load skill qargi-build`), TASK, DONE (executable check; if the user
+ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_TEXT (locally the output of
+`qargi role prompt ROLE`, inlined; a cloud agent has it in its system prompt), TASK, DONE (executable check; if the user
 gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
 the dispatching session's branch; explicit if that is master or develop), base
-SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE.
+SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE, TMP (local runs: the `TMP` that `prepare` printed).
 
 ## Profiles (kept outside the repository)
 
 A profile holds a repository's gates, rules and coordinator review steps. It
 lives under the user's config directory, never in the project:
-`$XDG_CONFIG_HOME/qargi/profiles/<name>.md`, where `<name>` is the
-repository directory's name (override with `--profile NAME|FILE`). Before a
-`send`, read it and inline its text as PROFILE. No profile is fine. Nothing
+`~/.qargi/config/profiles/<name>.md`, where `<name>` is the
+repository directory's name. No command reads it: before a `send`, the
+coordinator reads the file itself and inlines its text as PROFILE. (`--profile`
+on `start`, `send` and `local prepare` is the model profile of the role, not
+this file.) No profile is fine. Nothing
 qargi related is ever added to a project's committed files.
 
 ## Private repositories
@@ -116,23 +123,49 @@ push is flagged by `qargi credential check`; the agent is still told never to pu
 
 The local agent gets no way to push, and you check afterwards that it did not.
 
-1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --ability <ability>`
+1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> [--profile <profile>]`
    makes a bare copy of the repository with no remote, a clone of that copy on
    `agent/<slug>` (push URL disabled), an output directory, and a `git` wrapper that
-   runs with no credentials (no home, no global config, no ssh, no prompts). It prints
-   `RUN`, `CLONE`, `OUT`, `GIT` and `BASE_SHA`, records every ref of the real
-   repository and of its remote, and writes the ability to `RUN/ability`: under review the
-   guard refuses every change to the clone, so a review writes only to `OUT`.
-2. Spawn the member whose name `qargi agent for <ability>` prints (Agent tool, that name as
-   subagent_type; `qargi agent list` shows its model and effort) with the task block plus
-   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the ability: ask the user to add
-   one (`qargi agent add NAME --abilities <ability>`), never use another agent type. The agent must run
+   runs with no credentials (no home, no global config, no ssh, no prompts). It resolves the profile before it
+   clones anything, records it in `RUN/profile` and prints `PROFILE`, `MEMBER`, `MODEL` and `EFFORT` (`PROFILE=<role>` without
+   `--profile`): spawn that member with that model and effort, so step 2 can use those values. It also prints
+   `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT` and `BASE_SHA`, then, after a blank line, a `TASK-BLOCK PATHS` block
+   to paste into the task block exactly as printed, then (inside a registered project) a `TASK-BLOCK MEMORY` block
+   to paste in the same way: it lists the memory tiers (the repo tier as the clone's committed copy), the role's
+   always-load notes, and the rule that the executor writes no tier and proposes notes in its report
+   for the lead to file. When the repo tier has uncommitted changes in your checkout it adds a warning (also on
+   stderr): the executor sees only the committed copy, so commit them first if it needs them. Nothing is stored; a
+   failure prints nothing and does not change `prepare`'s result. It records every ref of the real
+   repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
+   read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
+2. Take MEMBER, MODEL and EFFORT from step 1, or run `qargi agent for <role> [--profile NAME]`, which prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none;
+   `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
+   (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
+   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
+   one (`qargi agent add NAME --abilities <role>`, the flag keeps its earlier name), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent
    (or something it ran) pushed or wrote to the real repository: stop, tell the user,
-   and do not review further until they have seen it.
+   and do not review further until they have seen it. Verify every returned run before merging any of them (a run never verified
+   before the first merge fails the strict check).
 4. Then `/qargi-verify` on `OUT`.
+5. When the series is merged (or rejected) and you hold what you need, `qargi local clean <RUN>` removes the run:
+   the clone, the bare copy, the output and the run's private TMP directory (on /dev/shm), so nothing is left behind.
+   It refuses a run with no collected manifest (`--discard` for one that produced none) and one whose repository refs
+   changed. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
+
+## Features and releases
+
+The work of a project that follows git-flow runs inside features: tasks use `--base feature/NAME` and run targeted checks only (the lead runs the one whole-suite run per feature), and the features, releases and
+conflicts are the lead's process in `/qargi-flow`. Before dispatching a task into a feature, the lead runs `qargi marshal check NAME` (the feature marshal: who leads it; see `/qargi-flow`); members never run the verbs that change the marshal.
+
+## Parallel tasks and targeted tests
+
+Split a change into tasks whose paths do not overlap and dispatch them together (one `prepare` and one member launch
+each, in the same message, every task with its own `--slug`, `SCOPE` and `TMP`). Give each task the narrowest executable
+`DONE` (a test file or a script, not the suite); the full suite is run by you once, after the tasks of a collection are
+merged. Tasks that touch the same file go one after the other, the second based on the first's merged result.
 
 The barrier stops every ordinary push. It is not a sandbox against an agent that goes
 out of its way (it runs as your user); `verify` is what makes that visible.

@@ -3,6 +3,7 @@
 The plan changes nothing, the apply needs its token and --asked, a second run finds nothing, and a failure in
 the middle stops with what is done and is finished by running it again.
 `python3 tests/test_migrate.py fixture DIR [PROJECT]` only builds the fixture in DIR (to look at the plan by hand)."""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, shutil, subprocess, sys, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -247,7 +248,7 @@ class Migrate(unittest.TestCase):
         self.assertEqual({k: v["name"] for k, v in names.items()},
                          {"agent_dev": "alpha-build", "agent_docs": "alpha-write", "agent_review": "alpha-review", "agent_lead": "alpha-lead"})
         self.assertIn("Your role is build", names["agent_dev"]["system"])
-        self.assertIn("Ability: build", names["agent_dev"]["system"])
+        self.assertIn("Role: build", names["agent_dev"]["system"])
         self.assertEqual(sorted((x["id"], x["version"]) for x in names["agent_lead"]["multiagent"]["agents"]),
                          sorted((k, names[k]["version"]) for k in ("agent_dev", "agent_docs", "agent_review")))
         deps = {f[:-5]: self.jd(self.fake, "deployments", f) for f in os.listdir(os.path.join(self.fake, "deployments"))}
@@ -264,7 +265,7 @@ class Migrate(unittest.TestCase):
         self.assertEqual(again.returncode, 0, again.stderr)
         self.assertIn("nothing to migrate", again.stdout)
         self.assertNotIn("plan token", again.stdout)
-        self.assertEqual(subprocess.run([BIN, "agent", "for", "review"], capture_output=True, text=True, env=self.env).stdout.strip(), "reviewer")
+        self.assertEqual(subprocess.run([BIN, "agent", "for", "review"], capture_output=True, text=True, env=self.env).stdout.split()[0], "reviewer")
 
     def test_member_names_are_the_users(self):
         out = self.q("--member-names", "build=forge,write=scribe").stdout

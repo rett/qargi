@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "name": "gitflow",
+  "version": 1,
+  "description": "Git-flow as described by its author (A successful Git branching model): master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
+  "params": {
+    "project": {
+      "required": true,
+      "help": "the project's name"
+    },
+    "test_command": {
+      "default": "make test",
+      "help": "the command that runs the whole test suite"
+    },
+    "version": {
+      "default": "0.1.0",
+      "help": "the first version"
+    },
+    "year": {
+      "default": "",
+      "help": "the copyright year (default: this year)"
+    }
+  },
+  "branches": {
+    "long_lived": [
+      "master",
+      "develop"
+    ],
+    "feature": "feature/{name}",
+    "task": "agent/{slug}",
+    "release": "release/{version}",
+    "hotfix": "hotfix/{version}",
+    "tag": "{version}"
+  },
+  "versioning": {
+    "file": "VERSION",
+    "changelog": "CHANGELOG.md",
+    "changelog_format": "keepachangelog",
+    "scheme": "semver"
+  },
+  "tests": {
+    "task": "the targeted check that covers the change",
+    "collection": "the whole suite, once, when a feature is complete and again on a release branch's pull request in CI"
+  },
+  "ci": {
+    "provider": "github-actions",
+    "file": ".github/workflows/test.yml",
+    "runs_on": [
+      "pull_request",
+      "push:develop"
+    ]
+  },
+  "release": [
+    "a feature is a branch cut from develop, as broad as a theme: the lead merges the verified series of each related task into it with --no-ff; tasks get targeted checks only",
+    "when the feature is complete, run the whole suite once on it, then merge it into develop with --no-ff and delete it; develop sees one merge per feature",
+    "when you say develop is ready: start release/<version> from develop; the first commit bumps the version and dates the changelog; only minor fixes follow",
+    "push the release branch and open a pull request into master; CI runs on exactly the commit that will be released",
+    "when CI passes: merge release/<version> into master with --no-ff, tag it, merge it into develop with --no-ff, delete the branch",
+    "a critical fix to production is a hotfix/<version> branch from master, finished the same way (into the open release branch instead of develop when one exists)"
+  ],
+  "roles": {
+    "build": {
+      "base": "@dispatcher"
+    },
+    "write": {
+      "base": "@dispatcher"
+    },
+    "review": {
+      "base": "@dispatcher"
+    },
+    "test": {
+      "base": "@dispatcher"
+    }
+  },
+  "scaffold": [
+    {
+      "src": "README.md",
+      "dest": "README.md"
+    },
+    {
+      "src": "VERSION",
+      "dest": "VERSION"
+    },
+    {
+      "src": "CHANGELOG.md",
+      "dest": "CHANGELOG.md"
+    },
+    {
+      "src": "CONTRIBUTING.md",
+      "dest": "CONTRIBUTING.md"
+    },
+    {
+      "src": "CLAUDE.md",
+      "dest": "CLAUDE.md"
+    },
+    {
+      "src": "gitignore",
+      "dest": ".gitignore"
+    },
+    {
+      "src": ".github/workflows/test.yml",
+      "dest": ".github/workflows/test.yml"
+    }
+  ],
+  "deployment": {
+    "note": "Deployment differs a lot between projects, so nothing is set up unless you choose it. Each option can be done for you or by hand.",
+    "options": [
+      {
+        "id": "none",
+        "title": "Nothing yet",
+        "automatable": false,
+        "instructions": "The tag on master is the release. Decide how to ship it later."
+      },
+      {
+        "id": "github-release",
+        "title": "A GitHub release with the built files",
+        "automatable": true,
+        "instructions": "After the tag is pushed: build the files you ship from the tag, then `gh release create <tag> --verify-tag --title \"<project> <tag>\" --notes-file <notes> <files>`. Keep the notes in the changelog."
+      },
+      {
+        "id": "container-image",
+        "title": "A container image built by CI on a tag",
+        "automatable": true,
+        "instructions": "Add a Containerfile, then a workflow that runs on tags, builds the image and pushes it to your registry (GitHub Container Registry needs no extra account). Store registry credentials as repository secrets, never in the repository."
+      },
+      {
+        "id": "package-registry",
+        "title": "A package published to a registry on a tag",
+        "automatable": true,
+        "instructions": "Add the package metadata for your language (npm, PyPI, crates.io, Go modules), then a workflow that runs on tags and publishes with a token kept as a repository secret. Try it with the registry's test instance first."
+      }
+    ]
+  }
+}

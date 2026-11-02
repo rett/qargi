@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reconciler tests on synthetic stores (no API, no private data).
 Run: python3 tests/test_canon.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import datetime, json, os, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -307,6 +308,14 @@ class Canon(unittest.TestCase):
         _, after = self.assertConverges("memory", {})
         after["/roles/ghost/INDEX.md"] = "x"
         self.assertEqual(run("check", "memory", after).returncode, 1)
+
+    def test_seed_readme_keeps_shared_curated(self):
+        text = slurp(os.path.join(SEED, "README.memory.md"))
+        plain = text.replace("`", "")                  # the seed writes paths in code spans
+        self.assertIn("Write only under roles/<your role>/", plain)
+        self.assertIn("shared/ is curated", plain)
+        self.assertNotIn("Write only under shared/", plain)
+        self.assertLess(len(text), 3000)
 
 
 if __name__ == "__main__":

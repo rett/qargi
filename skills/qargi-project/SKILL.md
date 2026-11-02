@@ -1,13 +1,13 @@
 ---
 name: qargi-project
 description: Initialise a project for qargi by asking the preliminary questions once (repository, long-lived branches, roles, per-role base branch, push policy, model and effort, packages, skills, budget, memory) and storing the answers outside the repository. Provisioning and dispatch read them.
-argument-hint: init|show|list|validate NAME
+argument-hint: init|new|attach|adopt|show|list|validate NAME
 ---
 
 # /qargi-project
 
 Run this before the first `/qargi-provision` for a project. The answers live in
-`$XDG_CONFIG_HOME/qargi/projects/<project>.json` (never in a repository) and
+`~/.qargi/config/projects/<project>.json` (never in a repository) and
 drive provisioning, the agent contracts and dispatch defaults.
 
 ## Ask first, then store
@@ -46,15 +46,20 @@ recommended; do not assume answers:
 6. **Budget** per cloud session in cents (default 500, set on the deployment).
 7. **Memory.** Create the project's stores or attach existing ones (ids).
 8. **Members, once.** The local workers are agents the user names. Ask for their
-   names and abilities, suggesting four members (`builder` for build, `writer` for
-   write, `reviewer` for review, `tester` for test) or one member with all four. Create
-   each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
+   names and abilities, suggesting the two base members (`worker` for build, write and
+   test; `reviewer` for review); specializations such as the auditor are profiles, not
+   members (`qargi agent models`). Create each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
    repository's `.claude/agents`, hidden from git); skip names that `qargi agent list`
    already shows.
 9. **Profile.** Which profile file holds the repository's gates and review steps
    (kept under the config directory, per role if the gates differ).
 
-Then write the answers file and store it:
+A project can also start from a repository instead of an answers file: `qargi project new NAME` creates a new one on the
+methodology's branches, `qargi project attach [DIR]` reads an existing one (it shows the answers and the gaps and changes nothing in
+the repository), and `qargi project adopt NAME` then creates the missing long-lived branches and methodology files on a branch to
+review. See `qargi help project`.
+
+Or write the answers file and store it:
 
 ```sh
 qargi project template NAME > answers.json   # edit with the answers
