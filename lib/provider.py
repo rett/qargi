@@ -27,6 +27,9 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   memory_dir(name, checkout) / checkout_key(rule, path) / launch_line(name, render)
                                        the layout's templates filled in
   project_provider(answers, project)   models.provider of the project's answers; there is no default: NoProvider (exit 2)
+  provider_of(answers, surface)        the runtime for one surface: models.provider is a name (runtime or family) or {local, cloud};
+                                       a surface left unset is NoProvider (exit 2). resolve_runtime(name, surface) is the rule: a
+                                       runtime of that name, else a family with exactly one runtime on the surface, else Refused
 Every function that reads a definition takes root= (the shipped directory) and library= (the pack library) for tests; the defaults are
 beside this file and below the configuration directory. A test that names a root sees a library only when it names one too.
 
@@ -49,8 +52,9 @@ Usage: provider.py list
                                          exit 3 with that refusal unless the provider supports skills on the local surface
        provider.py launch NAME RENDER    the command that starts a session on the render directory RENDER (exit 3: none)
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
-       provider.py of PROJECT [--conf DIR]
-                                         prints the project's provider (models.provider); exit 2 when it names none or there is no such project
+       provider.py of PROJECT [--conf DIR] [--surface local|cloud]
+                                         prints the project's provider (models.provider); with a surface, the runtime for it (a family
+                                         name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import copy
 import hashlib
@@ -86,6 +90,14 @@ class Refused(ProviderError):
 
 class Clash(Refused):
     """The same name is defined twice, as a shipped file and in the pack library."""
+
+
+class Ambiguous(Refused):
+    """A family name that matches more than one runtime on a surface."""
+
+
+class NotServed(Refused):
+    """A runtime of that name exists but does not serve the surface (provider_of turns it into NoProvider for a single name)."""
 
 
 NON_PROVIDERS = ("schema", "schema-2", "adapter-schema")   # JSON files in lib/providers/ that describe descriptors and adapters; they are not providers
@@ -867,20 +879,91 @@ def require_skills(name, would, root=None, library=None):
         raise Unsupported("provider %s has no skills support on the local surface: %s" % (name, would))
 
 
-def project_provider(answers, project):
-    """The provider of a project: models.provider of its stored answers. There is no default: absent or empty is NoProvider (exit
-    2). A name with no descriptor is refused later, by load(), like any unknown provider."""
+def _provider_answer(answers):
+    """models.provider of the answers: a non-empty string (stripped), a dict {local, cloud}, or None for anything else."""
     models = answers.get("models") if isinstance(answers, dict) else None
     p = models.get("provider") if isinstance(models, dict) else None
-    if not isinstance(p, str) or not p.strip():
-        raise NoProvider("project %s has no provider: set one with qargi project set %s models.provider NAME" % (project, project))
-    return p.strip()
+    if isinstance(p, str) and p.strip():
+        return p.strip()
+    return p if isinstance(p, dict) else None
 
 
-def provider_of(project, conf=None):
-    """project_provider() of the stored answers of a project. A project with no stored answers is NoProvider too (exit 2), but says
-    so: "no such project 'X'" is not "project X has no provider", whose fix (qargi project set) would fail for a name that is not a project.
-    No project at all (a verb given none, and none inferred from the checkout) is a refusal that says what to pass."""
+def _no_provider(project, surface=None):
+    project = project or "PROJECT"
+    if surface is None:
+        return NoProvider("project %s has no provider: set one with qargi project set %s models.provider NAME" % (project, project))
+    return NoProvider("project %s has no %s provider: set one with qargi project set %s models.provider.%s NAME" % (project, surface, project, surface))
+
+
+def project_provider(answers, project, surface=None, root=None, library=None):
+    """The provider of a project: models.provider of its stored answers. There is no default: absent or empty is NoProvider (exit
+    2). A name with no descriptor is refused later, by load(), like any unknown provider. A string is returned as it is, unresolved
+    (the earlier behaviour); an object {local, cloud} is returned only when it names one thing for both surfaces, else the verb must
+    say which surface it means (provider_of) and Refused is raised. With a surface this is provider_of()."""
+    if surface is not None:
+        return provider_of(answers, surface, project, root, library)
+    p = _provider_answer(answers)
+    if isinstance(p, str):
+        return p
+    if isinstance(p, dict):
+        values = {v.strip() for v in p.values() if isinstance(v, str) and v.strip()}
+        if len(values) == 1 and all(isinstance(p.get(s), str) and p[s].strip() for s in SURFACES):
+            return values.pop()
+        raise Refused("project %s names a runtime per surface (models.provider is %s); this verb has to ask for one surface: "
+                      "qargi provider of %s --surface local|cloud" % (project or "PROJECT", json.dumps(p, sort_keys=True), project or "PROJECT"))
+    raise _no_provider(project)
+
+
+def resolve_project(answers, surface, project=None, root=None, library=None):
+    """(runtime, notice) for one surface of a project: models.provider is a name (runtime or family, for every surface) or an object
+    {local, cloud}. A surface the answers leave unset is NoProvider (exit 2); there is no default. The notice is None, or says that a
+    single name was resolved through its family and what to set instead."""
+    if surface not in SURFACES:
+        raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
+    p = _provider_answer(answers)
+    if p is None:
+        raise _no_provider(project)
+    if isinstance(p, dict):
+        for k in p:
+            if k not in SURFACES:
+                raise Refused("models.provider: unknown surface '%s'; one of %s" % (k, ", ".join(SURFACES)))
+        name = p.get(surface)
+        if not isinstance(name, str) or not name.strip():
+            raise _no_provider(project, surface)
+        runtime, by_family = _resolve(name.strip(), surface, root, library)
+        return runtime, None
+    try:
+        runtime, by_family = _resolve(p, surface, root, library)
+    except NotServed as e:
+        raise NoProvider("project %s has no %s provider: its provider '%s' does not serve that surface; set one with qargi project set %s "
+                         "models.provider.%s NAME" % (project or "PROJECT", surface, p, project or "PROJECT", surface)) from e
+    notice = None
+    if by_family:
+        notice = ("models.provider is the single name '%s'; on the %s surface it resolves to %s through the family. Name a runtime for each "
+                  "surface: qargi project set %s models.provider.%s %s" % (p, surface, runtime, project or "PROJECT", surface, runtime))
+    return runtime, notice
+
+
+def provider_of(answers, surface=None, project=None, root=None, library=None):
+    """The runtime a project uses on one surface (resolve_project() without the notice). The earlier call provider_of(PROJECT, conf) is
+    provider_of_project()."""
+    if isinstance(answers, str):
+        return provider_of_project(answers, surface)
+    if surface is None:
+        raise ProviderError("provider_of needs a surface (one of %s)" % ", ".join(SURFACES))
+    return resolve_project(answers, surface, project, root, library)[0]
+
+
+def provider_of_project(project, conf=None, surface=None, root=None, library=None):
+    """The provider of a stored project. A project with no stored answers is NoProvider too (exit 2), but says so: "no such project 'X'"
+    is not "project X has no provider", whose fix (qargi project set) would fail for a name that is not a project. No project at all (a
+    verb given none, and none inferred from the checkout) is a refusal that says what to pass. With a surface the name is resolved for
+    it (provider_of); without, project_provider() answers."""
+    return project_provider(_stored_answers(project, conf), project, surface, root, library)
+
+
+def _stored_answers(project, conf=None):
+    """The stored answers of a project, or NoProvider saying why there are none."""
     if not project:
         raise NoProvider("no project given, so no provider: a provider belongs to a project; pass --project NAME (or run from a project checkout)")
     if not NAME_RE.match(project) or not os.path.lexists(os.path.join(conf or _conf(), "projects", project + ".json")):
@@ -888,7 +971,56 @@ def provider_of(project, conf=None):
     answers = project_answers(project, conf)
     if answers is None:
         raise NoProvider("cannot read the stored answers of project '%s' (qargi project show %s)" % (project, project))
-    return project_provider(answers, project)
+    return answers
+
+
+def _runtime_docs(e):
+    try:
+        return _docs(e)
+    except ProviderError:
+        return {}
+
+
+def resolve_runtime(name, surface, root=None, library=None):
+    """The runtime a name stands for on a surface: (1) a runtime of that name that serves the surface; (2) a family name matching exactly
+    ONE runtime (shipped or library) of the surface; (3) otherwise Refused, saying what is available. Naming is explicit; nothing here
+    picks a default."""
+    return _resolve(name, surface, root, library)[0]
+
+
+def _resolve(name, surface, root, library):
+    """(runtime, True when the name was a family)."""
+    if surface not in SURFACES:
+        raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
+    if not isinstance(name, str) or not NAME_RE.match(name):
+        raise Refused("'%s' is not a provider or family name" % name)
+    own = _pick(name, "provider", root, library)
+    served = list(_runtime_docs(own)) if own else []
+    if own and surface in served:
+        return name, False
+    found = _scan(root, library)
+    candidates, runtimes, families = [], set(), set()
+    for n, es in sorted(found.items()):
+        provs = [e for e in es if _kind(e) == "provider"]
+        docs = [d for e in provs for d in [_runtime_docs(e).get(surface)] if d is not None]
+        if not docs:
+            continue
+        if len({e["origin"] for e in es}) > 1:                         # defined twice: it matters only if it could be this family
+            if any(d.get("family") == name for d in docs):
+                raise Clash("'%s' is defined twice (shipped and library); qargi provider remove %s, or rename it" % (n, n))
+            continue
+        runtimes.add(n)
+        families.add(docs[0].get("family"))
+        if docs[0].get("family") == name:
+            candidates.append(n)
+    if len(candidates) == 1:
+        return candidates[0], True
+    if len(candidates) > 1:
+        raise Ambiguous("the family '%s' has more than one runtime on the %s surface (%s); name one of them" % (name, surface, ", ".join(candidates)))
+    if own:
+        raise NotServed("the provider %s does not serve the %s surface (it serves %s)" % (name, surface, ", ".join(served) or "none"))
+    available = sorted(runtimes | {f for f in families if f})
+    raise Refused("no runtime or family '%s' for the %s surface; available: %s" % (name, surface, ", ".join(available) or "none"))
 
 
 def skills_dirs(name=None, root=None, library=None):
@@ -1128,9 +1260,33 @@ def cmd_layout(name, field, would, home):
     return 0
 
 
+def cmd_of(args):
+    """of PROJECT [--conf DIR] [--surface local|cloud]: the project's provider. With a surface it is that surface's runtime (a family
+    name is resolved; a notice goes to stderr when it was); without, what models.provider says when it is one name."""
+    opts, pos, i = {}, [], 0
+    while i < len(args):
+        if args[i] in ("--conf", "--surface") and i + 1 < len(args):
+            opts[args[i]], i = args[i + 1], i + 2
+        else:
+            pos.append(args[i])
+            i += 1
+    if len(pos) != 1 or "--surface" in opts and opts["--surface"] not in SURFACES or any(a.startswith("--") for a in pos):
+        print("usage: qargi provider of PROJECT [--conf DIR] [--surface local|cloud]", file=sys.stderr)
+        return 2
+    project, conf, surface = pos[0], opts.get("--conf"), opts.get("--surface")
+    if surface is None:
+        print(provider_of_project(project, conf))
+        return 0
+    runtime, notice = resolve_project(_stored_answers(project, conf), surface, project)
+    if notice:
+        print("qargi: note: " + notice, file=sys.stderr)
+    print(runtime)
+    return 0
+
+
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -1156,9 +1312,7 @@ def main(argv):
                 print(d)
             return 0
         if verb == "of":
-            if len(rest) in (1, 3) and (len(rest) == 1 or rest[1] == '--conf'):
-                print(provider_of(rest[0], rest[2] if len(rest) == 3 else None))
-                return 0
+            return cmd_of(rest)
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):
