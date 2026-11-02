@@ -177,4 +177,37 @@ printf '%s' '{"name":"ctool","url":"https://mcp.example.net/","tools":{"list_ite
 $DA tool import "$T/ct.json" >/dev/null 2>&1 && no "tool import without --compatible" || ok "tool import refuses a pack without compatible_providers"
 tok=$($DA tool import "$T/ct.json" --compatible fam | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA tool import "$T/ct.json" --compatible fam --plan "$tok" --approved x >/dev/null 2>&1 && [ "$(rec tool compatible_providers ctool)" = '["fam"]' ] && ok "a tool pack is stored with its declaration" || no "tool record"
 
+# matching: a runtime name or its family; a pack the provider is not on is skipped with a note, never attached silently
+for rt in "famcli:local" "famhost:cloud"; do n=${rt%%:*}; s=${rt##*:}; mkdir -p "$T/c/packs/providers/$n"
+  jq -n --arg n "$n" --arg s "$s" '{schema:2,kind:"provider",provider:$n,family:"fam",surface:$s,models:{pattern:"^.+$",tiers:{"*":{model:"m",alias:"m",verified_on:"2026-11-02",source:"test"}},effort:null},
+    dispatch:{mode:"command",argv:[$n,"run"],prompt:{via:"stdin"},cwd:"{clone}",output:{format:"text"}},agents:null,resources:{},barrier:{kind:"none"}}' > "$T/c/packs/providers/$n/definition.json"; done
+$DA skill unlink style --scope user >/dev/null; $DA skill unlink build-only --scope user-role --role build >/dev/null
+mkp m-any any; mkp m-fam fam; mkp m-cli famcli; mkp m-host famhost; mkp m-other elsewhere; mkp m-two "elsewhere,fam"
+jq -n '{schema:1,project:"mp",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
+  roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
+  models:{provider:{local:"famcli",cloud:"famhost"}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/mp.json"
+for n in m-any m-fam m-cli m-host m-other m-two; do $DA skill link $n --scope project --project mp >/dev/null; done
+$DA tool link ctool --scope project --project mp >/dev/null
+out=$($DA skill effective mp build)
+[ "$(grep -v '^skipped ' <<<"$out" | sort | paste -sd, -)" = "m-any,m-cli,m-fam,m-host,m-two" ] && ok "effective gives the packs whose declaration names the runtime of a surface, or its family, or any" || no "effective: $out"
+grep -q "^skipped skill m-other: not compatible with famcli, famhost (it declares elsewhere)" <<<"$out" && ok "effective shows the skipped pack and why" || no "skipped line: $out"
+grep -q "m-other" <<<"$(grep -v '^skipped ' <<<"$out")" && no "a skipped pack is in the effective list" || ok "a skipped pack is not in the list"
+printf '%s' '{"name":"ctool2","url":"https://mcp.example.net/","tools":{"list_items":"always_allow"}}' > "$T/ct2.json"
+tok=$($DA tool import "$T/ct2.json" --compatible elsewhere | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA tool import "$T/ct2.json" --compatible elsewhere --plan "$tok" --approved x >/dev/null 2>&1; $DA tool link ctool2 --scope project --project mp >/dev/null
+[ "$($DA tool effective mp build | grep -v '^skipped ' | paste -sd, -)" = "ctool" ] && $DA tool effective mp build | grep -q "^skipped tool ctool2: not compatible with famcli, famhost" && ok "a tool pack is matched and skipped the same way" || no "tool skipped: $($DA tool effective mp build)"
+$DA skill check mp build 2>&1 | grep -q "^skip skill m-other: not compatible" && ok "check says what it skipped" || no "check skip note"
+$DA skill check mp build >/dev/null 2>&1 && ok "a skipped pack is not a failure" || no "check failed on a skip: $($DA skill check mp build 2>&1)"
+out=$($DA packs render mp build "$T/om" 2>&1 >/dev/null); rc=$?
+[ "$rc" = 0 ] && grep -q "note: skipped skill m-other: not compatible with famhost" <<<"$out" && ok "the cloud render notes the skip on stderr" || no "render note (rc=$rc): $out"
+[ "$(sort "$T/om/custom_skills.txt" | paste -sd, -)" = "m-any,m-fam,m-host,m-two" ] && ok "the cloud render has the packs for the cloud runtime (a family or runtime name, or any)" || no "render skills: $(paste -sd, "$T/om/custom_skills.txt")"
+[ ! -e "$T/om/skills/m-cli" ] && [ ! -e "$T/om/skills/m-other" ] && [ "$(jq -c '[.[].name]' "$T/om/mcp.json")" = '["ctool"]' ] && ok "a pack for the local runtime only, and one for another provider, are not in the cloud render (a tool for the family is)" || no "render has extra packs: $(jq -c . "$T/om/mcp.json")"
+out=$($DA packs load --project mp --role build 2>&1); grep -q "skill m-fam:" <<<"$out" && grep -q "skipped skill m-other: not compatible" <<<"$out" && ok "load lists what is enabled and what was skipped" || no "load: $out"
+$DA packs load m-other --project mp --role build 2>&1 | grep -q "m-other is linked but skipped for mp/build: not compatible" && ok "load names the reason for a pack it will not load" || no "load m-other"
+# the same pack with the project's provider named by its runtime, then by a single family name
+jq '.models.provider = "fam"' "$T/c/projects/mp.json" > "$T/mp.tmp" && cp "$T/mp.tmp" "$T/c/projects/mp.json"
+[ "$($DA skill effective mp build | grep -v '^skipped ' | sort | paste -sd, -)" = "m-any,m-cli,m-fam,m-host,m-two" ] && ok "a project that names the family resolves it per surface" || no "family answer: $($DA skill effective mp build)"
+# no provider at all: only "any" can be matched
+jq 'del(.models)' "$T/c/projects/mp.json" > "$T/mp.tmp" && cp "$T/mp.tmp" "$T/c/projects/mp.json"
+out=$($DA skill effective mp build); [ "$(grep -v '^skipped ' <<<"$out" | paste -sd, -)" = "m-any" ] && grep -q "^skipped skill m-fam: project mp names no provider to match against (it declares fam)" <<<"$out" && ok "a project with no provider gets only the packs for any, and the rest are noted" || no "no provider: $out"
+$DA packs render mp build "$T/om2" >/dev/null 2>&1; [ "$(paste -sd, "$T/om2/custom_skills.txt")" = "m-any" ] && ok "the render of a project with no provider holds only the packs for any" || no "render without provider"
 exit $fail
