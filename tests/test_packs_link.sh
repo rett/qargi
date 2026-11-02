@@ -65,6 +65,9 @@ out=$(lk); rc=$?
 [ "$rc" = 0 ] && grep -q "^already linked" <<<"$out" && [ -z "$(tok_of <<<"$out")" ] && ok "linking again says already linked, with no token, exit 0" || no "second link: rc=$rc $out"
 n=$(wc -l < "$T/s/audit.log"); lk --plan x --approved y >/dev/null; [ "$n" = "$(wc -l < "$T/s/audit.log")" ] && ok "already linked is not audited" || no "audit on no-op"
 
+# the check note
+$DA packs check --target claude-code alpha 2>&1 | grep -q "^note: repo .claude/skills is not linked" && no "check notes a linked checkout" || ok "check says nothing when the checkout is linked"
+
 # --- unlink: only the symlink goes
 out=$(ul); tok=$(tok_of <<<"$out")
 [ -n "$tok" ] && [ -L "$R/.claude/skills" ] && ok "the unlink plan prints a token and changes nothing" || no "unlink plan: $out"
@@ -74,6 +77,8 @@ ul --plan "$tok" --approved test >/dev/null
 [ ! -e "$R/.claude/skills" ] && [ ! -L "$R/.claude/skills" ] && [ -d "$D/.claude/skills/s-all" ] && [ -d "$R/.claude" ] && ok "unlink removes only the symlink; the render stays" || no "unlink result"
 tail -1 "$T/s/audit.log" | jq -e '.verb=="packs-unlink"' >/dev/null && ok "unlink is audit-logged" || no "unlink audit"
 ul >/dev/null 2>&1 && no "unlinked something that is not linked" || ok "unlink with nothing linked is refused"
+$DA packs check --target claude-code alpha 2>&1 | grep -qx "note: repo .claude/skills is not linked to the render (qargi packs link alpha)" && ok "check notes a checkout that is not linked, without failing" || no "check note"
+$DA packs check --target claude-code alpha >/dev/null 2>&1 && ok "the note does not change the exit status" || no "check status"
 echo ".claude/skills" >> "$R/.git/info/exclude"
 out=$(lk); [ -n "$(tok_of <<<"$out")" ] && ! grep -q "git does not ignore" <<<"$out" && ok "no hint once git ignores the path" || no "hint despite ignore: $out"
 
