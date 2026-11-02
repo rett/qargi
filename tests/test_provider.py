@@ -677,11 +677,14 @@ class Layout(Tree):
         with self.assertRaises(P.Unsupported):
             P.launch_line("claude", render, root=self.root)
 
-    def test_project_provider_reads_the_answers_and_defaults_to_claude(self):
-        self.assertEqual(P.project_provider({"models": {"provider": "other"}}), "other")
-        self.assertEqual(P.project_provider({}), "claude")
-        self.assertEqual(P.project_provider(None), "claude")
-        self.assertEqual(P.project_provider({"models": {"provider": "Bad Name"}}), "claude")
+    def test_project_provider_is_models_provider_and_has_no_default(self):
+        self.assertEqual(P.project_provider({"models": {"provider": "other"}}, "p"), "other")
+        msg = "project p has no provider: set one with qargi project set p models.provider NAME"
+        for answers in ({}, None, {"models": {}}, {"models": {"provider": ""}}, {"models": {"provider": "  "}}, {"models": {"provider": 3}}):
+            with self.assertRaises(P.NoProvider) as cm:
+                P.project_provider(answers, "p")
+            self.assertEqual(str(cm.exception), msg)
+            self.assertIsInstance(cm.exception, P.ProviderError)
 
 
 class LayoutCli(Cli):
@@ -711,6 +714,19 @@ class LayoutCli(Cli):
         rc, out, _ = self.run_cli("check", "claude")
         self.assertEqual(rc, 0)
         self.assertRegex(out, r"layout: session_launch\s+no \(")
+
+    def test_of_prints_the_provider_of_a_project_and_refuses_one_with_none_with_exit_2(self):
+        conf = os.path.join(self.tmp, "conf")
+        os.makedirs(os.path.join(conf, "projects"))
+        for name, answers in (("withp", {"models": {"provider": "claude"}}), ("nop", {"models": {}}), ("badp", {"models": {"provider": "nope"}})):
+            with open(os.path.join(conf, "projects", name + ".json"), "w") as f:
+                json.dump(answers, f)
+        self.assertEqual(self.run_cli("of", "withp", "--conf", conf)[:2], (0, "claude\n"))
+        rc, out, err = self.run_cli("of", "nop", "--conf", conf)
+        self.assertEqual((rc, out, err), (2, "", "qargi: project nop has no provider: set one with qargi project set nop models.provider NAME\n"))
+        self.assertEqual(self.run_cli("of", "absent", "--conf", conf)[0], 2)
+        self.assertEqual(self.run_cli("of", "badp", "--conf", conf)[:2], (0, "nope\n"))
+        self.assertEqual(self.run_cli("layout", "nope")[0], 1)
 
     def test_an_unknown_field_or_provider_is_not_exit_3(self):
         self.assertEqual(self.run_cli("layout", "claude", "nope")[0], 2)
