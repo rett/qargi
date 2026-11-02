@@ -11,9 +11,22 @@ ROOT=$PWD; T=$(mktemp -d); fail=0
 trap 'rm -rf "$T"; rm -rf "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 RETIRED="qargi-build qargi-write qargi-review qargi-test"
-CURRENT="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team"
+CURRENT="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team qargi-session"
 INSTALL="$ROOT/install.sh"
 S=$HOME/.claude/skills
+
+# --- the shipped skills: the list in install.sh, the directories under skills/ and this test agree, and each has valid front matter
+listed=$(sed -n 's/^skills="\(.*\)"$/\1/p' "$INSTALL" | tr ' ' '\n' | sort)
+shipped=$(cd "$ROOT/skills" && ls -d -- */ | tr -d / | sort)
+[ "$listed" = "$shipped" ] && ok "install.sh installs exactly the skills under skills/" || no "install.sh skills= and skills/ differ: $(diff <(echo "$listed") <(echo "$shipped"))"
+[ "$(echo "$CURRENT" | tr ' ' '\n' | sort)" = "$listed" ] && ok "this test lists the skills install.sh installs" || no "CURRENT in this test differs from install.sh skills="
+for s in $listed; do
+  f=$ROOT/skills/$s/SKILL.md
+  if [ -f "$f" ] && [ "$(sed -n '1p' "$f")" = "---" ] && [ "$(sed -n '2,/^---$/{/^name: /p}' "$f" | head -1)" = "name: $s" ] \
+     && [ -n "$(sed -n '2,/^---$/{s/^description: *//p}' "$f" | head -1)" ]; then ok "skill $s: SKILL.md with name $s and a description"
+  else no "skill $s: SKILL.md missing or its front matter has no name: $s / description"; fi
+done
+
 DATA=$HOME/.local/share/qargi
 
 # the state an upgrade meets: links into the checkout and into the copy, a link elsewhere, a real directory
