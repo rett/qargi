@@ -360,5 +360,103 @@ jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c
 out=$($DA skill accept alpha mine 2>&1); rc=$?
 [ "$rc" = 2 ] && [ "$out" = "qargi: project alpha has no provider: set one with qargi project set alpha models.provider NAME" ] && ok "no models.provider: the audit is refused with exit 2 and the fix" || no "no provider: rc=$rc $out"
 
+# --- schema 2 providers: the exclusion forms (settings-key with a nested pointer and a TOML file, config-list, deny-list, none, adapter)
+# and the acceptances (a record names its resource and provider; an older record counts as the project's provider's). Definitions
+# are schema 2 files of the tool copy, made from claude's own; qargi only reads the configuration files, and the test checks that.
+python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1] + "/lib"); import provider; d = provider.definition("claude", "local"); d["adapter"] = None; print(json.dumps(d))' "$ROOT" > "$T/v2base.json"
+mkv2() { jq --arg n "$1" ".provider = \$n | .resources.skills.project_dir = \".sk/skills\" | .resources.skills.user_dir = \"~/.sk/skills\" | $2" "$T/v2base.json" > "$TOOL/lib/providers/$1.json"; }
+SF='.resources.settings.files = [{scope:"user",path:"~/.tk/settings.json",format:"json"},{scope:"project",path:".tk/settings.toml",format:"toml"}]'
+mkv2 tomlkey "$SF | .resources.skills.exclusion = {form:\"settings-key\",files:[\"user\",\"project\"],pointer:\"/ui/hidden\",shape:\"map\",off:\"gone\"}"
+mkv2 cfglist '.resources.skills.exclusion = {form:"config-list",file:".cl/config.toml",format:"toml",pointer:"/skills/config",match:{name:"{name}"},off:{enabled:false}}'
+mkv2 cfguser '.resources.skills.exclusion = {form:"config-list",file:"~/.cu/config.json",format:"json",pointer:"/skills",match:{path:"s/{name}/SKILL.md"},off:{enabled:false}}'
+mkv2 denyl '.resources.skills.exclusion = {form:"deny-list",file:".dl/deny.json",format:"json",pointer:"/denied"}'
+mkv2 noform '.resources.skills.exclusion = {form:"none"}'
+mkv2 adapterform '.resources.skills.exclusion = {form:"adapter"}'
+mkv2 yamlform '.resources.settings.files = [{scope:"project",path:".yf/settings.yaml",format:"yaml"}] | .resources.skills.exclusion = {form:"settings-key",files:["project"],pointer:"/off",shape:"map",off:"x"}'
+R3=$T/repo3; git init -q -b main "$R3"; echo x > "$R3/README"; $G -C "$R3" add -A; $G -C "$R3" commit -q -m one
+for n in sk-a sk-b sk-c; do mk "$R3/.sk/skills" $n; done; mk "$HOME/.sk/skills" usk
+mkdir -p "$HOME/.tk" "$HOME/.cu" "$R3/.tk" "$R3/.cl" "$R3/.dl" "$R3/.yf"
+printf '{"ui": {"hidden": {"sk-a": "gone", "sk-x": "visible"}}}\n' > "$HOME/.tk/settings.json"
+printf '[ui.hidden]\nsk-b = "gone"\n' > "$R3/.tk/settings.toml"
+printf '[[skills.config]]\nname = "sk-a"\nenabled = false\n\n[[skills.config]]\nname = "sk-b"\nenabled = true\n\n[[skills.config]]\nname = "sk-c"\n' > "$R3/.cl/config.toml"
+printf '{"skills": [{"path": "s/sk-b/SKILL.md", "enabled": false}, {"path": "s/usk/SKILL.md", "enabled": false}, {"path": "s/sk-a/SKILL.md", "enabled": true}]}\n' > "$HOME/.cu/config.json"
+printf '{"denied": ["sk-c", "usk", 7]}\n' > "$R3/.dl/deny.json"
+for pr in "ptk tomlkey" "pcl cfglist" "pcu cfguser" "pdl denyl" "pno noform" "pad adapterform" "pyf yamlform"; do set -- $pr
+  proj "$1" "$R3"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"
+  mkdir -p "$T/s/$2/$1/.sk/skills"
+done
+printf 'off: [a]\n' > "$R3/.yf/settings.yaml"
+cfg_before=$(snap "$R3/.tk" "$R3/.cl" "$R3/.dl" "$R3/.yf" "$HOME/.tk" "$HOME/.cu")
+audit() { out=$($FX packs link "$1" 2>&1); rc=$?; }
+fst() { sed -n '/^skills a session would load:/,$p' <<<"$out" | sed -n "s/^ *\\([a-z]*\\) \\+$1  (.*/\\1/p"; }
+fline() { grep -E "^ +[a-z]+ +$1  \\(" <<<"$out"; }
+
+audit ptk
+[ "$rc" = 0 ] && [ "$(fst sk-a)" = excluded ] && [ "$(fst sk-b)" = excluded ] && [ "$(fst sk-c)" = unmanaged ] && [ "$(fst usk)" = unmanaged ] \
+  && ok "settings-key: the pointer is followed into nested objects, in a JSON user file and a TOML project file" || no "tomlkey: rc=$rc $out"
+fline sk-a | grep -q "off in $HOME/.tk/settings.json" && fline sk-b | grep -q "off in $R3/.tk/settings.toml" && ok "settings-key: the line names the file of the scope" || no "tomlkey files: $out"
+grep -q "to hide it instead: *set ui/hidden/sk-c to \"gone\" in $R3/.tk/settings.toml" <<<"$out" && grep -q "to hide it instead: *{\"ui\": {\"hidden\": {\"usk\": \"gone\"}}} in $HOME/.tk/settings.json" <<<"$out" \
+  && ok "settings-key: the line to hide a skill is the document for a JSON file and words for a TOML one" || no "tomlkey offer: $out"
+grep -q "hidden by ui/hidden" <<<"$out" && ok "settings-key: the legend names the pointer" || no "tomlkey legend: $out"
+
+audit pcl
+[ "$rc" = 0 ] && [ "$(fst sk-a)" = excluded ] && [ "$(fst sk-b)" = unmanaged ] && [ "$(fst sk-c)" = unmanaged ] && fline sk-a | grep -q "off in $R3/.cl/config.toml" \
+  && ok "config-list: an entry that matches the skill and holds the off fields hides it (TOML); one without them does not" || no "cfglist: rc=$rc $out"
+grep -q "to hide it instead: *add {\"name\": \"sk-c\", \"enabled\": false} to the list at /skills/config in $R3/.cl/config.toml" <<<"$out" && ok "config-list: the line to hide a skill is the entry to add" || no "cfglist offer: $out"
+fline usk | grep -q . && ! grep -A3 -E "^ +unmanaged +usk " <<<"$out" | grep -q "to hide it" && ok "config-list: a project file is not offered for a user skill" || no "cfglist user offer: $out"
+
+audit pcu
+[ "$rc" = 0 ] && [ "$(fst sk-b)" = excluded ] && [ "$(fst usk)" = excluded ] && [ "$(fst sk-a)" = unmanaged ] && fline usk | grep -q "off in $HOME/.cu/config.json" \
+  && ok "config-list: a match with the name inside a longer value (JSON file in the home directory)" || no "cfguser: rc=$rc $out"
+grep -q "to hide it instead: *add {\"path\": \"s/sk-c/SKILL.md\", \"enabled\": false} to the list at /skills in $HOME/.cu/config.json" <<<"$out" && ok "config-list: a user file is offered for a checkout skill" || no "cfguser offer: $out"
+
+audit pdl
+[ "$rc" = 0 ] && [ "$(fst sk-c)" = excluded ] && [ "$(fst usk)" = excluded ] && [ "$(fst sk-a)" = unmanaged ] && ok "deny-list: the names in the array are excluded" || no "denyl: rc=$rc $out"
+grep -q "to hide it instead: *add \"sk-a\" to the list at /denied in $R3/.dl/deny.json" <<<"$out" && ok "deny-list: the line to hide a skill is the name to add" || no "denyl offer: $out"
+[ "$cfg_before" = "$(snap "$R3/.tk" "$R3/.cl" "$R3/.dl" "$R3/.yf" "$HOME/.tk" "$HOME/.cu")" ] && ok "the audits wrote no configuration file" || no "an audit changed a configuration file"
+printf '{"denied": {"sk-c": true}}\n' > "$R3/.dl/deny.json"; audit pdl
+grep -q "note: cannot read $R3/.dl/deny.json (denied is not a list): the skills it hides are unknown" <<<"$out" && [ "$(fst sk-c)" = unmanaged ] && ok "deny-list: a pointer that is not a list is noted and hides nothing" || no "denyl bad: $out"
+printf '[1]\n' > "$R3/.dl/deny.json"; audit pdl
+grep -q "note: cannot read $R3/.dl/deny.json (not an object)" <<<"$out" && ok "a document the pointer cannot walk is noted" || no "denyl root: $out"
+printf '{"denied": ["sk-c"]}\n' > "$R3/.dl/deny.json"
+
+audit pno
+[ "$rc" = 0 ] && grep -q "note: provider noform has no way to switch a skill off in a settings file" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ! grep -q "to hide it" <<<"$out" && ok "form none: nothing is excluded, a note, no line to hide a skill" || no "noform: rc=$rc $out"
+audit pad
+[ "$rc" = 0 ] && grep -q "note: provider adapterform reads which skills are off with its adapter" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ! grep -q "to hide it" <<<"$out" && ok "form adapter: nothing is read, a note" || no "adapterform: rc=$rc $out"
+audit pyf
+grep -q "note: cannot read $R3/.yf/settings.yaml (yaml files cannot be read here" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ok "a YAML file is noted as unreadable" || no "yamlform: $out"
+rm -f "$R3/.yf/settings.yaml"; audit pyf
+! grep -q "cannot read" <<<"$out" && ok "a configuration file that is not there is fine" || no "yamlform missing: $out"
+audit ptk
+$FX skill accept ptk sk-a >/dev/null 2>&1 && no "accepted an excluded skill (settings-key)" || ok "an excluded skill is not accepted under another form either"
+
+# the acceptances: resource and provider
+PYT="python3 -I $TOOL/lib/packs_audit.py"   # the copy of the tool knows the fake providers
+H3=$(chash "$R3/.sk/skills/sk-c")
+rm -f "$ACC"
+audit ptk; [ "$(fst sk-c)" = unmanaged ] || no "setup: $out"
+tok=$($FX skill accept ptk sk-c | tok_of); $FX skill accept ptk sk-c --plan "$tok" --approved ok >/dev/null 2>&1
+jq -e --arg h "$H3" '.projects["ptk"]["sk-c"] | .sha256 == $h and .resource == "skills" and .provider == "tomlkey"' "$ACC" >/dev/null && ok "an acceptance records its resource and provider" || no "record: $(cat "$ACC")"
+audit ptk; [ "$(fst sk-c)" = accepted ] && ok "(and is accepted)" || no "accepted tomlkey: $out"
+printf '{"user": {"sk-c": {"sha256": "%s", "provider": "someoneelse", "resource": "skills"}}, "projects": {}}\n' "$H3" > "$ACC"
+audit ptk; [ "$(fst sk-c)" = unmanaged ] && ok "an acceptance made for another provider does not count" || no "other provider: $(fline sk-c)"
+printf '{"user": {"sk-c": {"sha256": "%s", "resource": "agents", "provider": "tomlkey"}}, "projects": {}}\n' "$H3" > "$ACC"
+audit ptk; [ "$(fst sk-c)" = unmanaged ] && ok "an acceptance made for another resource does not count" || no "other resource: $(fline sk-c)"
+printf '{"user": {"sk-c": {"sha256": "%s"}}, "projects": {}}\n' "$H3" > "$ACC"
+audit ptk; a1=$(fst sk-c); audit pcl; [ "$a1" = accepted ] && [ "$(fst sk-c)" = accepted ] && ok "an older record (no resource, no provider) counts as skills of the project's provider" || no "older record: $a1 $(fline sk-c)"
+printf '{"user": {"sk-c": {"sha256": "%s", "resource": "skills", "provider": "someoneelse"}}, "projects": {}}\n' "$H3" > "$ACC"
+$PYT store accept "$ACC" user ptk sk-c "$H3" "$R3/.sk/skills/sk-c" x 2026-01-01T00:00:00Z >/dev/null 2>&1
+jq -e --arg h "$H3" '.user["sk-c"].provider == "someoneelse" and (.user["skills/tomlkey/sk-c"] | .sha256 == $h and .provider == "tomlkey" and .resource == "skills")' "$ACC" >/dev/null \
+  && ok "an acceptance for another provider keeps its place; this one is stored under resource/provider/name" || no "composite: $(cat "$ACC")"
+audit ptk; a1=$(fst sk-c); audit pcl; [ "$a1" = accepted ] && [ "$(fst sk-c)" = unmanaged ] && ok "(each provider sees its own, and a third sees neither)" || no "composite read: $a1 $(fline sk-c)"
+out=$($PYT acceptance "$ACC" user ptk sk-c); jq -e '.provider == "tomlkey"' <<<"$out" >/dev/null && ok "acceptance prints the record of the project's provider" || no "acceptance: $out"
+$PYT store unaccept "$ACC" user ptk sk-c >/dev/null 2>&1
+jq -e '.user["sk-c"].provider == "someoneelse" and (.user | has("skills/tomlkey/sk-c") | not)' "$ACC" >/dev/null && ok "unaccept removes the record of the project's provider only" || no "unaccept composite: $(cat "$ACC")"
+$PYT store accept "$ACC" project ptk sk-c "$H3" x x 2026-01-01T00:00:00Z >/dev/null 2>&1
+$PYT store accept "$ACC" project ptk sk-c aaaaaaaaaaaaaaaa x x 2026-01-01T00:00:00Z >/dev/null 2>&1
+jq -e '.projects["ptk"] | keys == ["sk-c"] and ."sk-c".sha256 == "aaaaaaaaaaaaaaaa"' "$ACC" >/dev/null && ok "accepting again replaces the record of the same provider" || no "re-accept: $(cat "$ACC")"
+rm -f "$ACC"
+
 rm -rf "$T"
 exit $fail
