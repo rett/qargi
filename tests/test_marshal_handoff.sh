@@ -24,7 +24,7 @@ mkdir -p "$HOME" "$T/c/projects" "$S/features" "$T/scratch"
 R=$T/app; git init -q -b master "$R"
 echo 0.1.0 > "$R/VERSION"; git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git -C "$R" checkout -q -b parked
-jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, models:{provider:"claude"}, test_command:"true"}' > "$T/c/projects/app.json"
 commit_on() { # BRANCH FILE: one commit on BRANCH (in a temporary worktree)
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"
   echo "$1 $2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "$1 $2"; git -C "$R" worktree remove --force "$w"
@@ -202,6 +202,41 @@ grep -q "memory tier project: $HOME/.qargi/memory/projects/app (notes directory)
 grep -q "repository instructions: $R/CLAUDE.md" "$T/o" && ok "read first: the repository's CLAUDE.md path" || no "SPEC read first CLAUDE.md"
 grep -q "SECRET-MEMORY-BODY\|AGENT-DOC-BODY" "$T/o" && no "SPEC read first printed file contents" || ok "read first: paths only, never contents"
 rm -f "$R/CLAUDE.md"
+
+# --- another provider: the paths, the check target and the launch line come from its descriptor, not from Claude Code
+# A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills, has the render target agentx-render and a launch
+# template with an optional group; noskills has no project skills directory; notarget has no render target and no launch command.
+TOOL2=$T/tool2; mkdir -p "$TOOL2"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$TOOL/$d" ] || cp -r "$TOOL/$d" "$TOOL2/"; done
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$TOOL/lib/providers/claude.json" > "$TOOL2/lib/providers/$1.json"; }
+mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.session_launch = "agentx run --render {render}[ --extra {render}/extra.json]"'
+mkprov noskills '.layout.project_skills_dir = null'
+mkprov notarget '.layout.render_target = null | .layout.session_launch = null'
+setprov() { jq --arg v "$1" 'if $v == "" then del(.models) else .models = {provider: $v} end' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
+HX() { python3 -I "$TOOL2/lib/marshal_handoff.py" --state "$S" --conf "$T/c" --project app --repo "$R" "$@" f1 >"$T/o" 2>"$T/e"; }
+sect() { sed -n '/^== packs/,/^== read first/p' "$T/o"; }
+setprov agentx
+HX; rc=$?
+[ $rc = 0 ] && grep -q "^render check (qargi packs check --target agentx-render app): exit " "$T/o" && grep -q "until the owner runs qargi packs apply --target agentx-render app" "$T/o" && ok "another provider: the check and the fix name its render target" || no "agentx no render: rc=$rc $(sect)"
+mkdir -p "$S/agentx/app/.agent/skills"
+HX
+grep -q "^launch (the checkout's .agent/skills is not our link): agentx run --render $S/agentx/app\$" "$T/o" && ok "another provider: the launch line is its template" || no "agentx launch: $(sect)"
+echo '{}' > "$S/agentx/app/extra.json"; HX
+grep -q "agentx run --render $S/agentx/app --extra $S/agentx/app/extra.json\$" "$T/o" && ok "another provider: an optional group of the template appears when its file exists" || no "agentx launch extra: $(sect)"
+mkdir -p "$R/.agent"; ln -s "$S/agentx/app/.agent/skills" "$R/.agent/skills"; HX
+grep -q "launch: $R/.agent/skills is linked to the render" "$T/o" && ok "another provider: its skills directory is the link that is recognised" || no "agentx linked: $(sect)"
+sect | grep -qi "claude" && no "another provider: the packs section names Claude Code: $(sect)" || ok "another provider: nothing in the packs section names Claude Code"
+HX --json; jq -e '.packs.provider == "agentx" and .packs.render_exists == true and .packs.linked == true and (.packs.launch | startswith("agentx run"))' "$T/o" >/dev/null && ok "another provider: --json carries the provider and the same facts" || no "agentx json: $(cat "$T/o")"
+rm -rf "$R/.agent"
+setprov noskills; HX; rc=$?
+[ $rc = 0 ] && sect | grep -q "^provider noskills has no project skills directory: describe the packs a session loads" && ok "a provider with no project skills directory: the packs section says so, the note still comes (exit 0)" || no "noskills: rc=$rc $(sect)"
+setprov notarget; mkdir -p "$S/notarget/app/.claude/skills"; HX; rc=$?
+[ $rc = 0 ] && sect | grep -q "^render check: not run (provider notarget has no packs render target: " && sect | grep -q "provider notarget has no session launch command: " && ok "a provider with no render target and no launch command: both are said, nothing is run" || no "notarget: rc=$rc $(sect)"
+setprov nosuch; HX; rc=$?
+[ $rc = 1 ] && grep -q "unknown provider 'nosuch'" "$T/e" && [ ! -s "$T/o" ] && ok "a provider with no descriptor is refused (exit 1)" || no "unknown provider: rc=$rc $(out)"
+setprov ""; HX; rc=$?
+[ $rc = 2 ] && [ "$(cat "$T/e")" = "qargi: project app has no provider: set one with qargi project set app models.provider NAME" ] && [ ! -s "$T/o" ] && ok "no models.provider: the handoff is refused with exit 2 and the fix, and prints nothing" || no "no provider: rc=$rc $(out)"
+setprov claude
 
 # --- the answers are not on this host
 python3 -I "$TOOL/lib/marshal_handoff.py" --state "$S" --conf "$T/absent" --project app --repo "" f1 >"$T/o" 2>"$T/e"; rc=$?

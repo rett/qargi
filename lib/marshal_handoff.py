@@ -4,11 +4,15 @@
   marshal_handoff.py --state S --conf C --project P --repo R --ttl N [NAME] [--as ID] [--write FILE] [--json]
 
 A lead that ends a session (after /compact, after a change a running session cannot reload, when its context is tight) runs
-this verb; the next session, in a new Claude Code session or worktree and possibly on an older base, starts from the note and
+this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
 this host), the feature(s) (tip, whether the whole-suite result applies to the tip, merged and unmerged agent/* branches,
 commits ahead of develop), the marshal record, the packs (check summary and the launch line), what to read first, and a fixed
 list of things a new session must not assume.
+
+The packs section is the project's provider's (models.provider of its answers, no default: none is exit 2): the skills directory,
+the render target of the check and the launch line come from its layout (lib/providers/NAME.json through lib/provider.py). A
+provider that lacks one of them is said so in the section ("provider NAME has no FACILITY: ..."); the rest of the note stands.
 
 READ ONLY. It changes no record, no ref and no audit line, and it fetches nothing: the shared records are read from the cache
 this machine already holds (the same backend code as `marshal status`, switched to its member-run mode, which neither fetches nor
@@ -41,6 +45,7 @@ DO_NOT_ASSUME = (
 )
 
 _MS = None
+_PV = None
 
 
 def ms():
@@ -52,6 +57,17 @@ def ms():
         sys.modules["marshal_store"] = _MS
         spec.loader.exec_module(_MS)
     return _MS
+
+
+def pv():
+    """lib/provider.py, loaded by path (python -I does not put this directory on sys.path)."""
+    global _PV
+    if _PV is None:
+        spec = importlib.util.spec_from_file_location("provider", os.path.join(HERE, "provider.py"))
+        _PV = importlib.util.module_from_spec(spec)
+        sys.modules["provider"] = _PV
+        spec.loader.exec_module(_PV)
+    return _PV
 
 
 def clean(s):
@@ -196,27 +212,40 @@ def memory_facts(answers, project, repo):
     return out
 
 
-def packs_facts(state, project, repo, qargi_bin):
-    render = os.path.join(state, "claude", project)
-    skills = os.path.join(render, ".claude", "skills")
-    p = {"render_dir": clean(render), "render_exists": os.path.isdir(skills), "linked": False, "launch": None, "link_path": "",
+def packs_facts(state, project, repo, qargi_bin, name):
+    """The packs of the project as its provider (name) lays them out. A facility the provider lacks is recorded as the refusal
+    text (unsupported, launch_why, check_why) and the rest is still described."""
+    P = pv()
+    render = os.path.join(state, name, project)
+    p = {"provider": clean(name), "unsupported": None, "render_dir": clean(render), "render_exists": False, "skills_dir": "",
+         "linked": False, "launch": None, "launch_why": "", "render_target": None, "check_why": "", "link_path": "",
          "check": {"exit": None, "first": [], "last": [], "omitted": 0}}
+    lay = P.layout(name)                       # an unknown provider or a bad layout is a refusal of the whole note
+    try:
+        P.require_skills(name, "describe the packs a session loads")
+        sd = P.require(name, "project_skills_dir", "describe the packs a session loads")
+    except P.Unsupported as e:
+        p["unsupported"] = line(str(e), 300)
+        return p
+    skills = os.path.join(render, sd)
+    p["skills_dir"], p["render_exists"], p["render_target"] = clean(sd), os.path.isdir(skills), lay["render_target"]
     if repo:
-        lp = os.path.join(repo, ".claude", "skills")
+        lp = os.path.join(repo, sd)
         p["link_path"] = clean(lp)
         p["linked"] = p["render_exists"] and os.path.islink(lp) and os.path.realpath(lp) == os.path.realpath(skills)
     if p["render_exists"]:
-        c = "claude --add-dir " + render
-        if os.path.isfile(os.path.join(render, "mcp.json")):
-            c += " --mcp-config " + os.path.join(render, "mcp.json")
-        if os.path.isfile(os.path.join(render, "settings.json")):
-            c += " --settings " + os.path.join(render, "settings.json")
-        p["launch"] = clean(c)
+        try:
+            p["launch"] = clean(P.launch_line(name, render))
+        except P.Unsupported as e:
+            p["launch_why"] = line(str(e), 300)
     lines, rc = [], None
     try:
-        r = subprocess.run([qargi_bin, "packs", "check", "--target", "claude-code", project], capture_output=True, text=True,
+        rt = P.require(name, "render_target", "run the render check of the packs")
+        r = subprocess.run([qargi_bin, "packs", "check", "--target", rt, project], capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=PACK_TIMEOUT)
         rc, lines = r.returncode, (r.stdout + r.stderr).splitlines()
+    except P.Unsupported as e:
+        p["check_why"] = line(str(e), 300)
     except subprocess.TimeoutExpired:
         lines = ["timed out after %d s" % PACK_TIMEOUT]
     except OSError as e:
@@ -243,6 +272,7 @@ def collect(a, argv_name):
     except (OSError, ValueError):
         answers = {}
     present = os.path.isfile(answers_file)
+    prov = pv().project_provider(answers, a.project) if present else None       # no default: NoProvider ends the verb (exit 2)
     test_cmd = answers.get("test_command") or ""
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:
@@ -300,7 +330,7 @@ def collect(a, argv_name):
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
             "where": where, "features": feats, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
-            "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi")) if present else None,
+            "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
                            "repo_docs": [clean(os.path.join(repo, n)) for n in ("CLAUDE.md", "AGENTS.md") if repo and os.path.isfile(os.path.join(repo, n))],
                            "status_command": "qargi marshal status --all --history --project %s" % a.project},
@@ -407,20 +437,30 @@ def render_body(F):
         A("not described: the answers of the project are not on this host")
     else:
         c = p["check"]
-        A("render check (qargi packs check --target claude-code %s): exit %s" % (F["project"], c["exit"] if c["exit"] is not None else "n/a"))
+        if p["unsupported"]:
+            A(p["unsupported"])
+        elif p["check_why"]:
+            A("render check: not run (%s)" % p["check_why"])
+        else:
+            A("render check (qargi packs check --target %s %s): exit %s" % (p["render_target"], F["project"], c["exit"] if c["exit"] is not None else "n/a"))
         for ln in c["first"]:
             A("  " + ln)
         if c["omitted"]:
             A("  ... %d line(s) not shown ..." % c["omitted"])
         for ln in c["last"]:
             A("  " + ln)
-        if not p["render_exists"]:
-            A("note: there is no render of the project's packs on this host; a session sees only the user-level skills until the owner runs qargi packs apply --target claude-code %s" % F["project"])
+        how = " until the owner runs qargi packs apply --target %s %s" % (p["render_target"], F["project"]) if p["render_target"] else ""
+        if p["unsupported"]:
+            pass
+        elif not p["render_exists"]:
+            A("note: there is no render of the project's packs on this host; a session sees only the user-level skills%s" % (how or " (this provider has no render target)"))
         elif p["linked"]:
             A("launch: %s is linked to the render, so a session started in that checkout loads the project packs and needs no flag" % p["link_path"])
-            A("  a session started in any OTHER worktree has no link there: start it with: %s" % p["launch"])
+            A("  a session started in any OTHER worktree has no link there: start it with: %s" % (p["launch"] or p["launch_why"]))
+        elif p["launch"]:
+            A("launch (the checkout's %s is not our link): %s" % (p["skills_dir"], p["launch"]))
         else:
-            A("launch (the checkout's .claude/skills is not our link): %s" % p["launch"])
+            A("launch: %s" % p["launch_why"])
     A("")
     A("== read first (paths only; read the notes themselves, not only the index)")
     rf = F["read_first"]
@@ -535,6 +575,12 @@ def main(argv):
         else:
             sys.stdout.write(text)
     except M.Refuse as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 1
+    except pv().NoProvider as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 2
+    except pv().ProviderError as e:
         print("qargi: %s" % e, file=sys.stderr)
         return 1
     except BrokenPipeError:
