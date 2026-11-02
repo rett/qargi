@@ -141,7 +141,8 @@ start_base() { # name: creates the session (or prints the request, with QARGI_DR
   system=$(agent_prompt "$BROLE" "$proj") || die "could not render the system prompt of the $BROLE role"
   [ "${#system}" -lt 100000 ] || die "the system prompt of the $BROLE role is ${#system} characters; a session takes fewer than 100000"
   sha=$(printf '%s' "$system" | sha256sum | cut -c1-16)
-  prov=$(project_provider "$proj"); adapter=$(jq -r '.adapter // empty' "$QARGI_TOOL/lib/providers/$prov.json" 2>/dev/null)
+  prov=$(project_provider "$proj") || exit $?   # no default provider: a project with none is refused (exit 2)
+  adapter=$(jq -r '.adapter // empty' "$QARGI_TOOL/lib/providers/$prov.json" 2>/dev/null)
   [ -n "$adapter" ] && [ -x "$QARGI_TOOL/$adapter" ] || die "the provider '$prov' has no adapter that can build a session request"
   dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"
   cf=$(cred_file "$proj")

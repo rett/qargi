@@ -59,7 +59,7 @@ printf '%s\n' "$TOKEN" > "$T/secrets/tok"; chmod 600 "$T/secrets/tok"
 # alpha: private repository (a credential); beta: public (none)
 for p in alpha beta; do
   jq -n --arg p "$p" --arg f "$([ "$p" = alpha ] && echo "$T/secrets/tok")" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",credential_file:$f,long_lived:["main"]},
-    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
 inst() { jq -n --arg d "$1" '{location:"cloud",deployment_id:$d,environment_id:"env_01",agent:{id:"agent_01",version_pinned:3,model:"claude-sonnet-5-5",effort:"high"}}'; }
 jq -n --argjson w "$(inst depl_W)" --argjson r "$(inst depl_R)" --argjson b "$(inst depl_B)" \
