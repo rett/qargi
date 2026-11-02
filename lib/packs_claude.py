@@ -3,7 +3,10 @@
 that `claude --add-dir DIR` loads, with a manifest and a drift check.
 
 Called by packs.sh, which gathers the facts only the shell knows (links, review, hashes) into an inputs file:
-  {project, state, home, checkout, packs:[{kind,name,path,sha256,approved,review_ok,exists,roles[]}]}
+  {project, state, home, checkout, packs:[{kind,name,path,sha256,approved,review_ok,exists,compatible_providers,roles[]}],
+   skipped:[{kind,name,why,roles[]}]}
+packs is what the project's provider can use; skipped are the enabled packs it cannot (their declaration, compatible_providers, does
+not match), left out of the render and said in the plan and the check.
 
   packs_claude.py prep   INPUTS             validate the output root, create claude/ (the caller then takes the lock)
   packs_claude.py plan   INPUTS TOKENFILE   stage the tree (a private directory), print the plan, write the plan
@@ -163,6 +166,8 @@ def vet(inp, strict):
         elif p["approved"] and p["approved"] != p["sha256"]:
             bad.append("%s: library drift, changed since it was approved (%s -> %s); review it and seal it again"
                        % (e, p["approved"], p["sha256"]))
+        elif not isinstance(p.get("compatible_providers"), list) or not p["compatible_providers"]:
+            bad.append("%s: declares no compatible_providers (qargi %s seal %s --compatible LIST)" % (e, p["kind"], p["name"]))
     seen = {}
     for p in inp["packs"]:
         seen.setdefault(p["name"], set()).add(p["kind"])
@@ -415,6 +420,13 @@ def report(inp, live, manifest, old, creds):
         print("  needs credentials you configure yourself (vault_ids cannot authenticate locally): " + ", ".join(creds))
     for w in shadows(inp, packs):
         print("  WARNING: " + w)
+    for note in skipped_notes(inp):
+        print("  " + note)
+
+
+def skipped_notes(inp):
+    """One line per enabled pack the project's provider cannot use: it is not in the render, and this says why."""
+    return ["skipped %s %s: %s" % (s["kind"], s["name"], s["why"]) for s in sorted(inp.get("skipped") or [], key=lambda x: (x["kind"], x["name"]))]
 
 
 def cmd_swap(inp, stagefile, token):
@@ -537,10 +549,18 @@ def cmd_check(inp):
     if findings:
         for f in findings:
             print("FAIL " + f)
+        skipped_note(inp)
         link_note(inp, live)
         sys.exit(1)
     print("ok   %s: %d packs, rendered tree matches the manifest, nothing shadowed" % (inp["project"], len(mp)))
+    skipped_note(inp)
     link_note(inp, live)
+
+
+def skipped_note(inp):
+    """The notes about enabled packs the provider cannot use (never a finding: they are not in the render on purpose)."""
+    for note in skipped_notes(inp):
+        print("note: " + note)
 
 
 def link_note(inp, live):

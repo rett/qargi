@@ -30,15 +30,17 @@ proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
-mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
+mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 LIB=$T/c/packs
 # The hash and record `qargi skill seal` would write, without its review: the adapter has to hold on its own.
 forge() { # path: skill dir or tool file
   local p=$1 h
   if [ -d "$p" ]; then h=$(cd "$p" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -c1-16)
-    jq -n --arg h "$h" '{kind:"skill",source:"forged",sha256:$h,stored:"2026-01-01T00:00:00Z"}' > "$p/.pack.json"
+    h=$(printf '%s\ncompatible_providers=%s\n' "$h" '["any"]' | sha256sum | cut -c1-16)   # the hash covers the declaration, as in lib/packs.sh content_hash
+    jq -n --arg h "$h" '{kind:"skill",source:"forged",sha256:$h,stored:"2026-01-01T00:00:00Z",compatible_providers:["any"]}' > "$p/.pack.json"
   else h=$(sha256sum < "$p" | cut -c1-16)
-    jq -n --arg h "$h" '{kind:"tool",source:"forged",sha256:$h,stored:"2026-01-01T00:00:00Z"}' > "${p%.json}.pack.json"; fi
+    h=$(printf '%s\ncompatible_providers=%s\n' "$h" '["any"]' | sha256sum | cut -c1-16)
+    jq -n --arg h "$h" '{kind:"tool",source:"forged",sha256:$h,stored:"2026-01-01T00:00:00Z",compatible_providers:["any"]}' > "${p%.json}.pack.json"; fi
 }
 forcelink() { # pack-key e.g. skill:name -> project scope link written without the link verb's review
   jq --arg k "$1" --arg p "$PRJ" '.links = ((.links + [{pack:$k,scope:"project",project:$p}]) | unique)' "$LIB/links.json" > "$T/w/l.json" && mv "$T/w/l.json" "$LIB/links.json"
@@ -218,7 +220,7 @@ g_names() {
   # two packs of different kinds with the same name
   reset; hostile_skill dup; finish_skill dup
   printf '%s' '{"name":"dup","url":"https://mcp.example.net/","tools":{"list_things":"always_allow"}}' > "$T/w/dup.json"
-  imp=$($DA tool import "$T/w/dup.json" 2>&1 | tok_of); $DA tool import "$T/w/dup.json" --plan "$imp" --approved test >/dev/null 2>&1
+  imp=$($DA tool import "$T/w/dup.json" --compatible any 2>&1 | tok_of); $DA tool import "$T/w/dup.json" --compatible any --plan "$imp" --approved test >/dev/null 2>&1
   need "the tool verbs refuse a tool pack named like an existing skill" '[ ! -e "$LIB/tools/dup.json" ]'
   endcase "tool import of a name an existing skill pack already has"
   reset; hostile_skill dup; finish_skill dup

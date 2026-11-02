@@ -22,7 +22,7 @@ D=$T/s/claude/alpha
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
-mkskill() { $DA skill new "$1" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
+mkskill() { $DA skill new "$1" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; }
 lk() { $DA packs link alpha "$@"; }
 ul() { $DA packs unlink alpha "$@"; }
 lplan() { lk | tok_of; }
@@ -65,6 +65,12 @@ tail -1 "$T/s/audit.log" | jq -e '.verb=="packs-link" and .approved=="go ahead"'
 grep -q "git does not ignore .claude/skills" <<<"$out" && grep -q "^    .claude/skills$" <<<"$out" && grep -q "info/exclude" <<<"$out" && ok "an unignored link prints the line to add to .git/info/exclude" || no "exclude hint: $out"
 [ ! -s "$R/.git/info/exclude" ] || ! grep -q "^.claude/skills" "$R/.git/info/exclude" && ok "the exclude file is not edited" || no "exclude edited"
 [ "$before" = "$(snap "$T/c" "$D")" ] && ok "neither the library nor the render changed" || no "library or render changed"
+# a pack the project's provider cannot use is not in the render, so the link never reaches it; the plan says so
+$DA skill new s-skip --compatible elsewhere >/dev/null; sed -i "s/^description: .*/description: Use for s-skip./" "$T/c/packs/skills/s-skip/SKILL.md"; seal s-skip
+$DA skill link s-skip --scope project --project alpha >/dev/null
+out=$(lk); grep -q "^skipped skill s-skip: not compatible with claude (it declares elsewhere)" <<<"$out" && ok "the link plan says which pack the provider cannot use" || no "link plan skip note: $out"
+$DA skill unlink s-skip --scope project --project alpha >/dev/null
+$DA skill remove s-skip >/dev/null
 out=$(lk); rc=$?
 [ "$rc" = 0 ] && grep -q "^already linked" <<<"$out" && [ -z "$(tok_of <<<"$out")" ] && ok "linking again says already linked, with no token, exit 0" || no "second link: rc=$rc $out"
 n=$(wc -l < "$T/s/audit.log"); lk --plan x --approved y >/dev/null; [ "$n" = "$(wc -l < "$T/s/audit.log")" ] && ok "already linked is not audited" || no "audit on no-op"

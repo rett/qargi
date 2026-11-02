@@ -21,9 +21,14 @@ else:
 
 CATALOG = {"format": 1, "tools": [
     {"id": "skill-demo", "kind": "skill", "name": "demo", "summary": "A demo skill for documents", "tags": ["documents", "pdf"], "roles": {"write": "recommended"},
-     "stack": [], "risk": "low", "install": {"dir": "@SKILLDIR@", "name": "demo"}, "scope_hint": "project-role"},
+     "stack": [], "risk": "low", "install": {"dir": "@SKILLDIR@", "name": "demo"}, "scope_hint": "project-role", "compatible_providers": ["any"]},
     {"id": "mcp-demo", "kind": "mcp", "name": "demo-mcp", "summary": "Read a demo service", "tags": ["service"], "roles": {"review": "optional"}, "stack": [], "risk": "medium",
-     "install": {"name": "demo-mcp", "url": "https://mcp.example.net/demo", "tools": {"read_item": "always_allow"}, "vault_ids": []}, "scope_hint": "user-role"},
+     "install": {"name": "demo-mcp", "url": "https://mcp.example.net/demo", "tools": {"read_item": "always_allow"}, "vault_ids": []}, "scope_hint": "user-role",
+     "compatible_providers": ["any"]},
+    {"id": "skill-other", "kind": "skill", "name": "other", "summary": "A skill for another provider", "tags": ["documents"], "roles": {"write": "recommended"}, "stack": [],
+     "risk": "low", "install": {"dir": "@SKILLDIR@", "name": "other"}, "scope_hint": "project-role", "compatible_providers": ["elsewhere"]},
+    {"id": "skill-undeclared", "kind": "skill", "name": "undeclared", "summary": "A skill that does not say", "tags": ["documents"], "roles": {"write": "optional"}, "stack": [],
+     "risk": "low", "install": {"dir": "@SKILLDIR@", "name": "demo"}, "scope_hint": "project-role"},
     {"id": "pkg-lint", "kind": "package", "name": "shellcheck", "summary": "Lint shell scripts", "tags": ["lint", "shell"], "roles": {"build": "recommended", "test": "optional"},
      "stack": ["go"], "risk": "low", "install": {"manager": "apt", "packages": ["shellcheck", "jq"]}, "scope_hint": "project-role"},
     {"id": "pkg-have", "kind": "package", "name": "groff", "summary": "Man pages", "tags": ["man"], "roles": {"build": "recommended"}, "stack": [], "risk": "low",
@@ -47,6 +52,7 @@ class Env(unittest.TestCase):
         ans = json.loads(tpl)
         ans["repo"]["path"] = self.repo
         ans["repo"]["url"] = "https://github.com/example/alpha"
+        ans["models"]["provider"] = "claude"
         ans["roles"]["build"]["apt"] = ["groff"]
         ans["roles"]["review"] = dict(ans["roles"]["build"], apt=[], model="claude-opus-5-5")
         self.w(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(ans))
@@ -136,6 +142,75 @@ class Recommend(Env):
         r = self.q(["recommend", "nope"])
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("alpha", r.stderr)
+
+
+class Compatible(Env):
+    """Every pack declares which providers can use it; discover leaves out, with a note, what the project's provider cannot use."""
+
+    def test_recommend_leaves_out_an_entry_for_another_provider_and_says_so(self):
+        r = self.q(["recommend", "alpha", "--role", "write"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("skill-demo", r.stdout)
+        self.assertIn("skill-undeclared", r.stdout)                    # an entry that declares nothing is not filtered here: install asks
+        rows = [l for l in r.stdout.splitlines() if l.startswith("  ") and "skill-other" in l]
+        self.assertEqual(len(rows), 1, r.stdout)
+        self.assertTrue(rows[0].startswith("  skipped skill-other: not compatible with claude (it declares elsewhere)"), rows[0])
+
+    def test_a_project_with_no_provider_gets_only_the_packs_for_any(self):
+        ans = json.loads(self.rd(os.path.join(self.conf, "projects", "alpha.json")))
+        ans["models"]["provider"] = ""
+        self.w(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(ans))
+        r = self.q(["recommend", "alpha", "--role", "write"])
+        self.assertIn("skill-demo", r.stdout)
+        self.assertIn("skipped skill-other: project alpha names no provider to match against", r.stdout)
+
+    def test_show_prints_the_declaration(self):
+        self.assertIn('compatible_providers: ["elsewhere"]', self.q(["show", "skill-other"]).stdout)
+
+    def test_install_for_a_project_it_does_not_fit_is_refused_before_anything_is_asked(self):
+        r = self.q(["install", "skill-other", "--project", "alpha", "--role", "write"], answers=["y", "y", "project-role"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not installed for project alpha: skill-other: not compatible with claude", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.conf, "packs", "skills", "other")))
+
+    def test_the_declaration_is_stored_with_the_pack_and_covers_its_hash(self):
+        r = self.q(["install", "skill-demo", "--project", "alpha", "--role", "write"], answers=["y", "y", "project-role"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rec = json.loads(self.rd(os.path.join(self.conf, "packs", "skills", "demo", ".pack.json")))
+        self.assertEqual(rec["compatible_providers"], ["any"])
+        self.assertIn("compatible_providers: any", r.stdout)
+
+    def test_an_entry_that_declares_nothing_asks_and_the_answer_is_stored(self):
+        r = self.q(["install", "skill-undeclared", "--project", "alpha", "--role", "write"], answers=["y", "claude", "y", "project-role"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Which providers can use this pack?", self.rd(os.path.join(self.t, "out")))
+        rec = json.loads(self.rd(os.path.join(self.conf, "packs", "skills", "demo", ".pack.json")))
+        self.assertEqual(rec["compatible_providers"], ["claude"])
+
+    def test_the_option_answers_for_an_entry_that_declares_nothing(self):
+        r = self.q(["install", "skill-undeclared", "--compatible", "claude,fam", "--project", "alpha", "--role", "write"], answers=["y", "y", "project-role"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        rec = json.loads(self.rd(os.path.join(self.conf, "packs", "skills", "demo", ".pack.json")))
+        self.assertEqual(rec["compatible_providers"], ["claude", "fam"])
+
+    def test_a_declaration_that_is_not_one_is_refused_and_nothing_is_stored(self):
+        r = self.q(["install", "skill-undeclared", "--compatible", "any,claude", "--project", "alpha", "--role", "write"], answers=["y"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("compatible_providers:", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.conf, "packs", "skills", "demo")))
+
+    def test_a_skipped_pack_is_not_counted_as_one_the_role_has(self):
+        # `demo` is in the library and linked to alpha, but declared for another provider: effective names it as skipped, so recommend does not call it (have)
+        def row():
+            return [l for l in self.q(["recommend", "alpha", "--role", "write"]).stdout.splitlines() if "skill-demo" in l][0]
+        self.w(os.path.join(self.conf, "packs", "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Use for demo.\n---\n")
+        self.w(os.path.join(self.conf, "packs", "links.json"), json.dumps({"links": [{"pack": "skill:demo", "scope": "project", "project": "alpha"}]}))
+        self.w(os.path.join(self.conf, "packs", "skills", "demo", ".pack.json"), json.dumps({"kind": "skill", "compatible_providers": ["any"]}))
+        self.assertIn("(have)", row())
+        self.w(os.path.join(self.conf, "packs", "skills", "demo", ".pack.json"), json.dumps({"kind": "skill", "compatible_providers": ["elsewhere"]}))
+        eff = subprocess.run([BIN, "skill", "effective", "alpha", "write"], capture_output=True, text=True, env=self.env)
+        self.assertIn("skipped skill demo: not compatible with claude", eff.stdout)
+        self.assertNotIn("(have)", row())
 
 
 class Show(Env):
