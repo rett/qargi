@@ -83,6 +83,10 @@ project_answer() { # project ability field(model|effort) -> the project's valid 
   return 0
 }
 
+project_in_effect() { # explicit-project-or-empty -> that project, else the one in effect here (QARGI_PROJECT, else the checkout's), else empty
+  if [ -n "$1" ]; then echo "$1"; else python3 -I "$root/lib/help.py" infer; fi
+}
+
 provider_for() { # project-or-empty -> the active provider (the project's models.provider, default claude); dies when it has no file
   local f=$DA_CONF/projects/$1.json p=claude
   [ -z "$1" ] || [ ! -f "$f" ] || p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude
@@ -146,7 +150,7 @@ add() {
   first=${list%%,*}
   # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
   ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
-  [ -z "$ro" ] || barrier_guard local "$PROJ"
+  [ -z "$ro" ] || barrier_guard local "$(project_in_effect "$PROJ")"   # the barrier is the project in effect's (--project, QARGI_PROJECT, the checkout); none: refused
   adapter_for "$prov" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)

@@ -370,8 +370,11 @@ def project_provider(answers, project):
 
 def provider_of(project, conf=None):
     """project_provider() of the stored answers of a project. A project with no stored answers is NoProvider too (exit 2), but says
-    so: "no such project 'X'" is not "project X has no provider", whose fix (qargi project set) would fail for a name that is not a project."""
-    if not project or not NAME_RE.match(project) or not os.path.lexists(os.path.join(conf or _conf(), "projects", project + ".json")):
+    so: "no such project 'X'" is not "project X has no provider", whose fix (qargi project set) would fail for a name that is not a project.
+    No project at all (a verb given none, and none inferred from the checkout) is a refusal that says what to pass."""
+    if not project:
+        raise NoProvider("no project given, so no provider: a provider belongs to a project; pass --project NAME (or run from a project checkout)")
+    if not NAME_RE.match(project) or not os.path.lexists(os.path.join(conf or _conf(), "projects", project + ".json")):
         raise NoProvider("no such project '%s'" % project)
     answers = project_answers(project, conf)
     if answers is None:
