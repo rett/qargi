@@ -165,6 +165,8 @@ class Skills(unittest.TestCase):
 
     def test_refuses_the_verbs_that_change_a_skill(self):
         verbs = ["%s %s x" % (a, v) for a in ("skill", "tool") for v in ("new", "import", "seal", "remove", "unlink", "link", "enable", "disable")]
+        verbs += ["skill accept p x", "skill unaccept p x", "skill accept p x --user", "skill unaccept p x --user --plan 0123456789ab --approved go",
+                  "skill accept p x --plan 0123456789ab --approved go"]
         verbs += ["discover install skill-pdf --project p", "packs apply p-build --asked x", "packs link p", "packs unlink p --plan 0123456789ab --approved go",
                   "packs link p --plan 0123456789ab --approved go", "import backup.tar.gz"]
         for v in verbs:
@@ -175,7 +177,7 @@ class Skills(unittest.TestCase):
                 self.assertEqual(r.returncode, 2, form % v)
                 self.assertIn("changes a skill and is not available to an agent", r.stderr)
                 self.assertIn("qargi guard:", r.stderr)
-        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "./lib/packs.sh packs link p", "bash lib/packs.sh packs unlink p", "python3 -I lib/discover.py install foo"):
+        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "./lib/packs.sh packs link p", "bash lib/packs.sh skill accept p x", "./lib/packs.sh skill unaccept p x --user", "bash lib/packs.sh packs unlink p", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
     def test_refuses_provider_accept_to_a_member(self):
@@ -202,7 +204,8 @@ class Skills(unittest.TestCase):
 
     def test_lets_the_read_only_verbs_through(self):
         for c in ("qargi skill list", "qargi skill show x", "qargi tool check p build", "qargi skill effective p build", "qargi discover search pdf",
-                  "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi export a.tgz", "qargi help skill",
+                  "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi packs check --target claude-code p",
+                  "echo qargi skill accept p x", "git commit -m 'qargi skill unaccept p x'", "qargi export a.tgz", "qargi help skill",
                   "git commit -m 'qargi skill new is refused for members'", "grep -rn 'qargi skill link' docs", "echo qargi skill remove x",
                   "ls skills", "qargi local verify"):
             r = self.bash(c)
@@ -220,7 +223,7 @@ class Skills(unittest.TestCase):
     def test_edit_tools_are_decided_by_the_resolved_path(self):
         c, lib, ls = self.clone, self.lib, self.lskill
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
-            for p in (os.path.join(lib, "skills/s/SKILL.md"), os.path.join(lib, "links.json"), os.path.join(ls, "x/SKILL.md"), "../home/.claude/skills/x/SKILL.md",
+            for p in (os.path.join(lib, "skills/s/SKILL.md"), os.path.join(lib, "links.json"), os.path.join(lib, "accepted.json"), os.path.join(ls, "x/SKILL.md"), "../home/.claude/skills/x/SKILL.md",
                       "link-to-library/skills/s/SKILL.md", os.path.join(self.proj, ".claude/skills/p/SKILL.md"), "../../proj/.claude/skills/new/SKILL.md",
                       "~/.claude/skills/x/SKILL.md", "~/.claude/agents/m.md", "~/.claude/plugins/p/plugin.json"):
                 r = self.call(tool, {key: p})
@@ -241,7 +244,8 @@ class Skills(unittest.TestCase):
 
     def test_bash_writes_to_a_protected_location_are_refused(self):
         lib, ls = self.lib, self.lskill
-        for c in ("echo x > %s/skills/s/SKILL.md" % lib, "echo x >> %s/links.json" % lib, "echo x>%s/links.json" % lib, "cat a 2> %s/e" % ls,
+        for c in ("echo x > %s/skills/s/SKILL.md" % lib, "echo x >> %s/links.json" % lib, "echo x>%s/links.json" % lib, "echo '{}' > %s/accepted.json" % lib, "cp a.json %s/accepted.json" % lib, "mv a.json %s/accepted.json" % lib,
+                  "sed -i s/a/b/ %s/accepted.json" % lib, "rm %s/accepted.json" % lib, "cat a 2> %s/e" % ls,
                   "echo x | tee %s/x/SKILL.md" % ls, "cp a.md %s/x/" % ls, "cp -t %s/x a.md" % ls, "cp --target-directory=%s/x a.md" % ls,
                   "mv %s/x /tmp/gone" % ls, "mv a.md %s/x/SKILL.md" % ls, "rm -rf %s/skills/s" % lib, "rm -rf ~/.claude", "rm -rf %s" % self.home,
                   "ln -s /etc/passwd %s/x/SKILL.md" % ls, "install -m 644 a %s/x/SKILL.md" % ls, "sed -i s/a/b/ %s/x/SKILL.md" % ls,
@@ -261,7 +265,7 @@ class Skills(unittest.TestCase):
     def test_bash_reads_and_other_writes_are_not_refused(self):
         lib, ls = self.lib, self.lskill
         for c in ("cat %s/x/SKILL.md" % ls, "cat %s/x/SKILL.md > %s/run/out/copy.md" % (ls, self.t), "cp %s/x/SKILL.md %s/run/out/" % (ls, self.t),
-                  "grep -rn foo %s" % lib, "ls -la %s" % ls, "diff -r %s/x skills/qargi-build" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
+                  "grep -rn foo %s" % lib, "cat %s/accepted.json" % lib, "jq . %s/accepted.json" % lib, "ls -la %s" % ls, "diff -r %s/x skills/qargi-build" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
                   "jq . %s/links.json > %s/run/out/l.json" % (lib, self.t), "find %s -name '*.md'" % ls, "find %s -name SKILL.md -exec cat {} +" % self.clone + " > /dev/null",
                   "tar czf %s/run/out/lib.tgz -C %s ." % (self.t, lib), "echo x > %s/home/.claude/settings.json" % self.t, "rm -rf %s/run/out/old" % self.t,
                   "curl -s http://h/f -o %s/run/out/f" % self.t, "touch %s/.claude" % self.proj, "ls ~/.claude/skills", "echo ~/.claude/skills > list.txt", "cd %s && ls" % lib):

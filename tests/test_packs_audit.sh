@@ -223,6 +223,14 @@ grep -q "^already linked" <<<"$out" && grep -qE "^ +qargi +s-all  \(checkout\+re
 [ "$(st mine)" = "" ] && ok "(the real directory moved to the backup: its skills no longer load)" || no "mine still listed: $(line mine)"
 $DA packs unlink alpha --plan "$($DA packs unlink alpha | tok_of)" --approved go >/dev/null
 
+# --- a local member never accepts or unaccepts, and never writes the acceptances file (the guard of a member's tools)
+guard() { jq -nc --arg c "$1" '{tool_name:"Bash", tool_input:{command:$c}, cwd:"/"}' | $DA __guard 2>&1; }
+for c in "qargi skill accept alpha mine" "qargi skill unaccept alpha mine --user" "bash -c 'qargi skill accept alpha mine --plan 0123456789ab --approved go'" \
+         "bash lib/packs.sh skill accept alpha mine" "echo y > $T/c/packs/accepted.json"; do
+  guard "$c" >/dev/null; [ "$?" = 2 ] && ok "the member guard refuses: $c" || no "the member guard let through: $c"
+done
+guard "qargi packs check --target claude-code alpha" >/dev/null && ok "the member guard allows the read-only check" || no "the guard refused check"
+
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
