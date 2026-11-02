@@ -439,7 +439,8 @@ def render_body(F):
 def render_tail(F):
     L = ["== notes"] if F["notes"] else []
     L += ["note: " + n for n in F["notes"]]
-    L += ["", "== do not assume"] + ["- " + s for s in F["do_not_assume"]]
+    L += [""] if F["notes"] else []
+    L += ["== do not assume"] + ["- " + s for s in F["do_not_assume"]]
     return "\n".join(L) + "\n"
 
 
@@ -450,7 +451,7 @@ def render_text(F):
         cut = body.encode()[:room].decode(errors="ignore")
         cut = cut[:cut.rfind("\n")] if "\n" in cut else cut
         body = cut + "\n[truncated: the note is capped at %d KiB; the rest is in qargi marshal status NAME and qargi feature status NAME]" % (CAP_BYTES // 1024)
-    return body + "\n" + tail
+    return body + "\n\n" + tail
 
 
 def render_json(F):

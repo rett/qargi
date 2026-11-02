@@ -205,7 +205,7 @@ rm -f "$R/CLAUDE.md"
 
 # --- the answers are not on this host
 python3 -I "$TOOL/lib/marshal_handoff.py" --state "$S" --conf "$T/absent" --project app --repo "" f1 >"$T/o" 2>"$T/e"; rc=$?
-[ $rc = 1 ] && grep -q "no feature f1" "$T/e" && ok "answers absent and no repository: a feature cannot be found (exit 1)" || no "SPEC answers absent, no repo: rc=$rc $(out)"
+[ $rc = 0 ] && grep -q "^qargi data NOT present on this host" "$T/o" && grep -q "no branch feature/f1 on this host" "$T/o" && grep -q "^not described: the answers of the project are not on this host" "$T/o" && ok "answers absent and no repository: the record is shown, the rest is said to be unknown (exit 0)" || no "SPEC answers absent, no repo: rc=$rc $(out)"
 python3 -I "$TOOL/lib/marshal_handoff.py" --state "$S" --conf "$T/absent" --project app --repo "$R" >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && grep -q "^qargi data NOT present on this host" "$T/o" && grep -q "^note: the answers of app are not on this host" "$T/o" && ok "answers absent: 'qargi data NOT present on this host' and a note, exit 0" || no "SPEC data not present: rc=$rc $(out)"
 
