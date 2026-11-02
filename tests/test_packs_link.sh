@@ -87,9 +87,10 @@ echo ".claude/skills" >> "$R/.git/info/exclude"
 out=$(lk); [ -n "$(tok_of <<<"$out")" ] && ! grep -q "git does not ignore" <<<"$out" && ok "no hint once git ignores the path" || no "hint despite ignore: $out"
 
 # --- a symlink somewhere else is never replaced
+tok=$(lplan); [ -n "$tok" ] || no "setup: a plan before the foreign symlink appears"   # a real token, taken in this same state
 mkdir -p "$T/other/skills"; echo keep > "$T/other/skills/f"; ln -s "$T/other/skills" "$R/.claude/skills"
 out=$(lk 2>&1) && no "replaced a foreign symlink" || { grep -q "not to this project's render" <<<"$out" && ok "a symlink to somewhere else is refused" || no "foreign message: $out"; }
-lk --plan 000000000000 --approved x >/dev/null 2>&1 && no "foreign symlink accepted with a token" || ok "a foreign symlink is refused at apply too"
+out=$(lk --plan "$tok" --approved x 2>&1) && no "foreign symlink accepted with a token" || { grep -q "not to this project's render" <<<"$out" && ok "a foreign symlink that appeared after the plan is refused at apply, with that reason" || no "foreign at apply: $out"; }
 out=$(ul 2>&1) && no "unlink removed a foreign symlink" || { grep -q "not to this project's render" <<<"$out" && ok "unlink refuses a foreign symlink" || no "unlink foreign: $out"; }
 [ "$(readlink "$R/.claude/skills")" = "$T/other/skills" ] && [ "$(cat "$T/other/skills/f")" = keep ] && ok "the foreign symlink and its target are untouched" || no "foreign changed"
 rm "$R/.claude/skills"; ln -s "$T/nowhere" "$R/.claude/skills"; lk >/dev/null 2>&1 && no "replaced a dangling symlink" || ok "a dangling foreign symlink is refused too"
@@ -136,19 +137,21 @@ out=$(ul --plan "$tok" --approved x 2>&1)
 [ -d "$S" ] && [ ! -L "$S" ] && [ ! -e "$bk" ] && diff -r "$T/snapshot" "$S" >/dev/null && [ -L "$S/mine/rl" ] && grep -q "restored from $bk (there was no link)" <<<"$out" && ok "the backup-only unlink moves the backup back, byte for byte" || no "backup-only apply: $out"
 
 # --- tracked files: the repository's owner decides
+tok=$(lplan); [ -n "$tok" ] || no "setup: a plan before the skills are tracked"
 git -C "$R" add -f .claude/skills; $G -C "$R" commit -q -m "track skills"
 out=$(lk 2>&1) && no "planned over tracked skills" || { grep -q "tracked by git" <<<"$out" && grep -q "owner decides" <<<"$out" && ok "a directory with tracked files is refused and the owner decides" || no "tracked message: $out"; }
-lk --plan 000000000000 --approved x >/dev/null 2>&1 && no "applied over tracked skills" || ok "tracked skills are refused at apply too"
+out=$(lk --plan "$tok" --approved x 2>&1) && no "applied over tracked skills" || { grep -q "tracked by git" <<<"$out" && ok "skills that were tracked after the plan are refused at apply, with that reason" || no "tracked at apply: $out"; }
 [ -d "$S" ] && [ ! -L "$S" ] && diff -r "$T/snapshot" "$S" >/dev/null && ok "tracked files are untouched" || no "tracked changed"
 rm -r "$S"; out=$(lk 2>&1) && no "planned over tracked, deleted skills" || ok "tracked files that were deleted from the work tree are still refused"
 git -C "$R" checkout -q -- .claude/skills; git -C "$R" rm -q -r --cached .claude/skills; $G -C "$R" commit -q -m untrack
 rm -rf "$S"
 
 # --- a symlinked .claude
+tok=$(lplan); [ -n "$tok" ] || no "setup: a plan before .claude becomes a symbolic link"
 rm -rf "$R/.claude"; mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$R/.claude"
 out=$(lk 2>&1) && no "linked through a symlinked .claude" || { grep -q "is a symbolic link" <<<"$out" && ok "a symlinked .claude is refused" || no ".claude message: $out"; }
 ul >/dev/null 2>&1 && no "unlinked through a symlinked .claude" || ok "unlink refuses a symlinked .claude too"
-lk --plan 000000000000 --approved x >/dev/null 2>&1; [ -z "$(ls -A "$T/elsewhere")" ] && ok "nothing is written outside the checkout" || no "wrote outside"
+out=$(lk --plan "$tok" --approved x 2>&1); [ -z "$(ls -A "$T/elsewhere")" ] && grep -q "is a symbolic link" <<<"$out" && ok "a .claude that became a symbolic link after the plan is refused at apply, and nothing is written outside the checkout" || no "wrote outside: $out"
 rm "$R/.claude"; printf 'file\n' > "$R/.claude"; lk >/dev/null 2>&1 && no ".claude that is a file was accepted" || ok "a .claude that is a file is refused"
 rm "$R/.claude"
 
@@ -274,18 +277,19 @@ $PYL apply link "$T/in.json" "$(cat "$T/tokfile" 2>/dev/null || echo 00000000000
 mkin "$R" "$T/s"; jq '.provider = "agentx"' "$T/in.json" > "$T/in2.json"; out=$($PYL plan link "$T/in2.json" "$T/tokfile" 2>&1) && no "planned another provider than the project's" || { grep -q "not the project's" <<<"$out" && ok "the provider must be the project's own" || no "foreign provider message: $out"; }
 $PYL plan link "$T/in.json" "$T/tokfile" >/dev/null 2>&1 && [ -s "$T/tokfile" ] && ok "(inputs that agree with the stored answers still plan)" || no "plain direct plan failed"
 
-# --- a provider whose layout differs: every path comes from its descriptor, and a missing facility is a refusal (exit 3)
-# A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
-# has its own render target, and no renderer: the render is made by hand.
 # a name with a trailing newline is not a project name, nor a skill name
 jq '.project = "alpha\n"' "$T/in.json" > "$T/in3.json"; out=$($PYL plan link "$T/in3.json" "$T/tokfile" 2>&1) && no "a project name with a trailing newline was accepted" || { grep -q "not a project name" <<<"$out" && ok "a project name with a trailing newline is refused" || no "newline project: $out"; }
 out=$($DA skill accept alpha $'mine\n' 2>&1) && no "a skill name with a trailing newline was accepted" || { grep -q "^qargi: not a skill name: mine" <<<"$out" && ok "the shell refuses a skill name with a trailing newline as 'not a skill name'" || no "newline skill (shell): $out"; }
 
+# --- a provider whose layout differs: every path comes from its descriptor, and a missing facility is a refusal (exit 3)
+# A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
+# has its own render target, and no renderer: the render is made by hand.
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
 mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"'
+mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"
+  | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}] | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
 mkprov noskills '.layout.project_skills_dir = null'
 mkprov unverified '.capabilities.skills.local.verified_on = null'
 mkprov notarget '.layout.render_target = null'
@@ -320,14 +324,14 @@ projp eps notarget; out=$($FX packs check --target claude-code eps 2>&1); rc=$?
 [ "$rc" = 3 ] && [ "$out" = "qargi: provider notarget has no packs render target: render the project's packs for a local session" ] && ok "a provider with no render target: packs check --target is refused with exit 3" || no "notarget check: rc=$rc $out"
 out=$($FX packs apply --target claude-code beta 2>&1); rc=$?
 [ "$rc" != 0 ] && [ "$rc" != 3 ] && grep -q "^qargi: --target is agentx-render for provider agentx" <<<"$out" && ok "another provider's render target is the one --target accepts" || no "wrong target: rc=$rc $out"
-out=$($FX packs apply --target agentx-render beta 2>&1); rc=$?
-[ "$rc" = 3 ] && grep -q "^qargi: provider agentx has no packs renderer for target agentx-render: " <<<"$out" && ok "a render target nothing renders is refused with exit 3" || no "no renderer: rc=$rc $out"
-out=$($DA packs check --target claude-code alpha 2>&1); [ -n "$out" ] && ok "claude keeps answering to --target claude-code" || no "claude target"
-# there is no default provider: answers without models.provider are refused with exit 2 and the fix, by every verb that needs one
 out=$($FX packs check beta 2>&1); rc=$?
 [ "$rc" = 1 ] && [ "$out" = "qargi: --target is agentx-render (or managed-agents / none for a cloud instance); check needs --target agentx-render" ] && ok "check without --target names the project's provider's render target, not claude-code" || no "no target message: rc=$rc $out"
 out=$($FX packs apply --target none beta 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "^qargi: --target is agentx-render (or managed-agents" <<<"$out" && ! grep -q claude <<<"$out" && ok "--target none names the provider's render target too" || no "target none message: rc=$rc $out"
+out=$($FX packs apply --target agentx-render beta 2>&1); rc=$?
+[ "$rc" = 3 ] && grep -q "^qargi: provider agentx has no packs renderer for target agentx-render: " <<<"$out" && ok "a render target nothing renders is refused with exit 3" || no "no renderer: rc=$rc $out"
+out=$($DA packs check --target claude-code alpha 2>&1); [ -n "$out" ] && ok "claude keeps answering to --target claude-code" || no "claude target"
+# there is no default provider: answers without models.provider are refused with exit 2 and the fix, by every verb that needs one
 jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 for v in "packs link alpha" "packs unlink alpha" "packs check --target claude-code alpha" "packs apply --target claude-code alpha"; do
   out=$($DA $v 2>&1); rc=$?

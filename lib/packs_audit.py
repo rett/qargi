@@ -303,7 +303,24 @@ def offers(inp, e):
         out += ["    or accept it as it is:      qargi skill accept %s %s" % (q(p), q(n))]
     else:
         out += ["    to accept it as it is: qargi skill accept %s %s --user" % (q(p), q(n))]
-    return out
+    return out + hide_offer(inp, e)
+
+
+def hide_offer(inp, e):
+    """The line the person adds to a settings file to switch the skill off, as text only (qargi never writes a settings file): the key
+    and the off value are the provider's exclusion, the file one of its settings files, the unshared one of the checkout for a checkout
+    skill and the user's for a user skill. Nothing for a provider that cannot hide a skill."""
+    lay = layout(inp)
+    exc, files = lay["exclusion"], lay["settings_files"] or []
+    if not exc or not files:
+        return []
+    co = inp.get("checkout") or ""
+    for scope in (("project-local", "project", "user") if "checkout" in e["where"] else ("user",)):
+        for f in files:
+            if f["scope"] == scope and (os.path.isabs(f["path"]) or (co and os.path.isabs(co))):
+                path = f["path"] if os.path.isabs(f["path"]) else os.path.join(co, f["path"])
+                return ["    to hide it instead:         %s in %s" % (json.dumps({exc["file_key"]: {e["name"]: exc["off_value"]}}), clean(path))]
+    return []
 
 
 def cmd_report(inp):
