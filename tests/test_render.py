@@ -3,7 +3,8 @@
 renderer and the `command` renderer. Hermetic: every file is made in a temporary directory.
 Run: python3 tests/test_render.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, random, sys, tomllib, unittest
+import hashlib, json, os, random, sys, tomllib, unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, "..", "lib")
@@ -354,6 +355,332 @@ class Markdown(unittest.TestCase):
             with self.subTest(text=text):
                 with self.assertRaises(R.RenderError):
                     R.split_markdown(text)
+
+
+# ---------------------------------------------------------------- the map renderer
+
+DEF = {
+    "name": "build-1",
+    "abilities": ["build", "test"],
+    "class": "write",
+    "tier": "balanced",
+    "effort": "high",
+    "tools": ["bash", "read", "edit"],
+    "barrier": {"guard_command": "qargi __guard --provider p"},
+    "body": "You are a member.\n\nWork.\n",
+}
+TOOL_MAP = {"bash": "Bash", "read": "Read", "edit": "Edit", "monitor": "Monitor"}
+FIELDS = [
+    {"from": "name", "to": "name", "refuse_if_missing": True},
+    {"value": "A member (roles: {abilities}): one task at a time", "to": "description"},
+    {"from": "tier", "to": "model", "resolve": "model", "refuse_if_missing": True},
+    {"from": "effort", "to": "effort", "resolve": "effort"},
+    {"from": "tools", "to": "tools", "tool_map": TOOL_MAP, "transform": [{"join": ", "}], "guarantee_for": ["read-only"]},
+    {"value": {"PreToolUse": [{"matcher": "Bash|Edit", "hooks": [{"type": "command", "command": "{barrier.guard_command}", "timeout": 20}]}]},
+     "to": "hooks"},
+]
+TABLES = {"model": {"balanced": "m-bal", "deep": "m-deep"}, "effort": {"high": "hi"}}
+
+
+def resolver(kind, value, definition):
+    return TABLES[kind].get(value)
+
+
+def spec(**kw):
+    s = {"engine": "map", "format": "markdown-frontmatter", "path": "{name}.md", "fields": FIELDS}
+    s.update(kw)
+    return s
+
+
+def defn(**kw):
+    d = json.loads(json.dumps(DEF))
+    d.update(kw)
+    return {k: v for k, v in d.items() if v is not None}
+
+
+GOLDEN_MD = """\
+---
+name: build-1
+description: "A member (roles: build, test): one task at a time"
+model: m-bal
+effort: hi
+tools: Bash, Read, Edit
+hooks:
+  PreToolUse:
+    - matcher: "Bash|Edit"
+      hooks:
+        - type: command
+          command: qargi __guard --provider p
+          timeout: 20
+---
+
+You are a member.
+
+Work.
+"""
+
+
+class MapRenderer(unittest.TestCase):
+    def render(self, d=None, s=None, **kw):
+        return R.render_map(defn() if d is None else d, spec() if s is None else s, resolver=kw.pop("resolver", resolver), **kw)
+
+    def refuses(self, match, d=None, s=None, **kw):
+        with self.assertRaisesRegex(R.RenderError, match):
+            self.render(d, s, **kw)
+
+    def test_markdown_golden_and_result_shape(self):
+        r = self.render()
+        self.assertEqual(r["content"], GOLDEN_MD)
+        self.assertEqual(r["path"], "build-1.md")
+        self.assertEqual(r["sha256"], hashlib.sha256(GOLDEN_MD.encode()).hexdigest())
+        self.assertRegex(r["inputs_hash"], r"^[0-9a-f]{64}$")
+        self.assertEqual(r["notes"], [])
+        self.assertEqual(sorted(r), ["content", "inputs_hash", "notes", "path", "sha256"])
+
+    def test_the_same_fields_as_yaml_toml_json(self):
+        flat = [f for f in FIELDS if f["to"] != "hooks"]
+        yaml_ = self.render(s=spec(format="yaml", fields=flat, path="agents/{name}.yaml", body=None))
+        self.assertEqual(yaml_["content"], 'name: build-1\ndescription: "A member (roles: build, test): one task at a time"\n'
+                                           'model: m-bal\neffort: hi\ntools: Bash, Read, Edit\n')
+        self.assertEqual(yaml_["path"], "agents/build-1.yaml")
+        toml_ = self.render(s=spec(format="toml", fields=flat, path="{name}.toml", body=None))
+        self.assertEqual(toml_["content"], 'name = "build-1"\ndescription = "A member (roles: build, test): one task at a time"\n'
+                                           'model = "m-bal"\neffort = "hi"\ntools = "Bash, Read, Edit"\n')
+        json_ = self.render(s=spec(format="json", fields=flat, path="{name}.json", body=None))
+        self.assertEqual(json.loads(json_["content"]), json.loads(json.dumps({
+            "name": "build-1", "description": "A member (roles: build, test): one task at a time", "model": "m-bal", "effort": "hi", "tools": "Bash, Read, Edit"})))
+
+    def test_a_tools_list_stays_a_list_without_join_and_nested_values_are_typed(self):
+        fields = [{"from": "tools", "to": "tools", "tool_map": TOOL_MAP}, {"value": {"a": {"b": ["{name}", "x"], "n": 3, "t": True}}, "to": "obj"}]
+        r = self.render(s=spec(format="toml", fields=fields, path="{name}.toml", body=None))
+        self.assertEqual(tomllib.loads(r["content"]), {"tools": ["Bash", "Read", "Edit"], "obj": {"a": {"b": ["build-1", "x"], "n": 3, "t": True}}})
+
+    def test_text_format(self):
+        s = spec(format="text", path="{name}.txt", fields=FIELDS[:3], template="agent {name} on {model} ({description})\n\n{body}")
+        r = self.render(s=s)
+        self.assertEqual(r["content"], "agent build-1 on m-bal (A member (roles: build, test): one task at a time)\n\nYou are a member.\n\nWork.\n")
+        s["template"] = "{missing}"
+        self.refuses("missing", s=s)
+        s["template"] = "{{literal}} {name}"
+        self.assertEqual(self.render(s=s)["content"], "{literal} build-1\n")
+
+    def test_the_body_may_come_from_elsewhere_or_be_absent(self):
+        r = self.render(d=defn(prompt="Other.\n"), s=spec(body="prompt"))
+        self.assertTrue(r["content"].endswith("---\n\nOther.\n"))
+        r = self.render(s=spec(body=None))
+        self.assertTrue(r["content"].endswith("---\n"))
+        self.refuses("body", d=defn(body=None), s=spec(body_required=True))
+        self.refuses("body", s=spec(format="json", body="body"))
+
+    def test_deterministic_for_the_same_input_and_for_any_insertion_order(self):
+        a = self.render()
+        self.assertEqual(a, self.render())
+        d = defn()
+        reordered = {k: d[k] for k in reversed(list(d))}
+        reordered["barrier"] = dict(reversed(list(d["barrier"].items())))
+        b = self.render(d=reordered)
+        self.assertEqual(a, b)
+        self.assertEqual(a["content"].splitlines()[1], "name: build-1")
+
+    def test_the_order_of_the_file_is_the_order_of_the_field_table(self):
+        fields = list(reversed(FIELDS[:4]))
+        r = self.render(s=spec(fields=fields, body=None))
+        keys = [line.split(":")[0] for line in r["content"].splitlines()[1:-1]]
+        self.assertEqual(keys, ["effort", "model", "description", "name"])
+
+    def test_inputs_hash_follows_the_inputs_and_only_them(self):
+        base = self.render()["inputs_hash"]
+        self.assertNotEqual(base, self.render(d=defn(description="x"))["inputs_hash"])
+        self.assertNotEqual(base, self.render(d=defn(body="Other.\n"))["inputs_hash"])
+        self.assertNotEqual(base, self.render(s=spec(path="x-{name}.md"))["inputs_hash"])
+        self.assertNotEqual(base, self.render(extra={"catalog": "abc"})["inputs_hash"])
+        self.assertEqual(self.render(extra={"catalog": "abc"})["inputs_hash"], self.render(extra={"catalog": "abc"})["inputs_hash"])
+        changed = lambda kind, value, d: "other-model" if kind == "model" else TABLES[kind].get(value)  # noqa: E731
+        self.assertNotEqual(base, self.render(resolver=changed)["inputs_hash"])      # a catalog change makes the render STALE
+        self.assertEqual(base, self.render(resolver=lambda k, v, d: TABLES[k].get(v))["inputs_hash"])
+
+    def test_the_resolver_may_be_tables_in_the_spec(self):
+        r = R.render_map(defn(), spec(resolve=TABLES))
+        self.assertEqual(r["content"], GOLDEN_MD)
+        with self.assertRaisesRegex(R.RenderError, "resolver"):
+            R.render_map(defn(), spec())
+
+    def test_required_fields(self):
+        d = defn()
+        del d["name"]
+        self.refuses("name", d=d)
+        self.refuses("name", d=defn(name=""))
+        self.refuses("model", d=defn(tier=None))
+        fields = [dict(f, default="fallback") if f["to"] == "name" else f for f in FIELDS]
+        d = defn()
+        del d["name"]
+        self.assertIn("name: fallback", self.render(d=d, s=spec(fields=fields, path="x.md"))["content"])
+        self.refuses("path|name", d=d, s=spec(fields=fields))
+
+    def test_an_optional_field_that_is_absent_is_left_out_silently(self):
+        r = self.render(d=defn(effort=None))
+        self.assertNotIn("effort", r["content"])
+        self.assertEqual(r["notes"], [])
+
+    def test_degrade_a_value_the_runtime_cannot_express_is_dropped_with_a_note(self):
+        r = self.render(d=defn(effort="extreme"))
+        self.assertNotIn("effort", r["content"])
+        self.assertEqual(r["notes"], ["effort: omitted, the runtime has no effort for 'extreme'"])
+
+    def test_degrade_refuse_and_required_refuse_instead(self):
+        fields = [dict(f, degrade="refuse") if f["to"] == "effort" else f for f in FIELDS]
+        self.refuses("effort", d=defn(effort="extreme"), s=spec(fields=fields))
+        self.refuses("model", d=defn(tier="fast"))
+
+    def test_a_guarantee_is_never_dropped_for_the_class_it_guards(self):
+        d = defn(**{"class": "read-only"})
+        d_no_tools = defn(tools=None, **{"class": "read-only"})
+        self.assertIn("tools: Bash, Read, Edit", self.render(d=d)["content"])
+        self.refuses("tools", d=d_no_tools)                                          # absent for a read-only member
+        self.assertNotIn("tools", self.render(d=defn(tools=None))["content"])         # absent for a write member: fine
+        fields = [dict(f, tool_map={"bash": "Bash"}) if f["to"] == "tools" else f for f in FIELDS]
+        self.refuses("tool", d=d, s=spec(fields=fields))                             # an unmapped REQUIRED tool always refuses
+
+    def test_tools_policy_required_and_optional(self):
+        tools = {"required": ["bash"], "optional": ["monitor", "unknown"]}
+        r = self.render(d=defn(tools=tools))
+        self.assertIn("tools: Bash, Monitor\n", r["content"])
+        self.assertEqual(r["notes"], ["tools: the optional tool 'unknown' has no native name and was dropped"])
+        self.refuses("unknown", d=defn(tools={"required": ["unknown"]}))
+        fields = [dict(f, tool_map={"a": ["A", "B"], "b": "A"}) if f["to"] == "tools" else f for f in FIELDS]
+        self.assertIn("tools: A, B\n", self.render(d=defn(tools=["a", "b"]), s=spec(fields=fields))["content"])      # one tool, several natives; no repeats
+
+    def test_when_class(self):
+        fields = FIELDS + [{"value": "plan", "to": "mode", "when": {"class": "read-only"}}]
+        self.assertNotIn("\nmode:", self.render(s=spec(fields=fields))["content"])
+        self.assertIn("mode: plan", self.render(d=defn(**{"class": "read-only"}), s=spec(fields=fields))["content"])
+
+    def test_the_class_may_come_as_read_only_flag(self):
+        d = defn(**{"read_only": True})
+        del d["class"]
+        fields = [{"value": "{class}", "to": "c"}]
+        self.assertIn("c: read-only", self.render(d=d, s=spec(fields=fields))["content"])
+        d["read_only"] = False
+        self.assertIn("c: write", self.render(d=d, s=spec(fields=fields))["content"])
+        d = defn()
+        del d["class"]
+        self.refuses("class", d=d)
+        self.refuses("class", d=defn(**{"class": "admin"}))
+
+    def test_transforms(self):
+        def one(value, transform, **kw):
+            fields = [{"value": value, "to": "k", "transform": transform}]
+            return tomllib.loads(self.render(s=spec(format="toml", fields=fields, body=None), **kw)["content"])["k"]
+        self.assertEqual(one("AbC", "lower"), "abc")
+        self.assertEqual(one("AbC", "upper"), "ABC")
+        self.assertEqual(one("  x ", "strip"), "x")
+        self.assertEqual(one("x", {"prefix": "qargi-"}), "qargi-x")
+        self.assertEqual(one("x", {"suffix": ".md"}), "x.md")
+        self.assertEqual(one("x", {"map": {"x": "y"}}), "y")
+        self.assertEqual(one(["A", "B"], "lower"), ["a", "b"])                       # elementwise on a list
+        self.assertEqual(one(["a", "b"], {"join": "+"}), "a+b")
+        self.assertEqual(one(["a", "b"], {"join": ""}), "ab")
+        self.assertEqual(one(["a", 2], "join"), "a, 2")
+        self.assertEqual(one(["b", "a"], [{"map": {"a": "A", "b": "B"}}, "lower", {"prefix": "<"}, {"join": " "}]), "<b <a")
+        self.assertEqual(one("read-only", {"map": {"write": 1, "read-only": True}}), True)
+
+    def test_transform_errors(self):
+        def one(value, transform):
+            self.refuses("transform|join|map|text|string|needs", s=spec(format="toml", fields=[{"value": value, "to": "k", "transform": transform}], body=None))
+        one("x", "shout")                                  # unknown
+        one("x", {"shout": 1})
+        one("x", {"prefix": 3})
+        one("x", {"prefix": "a", "suffix": "b"})           # one name per entry
+        one("x", {"lower": 1})
+        one("x", {"map": "nope"})
+        one("x", {"map": {"y": "z"}})                      # no entry
+        one("x", {"map": {"x": [1]}})
+        one("x", "join")                                   # not a list
+        one([[1]], "join")
+        one(5, "lower")
+        one(True, {"prefix": "x"})
+        one("x", 5)
+
+    def test_unknown_transform_is_refused_even_on_a_field_that_does_not_apply(self):
+        fields = [{"value": "x", "to": "k", "transform": "shout", "when": {"class": "read-only"}}]
+        self.refuses("shout", s=spec(fields=fields))
+
+    def test_interpolation(self):
+        def val(template, d=None):
+            fields = [{"value": template, "to": "k"}]
+            return tomllib.loads(self.render(d=d, s=spec(format="toml", fields=fields, body=None))["content"])["k"]
+        self.assertEqual(val("{name}"), "build-1")
+        self.assertEqual(val("{abilities}"), ["build", "test"])                      # exactly one placeholder: its type
+        self.assertEqual(val("x {abilities} y"), "x build, test y")
+        self.assertEqual(val("{missing|name}"), "build-1")                          # first non-empty
+        self.assertEqual(val("{description|name}", defn(description="")), "build-1")
+        self.assertEqual(val("{{name}} {name}"), "{name} build-1")
+        self.assertEqual(val("{barrier.guard_command}"), "qargi __guard --provider p")
+        for bad in ("{nope}", "{nope|also}", "{barrier}x", "a { b", "a } b", "{}", "{a b}", "{name"):
+            with self.subTest(bad=bad):
+                self.refuses("", s=spec(format="toml", fields=[{"value": bad, "to": "k"}], body=None))
+
+    def test_path_template(self):
+        self.assertEqual(self.render(s=spec(path="agents/{name}.md"))["path"], "agents/build-1.md")
+        self.assertEqual(self.render(s=spec(path=".dot/{name}.md"))["path"], ".dot/build-1.md")
+        for bad in ("{name}/../x.md", "/abs/{name}.md", "../{name}.md", "a//{name}.md", "{nope}.md", "", "a\\{name}.md", "./{name}.md", "{name}.md\n"):
+            with self.subTest(bad=bad):
+                self.refuses("path|nope", s=spec(path=bad))
+        for name in ("a/b", "..", ".", "a\\b", "x\ny", "x\x00y"):
+            with self.subTest(name=name):
+                self.refuses("path|name", d=defn(name=name))
+
+    def test_spec_errors(self):
+        for bad in [
+            {"format": "xml"}, {"fields": "x"}, {"fields": ["x"]}, {"path": 3}, {"engine": "other"}, {"nope": 1}, {"template": "x"}, {"resolve": 3},
+            {"fields": [{"to": "a"}]}, {"fields": [{"from": "name"}]}, {"fields": [{"from": "name", "value": "x", "to": "a"}]},
+            {"fields": [{"from": "name", "to": "a", "nope": 1}]}, {"fields": [{"from": "name", "to": ""}]}, {"fields": [{"from": "n me", "to": "a"}]},
+            {"fields": [{"from": "name", "to": "a", "tool_map": {}}]}, {"fields": [{"from": "tools", "to": "a", "tool_map": {"a": 1}}]},
+            {"fields": [{"from": "name", "to": "a", "degrade": "shrug"}]}, {"fields": [{"from": "name", "to": "a", "guarantee_for": ["x"]}]},
+            {"fields": [{"from": "name", "to": "a", "when": {"class": "x"}}]}, {"fields": [{"from": "name", "to": "a", "refuse_if_missing": "yes"}]},
+            {"format": "text"}, {"format": "text", "template": 5},
+        ]:
+            with self.subTest(bad=bad):
+                self.refuses("", s=spec(**bad))
+        self.refuses("two fields", s=spec(fields=[{"from": "name", "to": "a"}, {"value": "x", "to": "a"}]))
+
+    def test_definition_errors(self):
+        for bad in [[], "x", {"name": 3, "class": "write"}, defn(abilities="build"), defn(abilities=[1]), defn(tools="bash"), defn(tools=[1]),
+                    defn(tools={"required": "x"}), defn(tools={"other": []}), defn(tier=3), defn(body=3), defn(extra={1, 2})]:
+            with self.subTest(bad=bad):
+                self.refuses("", d=bad)
+
+    def test_a_value_the_format_cannot_hold_is_an_error(self):
+        self.refuses("float", s=spec(format="toml", fields=[{"value": 1.5, "to": "f"}], body=None))
+        self.refuses("control|U\\+", s=spec(format="markdown-frontmatter", fields=FIELDS[:1]), d=defn(body="a\x00b"))
+
+    def test_a_broken_emitter_is_caught_by_the_parse_back(self):
+        orig = R.emit_yaml
+        with mock.patch.object(R, "emit_yaml", lambda data: orig({k: v for k, v in data.items() if k != "name"})):
+            self.refuses("differs", s=spec(format="yaml", fields=FIELDS[:2], body=None))
+        origj = R.emit_json
+        with mock.patch.object(R, "emit_json", lambda data: origj(dict(data, name=True))):
+            self.refuses("differs", s=spec(format="json", fields=FIELDS[:2], body=None))
+        origt = R.emit_toml
+        with mock.patch.object(R, "emit_toml", lambda data: origt(dict(data, name="other"))):
+            self.refuses("differs", s=spec(format="toml", fields=FIELDS[:2], body=None))
+        origm = R.emit_markdown
+        with mock.patch.object(R, "emit_markdown", lambda meta, body: origm(meta, "tampered\n")):
+            self.refuses("differs")
+
+    def test_resolver_failures(self):
+        def boom(kind, value, d):
+            raise KeyError(value)
+        self.refuses("resolver failed", resolver=boom)
+        self.refuses("resolver", resolver=lambda k, v, d: {1, 2})
+
+        def custom(kind, value, d):
+            raise R.RenderError("catalog has no tier %s" % value)
+        self.refuses("catalog has no tier", resolver=custom)
+
+    def test_the_result_is_valid_for_the_cli_json(self):
+        r = self.render()
+        self.assertEqual(json.loads(json.dumps(r)), r)
 
 
 if __name__ == "__main__":

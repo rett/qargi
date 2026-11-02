@@ -11,6 +11,11 @@ Readers, used to verify every render by parsing it back:
   split_markdown(text)              (meta, body) of a front matter file; parse_toml is tomllib, parse_json is json
   check_roundtrip(fmt, content, data, body=None)   RenderError unless the content parses back to data (same types: a string
                                     "1" is not 1, True is not 1) and, for yaml and markdown, is what the emitter would write
+The `map` renderer, from data (see render_map):
+  render_map(definition, spec, resolver=None, extra=None)
+                                    {path, content, sha256, inputs_hash, notes}; the content has been read back and equals the
+                                    mapped values, or RenderError. definition is the neutral agent definition (name, description,
+                                    abilities, class write|read-only, tier, effort, tools, body, ...), spec the renderer's data.
 Values: text, True/False, ints within 64 bits, lists, maps with text keys; None in json and yaml; finite floats in json only.
 Anything else is a RenderError naming the value, never a silent change. Text may not hold NUL or other control characters in a
 text file or a markdown body (a table, a map value or a key can: it is escaped).
@@ -592,3 +597,436 @@ def check_roundtrip(fmt, content, data, body=None):
         _fail("%s: the content read back differs from what was rendered" % fmt)
     if fmt == "yaml" and emit_yaml(got) != content:
         _fail("yaml: the content is not in canonical form")
+
+
+# ---------------------------------------------------------------- the map renderer
+#
+# spec = {
+#   "engine": "map",                       optional
+#   "format": one of FORMATS,
+#   "path": "agents/{name}.md",            the file, relative to the runtime's agents directory; {var} from the definition
+#   "fields": [ field, ... ],              the file's keys, in this order
+#   "body": "body",                        markdown-frontmatter and text: where the body is in the definition (null: none)
+#   "body_required": false,
+#   "template": "...{key}...{body}",       text only: placeholders are the `to` keys of the fields, and body
+#   "resolve": {"model": {tier: native}, "effort": {...}}      tables for fields with "resolve" when no resolver is passed
+# }
+# field = {
+#   "to": "model",                         the key in the file
+#   "from": "tier" | ["a", "b"],           a path in the definition (dots go into maps); a list: the first that is set
+#   "value": any,                          or a constant; strings in it may hold {path}, {a|b}, {{ and }}
+#   "default": any,                        when the definition does not set it
+#   "resolve": "model",                    the value goes through resolver(kind, value, definition); None means "cannot say"
+#   "tool_map": {neutral: native | [native]},   from "tools" only: required tools without a native name refuse the render,
+#                                          optional ones are dropped with a note
+#   "transform": t | [t, ...],             t is a name or {name: arg}: join(sep) lower upper strip prefix(s) suffix(s) map({..})
+#   "refuse_if_missing": false,            the field must end up in the file
+#   "degrade": "omit" | "refuse",          what to do with a value the runtime cannot express: leave it out with a note, or refuse
+#   "guarantee_for": ["read-only"],        for these classes the field is a guarantee: missing or inexpressible always refuses
+#   "when": {"class": "read-only"}         the field applies to this class only
+# }
+# A value that is not there (missing, null, "", [] or {}) is left out of the file silently unless the field is required.
+
+ENGINE_VERSION = 1                           # part of inputs_hash: a change of the emitters or of this engine makes renders STALE
+CLASSES = ("write", "read-only")
+_MISSING = object()
+_REF_RE = re.compile(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*\Z")
+_ONE_RE = re.compile(r"\{([^{}]+)\}\Z")
+_TOKEN_RE = re.compile(r"\{\{|\}\}|\{([^{}]*)\}")
+_MAP_KEYS = {"engine", "format", "path", "fields", "body", "body_required", "template", "resolve"}
+_FIELD_KEYS = {"to", "from", "value", "default", "resolve", "tool_map", "transform", "refuse_if_missing", "degrade", "guarantee_for", "when"}
+_DEF_TEXT_KEYS = ("name", "description", "tier", "effort", "model", "body")
+
+
+def canonical_json(v, what="value"):
+    try:
+        return json.dumps(v, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as e:
+        _fail("%s is not JSON data: %s" % (what, e))
+
+
+def _get(obj, ref):
+    for part in ref.split("."):
+        if not isinstance(obj, dict) or part not in obj:
+            return _MISSING
+        obj = obj[part]
+    return obj
+
+
+def _missing(v):
+    return v is _MISSING or v is None or v == "" or v == [] or v == {}
+
+
+def _as_text(v, where):
+    if isinstance(v, str):
+        return v
+    if v is True or v is False:
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, list) and all(isinstance(x, (str, int)) and not isinstance(x, bool) for x in v):
+        return ", ".join(str(x) for x in v)
+    _fail("%s: a value of this kind cannot be put inside text" % where)
+
+
+def _interp(t, lookup, where, typed=True, conv=_as_text):
+    """The string t with its {ref} / {a|b} placeholders replaced; {{ and }} are braces. A string that is exactly one
+    placeholder gives the value itself (a list stays a list) when typed."""
+    def ref_value(ref):
+        names = [r.strip() for r in ref.split("|")]
+        for n in names:
+            if not _REF_RE.match(n):
+                _fail("%s: %r is not a name in a placeholder" % (where, n))
+        for n in names:
+            v = lookup(n)
+            if not _missing(v):
+                return v
+        _fail("%s: {%s} is not set" % (where, ref))
+
+    if "{" not in t and "}" not in t:
+        return t
+    rest = _TOKEN_RE.sub("", t)
+    if "{" in rest or "}" in rest:
+        _fail("%s: a stray brace in %r (write {{ and }} for braces)" % (where, t))
+    m = _ONE_RE.match(t)
+    if typed and m:
+        return ref_value(m.group(1))
+
+    def sub(m):
+        if m.group(0) in ("{{", "}}"):
+            return m.group(0)[0]
+        return conv(ref_value(m.group(1)), where)
+    return _TOKEN_RE.sub(sub, t)
+
+
+def _interp_value(v, lookup, where):
+    if isinstance(v, str):
+        return _interp(v, lookup, where)
+    if isinstance(v, list):
+        return [_interp_value(x, lookup, where) for x in v]
+    if isinstance(v, dict):
+        return {k: _interp_value(x, lookup, where) for k, x in v.items()}
+    return v
+
+
+# ---- transforms: a closed set
+
+def _each(v, fn, name, where):
+    def one(x):
+        if not isinstance(x, str):
+            _fail("%s: transform %s needs text, got %s" % (where, name, type(x).__name__))
+        return fn(x)
+    return [one(x) for x in v] if isinstance(v, list) else one(v)
+
+
+def _t_join(v, arg, where):
+    if not isinstance(v, list):
+        _fail("%s: transform join needs a list" % where)
+    for x in v:
+        if not isinstance(x, (str, int)) or isinstance(x, bool):
+            _fail("%s: transform join needs a list of text or numbers" % where)
+    return (", " if arg is None else arg).join(str(x) for x in v)
+
+
+def _t_map(v, arg, where):
+    def look(x):
+        if x not in arg:
+            _fail("%s: transform map has no entry for %r" % (where, x))
+        return arg[x]
+    return _each(v, look, "map", where)
+
+
+_TRANSFORMS = {            # name: (function, argument kind: None, "text?" (optional text), "text", "table")
+    "join": (_t_join, "text?"),
+    "lower": (lambda v, a, w: _each(v, str.lower, "lower", w), None),
+    "upper": (lambda v, a, w: _each(v, str.upper, "upper", w), None),
+    "strip": (lambda v, a, w: _each(v, str.strip, "strip", w), None),
+    "prefix": (lambda v, a, w: _each(v, lambda x: a + x, "prefix", w), "text"),
+    "suffix": (lambda v, a, w: _each(v, lambda x: x + a, "suffix", w), "text"),
+    "map": (_t_map, "table"),
+}
+
+
+def _transform_list(tf, where):
+    items = tf if isinstance(tf, list) else [tf]
+    out = []
+    for t in items:
+        if isinstance(t, str):
+            name, arg = t, None
+        elif isinstance(t, dict) and len(t) == 1:
+            (name, arg), = t.items()
+        else:
+            _fail("%s: a transform is a name or a one-entry map {name: argument}, not %s" % (where, canonical_json(t)))
+        if name not in _TRANSFORMS:
+            _fail("%s: unknown transform %r (one of %s)" % (where, name, ", ".join(sorted(_TRANSFORMS))))
+        kind = _TRANSFORMS[name][1]
+        ok = ((kind is None and arg is None) or (kind == "text?" and (arg is None or isinstance(arg, str))) or (kind == "text" and isinstance(arg, str))
+              or (kind == "table" and isinstance(arg, dict) and all(isinstance(v, (str, int)) and isinstance(k, str) for k, v in arg.items())))
+        if not ok:
+            _fail("%s: transform %s takes %s as its argument" % (where, name, {None: "none", "text?": "an optional text", "text": "a text", "table": "a table of text keys"}[kind]))
+        out.append((name, arg))
+    return out
+
+
+# ---- the definition and the spec
+
+def _check_definition(d):
+    if not isinstance(d, dict):
+        _fail("definition: must be a map")
+    canonical_json(d, "definition")
+    for k in _DEF_TEXT_KEYS:
+        if k in d and d[k] is not None and not isinstance(d[k], str):
+            _fail("definition: %s must be text" % k)
+    if d.get("abilities") is not None and not (isinstance(d["abilities"], list) and all(isinstance(x, str) for x in d["abilities"])):
+        _fail("definition: abilities must be a list of text")
+    t = d.get("tools")
+    if t is not None:
+        lists = [t] if isinstance(t, list) else None
+        if isinstance(t, dict):
+            if set(t) - {"required", "optional"}:
+                _fail("definition: tools takes a list, or a map with required and optional")
+            lists = [t.get("required", []), t.get("optional", [])]
+        if lists is None or not all(isinstance(x, list) and all(isinstance(y, str) for y in x) for x in lists):
+            _fail("definition: tools must be a list of names, or {required: [..], optional: [..]}")
+    cls = d.get("class")
+    if cls is None and isinstance(d.get("read_only"), bool):
+        cls = "read-only" if d["read_only"] else "write"
+    if cls not in CLASSES:
+        _fail("definition: class must be write or read-only (or read_only true or false), not %r" % (cls,))
+    ns = dict(d)
+    ns["class"] = cls
+    return ns
+
+
+def _check_spec(spec):
+    if not isinstance(spec, dict):
+        _fail("spec: must be a map")
+    canonical_json(spec, "spec")
+    if set(spec) - _MAP_KEYS:
+        _fail("spec: unknown key %s" % ", ".join(sorted(set(spec) - _MAP_KEYS)))
+    if spec.get("engine", "map") != "map":
+        _fail("spec: the engine is %r, not map" % spec.get("engine"))
+    fmt = spec.get("format")
+    if fmt not in FORMATS:
+        _fail("spec: format must be one of %s" % ", ".join(FORMATS))
+    if not isinstance(spec.get("path"), str) or not spec["path"]:
+        _fail("spec: path must be a non-empty template")
+    if not isinstance(spec.get("fields"), list):
+        _fail("spec: fields must be a list")
+    if fmt == "text":
+        if not isinstance(spec.get("template"), str):
+            _fail("spec: a text format needs a template")
+    elif "template" in spec:
+        _fail("spec: template is for the text format only")
+    if "body" in spec and spec["body"] is not None and fmt not in ("markdown-frontmatter", "text"):
+        _fail("spec: body is for markdown-frontmatter and text only")
+    if spec.get("body") is not None and not isinstance(spec.get("body", ""), str):
+        _fail("spec: body names a path in the definition, or is null")
+    if not isinstance(spec.get("body_required", False), bool):
+        _fail("spec: body_required must be true or false")
+    res = spec.get("resolve", {})
+    if not isinstance(res, dict) or not all(isinstance(t, dict) for t in res.values()):
+        _fail("spec: resolve is a map of kind to a table")
+    for i, f in enumerate(spec["fields"]):
+        _check_field(f, "field %d" % i)
+
+
+def _check_field(f, where):
+    if not isinstance(f, dict):
+        _fail("%s: must be a map" % where)
+    if set(f) - _FIELD_KEYS:
+        _fail("%s: unknown key %s" % (where, ", ".join(sorted(set(f) - _FIELD_KEYS))))
+    if not isinstance(f.get("to"), str) or not f["to"]:
+        _fail("%s: to must name the key in the file" % where)
+    where = "field %s" % f["to"]
+    if ("from" in f) == ("value" in f):
+        _fail("%s: give exactly one of from and value" % where)
+    if "from" in f:
+        paths = f["from"] if isinstance(f["from"], list) else [f["from"]]
+        if not paths or not all(isinstance(p, str) and _REF_RE.match(p) for p in paths):
+            _fail("%s: from is a path (letters, digits, _ - and dots) or a list of them" % where)
+    if "resolve" in f and not (isinstance(f["resolve"], str) and f["resolve"]):
+        _fail("%s: resolve names a kind (model, effort, ...)" % where)
+    if "tool_map" in f:
+        tm = f["tool_map"]
+        if f.get("from") != "tools":
+            _fail("%s: tool_map goes with from: tools" % where)
+        if not isinstance(tm, dict) or not all(isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v)) for v in tm.values()):
+            _fail("%s: tool_map maps a neutral name to a native name or a list of them" % where)
+    if "transform" in f:
+        _transform_list(f["transform"], where)
+    if not isinstance(f.get("refuse_if_missing", False), bool):
+        _fail("%s: refuse_if_missing must be true or false" % where)
+    if f.get("degrade", "omit") not in ("omit", "refuse"):
+        _fail("%s: degrade is omit or refuse" % where)
+    g = f.get("guarantee_for", [])
+    if not isinstance(g, list) or not all(c in CLASSES for c in g):
+        _fail("%s: guarantee_for is a list of %s" % (where, " / ".join(CLASSES)))
+    w = f.get("when")
+    if w is not None and not (isinstance(w, dict) and set(w) == {"class"} and w["class"] in CLASSES):
+        _fail("%s: when is {class: write | read-only}" % where)
+
+
+def table_resolver(tables):
+    """A resolver from {kind: {value: native}}; a value with no entry is None (cannot say)."""
+    def resolve(kind, value, definition):
+        if kind not in tables:
+            _fail("no table to resolve %r" % kind)
+        return tables[kind].get(value) if isinstance(value, str) else None
+    return resolve
+
+
+def _check_relpath(p, what="path"):
+    if not isinstance(p, str) or not p or len(p) > 1024:
+        _fail("%s: empty or too long" % what)
+    _check_str(p, what)
+    if any(ord(c) < 0x20 or ord(c) == 0x7f for c in p) or "\\" in p:
+        _fail("%s: %r has a control character or a backslash" % (what, p))
+    if p.startswith("/"):
+        _fail("%s: %r must be relative" % (what, p))
+    for c in p.split("/"):
+        if c in ("", ".", "..") or len(c.encode("utf-8")) > 255:
+            _fail("%s: %r has an empty, '.', '..' or too long component" % (what, p))
+    return p
+
+
+def render_path(template, ns):
+    def lookup(ref):
+        v = _get(ns, ref)
+        if _missing(v):
+            return _MISSING
+        if isinstance(v, bool) or not isinstance(v, (str, int)):
+            _fail("path: {%s} must be text or a number" % ref)
+        return v
+
+    def piece(v, where):
+        t = str(v)
+        if t in (".", "..") or "/" in t or "\\" in t or any(ord(c) < 0x20 or ord(c) == 0x7f for c in t):
+            _fail("path: %r cannot be part of a file name" % t)
+        return t
+    return _check_relpath(_interp(template, lookup, "path", typed=False, conv=piece))
+
+
+def _tools_of(ns):
+    t = ns.get("tools")
+    if isinstance(t, dict):
+        return list(t.get("required") or []), list(t.get("optional") or [])
+    return list(t or []), []
+
+
+def _map_fields(ns, spec, resolve, log, notes):
+    mapped = {}
+    cls = ns["class"]
+    for f in spec["fields"]:
+        to = f["to"]
+        if "when" in f and f["when"]["class"] != cls:
+            continue
+        guard = cls in f.get("guarantee_for", [])
+        must = guard or f.get("refuse_if_missing", False)
+        refuse_drop = must or f.get("degrade", "omit") == "refuse"
+        where = "field %s" % to
+
+        def lookup(ref):
+            return _get(ns, ref)
+        if "value" in f:
+            raw = _interp_value(f["value"], lookup, where)
+        else:
+            raw = _MISSING
+            for path in (f["from"] if isinstance(f["from"], list) else [f["from"]]):
+                v = _get(ns, path)
+                if not _missing(v):
+                    raw = v
+                    break
+        if _missing(raw) and "default" in f:
+            raw = f["default"]
+        if _missing(raw):
+            if must:
+                _fail("%s: is required and the definition does not set it" % where)
+            continue
+
+        def cannot(reason):
+            if refuse_drop:
+                _fail("%s: %s" % (where, reason))
+            notes.append("%s: omitted, %s" % (to, reason))
+
+        if "tool_map" in f:
+            required, optional = _tools_of(ns)
+            native = []
+            for name in required + optional:
+                got = f["tool_map"].get(name)
+                if got is None:
+                    if name in required:
+                        _fail("%s: the tool %r has no native name in this runtime" % (where, name))
+                    notes.append("%s: the optional tool %r has no native name and was dropped" % (to, name))
+                    continue
+                for n in ([got] if isinstance(got, str) else got):
+                    if n not in native:
+                        native.append(n)
+            raw = native
+            if not raw:
+                cannot("no tool can be expressed in this runtime")
+                continue
+        if "resolve" in f:
+            out = resolve(f["resolve"], raw)
+            if _missing(out):
+                cannot("the runtime has no %s for %r" % (f["resolve"], raw))
+                continue
+            raw = out
+        for name, arg in _transform_list(f.get("transform", []), where):
+            raw = _TRANSFORMS[name][0](raw, arg, where)
+        if _missing(raw):
+            cannot("nothing is left of it after the transforms")
+            continue
+        if to in mapped:
+            _fail("%s: two fields write the key %r" % (where, to))
+        mapped[to] = raw
+    return mapped
+
+
+def render_map(definition, spec, resolver=None, extra=None):
+    """Render the neutral definition through the map spec. resolver(kind, value, definition) turns a tier into a native model
+    and an effort into the runtime's own, or returns None when it cannot; without one the spec's `resolve` tables are used.
+    extra (JSON) is anything else the render depends on, such as the hash of the effective runtime definition; it goes into
+    inputs_hash. Returns {path, content, sha256, inputs_hash, notes}."""
+    ns = _check_definition(definition)
+    _check_spec(spec)
+    fmt = spec["format"]
+    log, notes = [], []
+    base = resolver or (table_resolver(spec["resolve"]) if "resolve" in spec else None)
+
+    def resolve(kind, value):
+        if base is None:
+            _fail("a field needs a resolver for %r and none was given" % kind)
+        try:
+            out = base(kind, value, definition)
+        except RenderError:
+            raise
+        except Exception as e:                                       # a resolver is the caller's code: report, do not crash
+            _fail("the resolver failed for %s %r: %s: %s" % (kind, value, type(e).__name__, e))
+        canonical_json(out, "the resolver's answer")
+        log.append([kind, value, out])
+        return out
+
+    mapped = _map_fields(ns, spec, resolve, log, notes)
+    body = None
+    if fmt in ("markdown-frontmatter", "text"):
+        ref = spec.get("body", "body")
+        got = _get(ns, ref) if ref else _MISSING
+        if not _missing(got):
+            if not isinstance(got, str):
+                _fail("body: %s must be text" % ref)
+            body = got
+        elif spec.get("body_required"):
+            _fail("body: %s is required and the definition does not set it" % (ref or "(the spec names none)"))
+    if fmt == "text":
+        flat = dict(mapped)
+        flat["body"] = body if body is not None else _MISSING
+        text = _interp(spec["template"], lambda ref: flat.get(ref, _MISSING), "template", typed=False)
+        content = emit_text(text)
+        check_roundtrip(fmt, content, None, text)
+    else:
+        content = emit(fmt, mapped, body)
+        check_roundtrip(fmt, content, mapped, body)
+    path = render_path(spec["path"], ns)
+    inputs = canonical_json({"engine": "map", "version": ENGINE_VERSION, "definition": definition, "spec": spec, "resolved": log, "extra": extra})
+    return {"path": path, "content": content, "sha256": sha256_text(content), "inputs_hash": sha256_text(inputs), "notes": notes}
