@@ -4,6 +4,12 @@ JSON on stdin and refuses (exit 2, reason on stderr) what would publish, reach o
 proof: a second barrier beside the git wrapper (which has no credentials) and `qargi local verify`; an agent that goes
 out of its way can still get around it, which is why verify exists.
 
+Two layers. The hook protocol (HOOK PROTOCOL below) is data: where in the hook's JSON the tool, the command, the paths and the working
+directory are, which tool names are a shell, a write or a read, and how a refusal is given back (exit status and stream, or JSON on
+standard output). It turns the hook's input into a neutral Call(kind, name, command, path, cwd) and a refusal into the hook's answer.
+The decisions (judge and everything it calls) see only the Call. The data of the runtime that qargi was built for is CLAUDE_HOOK, used
+when the hook command names no provider; `--provider NAME` reads it from the definition of that provider instead.
+
 Publishing: git push, gh, ssh, scp, sftp, and changing a remote.
 
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
@@ -91,7 +97,7 @@ hook with `onFailure` set to \"block\""), so agents/member.md sets `onFailure: "
 "Requires Claude Code v2.1.295 or later"; an older version does not enforce it). Frontmatter hooks of a project-level
 agent file run only after the workspace trust dialog is accepted (https://code.claude.com/docs/en/sub-agents): until
 then the subagent runs without this guard."""
-import glob, json, os, re, shlex, sys
+import collections, glob, json, os, re, shlex, sys
 
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
@@ -105,7 +111,6 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
               "notes", "update-ref", "config", "submodule"}
 REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
-EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
@@ -262,10 +267,11 @@ def write_targets(toks, i):
     return targets
 
 
-def review_refusal(tool, inp, cwd):
+def review_refusal(call):
     """The reason a call under the review ability is refused, or None."""
-    if tool in EDIT_TOOLS:
-        fp = inp.get("file_path") or inp.get("notebook_path") or ""
+    cwd = call.cwd
+    if call.kind == "write":
+        fp = call.path
         if not fp:
             return None
         full = os.path.realpath(os.path.join(cwd, fp))
@@ -276,11 +282,10 @@ def review_refusal(tool, inp, cwd):
         if run and is_review(run) and not inside(full, os.path.join(run, "out")):
             return "under the review ability only the report and the manifest in RUN_DIR may be written (%s is not)" % fp
         return None
-    if tool != "Bash":
+    if call.kind != "shell":
         return None
-    command = inp.get("command") or ""
     here = cwd
-    for seg in SEGMENT.split(command):
+    for seg in SEGMENT.split(call.command):
         toks = tokens(seg)
         i = skip_wrappers(toks)
         if i < len(toks) and toks[i] == "cd" and i + 1 < len(toks):
@@ -542,19 +547,18 @@ def protected(full, destructive=False):
     return None
 
 
-def skill_refusal(tool, inp, cwd):
+def skill_refusal(call):
     """The reason a call would change a skill (or let an agent skip a plan token), or None."""
-    if tool in EDIT_TOOLS:
-        fp = inp.get("file_path") or inp.get("notebook_path") or ""
-        root = protected(resolve(cwd, fp)) if fp else None
-        return refusal_text(tool, fp, root) if root else None
-    if tool in ("Read", "NotebookRead", "Grep"):         # the read tools: the signing key, alone or in a directory the search reaches
-        fp = inp.get("file_path") or inp.get("notebook_path") or inp.get("path") or ""
-        full = resolve(cwd, fp) if fp else ""
-        return key_refusal_text(tool, fp) if full and (is_key(full) or (tool == "Grep" and holds_key(full))) else None
-    if tool != "Bash":
+    fp = call.path
+    if call.kind == "write":
+        root = protected(resolve(call.cwd, fp)) if fp else None
+        return refusal_text(call.name, fp, root) if root else None
+    if call.kind in ("read", "search"):                  # the read tools: the signing key, alone or in a directory the search reaches
+        full = resolve(call.cwd, fp) if fp else ""
+        return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and holds_key(full))) else None
+    if call.kind != "shell":
         return None
-    return bash_skill_refusal(inp.get("command") or "", cwd, 0)
+    return bash_skill_refusal(call.command, call.cwd, 0)
 
 
 def names_lead(t):
@@ -760,46 +764,137 @@ def tar_targets(rest):
     return out
 
 
-def decide():
+# --- HOOK PROTOCOL: how a runtime's hook hands a call over and how it is told no. Data, not code: the decisions above and in judge()
+# see only a Call. The data has the keys of a definition's barrier.hook (the provider schema):
+#   input          "json-stdin": the hook's input is one JSON document on standard input
+#   tool_pointer   JSON pointer to the name of the tool; command_pointer: to the shell command; cwd_pointer: to the working directory
+#   path_pointers  the pointers to the path a tool names, tried in order and the first that is set is used: a list for every tool, or
+#                  a map of a kind to its list (a search tool without its own list uses the one of read)
+#   tool_names     kind -> tool names. shell: runs a command; write: changes the file it names; read: reads the file it names; search:
+#                  reads like read and also reaches the directory it names. A call that names no tool is a shell command; a tool in
+#                  no list is not judged
+#   deny           how a refusal is given back: {"exit": N, "stream": "stderr"|"stdout"} prints the reason there, or {"exit": 0,
+#                  "stdout": {...}} prints that JSON with "{reason}" replaced in every string; allow: {"exit": N}, the answer to a call that passes
+# The text of a refusal belongs to the decisions: the protocol only carries it.
+
+Call = collections.namedtuple("Call", "kind name command path cwd")    # kind: shell, write, read, search or None; name: the runtime's name of the tool
+KINDS = ("shell", "write", "read", "search")
+
+CLAUDE_HOOK = {
+    "input": "json-stdin", "tool_pointer": "/tool_name", "command_pointer": "/tool_input/command", "cwd_pointer": "/cwd",
+    "path_pointers": {"write": ["/tool_input/file_path", "/tool_input/notebook_path"],
+                      "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]},
+    "tool_names": {"shell": ["Bash"], "write": ["Edit", "Write", "NotebookEdit", "MultiEdit"], "read": ["Read", "NotebookRead"], "search": ["Grep"]},
+    "deny": {"exit": 2, "stream": "stderr"}, "allow": {"exit": 0},
+}
+
+
+def pointer(doc, ptr):
+    """The value a JSON pointer names in doc, or None where it is missing, null or empty on the way. A step into a value that is neither
+    an object nor a list is an error (the caller ends it as a refusal), so a tool_input of the wrong type is not read as "nothing"."""
+    cur = doc
+    for key in ptr.split("/")[1:]:
+        key = key.replace("~1", "/").replace("~0", "~")
+        if not cur:
+            return None
+        if isinstance(cur, dict):
+            cur = cur.get(key)
+        elif isinstance(cur, list) and key.isdigit():
+            cur = cur[int(key)] if int(key) < len(cur) else None
+        else:
+            raise TypeError("%s: a %s has no member %s" % (ptr, type(cur).__name__, key))
+    return cur
+
+
+def kind_of(hook, name):
+    if not name:
+        return "shell"
+    for k in KINDS:
+        if name in hook["tool_names"].get(k, ()):
+            return k
+    return None
+
+
+def path_pointers(hook, kind):
+    pp = hook.get("path_pointers") or []
+    if isinstance(pp, dict):
+        return pp.get(kind) or (pp.get("read") if kind == "search" else None) or []
+    return pp if kind in ("write", "read", "search") else []
+
+
+def parse_call(hook, data):
+    """The neutral Call a hook's JSON stands for."""
+    if not isinstance(data, dict):
+        raise TypeError("the hook's input is not a JSON object")
+    name = pointer(data, hook["tool_pointer"])
+    command = pointer(data, hook["command_pointer"]) or ""        # read for every call: a tool_input that cannot be read is an error
+    kind = kind_of(hook, name)
+    path = next((v for v in (pointer(data, p) for p in path_pointers(hook, kind)) if v), "")
+    cwd = (pointer(data, hook["cwd_pointer"]) if hook.get("cwd_pointer") else None) or os.getcwd()
+    return Call(kind, name, command if kind == "shell" else "", path, cwd)
+
+
+def fill(node, reason):
+    """node with "{reason}" replaced by the reason in every string (JSON is built from the data, never by splicing text into it)."""
+    if isinstance(node, str):
+        return node.replace("{reason}", reason)
+    if isinstance(node, list):
+        return [fill(v, reason) for v in node]
+    if isinstance(node, dict):
+        return {k: fill(v, reason) for k, v in node.items()}
+    return node
+
+
+def refuse(hook, reason):
+    """Give back a refusal in the hook's way; the exit status to end with."""
+    deny = hook["deny"]
+    if "stdout" in deny:
+        print(json.dumps(fill(deny["stdout"], reason)))
+    else:
+        print(reason, file=sys.stdout if deny.get("stream") == "stdout" else sys.stderr)
+    return deny["exit"]
+
+
+# --- the decisions
+
+def judge(call):
+    """The refusal (a sentence for the member, ending in what to do instead) a Call earns, or None. The neutral core."""
+    why = blocked(call.command) if call.kind == "shell" else None
+    if why:
+        return "qargi guard: %s. Agents never push; return patches instead." % why
+    why = skill_refusal(call)
+    if isinstance(why, MarshalReason):
+        return "qargi guard: %s." % why
+    if why:
+        return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change as a "
+                "patch or a plan in RUN_DIR." % why)
+    why = review_refusal(call)
+    if why:
+        return "qargi guard: %s. A review reads the work and writes its report to RUN_DIR." % why
+    return None
+
+
+def decide(hook):
     try:
         data = json.load(sys.stdin)
     except ValueError:
-        return 0                                          # not JSON: not a call to judge (as before)
-    tool = data.get("tool_name") or "Bash"
-    inp = data.get("tool_input") or {}
-    cwd = data.get("cwd") or os.getcwd()
-    why = blocked(inp.get("command") or "") if tool == "Bash" else None
-    if why:
-        print("qargi guard: %s. Agents never push; return patches instead." % why, file=sys.stderr)
-        return 2
-    why = skill_refusal(tool, inp, cwd)
-    if isinstance(why, MarshalReason):
-        print("qargi guard: %s." % why, file=sys.stderr)
-        return 2
-    if why:
-        print("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change as a "
-              "patch or a plan in RUN_DIR." % why, file=sys.stderr)
-        return 2
-    why = review_refusal(tool, inp, cwd)
-    if why:
-        print("qargi guard: %s. A review reads the work and writes its report to RUN_DIR." % why, file=sys.stderr)
-        return 2
-    return 0
+        return hook["allow"]["exit"]                      # not JSON: not a call to judge (as before)
+    why = judge(parse_call(hook, data))
+    return refuse(hook, why) if why else hook["allow"]["exit"]
 
 
 def main():
     global CLASS
+    hook = CLAUDE_HOOK
     cls = read_class(sys.argv[1:])
     if cls not in CLASSES:
-        print("qargi guard: unknown class %r in the hook command; refusing every call until the member is refreshed." % cls, file=sys.stderr)
-        return 2
+        return refuse(hook, "qargi guard: unknown class %r in the hook command; refusing every call until the member is refreshed." % cls)
     CLASS = cls
     try:
-        return decide()
+        return decide(hook)
     except Exception as e:                                # fail closed: a guard that cannot decide refuses
-        print("qargi guard: internal error (%s: %s); refusing the call because the guard could not check it."
-              % (type(e).__name__, e), file=sys.stderr)
-        return 2
+        return refuse(hook, "qargi guard: internal error (%s: %s); refusing the call because the guard could not check it."
+                      % (type(e).__name__, e))
 
 
 if __name__ == "__main__":
