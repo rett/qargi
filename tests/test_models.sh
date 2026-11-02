@@ -148,7 +148,7 @@ e=$($DA agent models --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude, claude-code, claude-platform' <<<"$e"; } && ok "an unknown models.provider is an error listing the providers (models)" || no "unknown provider models: $e"
 jq '.models.provider = "schema"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 e=$($DA agent models --project alpha 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "models.provider 'schema'" <<<"$e" && grep -q 'available: claude, claude-code, claude-platform' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
+{ [ $rc != 0 ] && grep -q "no runtime or family 'schema'" <<<"$e" && grep -q 'available: claude, claude-code, claude-platform' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
 jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
 [ "$($DA project template alpha | sha256sum | cut -d' ' -f1)" = e7b0ee756a604905e80fe4782ec602307260bee817b8cd0b9e7b85c6e798a43a ] && ok "project template output is byte-identical to before the profiles" || no "template"
