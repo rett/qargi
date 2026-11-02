@@ -177,6 +177,19 @@ out=$(lk 2>&1); line=$(sed -n 's/^ *to keep it: qargi skill import //p' <<<"$out
 eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo with space/.claude/skills/mine" ] && ok "link plan: a path with a quote and spaces is shell-quoted in the offer" || no "path quoting: $line / $out"
 rm -rf "$T/it's a repo with space"; proj alpha "$R"
 
+# --- same and differs are decided on the whole tree: a link, an executable bit, an empty directory or a nested .pack.json make a copy differ
+S=$R/.claude/skills; mkdir -p "$S"; cp -r "$T/c/packs/skills/s-all" "$S/s-all"; rm -f "$S/s-all/.pack.json"
+kind() { lk 2>&1 | sed -n 's/^ *\(same\|differs\|new\) \+s-all .*/\1/p'; }
+[ "$(kind)" = same ] && ok "a copy of the pack without its record is 'same'" || no "plain copy: $(kind)"
+chmod +x "$S/s-all/refs/r.md"; [ "$(kind)" = differs ] && ok "an executable bit makes it differ" || no "mode: $(kind)"
+chmod -x "$S/s-all/refs/r.md"; [ "$(kind)" = same ] && ok "(and taking it away makes it the same again)" || no "mode back: $(kind)"
+ln -s r.md "$S/s-all/refs/link"; [ "$(kind)" = differs ] && ok "a symbolic link inside makes it differ" || no "symlink: $(kind)"
+rm "$S/s-all/refs/link"; mkdir "$S/s-all/empty"; [ "$(kind)" = differs ] && ok "an empty directory makes it differ" || no "empty dir: $(kind)"
+rmdir "$S/s-all/empty"; echo '{}' > "$S/s-all/refs/.pack.json"; [ "$(kind)" = differs ] && ok "a .pack.json below the top level makes it differ" || no "nested record: $(kind)"
+rm "$S/s-all/refs/.pack.json"; echo '{}' > "$S/s-all/.pack.json"; [ "$(kind)" = differs ] && ok "so does a .pack.json at the top of a copy in the checkout" || no "top record in checkout: $(kind)"
+rm "$S/s-all/.pack.json"; [ "$(kind)" = same ] && ok "(the same again once it is gone)" || no "same again: $(kind)"
+rm -rf "$S"
+
 # --- the helper script run directly, as a member could: the gates still hold (a member run never applies; the state, the checkout and the
 # provider are the environment's and the stored answers', not the inputs file's)
 PYL="python3 -I $ROOT/lib/packs_link.py"; DAA=$ROOT/bin/qargi

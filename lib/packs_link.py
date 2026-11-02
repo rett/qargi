@@ -8,9 +8,10 @@ CHECKOUT/<skills dir> a symbolic link to that directory, so a session opened in 
 `packs unlink` undoes it.
 
 Called by packs.sh, which holds the project's lock and gathers the facts only the shell knows into an inputs file:
-  {project, provider, state, checkout, kids:[{name, hash, lib}]}
-where kids are the skill directories of a real CHECKOUT/<skills dir> (hash: their content hash; lib: the content hash of
-the library pack of that name, or null). A provider without a project skills directory, or without verified skills support,
+  {project, provider, state, checkout, kids:[{name, in_library}]}
+where kids are the skill directories of a real CHECKOUT/<skills dir> and in_library says whether the library has a pack of that
+name. The content of a kid and of its library pack is compared here with packs_audit.strict_hash (symbolic links, the executable
+bit, empty directories and nested .pack.json files count; the library pack's own top-level record does not). A provider without a project skills directory, or without verified skills support,
 is refused with exit status 3.
 
   packs_link.py plan  link|unlink INPUTS TOKENFILE   print the plan and write the plan token (none when there is nothing to do)
@@ -34,6 +35,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marshal_refs  # noqa: E402  (in_member_run)
+import packs_audit  # noqa: E402  (strict_hash)
 import paths  # noqa: E402
 import provider  # noqa: E402
 
@@ -185,12 +187,12 @@ def classify(verb, inp):
             facts["kind"] = "dir"
             facts["others"] = sorted(n for n in os.listdir(link) if n not in {k["name"] for k in inp.get("kids", [])})
             for k in sorted(inp.get("kids", []), key=lambda k: k["name"]):
-                if k.get("lib") is None:
+                lib = packs_audit.library_hash(k["name"]) if k.get("in_library") and NAME_RE.fullmatch(k["name"]) else None
+                if lib is None:
                     st = "new"
-                elif k.get("hash") == k["lib"]:
-                    st = "same"
                 else:
-                    st = "differs"
+                    mine = packs_audit.strict_hash(os.path.join(link, k["name"]))
+                    st = "same" if mine and mine == lib else "differs"
                 facts["kids"].append([k["name"], st])
         else:
             die("%s exists and is not a directory or a symbolic link; refusing" % link)
