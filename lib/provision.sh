@@ -2,8 +2,8 @@
 # Provision the cloud resources for a qargi instance with `ant apply`:
 # environment, agent, memory store and deployment, then register the instance.
 #
-#   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
-#   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
+#   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited] [--force]
+#   provision.sh apply NAME [--force] --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
 # NAME is <project>-<role> (--project P --role R, role defaults to build; roles come
 # from a fixed list). The agent and the deployment are named <project>-<role>
@@ -12,6 +12,8 @@
 # The memory stores belong to the project: <project>-memory (recipes) and <project>-reference. Existing ones are
 # attached, not duplicated; --memory-store ID and --reference-store ID name them.
 # Options also include --budget CENTS (default 500, set on the deployment).
+# --force (plan and apply) passes `ant apply --force`, which overwrites the server's copy of a resource that changed
+# outside this config since the last apply; the plan token covers it, so plan and apply must both give it.
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
 # changes nothing. `apply` creates the resources only with --approved (the
 # user's go-ahead after seeing the plan), brings new memory stores to the canon
@@ -28,7 +30,7 @@ TPL=$here/../provision/templates
 verb=${1:-}; shift || true
 NAME='' PROJECT='' ROLE=build
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
-PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
+PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS='' FORCE=''
 while [ $# -gt 0 ]; do
   case $1 in
     --model) MODEL=$2; shift 2;;
@@ -38,6 +40,7 @@ while [ $# -gt 0 ]; do
     --asked) ASKED=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
     --plan) PLAN_ARG=$2; shift 2;;
+    --force) FORCE=1; shift;;
     --budget) BUDGET=$2; shift 2;;
     --project) PROJECT=$2; shift 2;;
     --role) ROLE=$2; shift 2;;
@@ -190,7 +193,9 @@ FILES=(agents/"$NAME"/deployment-standby.yaml)
 
 # What apply would create: the rendered files, the stores it attaches, the budget.
 plan_hash() {
-  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME" "$ENV_REF" "$ENV_APT"; } | plan_token
+  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME" "$ENV_REF" "$ENV_APT"
+    # a forced plan has its own token: only when set, so the tokens of plain plans are unchanged
+    [ -z "$FORCE" ] || printf 'force\n'; } | plan_token
 }
 
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
@@ -216,13 +221,22 @@ case $verb in
     store_note memory "$PROJECT-memory" "$MEMID"
     store_note reference "$PROJECT-reference" "$REFID"
     echo "plan token: $(plan_hash)   (apply with: --plan <token> --approved \"...\")"
-    (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}");;
+    if [ -n "$FORCE" ]; then
+      echo "--force: the server's copy of any resource changed outside this config will be overwritten with this config"
+      (cd "$W" && ant apply --dry-run -v --force --lock-file "$LOCK" "${FILES[@]}")
+    else
+      (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}")
+    fi;;
   apply)
     need_asked
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan $NAME>\""
     render
-    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME"
-    (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME${FORCE:+ force}"
+    if [ -n "$FORCE" ]; then
+      (cd "$W" && ant apply --yes --force --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    else
+      (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    fi
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
       cur=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config') || die "cannot read the shared environment $ENVID"
