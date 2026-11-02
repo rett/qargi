@@ -16,11 +16,14 @@ its plan shown first). Nothing found online is installed on trust.
 """
 import datetime, getpass, glob, json, os, re, subprocess, sys, tempfile, urllib.parse
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths as P  # noqa: E402  where the data lives
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CATALOG = os.environ.get("QARGI_CATALOG") or os.path.join(ROOT, "catalog", "tools.json")
-CONF = os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
-STATE = os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+CONF = P.conf()
+STATE = P.state()
 MEMBERS = os.path.join(CONF, "agents.json")   # the members you named (qargi agent add)
 
 

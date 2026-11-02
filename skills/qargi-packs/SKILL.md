@@ -1,7 +1,7 @@
 ---
 name: qargi-packs
 description: Create or import skills and tools (MCP servers) into one library and attach them by scope: user, user-role, project, project-role. Review and approve at import, link to a scope, opt a role out, check for drift, and apply to provisioned or existing cloud agents. Names are globally unique, so there is no precedence to resolve.
-argument-hint: skill|tool new|import|seal|link|unlink|enable|disable|list|show|effective|check|remove ... | packs apply INSTANCE
+argument-hint: skill|tool new|import|seal|link|unlink|enable|disable|list|show|effective|check|remove ... | packs seed [--install] | packs apply INSTANCE | packs apply|check --target claude-code PROJECT
 ---
 
 # /qargi-packs
@@ -26,6 +26,17 @@ A role gets every pack linked at a scope that reaches it, unless that role disab
 `qargi skill disable PROJECT ROLE NAME` (stored as `roles.<role>.packs_off` in the
 project answers; `enable` undoes it). `qargi skill|tool effective PROJECT ROLE` shows what
 a role gets; `unlink` removes a link.
+
+## Who may change a skill
+
+Only you, with the person present, run the verbs that change one: `new`, `import`,
+`seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover install`, `qargi packs seed` and
+`qargi packs apply`. A local member never does: its guard refuses these verbs and any
+write in the pack library or in a `.claude/skills` directory, and `QARGI_NESTED` does
+not stand in for the plan token of `import`, `seal` or `packs apply`. If a member
+thinks a skill should change, it says so in its report; you show the person the plan
+and token and wait for their go-ahead before you apply it. The `--approved` text is
+recorded, not verified: it is not proof that a person agreed.
 
 ## Create, import, approve
 
@@ -53,5 +64,44 @@ a role gets; `unlink` removes a link.
   and a token; with `--plan TOKEN --approved "..."` it uploads the custom skills, replaces
   the agent's skill, MCP-server and tool lists (a new agent version) and re-points the
   deployment. Vault ids a tool needs are reported, not attached.
+- **A local Claude Code session:** `qargi packs apply --target claude-code PROJECT`
+  prints the plan (what is added, changed or removed, shadowed skills, tools that need
+  credentials) and a token; with `--plan TOKEN --approved "..."` it renders the union of
+  the project's roles into `~/.qargi/state/claude/PROJECT/` (skills under
+  `.claude/skills`, `mcp.json`, `settings.json`, `MANIFEST.json`) and prints the launch
+  line `claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json`.
+  Same rule as the cloud apply: show the person the plan and wait for their go-ahead.
+  Nothing is written into a repository or `~/.claude`; role scoping is advisory (the
+  render is the union of roles); the guard refuses a member any write under
+  `state/claude/`. Vault credentials a tool needs are reported: the person configures
+  them. `qargi packs check --target claude-code PROJECT` reports drift and shadowing
+  (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
+  read only.
+  The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or writable render files and a bad manifest.
 - `qargi skill|tool check PROJECT ROLE` reviews and drift-checks what reaches a role.
   `remove NAME` is refused while the pack is linked.
+
+## Baseline packs
+
+qargi ships skills in `packs/` (`shellcheck-gate`, `keep-a-changelog`, `gitflow-member`).
+`qargi packs seed [--install] [--plan TOKEN --approved "..."]` stores them in the library.
+Without `--approved` it prints one line per shipped pack and a plan token:
+
+- `add skill N (content H)`: the library has no pack of that name; it is stored.
+- `current skill N`: the library copy is the shipped one.
+- `update skill N (content OLD -> H; links: ...)`: an untouched shipped copy is replaced
+  by the newer text.
+- `kept skill N: ...`: not touched, either edited in your library (changed or not yet
+  sealed) or the name belongs to a pack you created or imported.
+
+With nothing to add or update it prints `nothing to seed` and no token. Show the person
+the plan and wait for their go-ahead, as for any change to a skill; `seed` is refused to
+a member. Seeding never links: a pack reaches nobody until you `link` it, for example
+`qargi skill link NAME --scope project --project P`. `--install` only adds missing
+packs, needs no token, never updates and notes when a newer shipped version exists (this
+is what `install.sh --user` runs).
+
+After an update of a linked pack, seed prints the follow-ups: `qargi packs apply --target
+claude-code P` for each project the links reach and `qargi packs apply INSTANCE` for
+cloud agents. To take the shipped version of an edited pack again: unlink it, remove it
+(the `remove` verb of `skill`), seed.

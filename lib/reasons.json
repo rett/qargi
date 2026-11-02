@@ -1,0 +1,4 @@
+{
+  "_": "Reason codes for qargi mark --why and for dismissing a noticed note. Data, so the list can grow; keep codes lower-case kebab.",
+  "codes": ["wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other"]
+}

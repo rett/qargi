@@ -1,0 +1,4 @@
+{
+  "class": "write",
+  "description": "Write and update the operational documentation of a project on its documentation branch and return patches."
+}

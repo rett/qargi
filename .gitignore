@@ -4,3 +4,8 @@ claude-lock.json
 .env
 __pycache__/
 *.pyc
+.qargi/
+
+# Claude Code
+.claude/worktrees/
+.claude/settings.local.json

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The command description (lib/commands.py) against the scripts, and the help, man page, completion and
 project inference built from it. Offline. Run: python3 tests/test_help.py"""
+import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import glob, json, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,7 +32,7 @@ def doc_flags(cmd):
 
 
 # every kind of value the command data may name, and what completes it
-TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "member": 1, "store": 1, "deployment": 1,
+TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "workrole": 1, "methodology": 1, "member": 1, "store": 1, "deployment": 1,
          "model": 1, "branch": 1, "entry": 1, "key": 1, "value": 1, "seconds": 1, "cents": 1, "file": 1, "dir": 1, "help": 1}
 
 
@@ -114,8 +115,10 @@ class Render(unittest.TestCase):
             self.assertTrue(H.show_topic(t))
 
     def test_cli_help_forms(self):
+        home = tempfile.mkdtemp()                       # never the real home: some commands look at it
+        self.addCleanup(shutil.rmtree, home, True)
         def run(*a, env=None):
-            return subprocess.run([BIN, *a], capture_output=True, text=True, env=dict(os.environ, **(env or {})), stdin=subprocess.DEVNULL)
+            return subprocess.run([BIN, *a], capture_output=True, text=True, env=dict(os.environ, QARGI_HOME=home, **(env or {})), stdin=subprocess.DEVNULL)
         self.assertEqual(run("help").returncode, 0)
         r = run("lead", "--help")
         self.assertEqual(r.returncode, 0)
@@ -130,6 +133,20 @@ class Render(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("unknown command", r.stderr)
         self.assertEqual(run("version").returncode, 0)
+
+    def test_no_help_text_names_a_retired_ability_skill(self):
+        # The abilities are role text that comes with the task block (roles/<role>/ROLE.md); no skill of the same
+        # name exists to load. The changelog keeps the history and is not read here.
+        texts = {"man page": H.man().replace("\\-", "-").replace("\\e", "\\")}
+        for t in C.TOPICS:
+            texts["topic " + t] = H.show_topic(t)
+        for cmd in C.COMMANDS:
+            texts[cmd] = H.show_command(cmd)
+            for v in verbs(cmd):
+                texts["%s %s" % (cmd, v)] = H.show_command(cmd, v)
+        for where, txt in texts.items():
+            for name in ("qargi-build", "qargi-write", "qargi-review", "qargi-test"):
+                self.assertNotIn(name, txt, "%s still names the skill %s" % (where, name))
 
     def test_man_page_is_current_and_lints(self):
         page = H.man()
@@ -182,6 +199,7 @@ class Complete(Env):
         self.assertEqual(H.complete(["close", ""]), ["sesn_1"])
         self.assertEqual(H.complete(["canon", "apply", "--kind", ""]), ["memory", "reference"])
         self.assertEqual(H.complete(["skill", "link", "x", "--scope", ""]), ["user", "user-role", "project", "project-role"])
+        self.assertEqual(H.complete(["agent", "for", "build", "--surface", ""]), ["local", "cloud"])
         self.assertIn("--plan", H.complete(["canon", "apply", "alpha", "-"]))
         self.assertEqual(H.complete(["review", "check", ""]), ["@dir"])
         self.assertEqual(H.complete(["project", "init", "x", "--answers", ""]), ["@file"])

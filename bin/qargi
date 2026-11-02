@@ -13,11 +13,19 @@ area=${1:-}; [ -n "$area" ] || usage; shift
 case $area in
   help|-h|--help) exec python3 -I "$help" show "$@";;
   __complete) exec python3 -I "$help" complete "$@";;
-  __guard) exec python3 -I "$lib/guard.py";;
+  __guard) exec python3 -I "$lib/guard.py" "$@";;
+  version) cat "$root/VERSION"; exit 0;;
 esac
 # qargi COMMAND --help and qargi COMMAND VERB --help
 case ${1:-} in -h|--help) exec python3 -I "$help" show "$area";; esac
 case ${2:-} in -h|--help) exec python3 -I "$help" show "$area" "${1:-}";; esac
+# The run-event hooks (qargi hook tool-use ...) never go through resolve and never fail: a hook must not block an agent.
+case $area:${1:-} in
+  hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
+    "$lib/hook.sh" "$@" || true; exit 0;;
+esac
+# Only the earlier XDG layout exists: stop before anything creates the new root (lib/paths.py; lib.sh checks too).
+case $area:${1:-} in migrate:home) ;; *) python3 -I "$lib/paths.py" check || exit 1;; esac
 # What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
 _rf=$(mktemp)
 if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
@@ -25,24 +33,47 @@ if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
   if [ "${#_resolved[@]}" -gt 0 ]; then area=${_resolved[0]}; set -- "${_resolved[@]:1}"; fi
   rm -f "$_rf"
 else rm -f "$_rf"; exit 2; fi
+# The project's cloud binding (qargi cloud): ant runs under the project's profile for this command, and lib.sh checks the
+# workspace before a cloud call. A command that is about no project, or a project without a binding, is left as it is.
 case $area in
+  cloud|help|version) ;;
+  *) mapfile -t _cb < <(python3 -I "$lib/cloud.py" for-args "$area" "$@" 2>/dev/null || true)
+     if [ -n "${_cb[1]:-}" ]; then
+       if [ -n "${ANTHROPIC_PROFILE:-}" ] && [ "$ANTHROPIC_PROFILE" != "${_cb[1]}" ]; then
+         echo "qargi: project ${_cb[0]} uses ant profile ${_cb[1]} (qargi cloud show), but ANTHROPIC_PROFILE is $ANTHROPIC_PROFILE; unset it or change the binding" >&2; exit 1
+       fi
+       export ANTHROPIC_PROFILE=${_cb[1]} QARGI_CLOUD_WORKSPACE=${_cb[2]} QARGI_CLOUD_PROJECT=${_cb[0]}
+     fi;;
+esac
+case $area in
+  cloud) exec python3 -I "$lib/cloud.py" "$@";;
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
-  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; *) usage;; esac;;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply|prune) exec "$lib/review.sh" "$@";; *) usage;; esac;;
   skill|tool) exec "$lib/packs.sh" "$area" "$@";;
   packs) exec "$lib/packs.sh" packs "$@";;
   credential) exec "$lib/cred.sh" "$@";;
   local) exec "$lib/local.sh" "$@";;
   agent) exec "$lib/agent.sh" "$@";;
+  role) exec "$lib/role.sh" "$@";;
+  feature) exec "$lib/feature.sh" "$@";;
+  marshal) exec "$lib/marshal.sh" "$@";;
+  release) exec "$lib/release.sh" "$@";;
+  methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
   start|send|status|stop|mark|close|track) exec "$lib/session.sh" "$area" "$@";;
+  report) exec python3 -I "$lib/report.py" "$@";;
+  noticed) exec python3 -I "$lib/noticed.py" "$@";;
+  provider) exec python3 -I "$lib/provider.py" "$@";;
+  upgrade) exec "$lib/upgrade.sh" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
   team) exec "$lib/team.sh" "$@";;
   lead) exec "$lib/lead.sh" "$@";;
   hook) exec "$lib/hook.sh" "$@";;
+  supervise) exec "$lib/supervise.sh" "$@";;
   discover) exec python3 -I "$lib/discover.py" "$@";;
   export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
   migrate) exec python3 -I "$lib/migrate.py" "$@";;

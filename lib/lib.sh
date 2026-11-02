@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
 # Shared helpers for the qargi skill. Registry and tracker live outside
-# the repository, under the XDG config and state directories.
+# the repository, under ~/.qargi/config and ~/.qargi/state.
 set -u
 
-# QARGI_CONF / QARGI_STATE override the locations (for tests); do not
-# redirect XDG_CONFIG_HOME instead, because the ant CLI keeps its login there.
-DA_CONF=${QARGI_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/qargi}
-DA_STATE=${QARGI_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/qargi}
+# Where the data lives (lib/paths.py does the same for the Python scripts; keep the two in step; its docstring has the
+# whole story): QARGI_CONF and QARGI_STATE name a directory (tests do), else QARGI_HOME/config and QARGI_HOME/state,
+# else ~/.qargi/config and ~/.qargi/state. XDG_CONFIG_HOME and XDG_STATE_HOME are not used for qargi's data (the ant
+# CLI keeps its login in the former); they only locate the earlier layout, which `qargi migrate home` copies.
+# A dev run (a checkout other than the one install.sh recorded in the live <config>/install.json, with nothing named)
+# keeps its data in <tool root>/.qargi instead, so a branch checkout never touches live data.
+QARGI_TOOL=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
+DA_ROOT=${QARGI_HOME:-$HOME/.qargi}
+if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ -f "$HOME/.qargi/config/install.json" ]; then
+  _rec=$(jq -r '.tool_root // empty' "$HOME/.qargi/config/install.json" 2>/dev/null) || _rec=''
+  if [ -n "$_rec" ] && [ "$(readlink -f "$_rec")" != "$QARGI_TOOL" ]; then DA_ROOT=$QARGI_TOOL/.qargi; fi
+fi
+DA_CONF=${QARGI_CONF:-$DA_ROOT/config}
+DA_STATE=${QARGI_STATE:-$DA_ROOT/state}
+# Only the earlier layout exists and nothing was named: stop, so no empty new root appears beside the old data.
+if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ "$DA_ROOT" = "$HOME/.qargi" ] && [ ! -e "$HOME/.qargi" ] && [ ! -L "$HOME/.qargi" ] \
+   && { [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/qargi" ] || [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/qargi" ]; }; then
+  echo "qargi: qargi keeps its data in $HOME/.qargi now; yours is still in the earlier XDG directories. Nothing was changed. Run: qargi migrate home (it shows the plan first and copies, so the old directories stay as a backup)." >&2
+  exit 1
+fi
 REG=$DA_CONF/instances.json
 TRK=$DA_STATE/sessions.json
 MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {name: {abilities, file, model, effort, project}}
@@ -14,6 +30,7 @@ export BETA=managed-agents-2026-04-01
 
 mkdir -p "$DA_CONF" "$DA_STATE"
 chmod 700 "$DA_CONF" "$DA_STATE"
+[ -n "${QARGI_CONF:-}${QARGI_STATE:-}" ] || chmod 700 "$DA_ROOT"
 for f in "$REG" "$TRK" "$MEMBERS_FILE"; do
   [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
 done
@@ -24,8 +41,56 @@ done
 # project: <project>-environment, <project>-memory, <project>-reference; the agent
 # and the deployment belong to a role: <project>-<role>, <project>-deployment-<role>.
 # An instance is <project>-<role>; a session is named <instance>-<task-slug>.
-# The roles are the four abilities (build, review, write, test), each defined by a skill qargi-<ability>.
-DA_ROLES=${QARGI_ROLES:-"build review write test"}
+# A role is a directory with role.json (its class, write or read-only, and a description) and ROLE.md (its instructions).
+# Four ship with qargi (build, write, review, test; <tool>/roles); you add your own under <config>/roles. Role names are one
+# lower-case token, unique across both places, and never "lead", "worker" or "reviewer" (the last two are the cloud bases).
+ROLE_BUILTIN="build review write test"
+role_dir() { # name -> the directory of the role, or fails (a base name is never a role, whatever directory carries it)
+  local d
+  ! is_base "$1" || return 1
+  for d in "$QARGI_TOOL/roles/$1" "$DA_CONF/roles/$1"; do
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ]; then echo "$d"; return 0; fi
+  done
+  return 1
+}
+role_names() { # the built-in roles, then yours in name order
+  local r d
+  for r in $ROLE_BUILTIN; do echo "$r"; done
+  for d in "$DA_CONF"/roles/*/; do
+    r=$(basename "$d")
+    case " $ROLE_BUILTIN " in *" $r "*) continue;; esac
+    if [ -f "$d/role.json" ] && [ -f "$d/ROLE.md" ] && printf '%s' "$r" | grep -Eq '^[a-z][a-z0-9]{0,23}$' && [ "$r" != lead ] && ! is_base "$r"; then echo "$r"; fi
+  done
+}
+role_class() { # name -> write | read-only (lead: coordinator)
+  [ "$1" != lead ] || { echo coordinator; return 0; }
+  local d; d=$(role_dir "$1") || return 1
+  jq -r '.class // "write"' "$d/role.json"
+}
+# The two cloud bases are instance names too: worker (write) and reviewer (read-only), from the bases of model-defaults.json.
+_QARGI_DEFAULTS=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/model-defaults.json
+base_class() { # name -> the class of a base (worker, reviewer), or fails when the name is not a base
+  [ -f "$_QARGI_DEFAULTS" ] || return 1
+  jq -er --arg n "$1" '.bases[$n].class // empty' "$_QARGI_DEFAULTS" 2>/dev/null
+}
+is_base() { base_class "$1" >/dev/null; }
+instance_class() { # name -> write | read-only | coordinator; never fails, and a name or a class it does not know is read-only
+  local c
+  [ "$1" != lead ] || { echo coordinator; return 0; }
+  if is_base "$1"; then c=$(base_class "$1"); else c=$(role_class "$1" 2>/dev/null) || c=''; fi
+  case $c in write|read-only) echo "$c";; *) echo read-only;; esac
+}
+class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a base, and those of the project's own profiles that use it
+  local f=${2:-}; [ -f "$f" ] && jq -e . "$f" >/dev/null 2>&1 || f=''
+  jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
+    '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
+}
+run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
+  local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
+  c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
+  echo "$c"
+}
+DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.
 valid_role() { local r; for r in $DA_ROLES lead; do [ "$r" = "$1" ] && return 0; done; return 1; }
@@ -33,9 +98,25 @@ valid_slug() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{0,40}$'; }
 # split_instance NAME: sets PROJECT and ROLE, or dies with the rule.
 split_instance() {
   PROJECT=${1%%-*}; ROLE=${1#*-}
-  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || ! valid_role "$ROLE"; then
-    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES"
+  if [ "$PROJECT-$ROLE" != "$1" ] || ! valid_project "$PROJECT" || { ! valid_role "$ROLE" && ! is_base "$ROLE"; }; then
+    die "'$1' is not a standard instance name: <project>-<role> with a lower-case project (letters, digits) and a role from: $DA_ROLES, or a base: worker, reviewer"
   fi
+}
+
+# The provider a project uses (models.provider in its answers, default claude); no project, or no answers, is claude.
+project_provider() { # project-or-empty
+  local f=$DA_CONF/projects/${1:-}.json p=claude
+  if [ -n "${1:-}" ] && [ -f "$f" ]; then p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude; fi
+  printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || p=claude
+  echo "$p"
+}
+# barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
+# `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
+# that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
+barrier_guard() {
+  local rc=0
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" require-barrier "$(project_provider "${2:-}")" "$1" ${2:+--project "$2"} || rc=$?
+  [ "$rc" = 0 ] || exit "$rc"
 }
 
 # mem_index STORE: JSON lines {path,id} of every memory of a store (metadata only).
@@ -99,8 +180,9 @@ die() { echo "qargi: $*" >&2; exit 1; }
 # Every approval-gated or cloud-driving verb leaves an append-only line here.
 audit_log() { # verb [detail]
   local f=$DA_STATE/audit.log
-  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" \
-    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")}' >> "$f"
+  # AUDIT_ORIGIN (set by the supervisor only) adds an origin field, so its lines can be told from the owner's
+  jq -nc --arg t "$(now)" --arg v "$1" --arg d "${2:-}" --arg a "${ASKED:-}" --arg p "${APPROVED:-}" --arg n "${QARGI_NESTED:-}" --arg o "${AUDIT_ORIGIN:-}" \
+    '{ts:$t, verb:$v, detail:$d, asked:$a, approved:$p, nested:($n != "")} + (if $o == "" then {} else {origin:$o} end)' >> "$f"
   chmod 600 "$f" 2>/dev/null || true
 }
 
@@ -131,7 +213,12 @@ now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # A cloud call that fails on an expired login should say so.
 ant_ok() {
-  ant auth status >/dev/null 2>&1 || die "ant is not logged in (run: ant auth login)"
+  ant auth status >/dev/null 2>&1 || die "ant is not logged in (run: ant auth login${QARGI_CLOUD_PROJECT:+, or: qargi cloud login $QARGI_CLOUD_PROJECT})"
+  # a project bound to a workspace (qargi cloud): the profile in use must still reach it, so nothing lands in another one
+  if [ -n "${QARGI_CLOUD_WORKSPACE:-}" ]; then
+    [ "$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/cloud.py" workspace "${ANTHROPIC_PROFILE:-default}" 2>/dev/null)" = "$QARGI_CLOUD_WORKSPACE" ] \
+      || die "ant profile ${ANTHROPIC_PROFILE:-?} does not reach workspace $QARGI_CLOUD_WORKSPACE, which project ${QARGI_CLOUD_PROJECT:-?} is bound to: qargi cloud check ${QARGI_CLOUD_PROJECT:-}"
+  fi
 }
 
 inst_get() { jq -e --arg n "$1" '.[$n]' "$REG" 2>/dev/null || die "no instance named $1 (see: list)"; }
@@ -142,13 +229,24 @@ inst_idle_session() {
     | sort_by(.value.created) | last | .key // empty' "$TRK"
 }
 
-# Refresh one tracker row from the API.
+# Why a session went idle. The session object has no stop_reason; the reason is on the session.status_idle events
+# (the thread_status_idle ones are per thread and ignored). Prints {type, event_ids} of the last one, or nothing.
+idle_stop() { # sid
+  ant beta:sessions:events list --session-id "$1" --max-items -1 </dev/null 2>/dev/null \
+    | jq -sc '[.[] | if type == "array" then .[] else . end | select(.type == "session.status_idle" and .stop_reason.type != null)]
+        | sort_by(.processed_at) | last // empty | {type: .stop_reason.type, event_ids: (.stop_reason.event_ids // null)}'
+}
+
+# Refresh one tracker row from the API. stop_reason is the type of the last session.status_idle event while the
+# session is idle (end_turn, requires_action, retries_exhausted, budget_reached) and empty otherwise; stop_event_ids
+# are the events a requires_action waits on. An interrupt (qargi stop) also ends with end_turn: see interrupt_sent_at.
 trk_refresh() {
-  local sid=$1 s
+  local sid=$1 s stop=''
   s=$(ant beta:sessions retrieve --session-id "$sid" 2>/dev/null) || return 1
-  json_update "$TRK" '.[$s] += {status: $st.status, stop_reason: ($st.stop_reason.type // null),
-      last_seen: $t, list_cost: ($st.usage.list_cost.amount // null)}' \
-    --arg s "$sid" --arg t "$(now)" --argjson st "$s"
+  [ "$(jq -r .status <<<"$s")" != idle ] || stop=$(idle_stop "$sid")
+  json_update "$TRK" '.[$s] += {status: $st.status, stop_reason: ($stop.type // $st.stop_reason.type // null), stop_event_ids: ($stop.event_ids // null),
+      last_seen: $t, last_processed_at: ($st.updated_at // null), list_cost: ($st.usage.list_cost.amount // null)}' \
+    --arg s "$sid" --arg t "$(now)" --argjson st "$s" --argjson stop "${stop:-null}"
 }
 
 cred_file() { # project -> expanded credential file path, or empty
@@ -165,8 +263,7 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
-# contract, and the ability's skill (skills/qargi-<role>/SKILL.md, the same text a local member
-# loads), or for the lead its contract. Provisioning and refresh-prompt
+# contract, and the role's instructions (roles/<role>/ROLE.md, the same text a local member's task block carries), or for the lead its contract. Provisioning and refresh-prompt
 # build it the same way, so an agent can always be brought back in line with the tool.
 # The teams of a project as text for the lead's prompt: members, bases, scopes, standards,
 # rounds and budget, so a lead started from the console needs only a task.
@@ -189,19 +286,59 @@ lead_teams_block() { # project
 
 # tools_off ROLE PROJECT_JSON: the built-in tools a cloud role does not get (roles.<role>.tools_off overrides the default).
 tools_off() {
-  local d='web_search web_fetch'; case $1 in review|lead) d='web_search web_fetch edit';; esac
+  local d='web_search web_fetch edit write'; [ "$(instance_class "$1")" != write ] || d='web_search web_fetch'   # any class but write: no edit, no write
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
-agent_prompt() { # role [project]
+# The directory that holds provision/ and skills/: the checkout, or lib/ itself in an installed copy.
+prompt_root() {
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  local tpl=$lib/../provision/templates rs=$lib/../provision/role-seeds/$1 sk=$lib/../skills
-  [ -d "$tpl" ] || { tpl=$lib/provision/templates; rs=$lib/provision/role-seeds/$1; sk=$lib/skills; }
+  if [ -d "$lib/../provision/templates" ]; then echo "$lib/.."; else echo "$lib"; fi
+}
+
+agent_prompt() { # role [project]
+  local root; root=$(prompt_root)
+  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 sk=$root/skills
+  # a base (worker, reviewer) is a role-neutral agent: the role text comes with each session, so the agent itself holds only a short fallback
+  if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
   [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
-  if [ -f "$sk/qargi-$1/SKILL.md" ]; then echo; awk 'f>=2 {print} /^---$/ {f++}' "$sk/qargi-$1/SKILL.md"; fi
+  local rd; if rd=$(role_dir "$1"); then echo; cat "$rd/ROLE.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
+}
+
+# The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
+# rendered prompt (what refresh-prompt would push); skill is the hash of the two files that change most, the agent
+# contract and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
+prompt_stamp() { # role project
+  local sk sha; sk=$(prompt_root)/skills
+  sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
+  [ "${PIPESTATUS[0]}" = 0 ] || return 1
+  jq -nc --arg s "$sha" --arg k "$(cat "$sk/qargi-task/agent-contract.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+}
+
+# prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the
+# hash recorded when the agent was provisioned or last refreshed. A registry entry with no hash (made before it was
+# recorded, or by init) is unknown, never stale; a local instance has no cloud prompt (none).
+prompt_state() {
+  local n=$1 rec old oldk cur
+  rec=$(jq -c --arg n "$n" '.[$n] // empty' "$REG" 2>/dev/null)
+  [ -n "$rec" ] && [ "$(jq -r .location <<<"$rec")" = cloud ] || { echo none; return 0; }
+  valid_project "${n%%-*}" && valid_role "${n#*-}" || { echo none; return 0; }
+  old=$(jq -r '.prompt.sha // empty' <<<"$rec"); oldk=$(jq -r '.prompt.skill // empty' <<<"$rec")
+  [ -n "$old" ] || { echo unknown; return 0; }
+  cur=$(prompt_stamp "${n#*-}" "${n%%-*}") || { echo unknown; return 0; }
+  if [ "$(jq -r .sha <<<"$cur")" = "$old" ]; then echo current
+  elif [ -n "$oldk" ] && [ "$(jq -r .skill <<<"$cur")" != "$oldk" ]; then echo "stale skill"
+  else echo "stale prompt"; fi
+}
+
+# prompt_record INSTANCE: remember the hashes of the prompt the cloud agent now has (provisioned or refreshed).
+prompt_record() {
+  local n=$1 st
+  st=$(prompt_stamp "${n#*-}" "${n%%-*}") || return 0
+  json_update "$REG" 'if has($n) then .[$n].prompt = ($p + {at: $t}) else . end' --arg n "$n" --argjson p "$st" --arg t "$(now)"
 }
 

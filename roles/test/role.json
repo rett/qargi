@@ -1,0 +1,4 @@
+{
+  "class": "write",
+  "description": "Write and repair a project's tests, prove them failing first and stable, and report how the suite behaves."
+}

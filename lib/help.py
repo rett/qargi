@@ -10,17 +10,18 @@ import glob, json, os, shutil, subprocess, sys, textwrap
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import commands as C  # noqa: E402
+import paths as P  # noqa: E402
 
 ROOT = os.path.dirname(HERE)
 BOLD = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
 
 def conf():
-    return os.environ.get("QARGI_CONF") or os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "qargi")
+    return P.conf()
 
 
 def state():
-    return os.environ.get("QARGI_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "qargi")
+    return P.state()
 
 
 def b(s):
@@ -281,8 +282,7 @@ def man():
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
     w("The skills qargi\\-task, qargi\\-team, qargi\\-project, qargi\\-instances, qargi\\-provision, qargi\\-memory, qargi\\-packs "
-      "and qargi\\-verify in Claude Code, and the ability skills qargi\\-build, qargi\\-write, qargi\\-review and qargi\\-test "
-      "(qargi help roles).")
+      "and qargi\\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).")
     return "\n".join(x for x in o if x != "") + "\n"
 
 
@@ -361,8 +361,26 @@ def roles_of(words):
     have = list((d.get("roles") or {}))
     if d.get("teams") or not have:
         have.append("lead")
-    have = [r for r in C.ROLES if r in have] or list(C.ROLES)
+    have = [r for r in C.ROLES if r in have] + sorted(r for r in have if r not in C.ROLES) or list(C.ROLES)
     return [(r, "%s/%s" % ((d.get("roles") or {}).get(r, {}).get("model", ""), (d.get("roles") or {}).get(r, {}).get("effort", "")) if (d.get("roles") or {}).get(r) else "") for r in have]
+
+
+def work_roles():
+    """The roles a task can have: the built-in ones, then yours (no lead)."""
+    mine = os.path.join(conf(), "roles")
+    own = sorted(n for n in (os.listdir(mine) if os.path.isdir(mine) else []) if n not in C.ABILITIES and n != "lead" and os.path.isfile(os.path.join(mine, n, "role.json")))
+    return [(r, "") for r in list(C.ABILITIES) + own]
+
+
+def methodologies():
+    """The methodologies, the built-in one and yours: (name, description)."""
+    out = []
+    for base in (os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "methodologies"), os.path.join(conf(), "methodologies")):
+        for n in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            f = os.path.join(base, n, "methodology.json")
+            if os.path.isfile(f) and n not in [x[0] for x in out]:
+                out.append((n, _read(f).get("description", "")[:60]))
+    return out
 
 
 def stores():
@@ -463,6 +481,10 @@ def by_type(t, words):
         return [(n, ", ".join(v.get("members", []))) for n, v in sorted((project_data(words).get("teams") or {}).items())]
     if base == "role":
         return roles_of(words)
+    if base == "workrole":
+        return work_roles()
+    if base == "methodology":
+        return methodologies()
     if base == "store":
         return stores()
     if base == "deployment":
