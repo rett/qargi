@@ -445,3 +445,5 @@ active profile is used.
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).
+
+Copyright (c) 2026 Everett C. Haimes III
