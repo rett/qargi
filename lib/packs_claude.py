@@ -535,8 +535,21 @@ def cmd_check(inp):
     if findings:
         for f in findings:
             print("FAIL " + f)
+        link_note(inp, live)
         sys.exit(1)
     print("ok   %s: %d packs, rendered tree matches the manifest, nothing shadowed" % (inp["project"], len(mp)))
+    link_note(inp, live)
+
+
+def link_note(inp, live):
+    """One note line when the checkout exists and its .claude/skills is not linked to the render (qargi packs link). Never a finding."""
+    co = inp.get("checkout") or ""
+    if not co or not os.path.isabs(co) or not os.path.isdir(co):
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from packs_link import linked
+    if not linked(os.path.join(co, ".claude", "skills"), os.path.join(live, ".claude", "skills")):
+        print("note: repo .claude/skills is not linked to the render (qargi packs link %s)" % inp["project"])
 
 
 def main():
