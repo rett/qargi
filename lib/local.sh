@@ -125,7 +125,7 @@ check_run() {
 # is asked for the render only ('--render-only'): the section about the skills a session would load is no part of whether the render is
 # out of date, and a drifted accepted skill must not read as one. A provider that cannot render at all (exit 3) is nothing to warn about.
 render_warning() {
-  local m d prj f rp ru out rc pv rt
+  local m d prj f rp ru out rc pv rt pe
   for m in "$DA_STATE"/claude/*/MANIFEST.json; do
     [ -f "$m" ] || continue
     d=$(dirname "$m"); prj=$(basename "$d"); f=$DA_CONF/projects/$prj.json
@@ -133,9 +133,13 @@ render_warning() {
     rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
     if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
     else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
-    rc=0; pv=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" 2>/dev/null </dev/null) || rc=$?
-    if [ "$rc" = 2 ]; then
-      echo "note: project $prj has no provider (qargi project set $prj models.provider NAME); the render check was skipped" >&2
+    rc=0; pv=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || rc=$?
+    if [ "$rc" = 2 ]; then   # the render is the local surface's: an object that names only a cloud runtime is the same as none
+      pe=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" --surface local 2>&1 </dev/null) || true
+      case $pe in
+        *"has no local provider"*) echo "note: project $prj has no local provider (qargi project set $prj models.provider.local NAME); the render check was skipped" >&2;;
+        *) echo "note: project $prj has no provider (qargi project set $prj models.provider NAME); the render check was skipped" >&2;;
+      esac
       return 0
     fi
     # the render under claude/ is the claude provider's; a project that has moved to another provider has no render to check here

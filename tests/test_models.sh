@@ -30,7 +30,7 @@ jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.provider == "claude" and
   and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/claude.json" >/dev/null \
   && ok "the claude provider file maps every tier the table uses to an id and to an alias" || no "provider file"
 jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t] != null and $c.aliases[$t] != null)' "$PROV/claude.json" >/dev/null && ok "every profile's tier is in both tiers and aliases" || no "tier coverage"
-[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | sort)" = "$(printf 'adapter-schema.json\nclaude.json\nschema.json')" ] && ok "claude is the only provider file (beside schema.json, which describes them)" || no "providers: $(ls "$PROV")"
+[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | sort)" = "$(printf 'adapter-schema.json\nclaude.json\nschema-2.json\nschema.json')" ] && ok "claude is the only provider file (beside schema.json and schema-2.json, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
 $DA agent add b1 --abilities build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"
@@ -148,7 +148,7 @@ e=$($DA agent models --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude$' <<<"$e"; } && ok "an unknown models.provider is an error listing the providers (models)" || no "unknown provider models: $e"
 jq '.models.provider = "schema"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 e=$($DA agent models --project alpha 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "models.provider 'schema'" <<<"$e" && grep -q 'available: claude$' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
+{ [ $rc != 0 ] && grep -q "no runtime or family 'schema'" <<<"$e" && grep -q 'available: claude$' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
 jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
 [ "$($DA project template alpha | sha256sum | cut -d' ' -f1)" = e7b0ee756a604905e80fe4782ec602307260bee817b8cd0b9e7b85c6e798a43a ] && ok "project template output is byte-identical to before the profiles" || no "template"
