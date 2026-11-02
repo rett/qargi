@@ -2,7 +2,10 @@
 # The conformance suite of a provider adapter: what every lib/providers/NAME/adapter must do, whatever the vendor.
 #
 # Usage: tests/conformance.sh NAME [--stub DIR] [--tool DIR]
-#   NAME       the provider; its descriptor is lib/providers/NAME.json and `adapter` in it names the adapter. A descriptor
+#   NAME       the provider (a runtime, for schema 2: claude-code, claude-platform); its descriptor is lib/providers/NAME.json
+#              and `adapter` in it names the adapter. A schema 2 definition serves one surface and its models may live in a
+#              catalog; the suite reads it through lib/provider.py load(), the view older readers get (surfaces, tier_detail,
+#              effort, adapter), so a schema 1 descriptor and a schema 2 definition are checked the same way. A descriptor
 #              with adapter null is skipped with a message (exit 0).
 #   --stub DIR the provider's test directory, default tests/providers/NAME. It holds `stub` (an executable that stands in
 #              for the vendor, exported to the adapter as $QARGI_TRANSPORT; see tests/providers/lib/stub.py), fixtures/
@@ -33,7 +36,8 @@
 #      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
 # A case whose verb the adapter does not implement (exit 3) is skipped. A mutated copy of the tool tree (the descriptor
 # changed, the adapter run from the copy) tests what the descriptor of the provider cannot show on its own: an effort
-# with no control, a surface that is not listed. An adapter must therefore find its descriptor and what it needs relative
+# with no control (changed where the models live: the catalog of a schema 2 definition that references one), a surface that is
+# not listed (a schema 1 descriptor of two surfaces; a schema 2 definition has one, and asking for the other is the case). An adapter must therefore find its descriptor and what it needs relative
 # to itself, as the adapter contract says.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -63,17 +67,24 @@ SCHEMA=$ROOT/lib/providers/adapter-schema.json
 VALIDATE=$HERE/providers/lib/validate.py
 CORPUS=$HERE/providers/barrier-corpus.jsonl
 
-AD_REL=$(jq -r '.adapter // empty' "$DESC")
-if [ -z "$AD_REL" ]; then
-  echo "skip [-] $NAME has no adapter (adapter is null in its descriptor); nothing to check"
-  exit 0
-fi
-
 # shellcheck source=hermetic.sh
 . "$HERE/hermetic.sh"
 W=$HERMETIC/work
 mkdir -p "$W/cwd" "$W/proj"
 cd "$W/cwd" || exit 2
+# the descriptor as load() shows it: schema 1 as it is, schema 2 in the shape of schema 1 (see lib/provider.py)
+VIEW=$W/view.json
+python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import provider as P
+try:
+    print(json.dumps(P.load(sys.argv[2], root=sys.argv[3])))
+except P.ProviderError as e:
+    sys.exit("conformance: %s" % e)' "$ROOT/lib" "$NAME" "$PROV" > "$VIEW" || exit 2
+SCHEMA_V=$(jq -r '.schema' "$DESC")
+AD_REL=$(jq -r '.adapter // empty' "$VIEW")
+if [ -z "$AD_REL" ]; then
+  echo "skip [-] $NAME has no adapter (adapter is null in its descriptor); nothing to check"
+  exit 0
+fi
 ADAPTER=$TOOL/$AD_REL
 STUB=$STUBDIR/stub
 export QARGI_TRANSPORT=$STUB QARGI_STUB_LOG=$W/stub.log CONFORMANCE_TOOL=$TOOL
@@ -111,10 +122,10 @@ check_schema() {   # VERB KIND VALUE: the problems of the value against adapter-
   printf '%s' "$3" | python3 -I "$VALIDATE" --schema "$SCHEMA" "$1" "$2"
 }
 eff() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import provider as P; print(P.effective(sys.argv[2], sys.argv[3], sys.argv[4], root=sys.argv[5]))' "$ROOT/lib" "$NAME" "$1" "$2" "$PROV"; }
-SURFACES=$(jq -r '.surfaces[]' "$DESC")
+SURFACES=$(jq -r '.surfaces[]' "$VIEW")
 listed() { grep -qx "$1" <<<"$SURFACES"; }
 VERBS="resolve dispatch-local barrier-check provision start-session status collect stop cost"
-MODEL=$(jq -r '.tier_detail.balanced | .alias // .model' "$DESC")
+MODEL=$(jq -r '.tier_detail.balanced | .alias // .model' "$VIEW")
 SID=sess_conformance
 
 sample() {   # VERB SURFACE: a good request for the verb
@@ -139,15 +150,22 @@ surfaces_of() {   # VERB: the listed surfaces the verb is asked on
 }
 ONE=$(echo "$SURFACES" | head -1)
 
-# a copy of the tool tree whose descriptor is changed by a jq filter; MUT is the adapter in the copy
+# a copy of the tool tree in which one file of lib/providers is changed by a jq filter; MUT is the adapter in the copy
 MUT=""
-mutate() {   # JQ-FILTER
+mutate_file() {   # FILE-UNDER-lib/providers JQ-FILTER
   local d
   rm -rf "$W/mut"; mkdir -p "$W/mut"
   cp -R "$TOOL/lib" "$W/mut/lib" && { [ ! -d "$TOOL/agents" ] || cp -R "$TOOL/agents" "$W/mut/agents"; } || return 1
-  d=$W/mut/lib/providers/$NAME.json
-  jq "$1" "$DESC" > "$d.new" && mv "$d.new" "$d" || return 1
+  d=$W/mut/lib/providers/$1
+  jq "$2" "$TOOL/lib/providers/$1" > "$d.new" && mv "$d.new" "$d" || return 1
   MUT=$W/mut/$AD_REL
+}
+mutate() { mutate_file "$NAME.json" "$1"; }   # JQ-FILTER on the descriptor itself
+mutate_effort_none() {   # LEVEL: that effort level has no control, in the file that holds the effort map
+  local cat
+  if [ "$SCHEMA_V" != 2 ]; then mutate ".effort.$1 = null"; return; fi
+  cat=$(jq -r '.models.catalog // empty' "$DESC")
+  if [ -n "$cat" ]; then mutate_file "catalogs/$cat.json" ".effort.$1 = null"; else mutate ".models.effort.$1 = null"; fi
 }
 call_mut() { OUT=$(printf '%s' "$2" | "$MUT" "$1" 2>"$W/stderr"); RC=$?; }
 
@@ -185,7 +203,7 @@ case2() {
   local s tier e want_model want_alias want_native req nulls
   for s in $SURFACES; do
     for tier in fast balanced deep frontier; do
-      want_model=$(jq -r --arg t "$tier" '.tier_detail[$t].model' "$DESC"); want_alias=$(jq -r --arg t "$tier" '.tier_detail[$t].alias' "$DESC")
+      want_model=$(jq -r --arg t "$tier" '.tier_detail[$t].model' "$VIEW"); want_alias=$(jq -r --arg t "$tier" '.tier_detail[$t].alias' "$VIEW")
       req=$(jq -nc --arg s "$s" --arg t "$tier" '{surface: $s, tier: $t, effort: "high", profile: "conformance"}')
       call resolve "$req"; ran
       if [ "$RC" != 0 ]; then problem "resolve $s/$tier: exit $RC: ${OUT:0:200}"; continue; fi
@@ -193,9 +211,9 @@ case2() {
       [ "$(jq -r .alias <<<"$OUT")" = "$want_alias" ] || problem "resolve $s/$tier: alias $(jq -r .alias <<<"$OUT"), the descriptor says $want_alias"
     done
   done
-  nulls=$(jq -r '.effort | to_entries[] | select(.value == null) | .key' "$DESC")
+  nulls=$(jq -r '.effort | to_entries[] | select(.value == null) | .key' "$VIEW")
   for e in low medium high xhigh max; do
-    want_native=$(jq -r --arg e "$e" '.effort[$e] // "null"' "$DESC")
+    want_native=$(jq -r --arg e "$e" '.effort[$e] // "null"' "$VIEW")
     call resolve "$(jq -nc --arg s "$ONE" --arg e "$e" '{surface: $s, tier: "balanced", effort: $e}')"
     [ "$RC" = 0 ] || { problem "resolve effort $e: exit $RC: ${OUT:0:200}"; continue; }
     [ "$(jq -r '.effort_native // "null"' <<<"$OUT")" = "$want_native" ] || problem "resolve effort $e: effort_native $(jq -c .effort_native <<<"$OUT"), the descriptor says $want_native"
@@ -206,13 +224,13 @@ case2() {
   call resolve "$(jq -nc --arg s "$ONE" '{surface: $s, tier: "balanced"}')"
   [ "$RC" = 0 ] && [ "$(jq -r '.effort_native' <<<"$OUT")" = null ] || problem "resolve with no effort asked: effort_native is not null (exit $RC)"
   if [ -z "$nulls" ]; then   # the descriptor maps every effort; change one in a copy to see the rule at work
-    if mutate '.effort.max = null'; then
+    if mutate_effort_none max; then
       call_mut resolve "$(jq -nc --arg s "$ONE" '{surface: $s, tier: "deep", effort: "max"}')"
       if [ "$RC" != 0 ]; then problem "resolve with an effort that has no control (a copy of the descriptor): exit $RC: ${OUT:0:200}"
       else
         [ "$(jq -r .effort_native <<<"$OUT")" = null ] || problem "an effort with no control: effort_native is not null"
         [ "$(jq '.notes | length' <<<"$OUT")" -ge 1 ] || problem "an effort with no control: no note"
-        [ "$(jq -r .model <<<"$OUT")" = "$(jq -r .tier_detail.deep.model "$DESC")" ] || problem "an effort with no control changed the model"
+        [ "$(jq -r .model <<<"$OUT")" = "$(jq -r .tier_detail.deep.model "$VIEW")" ] || problem "an effort with no control changed the model"
         note "effort null rule on a changed copy"
       fi
     else problem "internal: could not make a changed copy of the tool tree"; fi
@@ -238,7 +256,7 @@ case3() {
     call resolve "$(jq -nc --arg s "$x" '{surface: $s, tier: "fast"}')"; ran; checked=$((checked + 1))
     [ "$RC" = 3 ] || problem "resolve on the unlisted surface $x: exit $RC, not 3: ${OUT:0:160}"
   done
-  if [ "$(echo "$SURFACES" | wc -l)" -gt 1 ]; then   # every surface is listed: take one away in a copy
+  if [ "$SCHEMA_V" != 2 ] && [ "$(echo "$SURFACES" | wc -l)" -gt 1 ]; then   # every surface is listed: take one away in a copy
     x=$(echo "$SURFACES" | tail -1)
     if mutate ".surfaces -= [\"$x\"] | del(.capabilities[][\"$x\"])"; then
       call_mut resolve "$(jq -nc --arg s "$x" '{surface: $s, tier: "fast"}')"; ran; checked=$((checked + 1))

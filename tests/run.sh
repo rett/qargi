@@ -19,7 +19,8 @@ run python3 tests/test_provider.py
 run python3 tests/test_render.py
 run python3 tests/test_provider_adapter.py
 run bash tests/test_provider_degrade.sh
-run bash tests/conformance.sh claude
+run bash tests/conformance.sh claude-code
+run bash tests/conformance.sh claude-platform
 run bash tests/test_conformance_selftest.sh
 run python3 tests/test_tierplan.py
 run bash tests/test_tier_hook.sh
