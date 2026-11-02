@@ -243,7 +243,7 @@ Signing cannot stop someone with push access from deleting a ref; it makes forge
 
 ## Skills and command
 
-Nine skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
+Ten skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
@@ -256,6 +256,7 @@ Nine skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dis
 | `/qargi-verify` | the coordinator's procedure for verifying and applying returned patches |
 | `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
 | `/qargi-team` | a team on one task: a lead coordinating members for build, write and review; led by this session, a cloud lead, or a lead started in the console |
+| `/qargi-session` | the lead's handoff to a fresh session: `qargi marshal handoff` writes the note from stored state, the new session reports what it believes before it does anything |
 
 ## Skills and tools in a local Claude Code session
 
