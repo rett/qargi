@@ -533,12 +533,305 @@ def apply_unlink(facts, lk, pfd):
                                            else "The backup is where it was and nothing was changed."))
 
 
+# ---- what entry-symlinks and copy share --------------------------------------------------------------------------------------
+
+def source_entries(lk):
+    """([[name, "dir"|"file"]], [skipped names]): the entries of the source directory that are linked or copied, sorted. A name that
+    starts with a dot, holds a control character, or is neither a directory nor a regular file is skipped (and said so in the plan)."""
+    out, skipped = [], []
+    for n in sorted(os.listdir(lk.source)):
+        m = os.lstat(os.path.join(lk.source, n)).st_mode
+        if n.startswith(".") or CTRL_RE.search(n) or not (stat.S_ISDIR(m) or stat.S_ISREG(m)):
+            skipped.append(n)
+        else:
+            out.append([n, "dir" if stat.S_ISDIR(m) else "file"])
+    return out, skipped
+
+
+def tracked_any(base, rels):
+    """The first of the relative paths rels that git tracks in base, or None."""
+    if not rels:
+        return None
+    rc, out = git(base, "ls-files", "-z", "--", *rels)
+    names = [n for n in out.split("\0") if n] if rc == 0 else []
+    return names[0] if names else None
+
+
+def real_dest(lk, link):
+    """Refuse a destination of entry-symlinks or copy that is not a real directory (or missing)."""
+    if os.path.islink(link):
+        die("%s is a symbolic link; refusing (mode %s keeps a real directory and puts the entries inside it)" % (link, lk.mode))
+    if os.path.lexists(link) and not os.path.isdir(link):
+        die("%s exists and is not a directory; refusing" % link)
+
+
+def open_dest(pfd, leaf, link, create):
+    """A descriptor of the destination directory in the directory pfd, made first when create (Refused if it exists by now)."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    if create:
+        try:
+            os.mkdir(leaf, 0o777, dir_fd=pfd)
+        except FileExistsError:
+            raise Refused("%s exists now (it did not when the plan was made)" % link)
+    try:
+        return os.open(leaf, flags, dir_fd=pfd)
+    except FileNotFoundError:
+        raise Refused("%s does not exist any more" % link)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise Refused("%s is a symbolic link or not a directory now (it was neither when the plan was made)" % link)
+        raise
+
+
+class Journal:
+    """What an apply has changed, each with the step that undoes it, so that a failure puts the files back where it can."""
+
+    def __init__(self):
+        self.ops = []
+
+    def add(self, desc, undo):
+        self.ops.append((desc, undo))
+
+    def rollback(self):
+        """Undo in reverse order. The descriptions of what could not be undone (all of it when the rollback itself fails)."""
+        try:
+            fault("rollback")
+        except OSError:
+            return [d for d, _ in reversed(self.ops)]
+        left = []
+        for desc, undo in reversed(self.ops):
+            try:
+                undo()
+            except OSError:
+                left.append(desc)
+        return left
+
+
+def failed(verb, lk, facts, e, journal):
+    """Say what a failed apply left, after putting back what can be put back, and exit 1."""
+    why = why_of(e)
+    link = facts["link"]
+    n = len(journal.ops)
+    left = journal.rollback() if n else []
+    above = " (a missing directory above it may have been created, empty)" if verb == "link" and facts["state"] == "absent" else ""
+    if not n:
+        die("cannot %s %s: %s. Nothing was changed%s." % (verb, link, why, above))
+    if not left:
+        die("cannot %s %s: %s. %d change%s made and put back; nothing was changed%s." % (verb, link, why, n, " was" if n == 1 else "s were", above))
+    die("cannot %s %s: %s. %d of %d changes could not be put back: %s. Run the same command again to finish it, or %s undoes what is linked. "
+        "Only links qargi made were removed or replaced; nothing else was deleted."
+        % (verb, link, why, len(left), n, "; ".join(left), lk.words["unlink"]))
+
+
+def own_links(lk, link):
+    """{name: target} of the symbolic links in the directory link that point into the source: qargi's own entries."""
+    out = {}
+    src, real = os.path.normpath(lk.source), os.path.realpath(lk.source)
+    for n in sorted(os.listdir(link)):
+        p = os.path.join(link, n)
+        if not os.path.islink(p):
+            continue
+        t = os.readlink(p)
+        d = os.path.dirname(os.path.normpath(t if os.path.isabs(t) else os.path.join(link, t)))
+        if d == src or os.path.realpath(d) == real:
+            out[n] = t
+    return out
+
+
+def is_own(lk, link, target):
+    src, real = os.path.normpath(lk.source), os.path.realpath(lk.source)
+    d = os.path.dirname(os.path.normpath(target if os.path.isabs(target) else os.path.join(link, target)))
+    return d == src or os.path.realpath(d) == real
+
+
+def exclude_hint_many(base, rels):
+    """One warning naming the paths of rels that git does not ignore, with the line to add for each, or None."""
+    loose = [r for r in rels if git(base, "check-ignore", "-q", "--", r)[0] != 0]
+    if not loose:
+        return None
+    rc, path = git(base, "rev-parse", "--git-path", "info/exclude")
+    path = path.strip() if rc == 0 and path.strip() else ".git/info/exclude"
+    if not os.path.isabs(path):
+        path = os.path.join(base, path)
+    return "warning: git does not ignore %s, so the links show up as untracked; to keep them out of git status add these lines to %s:\n%s" % (
+        "them" if len(loose) > 1 else loose[0], path, "\n".join("    " + r for r in loose))
+
+
+# ---- entry-symlinks ----------------------------------------------------------------------------------------------------------
+
+def classify_entries(verb, lk):
+    """The facts of the plan for verb link|unlink in mode entry-symlinks: for every entry of the source (and every link of ours the
+    source has no entry for) what apply will do; refuses what is not qargi's to touch."""
+    base, link, _ = lk.locate()
+    rel = lk.dest
+    w = lk.words
+    facts = {"verb": verb, "resource": lk.kind, "mode": lk.mode, "project": lk.project, "checkout": base, "link": link, "source": lk.source,
+             "rel": rel, "entries": [], "skipped": []}
+    real_dest(lk, link)
+    present = os.path.lexists(link)
+    own = own_links(lk, link) if present else {}
+    if verb == "unlink":
+        if not own:
+            die("%s has no entry linked to the %s of %s; nothing to unlink" % (link, w["source_word"], lk.project))
+        facts["state"] = "ours"
+        facts["entries"] = [[n, "remove", own[n]] for n in sorted(own)]
+        return facts
+    lk.source_ready()
+    entries, facts["skipped"] = source_entries(lk)
+    names = {n for n, _ in entries}
+    for n, t in entries:
+        p = os.path.join(link, n)
+        want = os.path.join(lk.source, n)
+        if not os.path.lexists(p):
+            facts["entries"].append([n, "new", want])
+        elif os.path.islink(p) and n in own:
+            facts["entries"].append([n, "same" if os.path.basename(os.path.normpath(own[n])) == n else "relink", own[n]])
+        elif os.path.islink(p):
+            die("%s is a symbolic link to %s, not into %s; refusing to replace it" % (p, os.readlink(p), w["source"]))
+        else:
+            die("%s exists and is a real %s that qargi did not make; refusing to replace it (move it away first)" % (p, "directory" if os.path.isdir(p) else "file"))
+    for n in sorted(own):
+        if n not in names:
+            facts["entries"].append([n, "stale", own[n]])
+    facts["entries"].sort(key=lambda e: e[0])
+    t = tracked_any(base, [rel + "/" + n for n, a, _ in facts["entries"] if a != "same"])
+    if t:
+        die("files under %s are tracked by git in %s (%s): the repository's owner decides how its %s are loaded; "
+            "qargi does not touch tracked files" % (rel, base, t, w["plural"]))
+    facts["state"] = "absent" if not present else "dir"
+    if all(a == "same" for _, a, _ in facts["entries"]) and (present or not facts["entries"]):
+        facts["state"] = "linked"
+    return facts
+
+
+def show_entries(facts, lk):
+    p, link, source, rel = (clean(facts[k]) for k in ("project", "link", "source", "rel"))
+    w = lk.words
+    acts = facts["entries"]
+    if facts["verb"] == "link":
+        say("link plan for %s: the checkout %s loads %s, one link per entry" % (p, clean(facts["checkout"]), w["loads"]))
+        say("  directory: %s" % link)
+        say("  source:    %s" % source)
+        if facts["state"] == "absent":
+            say("  %s does not exist: create it (with %s if missing) and the links" % (rel, os.path.dirname(link)))
+        else:
+            say("  %s is a real directory and stays one; only links that point into the source are ever touched" % rel)
+        how = {"new": "create", "same": "keep", "relink": "relink", "stale": "remove"}
+        why = {"new": "", "same": "  (already linked)", "relink": "  (points elsewhere in the source; now to its own entry)",
+               "stale": "  (a link of ours; the source has no entry of that name)"}
+        for n, a, t in acts:
+            say("    %-8s %s%s" % (how[a], q(n), why[a]))
+        for n in facts["skipped"]:
+            say("    skipped  %s  (unusual name or not a file or directory)" % q(n))
+        say("  entries that are not qargi's are left alone; nothing is moved or deleted except links qargi made.")
+        say("  undo: %s" % clean(w["unlink"]))
+    else:
+        say("unlink plan for %s: remove the %d link%s in %s that point into %s" % (p, len(acts), "" if len(acts) == 1 else "s", link, source))
+        for n, a, t in acts:
+            say("    remove   %s" % q(n))
+        say("  entries that are not qargi's are left alone; the directory stays.")
+
+
+def hint_entries(facts):
+    if facts["verb"] != "link":
+        return None
+    return exclude_hint_many(facts["checkout"], [facts["rel"] + "/" + n for n, a, _ in facts["entries"] if a == "new"])
+
+
+def _verify_entries(dfd, facts, lk):
+    link = facts["link"]
+    for n, a, target in facts["entries"]:
+        cur = kind_of(dfd, n)
+        p = os.path.join(link, n)
+        if a == "new":
+            if cur != "absent":
+                raise Refused("%s exists now (it did not when the plan was made)" % p)
+        else:
+            try:
+                now = os.readlink(n, dir_fd=dfd) if cur == "link" else None
+            except OSError:
+                now = None
+            if now is None or not is_own(lk, link, now) or (a != "same" and now != target):
+                raise Refused("%s is not the link of qargi's that the plan saw" % p)
+
+
+def _swap_link(dfd, name, target):
+    """Make name a symbolic link to target, replacing the symbolic link that is there (a link of ours), atomically."""
+    tmp = ".qargi-link.%d" % os.getpid()
+    os.symlink(target, tmp, dir_fd=dfd)
+    try:
+        os.rename(tmp, name, src_dir_fd=dfd, dst_dir_fd=dfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except OSError:
+            pass
+        raise
+
+
+def apply_entries(verb, facts, lk, pfd):
+    link = facts["link"]
+    journal = Journal()
+    dfd = None
+    try:
+        dfd = open_dest(pfd, lk.parts[-1], link, create=verb == "link" and facts["state"] == "absent")
+        if verb == "link" and facts["state"] == "absent":
+            journal.add("created the directory %s" % q(link), lambda: os.rmdir(lk.parts[-1], dir_fd=pfd))
+        _verify_entries(dfd, facts, lk)
+        order = {"stale": 0, "remove": 0, "relink": 1, "new": 2}
+        todo = sorted((e for e in facts["entries"] if e[1] != "same"), key=lambda e: (order[e[1]], e[0]))
+        done = []
+        for i, (n, a, target) in enumerate(todo, 1):
+            if a in ("stale", "remove"):
+                old = os.readlink(n, dir_fd=dfd)
+                os.unlink(n, dir_fd=dfd)
+                journal.add("removed the link %s (it pointed to %s)" % (q(n), q(old)), lambda n=n, old=old: os.symlink(old, n, dir_fd=dfd))
+            elif a == "relink":
+                old = os.readlink(n, dir_fd=dfd)
+                _swap_link(dfd, n, os.path.join(lk.source, n))
+                journal.add("changed the link %s (it pointed to %s)" % (q(n), q(old)), lambda n=n, old=old: _swap_link(dfd, n, old))
+            else:
+                os.symlink(target, n, dir_fd=dfd)
+                journal.add("created the link %s" % q(n), lambda n=n: os.unlink(n, dir_fd=dfd))
+            done.append((n, a))
+            fault("after-entry-%d" % i)
+    except BaseException as e:
+        try:
+            failed(verb, lk, facts, e, journal)
+        finally:
+            if dfd is not None:
+                os.close(dfd)
+    os.close(dfd)
+    if verb == "link":
+        say("linked: %s: %d entr%s from %s" % (link, len(done), "y" if len(done) == 1 else "ies", facts["source"]))
+        for n, a in done:
+            say("  %s %s" % ({"new": "created", "relink": "relinked", "stale": "removed"}[a], q(n)))
+        hint = hint_entries(facts)
+        if hint:
+            say(hint)
+    else:
+        say("unlinked: %d link%s removed from %s" % (len(done), "" if len(done) == 1 else "s", link))
+
+
 # ---- the verbs ---------------------------------------------------------------------------------------------------------------
 
+def apply_dir(verb, facts, lk, pfd):
+    (apply_link if verb == "link" else apply_unlink)(facts, lk, pfd)
+
+
+def hint_dir(facts):
+    return exclude_hint(facts["checkout"], facts["rel"]) if facts["verb"] == "link" else None
+
+
+# mode -> (classify, show, apply, hint): the plan's facts, their text, the act and the line about git's exclude file
+MODE_FUNCS = {"dir-symlink": (classify_dir, show_dir, apply_dir, hint_dir),
+              "entry-symlinks": (classify_entries, show_entries, apply_entries, hint_entries)}
+
+
 def _mode(lk):
-    if lk.mode == "dir-symlink":
-        return classify_dir, show_dir, (apply_link, apply_unlink)
-    die("the link mode %s is not supported by this engine yet" % lk.mode)
+    if lk.mode not in MODE_FUNCS:
+        die("the link mode %s is not supported by this engine yet" % lk.mode)
+    return MODE_FUNCS[lk.mode]
 
 
 def plan(verb, lk):
@@ -548,7 +841,7 @@ def plan(verb, lk):
 
 def show_plan(facts, lk):
     _mode(lk)[1](facts, lk)
-    hint = exclude_hint(facts["checkout"], facts["rel"]) if facts["verb"] == "link" else None
+    hint = _mode(lk)[3](facts)
     if hint:
         say(hint)
 
@@ -575,6 +868,6 @@ def cmd_apply(verb, lk, token):
     except Refused as e:
         die("%s; nothing was changed" % e)
     try:
-        _mode(lk)[2][verb != "link"](facts, lk, pfd)
+        _mode(lk)[2](verb, facts, lk, pfd)
     finally:
         os.close(pfd)
