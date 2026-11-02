@@ -3,7 +3,7 @@
 directories for the dir tiers, a JSONL fixture (QARGI_CANON_FIXTURE_DIR) for the cloud tier, no real ant.
 Run: python3 tests/test_tiers.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, re, shutil, subprocess, sys, tempfile, unittest
+import atexit, json, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
@@ -62,6 +62,25 @@ def snapshot(*dirs_and_files):
 
 NOTE = "# n\n\nKind: sandbox\nApplies to: any\nSources: test run\nCheck: true\nVerified: 2026-10-27 by test\n"
 
+
+
+def without_ant(path):
+    """PATH entries for a machine with no `ant`. A directory that holds ant (on a CI runner that is /usr/bin, which also holds bash) cannot
+    simply be dropped: its other programs are linked into one stub directory, ant is not."""
+    dirs = path.split(os.pathsep)
+    stub = tempfile.mkdtemp(prefix="noant-")
+    atexit.register(shutil.rmtree, stub, True)
+    keep = [stub]
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        if not os.path.exists(os.path.join(d, "ant")):
+            keep.append(d)
+            continue
+        for n in os.listdir(d):
+            if n != "ant" and not os.path.lexists(os.path.join(stub, n)):
+                os.symlink(os.path.join(d, n), os.path.join(stub, n))
+    return keep
 
 class Env:
     """A fake home with a project's answers, tier directories and a cloud fixture."""
@@ -214,7 +233,7 @@ class Status(Base):
     def test_cloud_unreachable_without_ant_never_raises(self):
         e = self.mk()
         self.environ(e)
-        keep = [d for d in os.environ["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(d, "ant"))]
+        keep = without_ant(os.environ["PATH"])
         os.environ["PATH"] = os.pathsep.join(keep)
         os.environ.pop("QARGI_CANON_FIXTURE_DIR")
         by = {t["tier"]: t for t in T.resolve(e.answers, P)}
@@ -387,7 +406,7 @@ class Cli(Base):
 
     def test_tiers_unreachable_without_ant(self):
         e = self.populated()
-        keep = [d for d in e.env["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(d, "ant"))]
+        keep = without_ant(e.env["PATH"])
         env = dict(e.env, PATH=os.pathsep.join(keep))
         env.pop("QARGI_CANON_FIXTURE_DIR")
         r = e.qargi("memory", "tiers", "--project", P, env=env)
@@ -450,7 +469,7 @@ class Cli(Base):
 
     def test_check_unreachable_cloud_is_info(self):
         e = self.populated()
-        keep = [d for d in e.env["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(d, "ant"))]
+        keep = without_ant(e.env["PATH"])
         env = dict(e.env, PATH=os.pathsep.join(keep))
         env.pop("QARGI_CANON_FIXTURE_DIR")
         r = e.qargi("memory", "check", "--project", P, env=env)
@@ -482,7 +501,7 @@ class Cli(Base):
         before = e.snap()
         for args in (("tiers",), ("tiers", "--json"), ("check",)):
             e.qargi("memory", *args, "--project", P)
-        keep = [d for d in e.env["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(d, "ant"))]
+        keep = without_ant(e.env["PATH"])
         env = dict(e.env, PATH=os.pathsep.join(keep))
         e.qargi("memory", "check", "--project", P, env=env)
         self.assertEqual(e.snap(), before)
