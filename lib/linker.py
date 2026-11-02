@@ -51,8 +51,16 @@ failure anywhere puts things back where it can and says exactly what state the c
 changed" unless that is true). If the backup exists and the link does not (a stop between (2) and (3)), unlink plans the move of the
 backup back.
 
-Tests inject faults with QARGI_TEST_FAULT=NAME[,NAME] (after-tmp-link, after-backup, after-aside, after-restore, rollback: a failing
-rollback, and the names of the other modes) and stop between the plan and the act with QARGI_TEST_HOLD=PATH (the engine creates
+Crash safety, entry-symlinks and copy. Every change made by an apply is recorded with the step that undoes it; a failing step runs
+them backwards, and the message says whether everything was put back or which changes were not and that running the same command
+again finishes the job. entry-symlinks only ever removes or replaces a symbolic link that points into the source. copy checks every
+entry against the plan before changing any, copies into a temporary name and renames it into place, moves a copy it replaces or
+removes aside (and deletes the aside only after the manifest is written), and writes the manifest first with the entries to come, so
+a stop leaves the manifest naming at least what it made.
+
+Tests inject faults with QARGI_TEST_FAULT=NAME[,NAME] (dir-symlink: after-tmp-link, after-backup, after-aside, after-restore;
+entry-symlinks and copy: after-entry-N, the stop after the Nth change; copy: after-copy, after a copy was made under its temporary
+name; all: rollback, which makes the undo fail) and stop between the plan and the act with QARGI_TEST_HOLD=PATH (the engine creates
 PATH.reached and waits for PATH.go); nothing else reads them.
 """
 import ctypes
@@ -73,6 +81,7 @@ import marshal_refs  # noqa: E402  (in_member_run)
 NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
 KIND_RE = re.compile(r'[a-z][a-z0-9-]{0,39}')
 BACKUP_SUFFIX = ".qargi-backup"
+COPY_SUFFIX = ".qargi-copy.json"      # the manifest of copy mode, beside the destination
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 MODES = ("dir-symlink", "entry-symlinks", "copy")
 
@@ -813,6 +822,386 @@ def apply_entries(verb, facts, lk, pfd):
         say("unlinked: %d link%s removed from %s" % (len(done), "" if len(done) == 1 else "s", link))
 
 
+# ---- copy --------------------------------------------------------------------------------------------------------------------
+
+DIRFLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def hash_at(dfd, name):
+    """The content hash (32 hex digits) of the entry name of the directory dfd, or "" when it, or anything in it, is not a regular
+    file or a directory (a symbolic link, a socket) or cannot be read. Nothing is followed. One line per entry, sorted by path and
+    encoded as JSON: a regular file as its sha256 and whether any executable bit is set, an empty directory as itself, and the type of
+    the entry itself first. Owners, times and the other mode bits are not part of it."""
+    h = hashlib.sha256()
+
+    def add(*rec):
+        h.update((json.dumps(rec, ensure_ascii=True) + "\n").encode())
+
+    def file_hash(fd_dir, n):
+        f = hashlib.sha256()
+        fd = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd_dir)
+        try:
+            with os.fdopen(fd, "rb", closefd=False) as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    f.update(chunk)
+        finally:
+            os.close(fd)
+        return f.hexdigest()
+
+    def walk(fd, rel):
+        names = sorted(os.listdir(fd))
+        if not names and rel:
+            add("D", rel)
+        for n in names:
+            r = rel + "/" + n if rel else n
+            st = os.lstat(n, dir_fd=fd)
+            if stat.S_ISDIR(st.st_mode):
+                sub = os.open(n, DIRFLAGS, dir_fd=fd)
+                try:
+                    walk(sub, r)
+                finally:
+                    os.close(sub)
+            elif stat.S_ISREG(st.st_mode):
+                add("F", r, bool(st.st_mode & 0o111), file_hash(fd, n))
+            else:
+                raise ValueError(r)
+
+    try:
+        st = os.lstat(name, dir_fd=dfd)
+        if stat.S_ISDIR(st.st_mode):
+            add("T", "dir")
+            sub = os.open(name, DIRFLAGS, dir_fd=dfd)
+            try:
+                walk(sub, "")
+            finally:
+                os.close(sub)
+        elif stat.S_ISREG(st.st_mode):
+            add("T", "file")
+            add("F", "", bool(st.st_mode & 0o111), file_hash(dfd, name))
+        else:
+            return ""
+    except (OSError, ValueError):
+        return ""
+    return h.hexdigest()[:32]
+
+
+def copy_entry(sfd, sname, dfd, dname):
+    """Copy the file or directory sname of the directory sfd to dname of the directory dfd (which must not have it); the executable
+    bit is kept. Nothing is followed; anything but regular files and directories is an error."""
+    st = os.lstat(sname, dir_fd=sfd)
+    if stat.S_ISDIR(st.st_mode):
+        os.mkdir(dname, 0o777, dir_fd=dfd)
+        s2 = os.open(sname, DIRFLAGS, dir_fd=sfd)
+        try:
+            d2 = os.open(dname, DIRFLAGS, dir_fd=dfd)
+            try:
+                for n in sorted(os.listdir(s2)):
+                    copy_entry(s2, n, d2, n)
+            finally:
+                os.close(d2)
+        finally:
+            os.close(s2)
+    elif stat.S_ISREG(st.st_mode):
+        fin = os.open(sname, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=sfd)
+        try:
+            fout = os.open(dname, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o777 if st.st_mode & 0o111 else 0o666, dir_fd=dfd)
+            try:
+                while True:
+                    chunk = os.read(fin, 65536)
+                    if not chunk:
+                        break
+                    os.write(fout, chunk)
+            finally:
+                os.close(fout)
+        finally:
+            os.close(fin)
+    else:
+        raise OSError(errno.EINVAL, "neither a regular file nor a directory", sname)
+
+
+def remove_entry(dfd, name):
+    """Remove the file or directory name of the directory dfd, and what is in it. Only ever called on a copy qargi made and checked."""
+    st = os.lstat(name, dir_fd=dfd)
+    if stat.S_ISDIR(st.st_mode):
+        sub = os.open(name, DIRFLAGS, dir_fd=dfd)
+        try:
+            for n in os.listdir(sub):
+                remove_entry(sub, n)
+        finally:
+            os.close(sub)
+        os.rmdir(name, dir_fd=dfd)
+    else:
+        os.unlink(name, dir_fd=dfd)
+
+
+def read_manifest(lk, path):
+    """The manifest at path ({name: {type, hash}} of the copies qargi made), or {} when there is none. Dies on one that is not ours."""
+    if not os.path.lexists(path):
+        return {}
+    if os.path.islink(path) or not os.path.isfile(path):
+        die("%s is not a regular file; refusing" % path)
+    try:
+        with open(path) as fh:
+            m = json.load(fh)
+        ents = m["entries"]
+        good = (m["schema"] == 1 and isinstance(ents, dict) and all(isinstance(v, dict) and isinstance(v.get("hash"), str) for v in ents.values())
+                and all(isinstance(n, str) and n and "/" not in n and n not in (".", "..") for n in ents))
+    except (OSError, ValueError, KeyError, TypeError):
+        good = False
+    if not good:
+        die("%s is not a manifest qargi wrote; refusing to use it" % path)
+    if m.get("kind") != lk.kind or m.get("source") != lk.source:
+        die("%s belongs to another link (%s from %s); refusing to use it" % (path, m.get("kind"), m.get("source")))
+    return ents
+
+
+def manifest_bytes(lk, ents):
+    return (json.dumps({"schema": 1, "kind": lk.kind, "source": lk.source, "entries": ents}, indent=1, sort_keys=True) + "\n").encode()
+
+
+def write_manifest(pfd, name, data):
+    """Replace (or, with data None, remove) the manifest file name of the directory pfd; the new one is written under another name and
+    renamed onto the old, which is a regular file of ours."""
+    if data is None:
+        os.unlink(name, dir_fd=pfd)
+        return
+    tmp = ".qargi-manifest.%d" % os.getpid()
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o666, dir_fd=pfd)
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.rename(tmp, name, src_dir_fd=pfd, dst_dir_fd=pfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=pfd)
+        except OSError:
+            pass
+        raise
+
+
+def read_file_at(pfd, name):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
+    except FileNotFoundError:
+        return None
+    try:
+        return os.read(fd, 1 << 24)
+    finally:
+        os.close(fd)
+
+
+def classify_copy(verb, lk):
+    """The facts of the plan for verb link|unlink in mode copy: for every entry of the source, and every copy qargi recorded, what apply
+    will do, with the content hashes the decision was made on; refuses a copy that was modified and an entry that is not qargi's."""
+    base, link, _ = lk.locate()
+    rel = lk.dest
+    w = lk.words
+    mpath = link + COPY_SUFFIX
+    facts = {"verb": verb, "resource": lk.kind, "mode": lk.mode, "project": lk.project, "checkout": base, "link": link, "source": lk.source,
+             "rel": rel, "manifest": mpath, "entries": [], "skipped": []}
+    real_dest(lk, link)
+    present = os.path.lexists(link)
+    recorded = read_manifest(lk, mpath)
+    dfd = os.open(link, DIRFLAGS) if present else None
+    try:
+        def current(n):
+            return hash_at(dfd, n) if dfd is not None and os.path.lexists(os.path.join(link, n)) else None
+
+        def modified(n, cur):
+            die("%s was changed since qargi copied it (it is not what %s recorded); refusing to touch it: move it away, or copy your change into the source"
+                % (os.path.join(link, n), mpath))
+
+        if verb == "unlink":
+            if not recorded:
+                die("%s has no copy recorded in %s; nothing to unlink" % (link, mpath))
+            for n in sorted(recorded):
+                cur = current(n)
+                if cur is None:
+                    facts["entries"].append([n, "forget", "", recorded[n]["hash"]])
+                elif cur != recorded[n]["hash"]:
+                    modified(n, cur)
+                else:
+                    facts["entries"].append([n, "remove", "", cur])
+            facts["state"] = "ours"
+            return facts
+        lk.source_ready()
+        entries, facts["skipped"] = source_entries(lk)
+        names = {n for n, _ in entries}
+        sfd = os.open(lk.source, DIRFLAGS)
+        try:
+            for n, t in entries:
+                hs = hash_at(sfd, n)
+                if not hs:
+                    die("%s holds a symbolic link or another file that is neither a regular file nor a directory; mode copy does not copy those" % os.path.join(lk.source, n))
+                cur = current(n)
+                if cur is None:
+                    facts["entries"].append([n, "new", hs, ""])
+                elif n in recorded:
+                    if cur != recorded[n]["hash"]:
+                        modified(n, cur)
+                    facts["entries"].append([n, "same" if cur == hs else "update", hs, cur])
+                else:
+                    die("%s exists and qargi did not make it; refusing to replace it (move it away first)" % os.path.join(link, n))
+        finally:
+            os.close(sfd)
+        for n in sorted(recorded):
+            if n in names:
+                continue
+            cur = current(n)
+            if cur is None:
+                facts["entries"].append([n, "forget", "", recorded[n]["hash"]])
+            elif cur != recorded[n]["hash"]:
+                modified(n, cur)
+            else:
+                facts["entries"].append([n, "stale", "", cur])
+    finally:
+        if dfd is not None:
+            os.close(dfd)
+    facts["entries"].sort(key=lambda e: e[0])
+    t = tracked_any(base, [rel + "/" + n for n, a, _, _ in facts["entries"] if a not in ("same", "forget")] + [rel + COPY_SUFFIX])
+    if t:
+        die("files under %s are tracked by git in %s (%s): the repository's owner decides how its %s are loaded; "
+            "qargi does not touch tracked files" % (rel, base, t, w["plural"]))
+    facts["state"] = "absent" if not present else "dir"
+    if all(a == "same" for _, a, _, _ in facts["entries"]) and (present or not facts["entries"]):
+        facts["state"] = "linked"
+    return facts
+
+
+def show_copy(facts, lk):
+    p, link, source, rel = (clean(facts[k]) for k in ("project", "link", "source", "rel"))
+    w = lk.words
+    acts = facts["entries"]
+    if facts["verb"] == "link":
+        say("link plan for %s: the checkout %s loads %s, as copies (this runtime does not follow links)" % (p, clean(facts["checkout"]), w["loads"]))
+        say("  directory: %s" % link)
+        say("  source:    %s" % source)
+        say("  manifest:  %s (what qargi copied, with its content hash)" % clean(facts["manifest"]))
+        if facts["state"] == "absent":
+            say("  %s does not exist: create it (with %s if missing) and the copies" % (rel, os.path.dirname(link)))
+        else:
+            say("  %s is a real directory and stays one; only copies qargi made and that are unmodified are ever replaced or removed" % rel)
+        how = {"new": "create", "same": "keep", "update": "update", "stale": "remove", "forget": "forget"}
+        why = {"new": "", "same": "  (already copied)", "update": "  (the source changed; the copy is unmodified)",
+               "stale": "  (a copy of ours, unmodified; the source has no entry of that name)", "forget": "  (recorded, but gone from the directory)"}
+        for n, a, _, _ in acts:
+            say("    %-8s %s%s" % (how[a], q(n), why[a]))
+        for n in facts["skipped"]:
+            say("    skipped  %s  (unusual name or not a file or directory)" % q(n))
+        say("  entries that are not qargi's are left alone. A copy is replaced or removed only while it is what the manifest recorded.")
+        say("  undo: %s" % clean(w["unlink"]))
+    else:
+        say("unlink plan for %s: remove the %d cop%s qargi made in %s (all unmodified), and the manifest" % (p, len([a for a in acts if a[1] == "remove"]),
+                                                                                                           "y" if len([a for a in acts if a[1] == "remove"]) == 1 else "ies", link))
+        for n, a, _, _ in acts:
+            say("    %-8s %s%s" % ("remove" if a == "remove" else "forget", q(n), "" if a == "remove" else "  (recorded, but gone from the directory)"))
+        say("  entries that are not qargi's are left alone; the directory stays.")
+
+
+def hint_copy(facts):
+    if facts["verb"] != "link":
+        return None
+    return exclude_hint_many(facts["checkout"], [facts["rel"] + "/" + n for n, a, _, _ in facts["entries"] if a == "new"] + [facts["rel"] + COPY_SUFFIX])
+
+
+def apply_copy(verb, facts, lk, pfd):
+    link, leaf = facts["link"], lk.parts[-1]
+    mname = leaf + COPY_SUFFIX
+    journal, asides, dfd, sfd, done = Journal(), [], None, None, []
+    recorded = read_manifest(lk, link + COPY_SUFFIX)
+    old_bytes = read_file_at(pfd, mname)
+    try:
+        dfd = open_dest(pfd, leaf, link, create=verb == "link" and facts["state"] == "absent")
+        if verb == "link" and facts["state"] == "absent":
+            journal.add("created the directory %s" % q(link), lambda: os.rmdir(leaf, dir_fd=pfd))
+        if verb == "link":
+            sfd = os.open(lk.source, DIRFLAGS)
+        # nothing is changed before every entry is as the plan saw it
+        for n, a, hs, old in facts["entries"]:
+            cur = hash_at(dfd, n) if kind_of(dfd, n) != "absent" else None
+            if a == "new":
+                if cur is not None:
+                    raise Refused("%s exists now (it did not when the plan was made)" % os.path.join(link, n))
+            elif a == "forget":
+                if cur is not None:
+                    raise Refused("%s exists now (it did not when the plan was made)" % os.path.join(link, n))
+            elif cur != old:
+                raise Refused("%s is not the copy the plan saw" % os.path.join(link, n))
+            if a in ("new", "update", "same") and verb == "link" and hash_at(sfd, n) != hs:
+                raise Refused("%s changed in the source since the plan was made" % os.path.join(lk.source, n))
+        final = {n: v for n, v in recorded.items() if n not in {e[0] for e in facts["entries"] if e[1] in ("stale", "remove", "forget")}}
+        for n, a, hs, _ in facts["entries"]:
+            if a in ("new", "update", "same"):
+                final[n] = {"hash": hs}
+        union = dict(recorded)
+        union.update({n: {"hash": hs} for n, a, hs, _ in facts["entries"] if a in ("new", "update")})
+        if verb == "link" and union != recorded:
+            write_manifest(pfd, mname, manifest_bytes(lk, union))
+            journal.add("changed the manifest %s" % q(link + COPY_SUFFIX),
+                        lambda: write_manifest(pfd, mname, old_bytes) if old_bytes is not None else write_manifest(pfd, mname, None))
+        order = {"stale": 0, "remove": 0, "update": 1, "new": 2}
+        todo = sorted((e for e in facts["entries"] if e[1] in order), key=lambda e: (order[e[1]], e[0]))
+        for i, (n, a, hs, old) in enumerate(todo, 1):
+            if a in ("stale", "remove", "update"):
+                aside = ".qargi-old.%d.%d" % (os.getpid(), i)
+                rename_new(dfd, n, aside)
+                asides.append(aside)
+                journal.add("moved the copy %s to %s" % (q(n), q(os.path.join(link, aside))),
+                            lambda n=n, aside=aside: rename_new(dfd, aside, n))
+            if a in ("update", "new"):
+                tmp = ".qargi-copy.%d.%d" % (os.getpid(), i)
+                try:
+                    copy_entry(sfd, n, dfd, tmp)
+                    fault("after-copy")
+                    if hash_at(dfd, tmp) != hs:
+                        raise OSError(errno.EIO, "the copy of %s is not what was read" % n)
+                    rename_new(dfd, tmp, n)
+                except BaseException:
+                    if kind_of(dfd, tmp) != "absent":
+                        try:
+                            remove_entry(dfd, tmp)
+                        except OSError:
+                            pass
+                    raise
+                journal.add("copied %s" % q(n), lambda n=n, hs=hs: remove_entry(dfd, n) if hash_at(dfd, n) == hs else None)
+            done.append((n, a))
+            fault("after-entry-%d" % i)
+        if final:
+            write_manifest(pfd, mname, manifest_bytes(lk, final))
+        elif kind_of(pfd, mname) != "absent":
+            write_manifest(pfd, mname, None)
+    except BaseException as e:
+        try:
+            failed(verb, lk, facts, e, journal)
+        finally:
+            for fd in (dfd, sfd):
+                if fd is not None:
+                    os.close(fd)
+    leftovers = []
+    for aside in asides:
+        try:
+            remove_entry(dfd, aside)
+        except OSError:
+            leftovers.append(aside)
+    os.close(dfd)
+    if sfd is not None:
+        os.close(sfd)
+    if verb == "link":
+        say("linked: %s: %d cop%s from %s" % (link, len(done), "y" if len(done) == 1 else "ies", facts["source"]))
+        for n, a in done:
+            say("  %s %s" % ({"new": "created", "update": "updated", "stale": "removed"}[a], q(n)))
+        hint = hint_copy(facts)
+        if hint:
+            say(hint)
+    else:
+        say("unlinked: %d cop%s removed from %s" % (len(done), "y" if len(done) == 1 else "ies", link))
+    if leftovers:
+        say("note: %s could not be removed; they are qargi's old copies and can be deleted" % ", ".join(q(os.path.join(link, a)) for a in leftovers))
+
+
 # ---- the verbs ---------------------------------------------------------------------------------------------------------------
 
 def apply_dir(verb, facts, lk, pfd):
@@ -825,7 +1214,8 @@ def hint_dir(facts):
 
 # mode -> (classify, show, apply, hint): the plan's facts, their text, the act and the line about git's exclude file
 MODE_FUNCS = {"dir-symlink": (classify_dir, show_dir, apply_dir, hint_dir),
-              "entry-symlinks": (classify_entries, show_entries, apply_entries, hint_entries)}
+              "entry-symlinks": (classify_entries, show_entries, apply_entries, hint_entries),
+              "copy": (classify_copy, show_copy, apply_copy, hint_copy)}
 
 
 def _mode(lk):

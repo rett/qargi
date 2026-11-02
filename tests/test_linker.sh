@@ -282,5 +282,137 @@ tok=$(ptok link); spec
 out=$(cd "$T/run/out" && python3 -I "$T/drv.py" "$ROOT/lib" apply link "$T/spec.json" "$tok" 2>&1) && no "applied in a member run" || { grep -q "is not available in a member run" <<<"$out" && [ ! -e "$R/.rt2" ] && ok "entries: a member run never applies" || no "entries member run: $out"; }
 M=dir-symlink; rm -rf "$SRC"
 
+# --- copy: for runtimes that do not follow links; the copies are recorded beside the directory and only an unmodified copy is replaced or removed
+M=copy DEST=.rt3/agents SRC=$STATE/render/alpha/cp CO=$R; L=$R/$DEST MF=$R/$DEST.qargi-copy.json
+mkdir -p "$SRC/sub" "$L"; printf 'a\n' > "$SRC/a.md"; printf 'b\n' > "$SRC/b.md"; echo s > "$SRC/sub/f"; printf '#!/bin/sh\n' > "$SRC/sub/run.sh"; chmod +x "$SRC/sub/run.sh"; echo h > "$SRC/.hidden"
+echo mine > "$L/mine.md"
+strays_cp() { find "$R/.rt3" -name '.qargi-*' | grep . ; }
+before=$(snap "$STATE" "$L")
+out=$(pl link 2>&1); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && grep -q "^link plan for alpha: the checkout $R loads the project's agents from the source, as copies" <<<"$out" && grep -q "manifest:  $MF" <<<"$out" && grep -qE "^ +create +a.md" <<<"$out" && grep -qE "^ +create +sub" <<<"$out" \
+  && grep -qE "^ +skipped +.hidden" <<<"$out" && [ "$before" = "$(snap "$STATE" "$L")" ] && [ ! -e "$MF" ] && ok "copy: the plan lists each entry and the manifest, prints a token and writes nothing" || no "copy plan: $out"
+out=$(ap link "$tok" 2>&1)
+[ -d "$L" ] && [ ! -L "$L" ] && [ -f "$L/a.md" ] && [ ! -L "$L/a.md" ] && cmp -s "$L/a.md" "$SRC/a.md" && cmp -s "$L/sub/f" "$SRC/sub/f" && [ -x "$L/sub/run.sh" ] && [ ! -x "$L/sub/f" ] && [ ! -e "$L/.hidden" ] \
+  && ok "copy: the entries are real copies (files and directories, the executable bit kept)" || no "copy apply: $out; $(ls -laR "$L")"
+[ "$(jq -r '.schema, .kind, .source' "$MF" | tr '\n' ' ')" = "1 agents $SRC " ] && [ "$(jq -r '.entries | keys | join(",")' "$MF")" = "a.md,b.md,sub" ] && [ "$(jq -r '.entries | to_entries[] | .value.hash | length' "$MF" | sort -u)" = 32 ] && ok "copy: the manifest beside the directory records the kind, the source and a hash for each copy" || no "manifest: $(cat "$MF")"
+[ "$(cat "$L/mine.md")" = mine ] && ! strays_cp >/dev/null && grep -q "^linked: $L: 3 copies from $SRC" <<<"$out" && ok "copy: the user's own file is untouched and no temporary file is left" || no "copy own/strays: $out"
+out=$(pl link 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^already linked: $L -> $SRC" <<<"$out" && [ -z "$(tok_of <<<"$out")" ] && ok "copy: running link again says already linked, with no token" || no "copy again: rc=$rc $out"
+# the source changed: an unmodified copy is updated; one the source dropped is removed
+printf 'a2\n' > "$SRC/a.md"; rm "$SRC/b.md"; printf 'c\n' > "$SRC/c.md"
+out=$(pl link 2>&1); tok=$(tok_of <<<"$out")
+grep -qE "^ +update +a.md" <<<"$out" && grep -qE "^ +remove +b.md" <<<"$out" && grep -qE "^ +create +c.md" <<<"$out" && grep -qE "^ +keep +sub" <<<"$out" && ok "copy: the plan says what is updated, removed, created and kept" || no "copy update plan: $out"
+ap link "$tok" >/dev/null 2>&1
+[ "$(cat "$L/a.md")" = a2 ] && [ ! -e "$L/b.md" ] && [ "$(cat "$L/c.md")" = c ] && [ "$(jq -r '.entries | keys | join(",")' "$MF")" = "a.md,c.md,sub" ] && ! strays_cp >/dev/null && [ "$(cat "$L/mine.md")" = mine ] && ok "copy: update, removal and creation are done, the manifest follows, no old copy is left" || no "copy update apply: $(ls -la "$L"; cat "$MF")"
+# a modified copy is never touched
+cp -a "$L" "$T/cp.snap"; echo edited >> "$L/a.md"
+out=$(pl link 2>&1) && no "planned over a modified copy" || { grep -q "$L/a.md was changed since qargi copied it" <<<"$out" && ok "copy: a modified copy makes link refuse, and the message names it" || no "modified link: $out"; }
+out=$(pl unlink 2>&1) && no "unlink planned over a modified copy" || { grep -q "$L/a.md was changed since qargi copied it" <<<"$out" && ok "copy: a modified copy makes unlink refuse" || no "modified unlink: $out"; }
+echo more >> "$SRC/a.md"; out=$(pl link 2>&1) && no "planned an update over a modified copy" || ok "copy: a modified copy is not overwritten even when the source changed"
+sed -i '$d' "$SRC/a.md"; sed -i '$d' "$L/a.md"; [ "$(cat "$L/a.md")" = a2 ] || no "setup: a.md back to a2"
+echo x >> "$L/sub/f"; out=$(pl link 2>&1) && no "planned over a copy modified deep inside" || ok "copy: a change deep inside a copied directory counts"
+cp "$SRC/sub/f" "$L/sub/f"; chmod +x "$L/sub/f"; out=$(pl link 2>&1) && no "planned over a copy whose executable bit changed" || ok "copy: so does an executable bit"
+chmod -x "$L/sub/f"; echo n > "$L/sub/new"; out=$(pl link 2>&1) && no "planned over a copy with an added file" || ok "copy: so does an added file"
+rm "$L/sub/new"; ln -s a "$L/sub/lnk"; out=$(pl link 2>&1) && no "planned over a copy with a symlink" || ok "copy: so does a symbolic link"
+rm "$L/sub/lnk"; echo stale > "$SRC/gone.md"; ap link "$(ptok link)" >/dev/null 2>&1; rm "$SRC/gone.md"; echo edit >> "$L/gone.md"
+out=$(pl link 2>&1) && no "planned to remove a modified stale copy" || ok "copy: a modified copy the source dropped is not removed either"
+rm "$L/gone.md"; out=$(pl link 2>&1); tok=$(tok_of <<<"$out"); grep -qE "^ +forget +gone.md" <<<"$out" && ok "copy: a recorded copy that is gone is forgotten" || no "forget: $out"
+ap link "$tok" >/dev/null 2>&1; [ "$(jq -r '.entries | keys | join(",")' "$MF")" = "a.md,c.md,sub" ] && ok "copy: forgetting drops it from the manifest" || no "forget apply: $(cat "$MF")"
+diff -r "$T/cp.snap" "$L" >/dev/null && ok "copy: after all of that the copies are as they were" || no "copies changed: $(diff -r "$T/cp.snap" "$L")"
+# a deleted copy is made again
+rm "$L/c.md"; out=$(pl link 2>&1); grep -qE "^ +create +c.md" <<<"$out" && ok "copy: a copy the user deleted is made again" || no "recreate: $out"
+ap link "$(ptok link)" >/dev/null 2>&1
+# collisions: something qargi did not make where a copy goes
+printf 'd\n' > "$SRC/d.md"; echo real > "$L/d.md"
+out=$(pl link 2>&1) && no "planned over a real file" || { grep -q "$L/d.md exists and qargi did not make it; refusing to replace it" <<<"$out" && ok "copy: a name collision with a real entry is refused" || no "copy collision: $out"; }
+rm "$L/d.md"; ln -s "$T/other" "$L/d.md"; out=$(pl link 2>&1) && no "planned over a foreign link" || ok "copy: a name collision with a foreign link is refused"
+rm "$L/d.md"; rm "$SRC/d.md"
+ln -s "$T/other" "$SRC/lnk"; printf 'zz\n' > "$SRC/zz.md"; out=$(pl link 2>&1); [ -n "$(tok_of <<<"$out")" ] && grep -qE "^ +skipped +lnk" <<<"$out" && ok "copy: a symbolic link in the source's top level is skipped" || no "source link top: $out"
+rm "$SRC/lnk" "$SRC/zz.md"; ln -s "$T/other" "$SRC/sub/inner"; out=$(pl link 2>&1) && no "copied a directory holding a symlink" || { grep -q "neither a regular file nor a directory" <<<"$out" && ok "copy: a symbolic link inside a source entry is refused (copy never follows)" || no "source link inside: $out"; }
+rm "$SRC/sub/inner"
+# the manifest must be ours
+cp -a "$MF" "$T/mf.snap"
+echo '{"schema":1}' > "$MF"; out=$(pl link 2>&1) && no "used a manifest without entries" || { grep -q "is not a manifest qargi wrote" <<<"$out" && ok "copy: a manifest that is not ours is refused" || no "bad manifest: $out"; }
+jq '.source = "/elsewhere"' "$T/mf.snap" > "$MF"; out=$(pl unlink 2>&1) && no "used a manifest of another source" || { grep -q "belongs to another link" <<<"$out" && ok "copy: a manifest of another source is refused" || no "other manifest: $out"; }
+rm "$MF"; ln -s "$T/mf.snap" "$MF"; out=$(pl link 2>&1) && no "used a manifest that is a symbolic link" || ok "copy: a manifest that is a symbolic link is refused"
+rm "$MF"; cp -a "$T/mf.snap" "$MF"
+out=$(pl link 2>&1); [ -z "$(tok_of <<<"$out")" ] && ok "copy: the manifest restored, the plan is back to already linked" || no "restored manifest: $out"
+# tracked
+git -C "$R" add -f .rt3/agents.qargi-copy.json; $G -C "$R" commit -q -m trk; printf 'c2\n' > "$SRC/c.md"
+out=$(pl link 2>&1) && no "planned over a tracked manifest" || { grep -q "tracked by git" <<<"$out" && ok "copy: a tracked manifest is refused" || no "tracked manifest: $out"; }
+git -C "$R" rm -q --cached .rt3/agents.qargi-copy.json; $G -C "$R" commit -q -m untrk; printf 'c\n' > "$SRC/c.md"
+git -C "$R" add -f .rt3/agents/a.md; $G -C "$R" commit -q -m trk; printf 'a3\n' > "$SRC/a.md"
+out=$(pl link 2>&1) && no "planned to update a tracked copy" || { grep -q "tracked by git" <<<"$out" && ok "copy: a tracked copy is refused" || no "tracked copy: $out"; }
+git -C "$R" rm -q --cached .rt3/agents/a.md; $G -C "$R" commit -q -m untrk; printf 'a2\n' > "$SRC/a.md"
+# the plan token covers the mode and the content, not only the names
+tok=$(ptok link); printf 'a4\n' > "$SRC/a.md"; out=$(ap link "$tok" 2>&1) && no "applied after the source content changed" || { grep -q "the plan changed since it was approved" <<<"$out" && ok "token: a changed source file with the same listing makes the plan stale" || no "token content: $out"; }
+printf 'a2\n' > "$SRC/a.md"
+tok=$(ptok link); printf 'c3\n' > "$SRC/c.md"; tk=$(ptok link); printf 'c\n' > "$SRC/c.md"
+[ -n "$tk" ] && [ "$tk" != "$tok" ] && ok "token: the copy's plan token depends on the content of the source" || no "content not in token"
+DEST=.rt4/agents; tk=$(ptok link); M=entry-symlinks; tl=$(ptok link); M=copy; DEST=.rt3/agents
+[ -n "$tk" ] && [ -n "$tl" ] && [ "$tk" != "$tl" ] && ok "token: the same paths planned in another mode give another token" || no "mode not in token"
+# a change of the source between the plan and the apply
+printf 'u\n' > "$SRC/a.md"; tok=$(ptok link); held ap link "$tok" || no "setup: the hold was not reached"
+printf 'v\n' > "$SRC/a.md"; release
+[ "$HRC" != 0 ] && grep -q "$SRC/a.md changed in the source since the plan was made" <<<"$HOUT" && [ "$(cat "$L/a.md")" = a2 ] && ok "copy: a source that changes between the plan and the apply changes nothing" || no "late source: rc=$HRC $HOUT"
+printf 'a2\n' > "$SRC/a.md"
+printf 'a8\n' > "$SRC/a.md"; tok=$(ptok link); held ap link "$tok" || no "setup: the hold was not reached"
+echo late > "$L/a.md"; release
+[ "$HRC" != 0 ] && grep -q "$L/a.md is not the copy the plan saw" <<<"$HOUT" && [ "$(cat "$L/a.md")" = late ] && ok "copy: a copy edited between the plan and the apply is left alone" || no "late edit: rc=$HRC $HOUT"
+printf 'a2\n' > "$SRC/a.md"; printf 'a2\n' > "$L/a.md"
+# faults: where the files are
+snapcp=$(snap "$L" "$MF"); printf 'a9\n' > "$SRC/a.md"; printf 'n1\n' > "$SRC/n1.md"; tok=$(ptok link)
+out=$(QARGI_TEST_FAULT=after-copy ap link "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "injected fault after-copy" <<<"$out" && grep -q "made and put back; nothing was changed" <<<"$out" && [ "$snapcp" = "$(snap "$L" "$MF")" ] && ! strays_cp >/dev/null && ok "copy fault: a stop with a copy half placed changes nothing, and removes the temporary copy" || no "after-copy: rc=$rc $out"
+out=$(QARGI_TEST_FAULT=after-entry-1 ap link "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "changes were made and put back; nothing was changed\|change was made and put back; nothing was changed" <<<"$out" && [ "$snapcp" = "$(snap "$L" "$MF")" ] && [ "$(cat "$L/a.md")" = a2 ] && ! strays_cp >/dev/null && ok "copy fault: a stop after the first change puts the old copy and the manifest back" || no "after-entry-1: rc=$rc $out"
+out=$(QARGI_TEST_FAULT=after-entry-1,rollback ap link "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "3 of 3 changes could not be put back" <<<"$out" && grep -q "Run the same command again to finish it" <<<"$out" && ! grep -q "nothing was changed" <<<"$out" && [ "$(cat "$L/a.md")" = a9 ] && [ ! -e "$L/n1.md" ] \
+  && ok "copy fault: when the undo fails the message says so and how to finish" || no "copy rollback: rc=$rc $out"
+a_old=$(find "$L" -name '.qargi-old.*' | head -1); [ -n "$a_old" ] && [ "$(cat "$a_old")" = a2 ] && ok "copy fault: the replaced copy is kept under its temporary name, with its content" || no "aside: $(ls -la "$L")"
+out=$(pl link 2>&1) ; tok=$(tok_of <<<"$out"); grep -qE "^ +keep +a.md" <<<"$out" && grep -qE "^ +create +n1.md" <<<"$out" && ok "copy fault: after the failed undo the next plan keeps what was done and creates what is left" || no "replan after fault: $out"
+rm -rf "$L"/.qargi-old.*; ap link "$tok" >/dev/null 2>&1; out=$(pl link 2>&1); grep -q "^already linked" <<<"$out" && [ "$(cat "$L/a.md")" = a9 ] && ok "copy fault: running link again finishes the job" || no "finish copy: $out"
+tok=$(ptok unlink); out=$(QARGI_TEST_FAULT=after-entry-1 ap unlink "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && [ -f "$L/a.md" ] && [ -f "$L/n1.md" ] && [ -f "$L/sub/f" ] && [ -f "$MF" ] && ! strays_cp >/dev/null && ok "copy fault: a stop during unlink puts the removed copy back" || no "copy unlink fault: rc=$rc $out; $(ls -la "$L")"
+# unlink
+out=$(pl unlink 2>&1); tok=$(tok_of <<<"$out")
+grep -q "^unlink plan for alpha: remove the 4 copies qargi made in $L (all unmodified), and the manifest" <<<"$out" && ! grep -q "mine.md" <<<"$out" && ok "copy: the unlink plan names only the copies of ours" || no "copy unlink plan: $out"
+ap unlink "$tok" >/dev/null 2>&1
+[ "$(ls -A "$L")" = mine.md ] && [ ! -e "$MF" ] && ! strays_cp >/dev/null && ok "copy: unlink removes the copies and the manifest and keeps everything else" || no "copy unlink apply: $(ls -la "$L" "$R/.rt3")"
+out=$(pl unlink 2>&1) && no "unlinked with nothing recorded" || { grep -q "has no copy recorded in $MF; nothing to unlink" <<<"$out" && ok "copy: unlink with nothing recorded is refused" || no "copy unlink nothing: $out"; }
+# the directory does not exist yet
+rm -rf "$R/.rt3"; tok=$(ptok link)
+out=$(QARGI_TEST_FAULT=after-entry-2 ap link "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && [ ! -e "$L" ] && [ ! -e "$MF" ] && ok "copy fault: the directory and manifest made by a failed link are removed again" || no "copy absent fault: rc=$rc $out; $(ls -la "$R/.rt3")"
+out=$(go link 2>&1); [ -f "$L/sub/run.sh" ] && [ -f "$MF" ] && ok "copy: the directory and manifest are made when missing" || no "copy absent: $out"
+# names: shell-quoted, no control characters; a name with a quote and a space is copied
+printf 'q\n' > "$SRC/it's me.md"; printf 'z\n' > "$SRC/$(printf 'y\033[31mred.md')"
+out=$(pl link 2>&1); line=$(sed -n "s/^ *create  *\('it.*\)\$/\1/p" <<<"$out")
+eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "it's me.md" ] && ! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && grep -qE "^ +skipped" <<<"$out" && ok "copy: names are shell-quoted, control characters are never printed and such a source name is skipped" || no "copy names: $line / $out"
+rm -f "$SRC"/y* "$SRC/it's me.md"
+# parents and the destination
+ap unlink "$(ptok unlink)" >/dev/null 2>&1
+tok=$(ptok link); rm -rf "$R/.rt3"; ln -s "$T/outside" "$R/.rt3"
+out=$(pl link 2>&1) && no "copied through a symlinked parent" || { grep -q "$R/.rt3 is a symbolic link; refusing" <<<"$out" && ok "copy: a symlinked parent is refused" || no "copy parent: $out"; }
+out=$(ap link "$tok" 2>&1) && no "applied through a symlinked parent" || ok "copy: a plan made before the parent became a link is refused at apply"
+out=$(pl unlink 2>&1) && no "unlinked through a symlinked parent" || ok "copy: unlink through a symlinked parent is refused"
+[ -z "$(ls -A "$T/outside")" ] && ok "copy: nothing is written outside the checkout" || no "copy wrote outside"
+rm "$R/.rt3"; mkdir -p "$R/.rt3"; ln -s "$T/outside" "$R/.rt3/agents"
+out=$(pl link 2>&1) && no "copied into a destination that is a symlink" || { grep -q "is a symbolic link; refusing (mode copy keeps a real directory" <<<"$out" && ok "copy: a destination that is a symbolic link is refused" || no "copy dest link: $out"; }
+rm "$R/.rt3/agents"; echo f > "$R/.rt3/agents"; out=$(pl link 2>&1) && no "copied into a file" || ok "copy: a destination that is a file is refused"
+rm -rf "$R/.rt3"; tok=$(ptok link); held ap link "$tok" || no "setup: the hold was not reached"
+mkdir -p "$T/elsewhere4"; ln -s "$T/elsewhere4" "$R/.rt3"; release
+[ "$HRC" != 0 ] && grep -q "is a symbolic link or not a directory now" <<<"$HOUT" && [ -z "$(ls -A "$T/elsewhere4")" ] && ok "copy: a parent that became a link between the plan and the apply is refused and nothing is written through it" || no "copy swapped parent: rc=$HRC $HOUT"
+rm "$R/.rt3"
+# the worktree: the copies and the manifest are in it, nothing elsewhere
+state_before=$(snap "$STATE"); main_before=$(snap "$R/.git" "$R/README")
+CO=$T/wt; out=$(go link 2>&1)
+[ -f "$T/wt/$DEST/a.md" ] && [ -f "$T/wt/$DEST.qargi-copy.json" ] && [ ! -e "$R/.rt3" ] && [ "$state_before" = "$(snap "$STATE")" ] && [ "$main_before" = "$(snap "$R/.git" "$R/README")" ] && ok "copy: in a worktree the copies and their manifest are in that worktree only" || no "copy worktree: $out"
+ap unlink "$(ptok unlink)" >/dev/null 2>&1; [ ! -e "$T/wt/$DEST.qargi-copy.json" ] && ok "copy: unlink in the worktree removes its copies and manifest" || no "copy worktree unlink"; CO=$R
+# a member run never applies
+tok=$(ptok link); spec
+out=$(cd "$T/run/out" && python3 -I "$T/drv.py" "$ROOT/lib" apply link "$T/spec.json" "$tok" 2>&1) && no "applied in a member run" || { grep -q "is not available in a member run" <<<"$out" && [ ! -e "$R/.rt3" ] && ok "copy: a member run never applies" || no "copy member run: $out"; }
+M=dir-symlink
+
 rm -rf "$T"
 exit $fail
