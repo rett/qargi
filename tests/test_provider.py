@@ -991,6 +991,11 @@ class Loader(V2Tree):
         self.assertEqual((lay["project_skills_dir"], lay["user_skills_dir"], lay["project_agents_dir"]), (".fake/skills", "/h/.fake/skills", None))
         self.assertEqual((lay["memory_dir"], lay["checkout_key"], lay["exclusion"], lay["render_target"]), ("/h/.fake/m/{checkout_key}", "nonalnum-dash", None, "fakecli"))
         self.assertEqual(P.launch_line("fakecli", "/r", **self.kw()), "fake --add /r")
+        self.put("plain", runtime("plain", resources=res))
+        self.assertIsNone(P.layout("plain", **self.kw())["render_target"])                  # no session, no packs renderer of its own
+        with self.assertRaises(P.Unsupported) as cm:
+            P.require("plain", "render_target", "render the packs", **self.kw())
+        self.assertEqual(str(cm.exception), "provider plain has no packs render target: render the packs")
         self.assertEqual(P.memory_dir("fakecli", "/x/y", home="/h", **self.kw()), "/h/.fake/m/-x-y")
         with self.assertRaises(P.Unsupported) as cm:
             P.require("fakecli", "project_agents_dir", "write the agent", **self.kw())

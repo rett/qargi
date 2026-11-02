@@ -979,8 +979,7 @@ def resolve_project(answers, surface, project=None, root=None, library=None):
         name = p.get(surface)
         if not isinstance(name, str) or not name.strip():
             raise _no_provider(project, surface)
-        runtime, by_family = _resolve(name.strip(), surface, root, library)
-        return runtime, None
+        return _resolve(name.strip(), surface, root, library)[0], None
     try:
         runtime, by_family = _resolve(p, surface, root, library)
     except NotServed as e:
