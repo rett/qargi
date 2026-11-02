@@ -619,21 +619,21 @@ def main(argv):
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
             return cmd_require_barrier(rest[0], rest[1], rest[3] if len(rest) == 4 else None)
         if verb == "of":
-            if len(rest) in (1, 3) and (len(rest) == 1 or rest[1] == "--conf"):
+            if len(rest) in (1, 3) and (len(rest) == 1 or rest[1] == '--conf'):
                 print(provider_of(rest[0], rest[2] if len(rest) == 3 else None))
                 return 0
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):
-                if rest[i] in ("--would", "--home") and i + 1 < len(rest):
+                if rest[i] in ('--would', '--home') and i + 1 < len(rest):
                     opts[rest[i]], i = rest[i + 1], i + 2
                 else:
                     pos.append(rest[i])
                     i += 1
             if verb == "layout" and len(pos) in (1, 2):
-                return cmd_layout(pos[0], pos[1] if len(pos) == 2 else None, opts.get("--would"), opts.get("--home"))
+                return cmd_layout(pos[0], pos[1] if len(pos) == 2 else None, opts.get('--would'), opts.get('--home'))
             if verb == "require-skills" and len(pos) == 1:
-                require_skills(pos[0], opts.get("--would") or "the verb needs it")
+                require_skills(pos[0], opts.get('--would') or "the verb needs it")
                 return 0
             if verb == "launch" and len(pos) == 2:
                 print(launch_line(pos[0], pos[1]))
