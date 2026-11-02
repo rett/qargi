@@ -31,6 +31,9 @@ def doc_flags(cmd):
     return out
 
 
+# helper scripts and the command whose flags they parse (lib/provider.py runs lib/provider.sh for `provider accept`)
+HELPERS = {"provider.sh": "provider"}
+
 # every kind of value the command data may name, and what completes it
 TYPES = {"none": None, "project": 1, "instance": 1, "session": 1, "target": 1, "pack": 1, "team": 1, "role": 1, "workrole": 1, "methodology": 1, "member": 1, "store": 1, "deployment": 1,
          "model": 1, "branch": 1, "entry": 1, "key": 1, "value": 1, "seconds": 1, "cents": 1, "file": 1, "dir": 1, "help": 1}
@@ -67,6 +70,9 @@ class Sync(unittest.TestCase):
         for cmd, spec in C.COMMANDS.items():
             for s in spec.get("scripts", []):
                 by_script.setdefault(s, set()).update(doc_flags(cmd))
+        # scripts that a documented script runs for one verb, which "scripts" in lib/commands.py does not list
+        for s, cmd in HELPERS.items():
+            by_script.setdefault(s, set()).update(doc_flags(cmd))
         ignore = {"--help"}
         for s, documented in by_script.items():
             src = slurp(os.path.join(LIB, s))
