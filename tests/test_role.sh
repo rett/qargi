@@ -8,8 +8,10 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
-unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects"
+# there is no default provider: pbase is the project in effect, and its models.provider renders the members below
+jq -n '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+export QARGI_PROJECT=pbase
 
 out=$($DA role list 2>&1)
 for r in build write review test; do grep -q "^$r " <<<"$out" || no "list lacks $r: $out"; done
@@ -49,6 +51,8 @@ $DA agent for lead >/dev/null 2>&1 && no "agent for lead answered" || ok "lead i
 # a local run records the role and its class; the guard follows the class
 git init -q "$T/repo" && git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$T/repo" branch -M main
 mkdir -p "$T/scr"
+# a read-only role needs its repository's project and that project's provider (there is no default one)
+jq -n --arg r "$T/repo" '{schema:1,project:"prepo",repo:{url:"https://github.com/example/prepo",path:$r,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/prepo.json"
 out=$($DA local prepare --repo "$T/repo" --base main --slug a1 --scratch "$T/scr" --role audit 2>&1); RUN=$(sed -n 's/^RUN=//p' <<<"$out")
 [ "$(cat "$RUN/class" 2>/dev/null)" = read-only ] && [ "$(cat "$RUN/ability")" = audit ] && grep -q '^CLASS=read-only$' <<<"$out" && ok "prepare records the role and its class" || no "prepare: $out"
 guard() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s"},"cwd":"%s"}' "$1" "$RUN/clone" | $DA __guard >/dev/null 2>&1; }

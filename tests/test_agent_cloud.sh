@@ -36,7 +36,7 @@ python3 -I "$TOOL/lib/provider.py" check claude >/dev/null && python3 -I "$TOOL/
 
 # the projects: alpha has a base pair and the legacy instances, beta only the legacy ones, gamma only a worker, delta nothing
 for p in alpha beta gamma delta epsilon; do
-  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
 jq '.models = {provider: "effunver"}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 inst() { # name model effort -> one cloud instance record
@@ -109,6 +109,7 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 "$YES" agent for build --surface cloud >/dev/null 2>&1; [ $? != 0 ] && ok "cloud needs a project (none is inferred outside one)" || no "cloud without project"
 
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
+export QARGI_PROJECT=alpha   # there is no default provider: the project in effect lends its models.provider to the user-level members
 $YES agent add builder --abilities build,test >/dev/null 2>&1; $YES agent add judge --abilities review >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
