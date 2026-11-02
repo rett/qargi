@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-02T07:45:57Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-02T08:25:39Z",
- "finished_at": null,
+ "finished_at": "2026-11-02T08:30:35Z",
  "updated_by": "rett@arc",
- "rev": 5,
- "updated_at": "2026-11-02T08:25:39Z",
+ "rev": 6,
+ "updated_at": "2026-11-02T08:30:35Z",
  "feature": "tidy-gaps",
  "project": "qargi"
 }
