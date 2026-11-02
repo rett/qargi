@@ -1485,5 +1485,50 @@ class ProviderRoots(unittest.TestCase):
         self.assertIn("defined twice", r.stderr)
 
 
+class RuntimeRender(unittest.TestCase):
+    """$DA_STATE/render/<project>/<runtime> is where the renders of every runtime go (skills, tools, members): instructions a session follows,
+    changed only by the lead, like the claude/ directory beside it."""
+    setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def setUp(self):
+        self.setUp_skills()
+        self.state = os.path.join(self.t, "state")
+        self.render = os.path.join(self.state, "render", "proj", "fakecli")
+        os.makedirs(os.path.join(self.render, "agents"))
+        os.symlink(self.render, os.path.join(self.clone, "to-render"))
+
+    def call(self, tool, inp, cwd=None, **env):
+        env.setdefault("QARGI_STATE", self.state)
+        return self.call_skills(tool, inp, cwd, **env)
+
+    def test_writes_under_the_render_directory_are_refused(self):
+        r = self.render
+        for tool, key, p in (("Write", "file_path", r + "/agents/m.toml"), ("Edit", "file_path", "to-render/agents/m.toml"), ("NotebookEdit", "notebook_path", r + "/n.ipynb"),
+                             ("Write", "file_path", os.path.join(self.state, "render")), ("Write", "file_path", "../../state/render/proj/x")):
+            for cls in ((), ("--class", "read-only")):
+                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}), capture_output=True, text=True,
+                                     env={**os.environ, "HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+                self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
+                self.assertIn("the render of a project's skills, tools and members that a runtime loads", res.stderr)
+                self.assertIn("changed only by the lead", res.stderr)
+        for c in ("echo x > %s/agents/m.toml" % r, "cp a.md %s/agents/" % r, "rm -rf %s/agents" % r, "rm -rf %s/render" % self.state, "echo x > to-render/agents/m.toml",
+                  "mv a.md %s/x.md" % r, "cd %s && touch n" % r, "sed -i s/a/b/ %s/agents/m.toml" % r):
+            res = self.bash(c, QARGI_STATE=self.state)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("the render of a project's skills, tools and members that a runtime loads", res.stderr)
+
+    def test_reading_it_and_writing_beside_it_stay_allowed(self):
+        r = self.render
+        for c in ("cat %s/agents/m.toml" % r, "ls %s" % r, "grep -rn x %s" % r, "echo x > %s/renders.txt" % self.state, "echo x > %s/run/out/render-r.md" % self.t,
+                  "cp %s/agents/m.toml %s/run/out/" % (r, self.t)):
+            res = self.bash(c, QARGI_STATE=self.state)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_the_claude_directory_keeps_its_own_sentence(self):
+        res = self.bash("echo x > %s/claude/proj/CLAUDE.md" % self.state, QARGI_STATE=self.state)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("the render of a project's skills and tools that Claude Code loads; it is managed by `qargi packs apply`", res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
     installed ones: .claude/skills and .claude/agents), ~/.claude/plugins, and the installed copy of the tool (the tool_root in install.json:
-    the skills there are linked from ~/.claude/skills). Inside the clone, found from the nearest `qargi local
+    the skills there are linked from ~/.claude/skills), and the claude/ and render/ directories of the state (the renders a runtime loads
+    its skills, tools and members from; the claude/ one is what `packs apply --target claude-code` makes). Inside the clone, found from the nearest `qargi local
     prepare` run directory, a project directory such as .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
@@ -388,6 +389,7 @@ def protected_roots():
     if installed:
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
+    roots.update(render_roots(P, home))
     roots.update(feature_roots(P, home))
     roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
@@ -405,6 +407,16 @@ def claude_render_roots(P=None, home=None):
         import paths as P
     home = home or os.path.expanduser("~")
     return {os.path.realpath(os.path.join(st, "claude")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def render_roots(P=None, home=None):
+    """The render/ directory of the state: where the renders of every runtime go (state/render/<project>/<runtime>: skills, tools and
+    members as a runtime loads them). Found as claude_render_roots does."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "render")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
 def feature_roots(P=None, home=None):
@@ -481,6 +493,9 @@ def refusal_text(what, dest, root):
     if root in claude_render_roots():
         return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
                 "`qargi packs apply` and changed only by the lead" % (what, dest, root))
+    if root in render_roots():
+        return ("%s on %s would change %s, the render of a project's skills, tools and members that a runtime loads; it is managed by "
+                "qargi and changed only by the lead" % (what, dest, root))
     return "%s on %s would change %s, a protected location (skills, the pack library, credentials)" % (what, dest, root)
 
 
