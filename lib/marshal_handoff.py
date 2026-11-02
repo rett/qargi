@@ -547,7 +547,7 @@ def write_note(path, text):
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
     # describe; --state, --conf, --repo and --ttl are only passed by lib/marshal.sh
-    p = argparse.ArgumentParser(prog="marshal_handoff.py")
+    p = argparse.ArgumentParser(prog="marshal_handoff.py", allow_abbrev=False)   # no --wri for --write: the guard reads the option by its full name
     p.add_argument("name", nargs="?")
     p.add_argument('--state', required=True)
     p.add_argument('--conf', required=True)

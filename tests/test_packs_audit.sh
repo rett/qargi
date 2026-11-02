@@ -4,14 +4,18 @@
 # Offline, hermetic, with a fake HOME. Run: tests/test_packs_audit.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+ROOT=$PWD
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
+# the verbs that change a checkout refuse inside a member run (a directory `qargi local prepare` made, at or above the working directory), and this
+# test may itself run in one: work from the temporary directory
+cd "$T" || exit 1
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s HOME=$T/h
 US=$HOME/.claude/skills
 mkdir -p "$T/c/projects" "$T/s" "$US"
-DA=./bin/qargi
+DA=$ROOT/bin/qargi
 R=$T/repo
 CS=$R/.claude/skills; ACC=$T/c/packs/accepted.json
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
@@ -40,9 +44,9 @@ out=$(chk); rc=$?
 grep -q "^skills a session would load:" <<<"$out" && ok "check ends with the section of the skills a session would load" || no "no section: $out"
 [ "$(st s-all)" = qargi ] && grep -qE "^ +qargi +s-all  \(render, [0-9a-f]{12}" <<<"$out" && ok "a rendered library pack is qargi, with its place and a content hash prefix" || no "s-all: $(line s-all)"
 [ "$rc" = 0 ] && ok "a clean check still exits 0" || no "check status $rc: $out"
-ln -s "$PWD/skills/qargi-flow" "$US/qargi-flow"
+ln -s "$ROOT/skills/qargi-flow" "$US/qargi-flow"
 [ "$(st qargi-flow)" = qargi ] && ok "a symlink into the qargi install's skills is qargi" || no "shipped: $(line qargi-flow)"
-cp -r "$PWD/skills/qargi-flow" "$US/qargi-copy"
+cp -r "$ROOT/skills/qargi-flow" "$US/qargi-copy"
 [ "$(st qargi-copy)" = unmanaged ] && ok "a plain copy of a shipped skill is not the shipped skill" || no "copy: $(line qargi-copy)"
 rm -rf "$US/qargi-copy"
 # a library pack whose approved content differs from the directory that carries its name
@@ -231,6 +235,17 @@ for c in "qargi skill accept alpha mine" "qargi skill unaccept alpha mine --user
 done
 guard "qargi packs check --target claude-code alpha" >/dev/null && ok "the member guard allows the read-only check" || no "the guard refused check"
 
+# --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
+mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi
+PYA="python3 -I $ROOT/lib/packs_audit.py"
+tok=$(ac alpha mine | tok_of); [ -n "$tok" ] || no "setup: an accept plan"
+out=$(cd "$T/run/out" && "$DAA" skill accept alpha mine --plan "$tok" --approved x 2>&1) && no "a member run accepted a skill" || { grep -q "member run" <<<"$out" && ok "skill accept refuses in a member run" || no "member accept message: $out"; }
+[ ! -e "$ACC" ] && ok "a refused accept in a member run writes nothing" || no "member run wrote accepted.json"
+out=$(cd "$T/run/out" && $PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z 2>&1) && no "packs_audit.py store wrote in a member run" || { grep -q "member run" <<<"$out" && [ ! -e "$ACC" ] && ok "packs_audit.py store refuses in a member run, whatever calls it" || no "direct member store: $out"; }
+out=$($PYA store accept "$T/elsewhere.json" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z 2>&1) && no "store wrote a file that is not the environment's accepted.json" || { grep -q "written to $ACC only" <<<"$out" && [ ! -e "$T/elsewhere.json" ] && ok "store writes only <conf>/packs/accepted.json" || no "foreign file message: $out"; }
+$PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z >/dev/null 2>&1 && jq -e '.projects.alpha.mine.sha256' "$ACC" >/dev/null && ok "(store of the environment's file still works outside a member run)" || no "plain direct store failed"
+rm -f "$ACC"
+
 # --- the audit reads: nothing it reports on changed
 before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
@@ -239,9 +254,9 @@ chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && o
 # A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills and ~/.agent/skills, reads three settings files
 # of its own and hides a skill with {"skills_off": {NAME: "hidden"}}; nouser has no user skills directory and no way to hide a skill.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" lib/providers/claude.json > "$TOOL/lib/providers/$1.json"; }
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
 mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = "~/.agent/skills" | .layout.render_target = "agentx-render"
   | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project",path:".agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}]
   | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'

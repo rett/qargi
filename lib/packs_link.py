@@ -16,6 +16,10 @@ is refused with exit status 3.
   packs_link.py plan  link|unlink INPUTS TOKENFILE   print the plan and write the plan token (none when there is nothing to do)
   packs_link.py apply link|unlink INPUTS TOKEN       re-plan, refuse if the plan changed, then change the file system
 
+A member's run (a directory `qargi local prepare` made, at or above the working directory) never applies: only the lead's session
+changes what a checkout loads. The state directory comes from the environment (paths.state(), as the shell's DA_STATE) and the
+checkout and provider must be the ones in the project's stored answers (paths.conf()); the inputs file cannot name others.
+
 The only paths written are the directories above the link inside the checkout (when missing), the link itself and the backup
 of a real directory, beside it (<skills dir>.qargi-backup).
 Nothing is ever deleted except the symbolic link this tool made.
@@ -28,6 +32,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import marshal_refs  # noqa: E402  (in_member_run)
+import paths  # noqa: E402
 import provider  # noqa: E402
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
@@ -37,6 +43,25 @@ BACKUP_SUFFIX = ".qargi-backup"
 def die(msg):
     print("qargi: " + msg, file=sys.stderr)
     sys.exit(1)
+
+
+def bind(inp):
+    """Make the inputs say what the environment and the stored answers say: the state directory is paths.state(), and the
+    checkout and provider must be the project's own (an inputs file written by hand cannot point the link at another repository
+    or render). Dies when they differ."""
+    project = inp.get("project")
+    if not isinstance(project, str) or not NAME_RE.fullmatch(project) or ".." in project:
+        die("not a project name: %s" % (project,))
+    answers = provider.project_answers(project, paths.conf())
+    if answers is None:
+        die("no stored answers for project '%s'" % project)
+    co = (answers.get("repo") or {}).get("path") or ""
+    if (inp.get("checkout") or "") != co:
+        die("the inputs name the checkout %r, not the project's repo.path %r; refusing" % (inp.get("checkout"), co))
+    if inp.get("provider") != provider.project_provider(answers, project):
+        die("the inputs name the provider %r, not the project's; refusing" % (inp.get("provider"),))
+    inp["state"] = paths.state()
+    return inp
 
 
 def git(base, *args):
@@ -216,6 +241,8 @@ def cmd_plan(verb, inp, tokenfile):
 
 
 def cmd_apply(verb, inp, token):
+    if marshal_refs.in_member_run():
+        die("packs %s is not available in a member run: only the lead's session changes what a checkout loads; nothing was changed" % verb)
     facts = classify(verb, inp)
     if facts["kind"] == "linked" or token_of(facts) != token:
         die("the plan changed since it was approved; nothing was changed")
@@ -253,7 +280,7 @@ def main():
         die("usage: packs_link.py plan|apply link|unlink INPUTS TOKENFILE|TOKEN")
     try:
         with open(sys.argv[3]) as fh:
-            inp = json.load(fh)
+            inp = bind(json.load(fh))
         (cmd_plan if sys.argv[1] == "plan" else cmd_apply)(sys.argv[2], inp, sys.argv[4])
     except provider.Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)

@@ -3,12 +3,16 @@
 # Offline, hermetic. Run: tests/test_packs_link.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+ROOT=$PWD
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0
+# the verbs that change a checkout refuse inside a member run (a directory `qargi local prepare` made, at or above the working directory), and this
+# test may itself run in one: work from the temporary directory
+cd "$T" || exit 1
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s"
-DA=./bin/qargi
+DA=$ROOT/bin/qargi
 R=$T/repo
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
@@ -158,13 +162,31 @@ mv "$T/render.gone" "$D"
 
 # --- a project name that is not one
 $DA packs link '../x' >/dev/null 2>&1 && no "a bad project name was accepted" || ok "a bad project name is refused"
+# --- the helper script run directly, as a member could: the gates still hold (a member run never applies; the state, the checkout and the
+# provider are the environment's and the stored answers', not the inputs file's)
+PYL="python3 -I $ROOT/lib/packs_link.py"; DAA=$ROOT/bin/qargi
+mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"
+LEAD=$T/leadrepo; git init -q -b main "$LEAD"; echo x > "$LEAD/README"; $G -C "$LEAD" add -A; $G -C "$LEAD" commit -q -m one
+mkin() { jq -nc --arg co "$1" --arg st "$2" --arg h "$HOME" '{project:"alpha",provider:"claude",state:$st,home:$h,checkout:$co,packs:[],kids:[]}' > "$T/in.json"; }
+tok=$(lplan); [ -n "$tok" ] && [ ! -e "$R/.claude/skills" ] || no "setup: a plan in the same state"
+out=$(cd "$T/run/out" && "$DAA" packs link alpha --plan "$tok" --approved x 2>&1) && no "a member run applied packs link" || { grep -q "member run" <<<"$out" && ok "packs link refuses in a member run" || no "member link message: $out"; }
+[ ! -e "$R/.claude/skills" ] && [ ! -L "$R/.claude/skills" ] && ok "a refused apply in a member run changes nothing" || no "member run linked"
+mkin "$R" "$T/s"; out=$(cd "$T/run/out" && $PYL apply link "$T/in.json" "$tok" 2>&1) && no "packs_link.py applied in a member run" || { grep -q "member run" <<<"$out" && [ ! -L "$R/.claude/skills" ] && ok "packs_link.py apply refuses in a member run, whatever calls it" || no "direct member apply: $out"; }
+mkin "$R" "$T/evil-state"; out=$($PYL plan link "$T/in.json" "$T/tokfile" 2>&1)
+grep -q "target: $D/.claude/skills" <<<"$out" && ! grep -q "evil-state" <<<"$out" && ok "the render comes from the environment's state, not the inputs file's state" || no "state from inputs: $out"
+mkin "$LEAD" "$T/s"; rm -f "$T/tokfile"; out=$($PYL plan link "$T/in.json" "$T/tokfile" 2>&1) && no "planned a checkout the project does not have" || { grep -q "not the project's repo.path" <<<"$out" && ok "the checkout must be the project's own, not the inputs file's" || no "foreign checkout message: $out"; }
+$PYL apply link "$T/in.json" "$(cat "$T/tokfile" 2>/dev/null || echo 000000000000)" >/dev/null 2>&1
+[ ! -e "$LEAD/.claude" ] && ok "nothing is written into a checkout the inputs file invented" || no "wrote into the lead's repository"
+mkin "$R" "$T/s"; jq '.provider = "agentx"' "$T/in.json" > "$T/in2.json"; out=$($PYL plan link "$T/in2.json" "$T/tokfile" 2>&1) && no "planned another provider than the project's" || { grep -q "not the project's" <<<"$out" && ok "the provider must be the project's own" || no "foreign provider message: $out"; }
+$PYL plan link "$T/in.json" "$T/tokfile" >/dev/null 2>&1 && [ -s "$T/tokfile" ] && ok "(inputs that agree with the stored answers still plan)" || no "plain direct plan failed"
+
 # --- a provider whose layout differs: every path comes from its descriptor, and a missing facility is a refusal (exit 3)
 # A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
 # has its own render target, and no renderer: the render is made by hand.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" lib/providers/claude.json > "$TOOL/lib/providers/$1.json"; }
+mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
 mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"'
 mkprov noskills '.layout.project_skills_dir = null'
 mkprov unverified '.capabilities.skills.local.verified_on = null'
