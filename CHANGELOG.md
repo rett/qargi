@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-02
+
 ### Added
 - `qargi marshal forget NAME`: drops this machine's accepted marshal mark of one feature, so a stale mark (left after the feature was
   deleted or re-created on the remote) stops reporting `rollback detected`. It needs integrity advisory or strict and a mark for NAME,
