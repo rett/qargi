@@ -165,7 +165,8 @@ class Skills(unittest.TestCase):
 
     def test_refuses_the_verbs_that_change_a_skill(self):
         verbs = ["%s %s x" % (a, v) for a in ("skill", "tool") for v in ("new", "import", "seal", "remove", "unlink", "link", "enable", "disable")]
-        verbs += ["discover install skill-pdf --project p", "packs apply p-build --asked x", "import backup.tar.gz"]
+        verbs += ["discover install skill-pdf --project p", "packs apply p-build --asked x", "packs link p", "packs unlink p --plan 0123456789ab --approved go",
+                  "packs link p --plan 0123456789ab --approved go", "import backup.tar.gz"]
         for v in verbs:
             for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "echo ok; qargi %s --approved go",
                          "bash -c 'qargi %s'", "sh -c \"cd /x && qargi %s\"", "eval 'qargi %s'", "echo $(qargi %s)", "echo `qargi %s`",
@@ -174,7 +175,7 @@ class Skills(unittest.TestCase):
                 self.assertEqual(r.returncode, 2, form % v)
                 self.assertIn("changes a skill and is not available to an agent", r.stderr)
                 self.assertIn("qargi guard:", r.stderr)
-        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "python3 -I lib/discover.py install foo"):
+        for c in ("lib/packs.sh skill new x", "bash lib/packs.sh tool import f.json", "./lib/packs.sh packs apply i", "./lib/packs.sh packs link p", "bash lib/packs.sh packs unlink p", "python3 -I lib/discover.py install foo"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
     def test_refuses_provider_accept_to_a_member(self):
