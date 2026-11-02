@@ -1177,5 +1177,37 @@ class MemoryTiers(unittest.TestCase):
         self.assertEqual(self.bash("echo x > %s/run/out/memory-r.md" % self.t).returncode, 0)
 
 
+class HookProtocol(unittest.TestCase):
+    """The hook protocol is data (CLAUDE_HOOK, or the barrier.hook of a definition): it turns the hook's JSON into a neutral Call, and the
+    decisions see only that."""
+    @staticmethod
+    def load():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("qargi_guard_protocol", os.path.join(os.path.dirname(BIN), "..", "lib", "guard.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_claude_hook_data_makes_these_calls(self):
+        g = self.load()
+        for data, want in (({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/w"}, ("shell", "Bash", "ls", "", "/w")),
+                           ({"tool_input": {"command": "ls"}, "cwd": "/w"}, ("shell", None, "ls", "", "/w")),
+                           ({"tool_name": "Edit", "tool_input": {"file_path": "a", "path": "b"}, "cwd": "/w"}, ("write", "Edit", "", "a", "/w")),
+                           ({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("write", "NotebookEdit", "", "n", "/w")),
+                           ({"tool_name": "MultiEdit", "tool_input": {"path": "b"}, "cwd": "/w"}, ("write", "MultiEdit", "", "", "/w")),
+                           ({"tool_name": "Read", "tool_input": {"file_path": "r"}, "cwd": "/w"}, ("read", "Read", "", "r", "/w")),
+                           ({"tool_name": "NotebookRead", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("read", "NotebookRead", "", "n", "/w")),
+                           ({"tool_name": "Grep", "tool_input": {"path": "d", "pattern": "x"}, "cwd": "/w"}, ("search", "Grep", "", "d", "/w")),
+                           ({"tool_name": "Glob", "tool_input": {"pattern": "*"}, "cwd": "/w"}, (None, "Glob", "", "", "/w")),
+                           ({"tool_name": "Bash", "tool_input": None, "cwd": None}, ("shell", "Bash", "", "", os.getcwd()))):
+            self.assertEqual(tuple(g.parse_call(g.CLAUDE_HOOK, data)), want, data)
+
+    def test_a_hook_input_that_cannot_be_read_is_an_error_not_a_pass(self):
+        g = self.load()
+        for data in ([], "ls", None, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Bash", "tool_input": [1]}):
+            with self.assertRaises(TypeError, msg=data):
+                g.parse_call(g.CLAUDE_HOOK, data)
+
+
 if __name__ == "__main__":
     unittest.main()
