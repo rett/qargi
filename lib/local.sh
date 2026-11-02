@@ -117,12 +117,15 @@ check_run() {
   return 2
 }
 
-# render_warning REPO URL -> when the project this run belongs to has a Claude Code render (packs apply --target claude-code),
-# runs its read-only check and, on findings, prints a WARNING block to stderr. Never fails the caller: a stale render must not
-# block work. The project is the stored answers whose repo.path (or repo.url) is the one given; none found, nothing printed.
+# render_warning REPO URL -> when the project this run belongs to has a render of its packs (packs apply --target T, T the render target of its
+# provider), runs the read-only check of the render and, on findings, prints a WARNING block to stderr. Never fails the caller: a stale
+# render must not block work. The project is the stored answers whose repo.path (or repo.url) is the one given; none found, nothing printed.
 # No render directory (the usual case) costs no process: the glob below is the shell's own.
+# A project with no provider cannot be checked (there is no default one): one note line says so and that the check was skipped. The check
+# is asked for the render only ('--render-only'): the section about the skills a session would load is no part of whether the render is
+# out of date, and a drifted accepted skill must not read as one. A provider that cannot render at all (exit 3) is nothing to warn about.
 render_warning() {
-  local m d prj f rp ru out
+  local m d prj f rp ru out rc pv rt
   for m in "$DA_STATE"/claude/*/MANIFEST.json; do
     [ -f "$m" ] || continue
     d=$(dirname "$m"); prj=$(basename "$d"); f=$DA_CONF/projects/$prj.json
@@ -130,10 +133,19 @@ render_warning() {
     rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
     if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
     else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
-    out=$("$(dirname "$0")/packs.sh" packs check --target claude-code "$prj" 2>&1) && return 0
+    rc=0; pv=$(python3 -I "$(dirname "$0")/provider.py" of "$prj" --conf "$DA_CONF" 2>/dev/null </dev/null) || rc=$?
+    if [ "$rc" = 2 ]; then
+      echo "note: project $prj has no provider (qargi project set $prj models.provider NAME); the render check was skipped" >&2
+      return 0
+    fi
+    # the render under claude/ is the claude provider's; a project that has moved to another provider has no render to check here
+    [ "$rc" = 0 ] && [ "$pv" = "$(basename "$(dirname "$d")")" ] || return 0
+    rt=$(python3 -I "$(dirname "$0")/provider.py" layout "$pv" render_target 2>/dev/null </dev/null) || return 0
+    rc=0; out=$("$(dirname "$0")/packs.sh" packs check --target "$rt" '--render-only' "$prj" 2>&1) || rc=$?
+    [ "$rc" != 0 ] && [ "$rc" != 3 ] || return 0
     { echo "WARNING: the Claude Code render of project $prj is out of date or altered (the run goes on):"
       sed 's/^/  /' <<<"$out"
-      echo "  fix: qargi packs apply --target claude-code $prj"
+      echo "  fix: qargi packs apply --target $rt $prj"
       echo; } >&2
     return 0
   done
