@@ -552,7 +552,7 @@ COMMANDS = {
                  "which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool "
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
                  "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
-                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider (default claude)."),
+                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2)."),
         "scripts": ["provider.py", "provider.sh"],
         "verbs": {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),

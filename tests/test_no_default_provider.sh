@@ -238,4 +238,12 @@ out=$(v '.models.provider = "fakeprov" | .roles.build.model = "fake-m-1"'); rc=$
 out=$(v '.models.provider = "nosuchprov"'); rc=$?
 { [ "$rc" = 0 ] && grep -q "^finding: models.provider 'nosuchprov' has no descriptor" <<<"$out"; } && ok "validate: a provider with no descriptor is a finding (exit status unchanged)" || no "unknown provider: rc=$rc $out"
 
+# --- no fallback to claude is written in the code (the claude adapter, its shim and its descriptor are the only places that name it)
+hits=$(grep -nE '// *"claude"|default claude|load\("claude"\)|\.get\([^)]*"claude"\)|p=claude|_prov=claude|:-claude\}' lib/*.sh lib/*.py bin/qargi 2>/dev/null | grep -vE '^lib/(packs_claude\.py|guard\.py):')
+[ -z "$hits" ] && ok "no fallback to claude in lib/*.sh, lib/*.py or bin/qargi" || no "a fallback to claude is written: $hits"
+# the check itself finds each form (a self-test with the forbidden strings built here, so this file is not a hit)
+f=$T/forbidden.sh; q='"'
+{ echo "x=\$(jq -r '.models.provider // ${q}claude${q}' f)"; echo "# the default claude"; echo "PV.load(${q}claude${q})"; echo 'p=claude'; } > "$f"
+[ "$(grep -cE '// *"claude"|default claude|load\("claude"\)|p=claude' "$f")" = 4 ] && ok "the grep finds each form it is for" || no "the grep misses a form"
+
 [ "$fail" = 0 ] && echo "no-default-provider tests passed" || { echo "no-default-provider tests FAILED"; exit 1; }
