@@ -1378,5 +1378,162 @@ class PerSurfaceCli(CliBase):
         self.assertEqual(self.run_cli("of")[0], 2)
 
 
+class V2Cli(CliBase):
+    """list, show, check and effective on schema 2 definitions, shipped (the copy's providers/) and in the pack library."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf = os.path.join(self.tmp, "conf")
+        self.state = os.path.join(self.tmp, "state")
+        self.library = os.path.join(self.conf, "packs", "providers")
+        os.makedirs(os.path.join(self.root, "catalogs"))
+        os.makedirs(self.library)
+
+    def run_cli(self, *args):
+        env = dict(os.environ, QARGI_CONF=self.conf, QARGI_STATE=self.state)
+        r = subprocess.run([sys.executable, "-I", os.path.join(self.copy, "provider.py")] + list(args), capture_output=True, text=True, env=env)
+        return r.returncode, r.stdout, r.stderr
+
+    def put_lib(self, name, d, files=None):
+        os.makedirs(os.path.join(self.library, name), exist_ok=True)
+        with open(os.path.join(self.library, name, "definition.json"), "w") as f:
+            json.dump(d, f)
+        for rel, mode in (files or {}).items():
+            with open(os.path.join(self.library, name, rel), "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(os.path.join(self.library, name, rel), mode)
+
+    def put_catalog(self, family):
+        with open(os.path.join(self.root, "catalogs", family + ".json"), "w") as f:
+            json.dump(catalog(family), f)
+
+    def test_list_shows_every_definition_with_its_surfaces_and_marks_the_library(self):
+        self.put("fakecli", runtime("fakecli"))
+        self.put_lib("libcli", runtime("libcli", surface="cloud"))
+        self.put("broken2", runtime("broken2", extra=1))
+        self.put("lost", runtime("lost", models={"catalog": "gone", "use": "id"}))
+        rc, out, _ = self.run_cli("list")
+        rows = {ln.split()[0]: ln.split()[1:] for ln in out.strip().splitlines()}
+        self.assertEqual((rc, list(rows)), (0, ["broken2", "claude", "fakecli", "libcli", "lost"]))
+        self.assertEqual(rows["fakecli"], ["local", "clean"])
+        self.assertEqual(rows["libcli"], ["cloud", "clean", "(library)"])
+        self.assertEqual(rows["broken2"][-1], "failure")
+        self.assertEqual(rows["lost"][:2], ["local", "1"])
+
+    def test_list_says_when_a_name_is_defined_twice(self):
+        self.put("dupe", runtime("dupe"))
+        self.put_lib("dupe", runtime("dupe"))
+        rc, out, _ = self.run_cli("list")
+        self.assertEqual(rc, 0)
+        self.assertRegex(out, r"dupe\s+-\s+1 failure \('dupe' is defined twice")
+
+    def test_show_a_definition_prints_models_effort_and_capabilities(self):
+        self.put_catalog("fam")
+        self.put("fam-cli", runtime("fam-cli", family="fam", models={"catalog": "fam", "use": "alias"},
+                                    capabilities={"skills": cell("yes", "2026-11-02", "loads from .fake")}))
+        rc, out, _ = self.run_cli("show", "fam-cli")
+        self.assertEqual(rc, 0)
+        self.assertIn("fam-cli  (local, shipped; family fam)", out)
+        self.assertIn("models: catalog fam (2026-11-02), passes the alias", out)
+        self.assertRegex(out, r"fast\s+fam-small\s+alias small")
+        self.assertRegex(out, r"xhigh\s+- \(no control\)")
+        self.assertRegex(out, r"skills\s+yes\s+verified 2026-11-02\s+loads from \.fake")
+        rc, out, _ = self.run_cli("show", "fam-cli", "--json")
+        self.assertEqual(json.loads(out)["models"], {"catalog": "fam", "use": "alias"})
+
+    def test_show_a_library_definition_says_whether_the_record_backs_a_claim(self):
+        self.put_lib("libcli", runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "mcp": cell("no", None)}))
+        out = self.run_cli("show", "libcli")[1]
+        self.assertIn("libcli  (local, library)", out)
+        self.assertIn("single model my-model for every tier", out)
+        self.assertRegex(out, r"effort\s*\n\s+no control")
+        self.assertRegex(out, r"skills\s+yes\s+no record, counts as no")
+        os.makedirs(os.path.join(self.state, "providers", "libcli"))
+        with open(os.path.join(self.state, "providers", "libcli", "verified.json"), "w") as f:
+            json.dump({"skills": {"hash": P.definition_hash("libcli", root=self.root, library=self.library), "by": "attest"}}, f)
+        self.assertRegex(self.run_cli("show", "libcli")[1], r"skills\s+yes\s+verified by attest")
+
+    def test_check_of_a_clean_definition(self):
+        self.put("fakecli", runtime("fakecli"))
+        rc, out, _ = self.run_cli("check", "fakecli")
+        self.assertEqual(rc, 0)
+        self.assertIn("fakecli: 0 failures, 0 warnings", out)
+        self.assertIn("adapter: none (what needs one is refused)", out)
+        self.assertNotIn("note: schema 1", out)
+        self.assertIn("the review role cannot be served on local", out)
+        self.assertRegex(out, r"local: skills\s+no")
+        self.assertRegex(out, r"layout: project_skills_dir\s+no \(the verb that needs it is refused with exit 3\)")
+        self.assertNotIn("cloud", out)
+
+    def test_check_fails_for_a_violation_a_missing_catalog_and_a_clash(self):
+        self.put("bad", runtime("bad", extra=1))
+        self.put("lost", runtime("lost", models={"catalog": "gone", "use": "id"}))
+        self.put("dupe", runtime("dupe"))
+        self.put_lib("dupe", runtime("dupe"))
+        rc, out, _ = self.run_cli("check", "bad")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: extra: additional property is not allowed", out)
+        rc, out, _ = self.run_cli("check", "lost")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: models.catalog: no catalog 'gone'", out)
+        rc, _, err = self.run_cli("check", "dupe")
+        self.assertEqual(rc, 2)
+        self.assertIn("'dupe' is defined twice", err)
+
+    def test_check_looks_for_the_adapter_in_the_definitions_own_directory(self):
+        self.put("withad", runtime("withad", adapter="adapter"))
+        rc, out, _ = self.run_cli("check", "withad")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: adapter: adapter does not exist", out)
+        os.makedirs(os.path.join(self.root, "withad"))
+        ad = os.path.join(self.root, "withad", "adapter")
+        with open(ad, "w") as f:
+            f.write("#!/bin/sh\n")
+        self.assertIn("fail: adapter: adapter is not executable", self.run_cli("check", "withad")[1])
+        os.chmod(ad, 0o755)
+        rc, out, _ = self.run_cli("check", "withad")
+        self.assertEqual(rc, 0)
+        self.assertIn("adapter: adapter (exists, executable)", out)
+        self.put_lib("libad", runtime("libad", adapter="adapter"), {"adapter": 0o755})
+        self.assertIn("adapter: adapter (exists, executable)", self.run_cli("check", "libad")[1])
+
+    def test_check_degrades_follow_the_record_for_a_library_definition(self):
+        self.put_lib("libcli", runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "read_only_barrier": cell("yes", "2026-11-02")}))
+        out = self.run_cli("check", "libcli")[1]
+        self.assertRegex(out, r"local: skills\s+unverified \(counts as no\)")
+        self.assertIn("the review role cannot be served on local", out)
+        os.makedirs(os.path.join(self.state, "providers", "libcli"))
+        h = P.definition_hash("libcli", root=self.root, library=self.library)
+        with open(os.path.join(self.state, "providers", "libcli", "verified.json"), "w") as f:
+            json.dump({c: {"hash": h, "by": "conformance"} for c in ("skills", "read_only_barrier")}, f)
+        out = self.run_cli("check", "libcli")[1]
+        self.assertNotRegex(out, r"local: skills")
+        self.assertNotIn("cannot be served", out)
+
+    def test_check_of_a_schema_1_descriptor_notes_that_schema_2_exists(self):
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 0)
+        self.assertIn("note: schema 1 is the earlier format; qargi provider migrate claude --dry-run shows the schema 2 form", out)
+
+    def test_effective_of_a_definition_and_of_the_other_surface(self):
+        self.put("fakecli", runtime("fakecli", capabilities={"skills": cell()}))
+        self.assertEqual(self.run_cli("effective", "fakecli", "local", "skills")[:2], (0, "yes\n"))
+        self.assertEqual(self.run_cli("effective", "fakecli", "local", "mcp")[:2], (0, "no\n"))
+        rc, _, err = self.run_cli("effective", "fakecli", "cloud", "skills")
+        self.assertEqual(rc, 1)
+        self.assertIn("the provider fakecli does not list the surface cloud", err)
+
+    def test_the_other_verbs_work_on_a_definition_with_resources(self):
+        res = {"skills": {"project_dir": ".fake/skills", "user_dir": "~/.fake/skills"}}
+        self.put("fakecli", runtime("fakecli", resources=res, capabilities={"skills": cell()}, session={"launch": "fake {render}"}))
+        self.assertEqual(self.run_cli("layout", "fakecli", "project_skills_dir")[:2], (0, ".fake/skills\n"))
+        self.assertEqual(self.run_cli("require-skills", "fakecli")[0], 0)
+        self.assertEqual(self.run_cli("launch", "fakecli", "/r")[:2], (0, "fake /r\n"))
+        self.assertEqual(self.run_cli("skills-dirs")[1], ".claude/skills\n.fake/skills\n")
+        rc, _, err = self.run_cli("layout", "fakecli", "project_agents_dir", "--would", "write")
+        self.assertEqual((rc, err), (3, "qargi: provider fakecli has no project agents directory: write\n"))
+        self.assertEqual(self.run_cli("require-barrier", "fakecli", "local")[0], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

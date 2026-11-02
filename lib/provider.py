@@ -1153,15 +1153,39 @@ def _surfaces(d):
     return [x for x in s if x in SURFACES] if isinstance(s, list) else []
 
 
+def _is2(d):
+    return isinstance(d, dict) and type(d.get("schema")) is int and d["schema"] == 2
+
+
+def findings_of(name, root=None, library=None):
+    """(entry, document, findings) for one provider: the validation of its file and, for schema 2, of what it points at (its catalog),
+    plus why it cannot be read as a definition at all (a library file that is not schema 2, a directory that disagrees with the name)."""
+    e = _entry(name, root, library)
+    raw = _read(e)
+    findings = validate(raw, name)
+    if _is2(raw) and raw.get("kind") == "provider" and isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
+        try:
+            catalog(raw["models"]["catalog"], root, library)
+        except Clash:
+            raise
+        except ProviderError as ex:
+            findings.append(("fail", "models.catalog: %s" % ex))
+    try:
+        _docs(e)
+    except ProviderError as ex:
+        findings.append(("fail", str(ex)))
+    return e, raw, findings
+
+
 def cmd_list():
     for n in names():
         try:
-            d = load(n)
-            findings = validate(d, n)
-        except ProviderError as e:
-            print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % e))
+            e, raw, findings = findings_of(n)
+        except ProviderError as ex:
+            print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % ex))
             continue
-        print("%-12s %-12s %s" % (n, ",".join(_surfaces(d)) or "-", _state(findings)))
+        surfaces = [raw["surface"]] if _is2(raw) and raw.get("surface") in SURFACES else _surfaces(raw)
+        print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), "  (library)" if e["origin"] == "library" else ""))
     return 0
 
 
@@ -1169,15 +1193,57 @@ def _verified(cell):
     return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified" + (", counts as no" if cell.get("value") != "no" else "")
 
 
+def _backing(name, surface, c, cell):
+    """What stands behind a claimed capability, for show: a shipped definition, its date; a library one, the record or the lack of one."""
+    if cell.get("value") == "no":
+        return "-"
+    if origin(name) == "shipped":
+        return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified, counts as no"
+    rec = verification(name).get(c)
+    if cap(name, surface, c) == "unverified":
+        return "no record, counts as no" if not isinstance(rec, dict) else "record is stale, counts as no"
+    return "verified by %s" % rec["by"]
+
+
+def _show2(name, e, doc):
+    s = doc["surface"]
+    m = _resolve_models(doc)
+    print("%s  (%s, %s%s)" % (name, s, e["origin"], "; family %s" % doc["family"] if doc.get("family") else ""))
+    if doc.get("description"):
+        print(doc["description"])
+    if m["catalog"]:
+        print("models: catalog %s (%s), passes the %s" % (m["catalog"], catalog(m["catalog"])["version"], m["use"]))
+    elif len({json.dumps(r, sort_keys=True) for r in m["tiers"].values()}) == 1:
+        print("models: single model %s for every tier" % m["tiers"]["fast"]["model"])
+    print("model pattern: %s" % m["pattern"])
+    print("tiers")
+    for t in TIERS:
+        r = m["tiers"][t]
+        print("  %-9s %-22s alias %-8s %s" % (t, r["model"], r["alias"] or "-", "verified %s" % r["verified_on"] if r.get("verified_on") else "verified: no"))
+    print("effort")
+    if all(v is None for v in m["effort"].values()):
+        print("  no control")
+    else:
+        for k, v in m["effort"].items():
+            print("  %-7s %s" % (k, v if v is not None else "- (no control)"))
+    print("capabilities")
+    for c in capabilities2():
+        cl = _dict(doc.get("capabilities")).get(c)
+        if isinstance(cl, dict):
+            print("  %-34s %-8s %-30s %s" % (c, cl.get("value"), _backing(name, s, c, cl), cl.get("note", "")))
+    return 0
+
+
 def cmd_show(name, as_json):
-    d = load(name)
-    bad = [m for lvl, m in validate(d, name) if lvl == "fail"]
-    if bad:
+    e, d, findings = findings_of(name)
+    if any(lvl == "fail" for lvl, _ in findings):
         print("qargi: provider '%s' breaks the schema (qargi provider check %s)" % (name, name), file=sys.stderr)
         return 1
     if as_json:
         print(json.dumps(d, indent=2))
         return 0
+    if _is2(d):
+        return _show2(name, e, next(iter(_docs(e).values())))
     print("%s  (surfaces: %s)" % (name, ", ".join(d["surfaces"])))
     print("model pattern: %s" % d["model_pattern"])
     print("tiers")
@@ -1200,12 +1266,13 @@ def cmd_show(name, as_json):
     return 0
 
 
-def adapter_problem(d, tool=None):
-    """None when the descriptor has no adapter or the adapter file exists and is executable, else what is wrong."""
+def adapter_problem(d, tool=None, directory=None):
+    """None when the descriptor has no adapter or the adapter file exists and is executable, else what is wrong. A schema 1 adapter is
+    a path under the tool root; a schema 2 adapter (directory= the definition's directory) is relative to that directory."""
     ad = d.get("adapter")
     if not isinstance(ad, str) or os.path.isabs(ad) or ".." in ad.split("/"):
         return None                               # no adapter, or a path validate() already refused
-    path = os.path.join(tool or TOOL, ad)
+    path = os.path.join(directory if directory is not None else tool or TOOL, ad)
     if not os.path.isfile(path):
         return "adapter: %s does not exist" % ad
     if not os.access(path, os.X_OK):
@@ -1214,9 +1281,9 @@ def adapter_problem(d, tool=None):
 
 
 def cmd_check(name):
-    d = load(name)
-    findings = validate(d, name)
-    bad = adapter_problem(d)
+    e, d, findings = findings_of(name)
+    v2 = _is2(d)
+    bad = adapter_problem(d, directory=e["dir"] if v2 else None)
     if bad:
         findings.append(("fail", bad))
     fails = [m for lvl, m in findings if lvl == "fail"]
@@ -1229,9 +1296,11 @@ def cmd_check(name):
     if fails:
         return 1
     print("adapter: %s" % ("%s (exists, executable)" % d["adapter"] if d.get("adapter") else "none (what needs one is refused)"))
+    if not v2:
+        print("note: schema 1 is the earlier format; qargi provider migrate %s --dry-run shows the schema 2 form" % name)
     rows, cannot = [], []
-    for s in _surfaces(d):
-        for c in capabilities():
+    for s in surfaces_of(name):
+        for c in (capabilities2() if v2 else capabilities()):
             v = cap(name, s, c)
             if v in ("no", "unverified"):
                 rows.append("  %s: %-32s %s" % (s, c, "unverified (counts as no)" if v == "unverified" else "no"))
