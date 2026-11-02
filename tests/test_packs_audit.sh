@@ -64,6 +64,8 @@ out=$(chk); rc=$?
 [ "$(st mine)" = unmanaged ] && grep -qE "^ +unmanaged +mine  \(checkout, [0-9a-f]{12}" <<<"$out" && ok "a checkout skill nobody manages is unmanaged" || no "mine: $(line mine)"
 grep -q "qargi skill import $CS/mine" <<<"$out" && grep -q "qargi skill link mine --scope project --project alpha" <<<"$out" && grep -q "qargi skill accept alpha mine" <<<"$out" && ok "an unmanaged checkout skill gets the import, link and accept offer" || no "offer: $out"
 [ "$(st umine)" = unmanaged ] && grep -q "qargi skill accept alpha umine --user" <<<"$out" && ok "an unmanaged user skill is listed, with the user-scope accept offer" || no "umine: $(line umine)"
+grep -q "to hide it instead: *{\"skillOverrides\": {\"mine\": \"off\"}} in $R/.claude/settings.local.json" <<<"$out" && grep -q "to hide it instead: *{\"skillOverrides\": {\"umine\": \"off\"}} in $HOME/.claude/settings.json" <<<"$out" \
+  && ok "an unmanaged skill gets the line that would switch it off, as text: the provider's key, in the unshared project file or the user file" || no "hide offer: $out"
 grep -q "^  legend: .*unmanaged: " <<<"$out" && ok "the section ends with a legend of the states shown" || no "legend: $out"
 [ "$rc" = 0 ] && ok "unmanaged skills do not change the exit status" || no "unmanaged made check fail ($rc)"
 # a symbolic link to a skill directory elsewhere is followed
@@ -284,8 +286,6 @@ out=$($PYA store accept "$T/elsewhere.json" project alpha mine aaaaaaaaaaaaaaaa 
 $PYA store accept "$ACC" project alpha mine aaaaaaaaaaaaaaaa "$CS/mine" x 2026-01-01T00:00:00Z >/dev/null 2>&1 && jq -e '.projects.alpha.mine.sha256' "$ACC" >/dev/null && ok "(store of the environment's file still works outside a member run)" || no "plain direct store failed"
 rm -f "$ACC"
 
-# --- the audit reads: nothing it reports on changed
-before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 # --- text a hand-edited accepted.json puts in the unaccept plan has no control character; a name is a name only in full
 jq -n '{user:{},projects:{alpha:{evil:{sha256:"0123456789abcdef", path:"/p\u001b[31mred", approved:"ok\n== forged line\u0007", at:"t\u0000x"}}}}' > "$ACC"
 out=$(ua alpha evil); tok=$(tok_of <<<"$out")
@@ -296,6 +296,8 @@ out=$(ac alpha $'mine\n' 2>&1) && no "accepted a skill name with a trailing newl
 out=$(echo '{}' > "$T/empty.json"; python3 -I "$ROOT/lib/packs_audit.py" target "$T/empty.json" $'mine\n' project "$T/t.json" 2>&1) && no "target accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && ok "a skill name with a trailing newline is not a skill name (script)" || no "newline name (script): $out"; }
 out=$(python3 -I "$ROOT/lib/packs_audit.py" store accept "$ACC" project alpha $'mine\n' aaaaaaaaaaaaaaaa x y z 2>&1) && no "store accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && [ ! -e "$ACC" ] && ok "store refuses it too" || no "newline name (store): $out"; }
 
+# --- the audit reads: nothing it reports on changed
+before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
 chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
 
 # --- a provider with another layout: the places, the settings files and the exclusion key come from its descriptor
@@ -328,6 +330,8 @@ fst() { sed -n '/^skills a session would load:/,$p' <<<"$out" | sed -n "s/^ *\\(
 [ "$(fst cmine)" = unmanaged ] && grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ok "another provider: its project skills directory is the checkout place" || no "agentx cmine: $out"
 [ "$(fst umine2)" = unmanaged ] && grep -qE "^ +unmanaged +umine2  \(user, " <<<"$out" && ok "another provider: its user skills directory is the user place" || no "agentx umine2: $out"
 [ "$(fst rendered)" = unmanaged ] && grep -qE "^ +unmanaged +rendered  \(render, " <<<"$out" && ok "another provider: the render is read under its own state directory and skills directory" || no "agentx rendered: $out"
+grep -q "to hide it instead: *{\"skills_off\": {\"cmine\": \"hidden\"}} in $R2/.agent/settings.local.json" <<<"$out" && grep -q "to hide it instead: *{\"skills_off\": {\"umine2\": \"hidden\"}} in $HOME/.agent/settings.json" <<<"$out" \
+  && ok "another provider: the line to switch a skill off uses its key, its off value and its settings files" || no "agentx hide offer: $out"
 [ -z "$(fst claude-checkout)" ] && [ -z "$(fst claude-user)" ] && ok "another provider: the skills of Claude Code's directories are not listed" || no "agentx listed claude dirs: $out"
 for n in hid-a hid-b hid-c; do [ "$(fst "$n")" = excluded ] && ok "another provider: $n is excluded by its settings file and key" || no "agentx $n: $(grep -E " $n  " <<<"$out")"; done
 grep -q "excluded .*hid-a  (.*off in $HOME/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-b  (.*off in $R2/.agent/settings.json)" <<<"$out" && grep -q "excluded .*hid-c  (.*off in $R2/.agent/settings.local.json)" <<<"$out" && ok "another provider: the line names the settings file of its scope" || no "agentx settings names: $out"
@@ -342,6 +346,7 @@ out=$($FX skill accept beta hid-a 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "it is hidden (off in $HOME/.agent/settings.json)" <<<"$out" && ok "another provider: an excluded skill is not accepted" || no "agentx accept hidden: rc=$rc $out"
 out=$(fchk gamma)
 grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ! grep -q "umine2" <<<"$out" && grep -q "note: provider nouser has no user skills directory: user-level skills are not listed" <<<"$out" && ok "a provider with no user skills directory: no user place, and a note" || no "nouser: $out"
+! grep -q "to hide it" <<<"$out" && ok "a provider with no exclusion: no line to switch a skill off" || no "nouser hide offer: $out"
 grep -q "note: provider nouser has no way to switch a skill off in a settings file" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ok "a provider with no exclusion: nothing is reported excluded, and a note" || no "nouser exclusion: $out"
 jq '.layout.project_skills_dir = null' "$TOOL/lib/providers/nouser.json" > "$T/p.tmp" && mv "$T/p.tmp" "$TOOL/lib/providers/nouser.json"
 out=$($FX skill accept gamma cmine 2>&1); rc=$?
