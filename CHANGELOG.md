@@ -17,8 +17,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `project validate`, `init`, `attach` and `new` print `finding: models.provider is not set` for answers without a provider (exit status unchanged); the answers template carries an empty `models.provider`. `local prepare` skips the render check with one note when the project has no provider, and an unknown project is `no such project` (exit 2).
 - `packs unlink` also restores a backup whose link is already gone; `packs link` and `unlink` work through no-follow directory descriptors with a temporary link renamed into place, and when something fails they say where your skills are. Skills compared by `link`, the audit and `skill accept` use a stricter content hash (symlinks, the executable bit and nested files count), so an accepted record made before shows as `drifted` once. Names printed in offers are quoted and control characters are stripped; an unusual name is `skipped: unusual name`. For an unmanaged skill the audit prints the provider's line to hide it. The guard refuses the new scripts when a member runs them directly.
 
+- `qargi project attach` and `project new` take `--provider NAME` and store it as `models.provider`; without it nothing is guessed (no models key, the `finding:` line says so). `qargi migrate roles --project NAME` names the project whose provider renders the new members, and the plan refuses to add members without it.
+
 ### Changed
+- There is no implicit Claude anywhere: `agent`, `provision`, `local prepare` (the read-only barrier), session starts and `project validate` take the provider from the project's `models.provider` and, when it is unset, stop with exit 2 and `project P has no provider: set one with qargi project set P models.provider NAME`. `agent add|refresh|rename` without `--project` use the project in effect (`QARGI_PROJECT`, else the checkout); `agent for --surface cloud --project UNKNOWN` is exit 2. `project validate` still exits 0 and prints the `finding:`.
 - A project's provider is `models.provider`; every verb that takes `--target` (`packs apply`, `packs check`), `packs link` and `unlink`, `skill accept` and `marshal handoff` exit 2 when the project has no provider (`set one with qargi project set P models.provider NAME`) instead of assuming Claude; a name that is not a project says `no such project`. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
+
+### Fixed
+- `packs check --target claude-code` no longer reports "shadowing" for every rendered skill once the checkout's `.claude/skills` is the link made by `packs link`.
 
 ## [0.2.0] - 2026-11-02
 
