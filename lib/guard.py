@@ -15,7 +15,8 @@ and the manifest) and a Bash command that writes into the clone: a redirection i
 changes or removes files there, or a git command that changes the work tree or the history.
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
-  - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi discover
+  - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
+    (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink and qargi import (it restores the pack library). Read-only verbs (list, show, check,
     effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py);
@@ -98,7 +99,7 @@ GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm
 REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
-SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable"}
+SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
