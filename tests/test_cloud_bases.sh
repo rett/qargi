@@ -85,6 +85,8 @@ rm -rf "$T/c/roles/worker" "$T/c/roles/reviewer"
 refused() { # name rc output project
   [ "$2" = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
 }
+# delta names its provider (there is no default one to fall back to when a project has none)
+jq -n '{schema:1,project:"delta",repo:{url:"https://github.com/example/delta",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}},review:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/delta.json"
 out=$($DA provision plan --project delta --role reviewer 2>&1); rc=$?
 refused "provision plan: the reviewer base is refused where cloud has no barrier" "$rc" "$out" delta
 out=$($DA provision apply --project delta --role reviewer --asked x --approved y --plan z 2>&1); rc=$?

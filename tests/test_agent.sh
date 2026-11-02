@@ -7,8 +7,10 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
-unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects"
+# there is no default provider: the provider is a project's models.provider. pbase is the project in effect for the user-level members below
+jq -n '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+export QARGI_PROJECT=pbase
 A=$HOME/.claude/agents
 fm() { $DA agent for "$@" --json 2>/dev/null | jq -r .member; }   # the member name only
 
@@ -36,10 +38,10 @@ $DA agent remove judge >/dev/null 2>&1
 # a project's own member comes first inside its repository
 git init -q "$T/repo"
 jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",path:$p,long_lived:["main"]},
-  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high"}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high"}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 $DA agent add smith --abilities build --project alpha >/dev/null 2>&1 && [ -f "$T/repo/.claude/agents/smith.md" ] && ok "--project puts it in the repository" || no "project add"
 grep -qx '/.claude/agents/smith.md' "$T/repo/.git/info/exclude" && [ -z "$(git -C "$T/repo" status --porcelain)" ] && ok "and hides it from git" || no "exclude"
-[ "$(cd "$T/repo" && fm build)" = smith ] && [ "$(fm build)" = forge ] && [ "$(fm build --project alpha)" = smith ] && ok "for prefers the project's own member" || no "project for"
+[ "$(cd "$T/repo" && QARGI_PROJECT='' fm build)" = smith ] && [ "$(fm build)" = forge ] && [ "$(fm build --project alpha)" = smith ] && ok "for prefers the project's own member" || no "project for"
 
 $DA agent rename forge anvil >/dev/null 2>&1 && [ -f "$A/anvil.md" ] && [ ! -e "$A/forge.md" ] && grep -q '^name: anvil$' "$A/anvil.md" && [ "$(fm test)" = anvil ] && ok "rename moves the definition and the record" || no "rename"
 $DA agent rename anvil scribe >/dev/null 2>&1 && no "rename onto a member" || ok "rename refuses a name in use"
@@ -107,7 +109,7 @@ jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-haiku-5-5",effort:"low"}},
   profiles:{wrong:{base:"worker",abilities:["review"]}, nobase:{base:"nosuch"}, pm:{base:"worker",model:"claude-opus-5-5"},
     odd:{base:"worker",model:"claude-odd-9"}, scout:{base:"reviewer",tier:"fast",effort:"medium",purpose:"looks around"},
-    auditor:{effort:"high"}, junk:7, bad:{base:[],tier:3}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+    auditor:{effort:"high"}, junk:7, bad:{base:[],tier:3}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 e=$($DA agent for build --profile wrong --project alpha 2>&1); rc=$?
 { [ $rc = 2 ] && grep -qi 'abilit' <<<"$e"; } && ok "a project profile whose abilities differ in class from its base is refused at dispatch" || no "wrong abilities: rc=$rc $e"
 $DA agent for review --profile wrong --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "whatever the role" || no "wrong, review"
