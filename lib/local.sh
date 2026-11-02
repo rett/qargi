@@ -182,7 +182,11 @@ case $verb in
     [ "$ABILITY" != lead ] && valid_role "$ABILITY" || die "--role: one of $DA_ROLES (qargi role list)"
     CLASS=$(role_class "$ABILITY")
     # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
-    [ "$CLASS" != read-only ] || barrier_guard local "$(project_of "$REPO" "$URL")"
+    if [ "$CLASS" = read-only ]; then
+      BPJ=$(project_of "$REPO" "$URL")
+      [ -n "$BPJ" ] || { echo "qargi: no stored project has this repository, so no provider is known and a read-only role cannot start: store it (qargi project attach) and give it a provider (qargi project set PROJECT models.provider NAME)" >&2; exit 2; }
+      barrier_guard local "$BPJ"
+    fi
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory

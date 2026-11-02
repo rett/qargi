@@ -7,8 +7,10 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TABLE=$PWD/lib/model-defaults.json
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
-unset QARGI_PROJECT
 mkdir -p "$HOME" "$T/c/projects"
+# there is no default provider: the provider is a project's models.provider. pbase is the project in effect for the user-level members below
+jq -n '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+export QARGI_PROJECT=pbase
 A=$HOME/.claude/agents
 
 PROV=$PWD/lib/providers
@@ -54,7 +56,7 @@ git init -q "$T/repo"
 jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-opus-5-5",effort:"xhigh"},
          review:{base:"main",push:{mode:"none"},model:"claude-haiku-5-5",effort:"low"}},
-  lead:{model:"claude-opus-5-5",effort:"high"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+  lead:{model:"claude-opus-5-5",effort:"high"},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 PA=$T/repo/.claude/agents
 $DA agent add pb --abilities build --project alpha >/dev/null 2>&1 && grep -q '^model: claude-opus-5-5$' "$PA/pb.md" && grep -q '^effort: xhigh$' "$PA/pb.md" && ok "add --project: the project's answers win" || no "project override: $(head -5 "$PA/pb.md")"
 $DA agent add pt --abilities test --project alpha >/dev/null 2>&1 && grep -q '^model: claude-sonnet-5-5$' "$PA/pt.md" && grep -q '^effort: low$' "$PA/pt.md" && ok "a role the project does not answer uses the table" || no "project fallback"
@@ -104,8 +106,9 @@ $DA agent add res2 --abilities review --model claude-fable-5-1 --effort high >/d
 
 # problems are flagged rows, never an error
 W=$T/w; mkdir -p "$W/home" "$W/c/projects"
-wd() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s "$DA" "$@"; }
-wm() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s "$DA" agent models "$@"; }
+jq -n '{schema:1,project:"wbase",repo:{url:"https://github.com/example/wbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$W/c/projects/wbase.json"
+wd() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" "$@"; }
+wm() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" agent models "$@"; }
 out=$(wm 2>&1); rc=$?
 { [ $rc = 0 ] && grep -q 'no reviewer: review profiles cannot dispatch' <<<"$out" && grep -E '^ *reviewer ' <<<"$out" | grep -q 'no reviewer'; } && ok "models: a missing base is flagged (no reviewer)" || no "missing base: rc=$rc $out"
 wm --json | jq -e '[.warnings[] | select(.message | test("no reviewer: review profiles cannot dispatch"))] | length == 1' >/dev/null && ok "models --json: the same problem in warnings[]" || no "warnings json"
@@ -125,7 +128,7 @@ out=$(wm 2>&1); rc=$?
 wd agent add deepthought --abilities review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --abilities review --model fable >/dev/null 2>&1; wd agent add researcher --abilities review --model fable >/dev/null 2>&1
 out=$(wm 2>&1)
 { grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"
-jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},memory:{},budget_cents:500,
+jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},models:{provider:"claude"},memory:{},budget_cents:500,
   profiles:{ghost:{base:"nosuch"}, clash:{base:"worker",abilities:["review"]}, tiny:{base:"reviewer",tier:"ultra"}, odd:{base:"worker",model:"claude-odd-9"}}}' > "$W/c/projects/beta.json"
 out=$(wm --project beta 2>&1); rc=$?
 { [ $rc = 0 ] && grep -E '^ *ghost ' <<<"$out" | grep -q 'refused' && grep -E '^ *clash ' <<<"$out" | grep -q 'refused'; } && ok "models: a project profile with an unknown base or a class conflict is refused (exit 0)" || no "refused: rc=$rc $out"

@@ -83,7 +83,7 @@ than finishing on it.
 
 There are two base members, one per guard class: `worker` (abilities build, write and test; write class) and `reviewer`
 (review; read-only). Everything else is a profile, resolved at dispatch: a base, a tier (fast, balanced, deep, frontier,
-which `lib/providers/claude.json` maps to models), an effort and a purpose. The shipped profiles are `build`, `write` and
+which the project's provider file, `lib/providers/NAME.json` for its `models.provider`, maps to models; there is no default provider), an effort and a purpose. The shipped profiles are `build`, `write` and
 `test` (worker) and `review`, `auditor` and `advisor` (reviewer), plus `researcher` and `lead`. `qargi agent models
 [--project P] [--json]` shows the bases, the profiles (the project's `profiles.<name>` merged over the shipped ones) and
 the members, and flags legacy one-per-ability members (builder, writer, tester), which still resolve when no base exists.

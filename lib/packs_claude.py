@@ -278,6 +278,8 @@ def shadows(inp, packs):
     homes = [("~/.claude/skills", os.path.join(inp["home"], ".claude", "skills"))]
     if inp.get("checkout") and os.path.isabs(inp["checkout"]):
         homes.append(("the project checkout's .claude/skills", os.path.join(inp["checkout"], ".claude", "skills")))
+    render = os.path.realpath(os.path.join(inp["state"], "claude", inp["project"], ".claude", "skills")) if inp.get("state") and inp.get("project") else None
+    homes = [(lb, d) for lb, d in homes if render is None or os.path.realpath(d) != render]   # the checkout's skills directory linked to the render (packs link) is the render, not a competitor
     out = []
     for p in packs:
         if p["kind"] != "skill":

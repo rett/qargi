@@ -265,17 +265,19 @@ class Barrier(unittest.TestCase):
 
 
 class AgentAdd(Tree):
-    """qargi agent add reaches the definition through the adapter the active provider's descriptor names."""
+    """qargi agent add reaches the definition through the adapter the descriptor of the project's provider names. There is no default
+    provider: alpha, the project in effect (QARGI_PROJECT) for the user-level members, names claude unless a test says otherwise."""
 
     def setUp(self):
         super().setUp()
-        self.env = dict(os.environ, HOME=os.path.join(self.tmp, "home"), QARGI_CONF=os.path.join(self.tmp, "c"), QARGI_STATE=os.path.join(self.tmp, "s"))
+        self.env = dict(os.environ, HOME=os.path.join(self.tmp, "home"), QARGI_CONF=os.path.join(self.tmp, "c"), QARGI_STATE=os.path.join(self.tmp, "s"),
+                        QARGI_PROJECT="alpha")
         os.makedirs(os.path.join(self.env["HOME"]))
         os.makedirs(os.path.join(self.env["QARGI_CONF"], "projects"))
         self.repo = os.path.join(self.tmp, "repo")
         subprocess.run(["git", "init", "-q", self.repo], check=True)
 
-    def project(self, provider=None):
+    def project(self, provider="claude"):
         p = {"schema": 1, "project": "alpha", "repo": {"url": "https://github.com/example/alpha", "path": self.repo, "long_lived": ["main"]},
              "roles": {"build": {"base": "main", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high"}}, "memory": {}, "budget_cents": 500}
         if provider:
@@ -311,6 +313,7 @@ class AgentAdd(Tree):
             self.assertEqual(f.read(), sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only"))
 
     def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
+        self.project()
         self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build")[0], 0)
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         with open(conf) as f:
@@ -324,6 +327,7 @@ class AgentAdd(Tree):
             self.assertIn("\nmodel: sonnet\n", f.read())
 
     def test_the_reserved_names_come_from_the_descriptor(self):
+        self.project()
         self.assertEqual(self.qargi("agent", "add", "plan")[0], 1)
         self.descriptor(lambda d: d["local"].update(reserved_names=["plan", "mine"]))
         rc, out = self.qargi("agent", "add", "mine")
@@ -333,6 +337,7 @@ class AgentAdd(Tree):
         self.assertEqual(rc, 0, out)
 
     def test_a_pinned_model_is_one_that_matches_the_model_pattern(self):
+        self.project()
         self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5")[0], 0)
         self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus")[0], 0)
         rc, out = self.qargi("agent", "models", "--json")
@@ -345,7 +350,7 @@ class AgentAdd(Tree):
 
 
 class Derived(Tree):
-    """What was hardcoded for claude now follows the descriptor of the project's provider (models.provider, default claude)."""
+    """What was hardcoded for claude now follows the descriptor of the project's provider (models.provider; there is no default)."""
 
     def setUp(self):
         super().setUp()
@@ -392,8 +397,8 @@ class Derived(Tree):
             json.dump(a, f)
         return self.qargi("project", "validate", path)
 
-    def test_validate_names_the_balanced_model_of_the_default_provider_in_its_messages(self):
-        a, _ = self.answers()
+    def test_validate_names_the_balanced_model_of_the_projects_provider_in_its_messages(self):
+        a, _ = self.answers("claude")
         self.assertEqual(self.validate(a)[0], 0)
         a["roles"]["build"]["model"] = "gpt"
         rc, out = self.validate(a)
@@ -424,27 +429,56 @@ class Derived(Tree):
         a["profiles"] = {"tiny": {"base": "worker", "model": "sonnet"}}
         self.assertIn("profiles.tiny.model: z1, z2, z3, z4 or a model id like zeta-2", self.validate(a)[1])
 
-    def test_an_unknown_provider_in_the_answers_validates_as_the_default_one(self):
+    def test_an_unknown_provider_in_the_answers_validates_without_its_model_checks_and_with_a_finding(self):
         a, _ = self.answers("nope")
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("finding: models.provider 'nope' has no descriptor", out)
+        a["roles"]["build"]["model"] = "any-model-1"
         self.assertEqual(self.validate(a)[0], 0)
+
+    def test_no_provider_in_the_answers_validates_with_the_finding_and_never_names_one(self):
+        a, _ = self.answers()
+        a["models"] = {}
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("finding: models.provider is not set", out)
+        a["roles"]["build"]["model"] = "gpt"
+        self.assertEqual(self.validate(a)[0], 0)      # a model that looks like an id: only the provider's own pattern could refuse it
+        a["roles"]["build"]["model"] = "NOT AN ID"
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 1)
+        self.assertNotIn("claude", out)
 
     def test_attach_proposes_the_balanced_model_of_the_descriptor(self):
         repo = os.path.join(self.tmp, "widget")
         subprocess.run(["git", "init", "-q", repo], check=True)
-        def detect():
-            r = subprocess.run([sys.executable, "-I", os.path.join(self.tool, "lib", "attach.py"), "detect", repo, "--name", "widget", "--methodology", "gitflow"],
+        def detect(*extra):
+            r = subprocess.run([sys.executable, "-I", os.path.join(self.tool, "lib", "attach.py"), "detect", repo, "--name", "widget", "--methodology", "gitflow", *extra],
                                capture_output=True, text=True, env=self.env)
             self.assertEqual(r.returncode, 0, r.stderr)
             return json.loads(r.stdout)
-        models = {r["model"] for r in detect()["answers"]["roles"].values()}
+        # no --provider: no provider is guessed, so no model and no models key are proposed
+        a = detect()["answers"]
+        self.assertNotIn("models", a)
+        self.assertTrue(all("model" not in r for r in a["roles"].values()))
+        a = detect("--provider", "claude")["answers"]
+        self.assertEqual(a["models"], {"provider": "claude"})
+        models = {r["model"] for r in a["roles"].values()}
         self.assertEqual(models, {"claude-sonnet-5-5"})
         def mutate(d):
             d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
             d["tiers"]["balanced"] = "claude-sonnet-9-9"
         self.descriptor(mutate)
-        self.assertEqual({r["model"] for r in detect()["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
+        self.assertEqual({r["model"] for r in detect("--provider", "claude")["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
 
     def test_provision_defaults_to_the_balanced_model_of_the_projects_provider(self):
+        a, _ = self.answers("claude")
+        a["project"] = "zed"
+        for r in a["roles"].values():
+            r["model"] = ""
+        with open(os.path.join(self.env["QARGI_CONF"], "projects", "zed.json"), "w") as f:
+            json.dump(a, f)
         def agent_model(name):
             rc, out = self.qargi("provision", "plan", name)
             self.assertEqual(rc, 0, out)

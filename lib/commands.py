@@ -95,7 +95,8 @@ COMMANDS = {
                         [opt("--methodology", "the methodology (default gitflow)", "NAME", "methodology"), opt("--dir", "where to create it (default ./NAME; must be absent or empty)", "DIR", "dir"),
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
-                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"), PLAN, APPROVED],
+                         opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
+                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours."),
@@ -104,6 +105,7 @@ COMMANDS = {
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
                             opt("--url", "the repository URL, when it has no origin remote", "URL"),
+                            opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
                             PLAN, APPROVED, opt("--force", "replace the detected answers, keep the rest")],
                            desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
@@ -111,7 +113,8 @@ COMMANDS = {
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
                                  "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
-                                 "cannot (the roles' models and effort, cloud, memory, budget).")),
+                                 "cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
@@ -142,8 +145,9 @@ COMMANDS = {
                         [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
-                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents", "PROJECT", "project")],
-                        desc="Refuses a name that exists, a name that is not kebab-case, and the name of a built-in Claude Code agent type.",
+                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it", "PROJECT", "project")],
+                        desc=("The definition is rendered by the provider of the project in effect: --project, else QARGI_PROJECT, else the project whose checkout you are in. "
+                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider)."),
                         examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
                                   "qargi agent add worker    # the write-class base: build, write and test"]),
             "list": verb("List the members, their abilities and definitions"),
@@ -156,7 +160,7 @@ COMMANDS = {
                            desc="Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read-only). "
                                 "Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model-defaults.json "
                                 "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
-                                "and a provider file (lib/providers/claude.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
+                                "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the "
                                 "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
@@ -548,7 +552,7 @@ COMMANDS = {
                  "which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool "
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
                  "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
-                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider (default claude)."),
+                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2)."),
         "scripts": ["provider.py", "provider.sh"],
         "verbs": {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
@@ -822,6 +826,7 @@ COMMANDS = {
                          examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
             "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
                           [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
+                           opt("--project", "the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider)", "PROJECT", "project"),
                            opt("--apply", "apply the plan the token names"), PLAN,
                            opt("--asked", "the request, in your words, for this migration; needed when the plan changes cloud resources", "REQUEST")],
                           examples=["qargi migrate roles", "qargi migrate roles --member-names build=forge,write=scribe",
