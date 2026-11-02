@@ -235,6 +235,19 @@ for c in "qargi skill accept alpha mine" "qargi skill unaccept alpha mine --user
 done
 guard "qargi packs check --target claude-code alpha" >/dev/null && ok "the member guard allows the read-only check" || no "the guard refused check"
 
+# --- names and paths that come from the checkout and the home directory are not trusted in the offers
+rm -rf "$CS"; mkdir -p "$CS"; mk "$CS" fine
+mk "$CS" 'evil $(touch PWNED)'; mk "$CS" 'bt `touch PWNED`'; mk "$CS" "$(printf 'nl\nline')"; mk "$CS" "$(printf 'esc\033[31mred')"; mk "$US" 'user $(touch PWNED)'
+out=$(chk)
+[ "$(grep -c 'skipped: unusual name' <<<"$out")" = 5 ] && ok "an unusual name is marked 'skipped: unusual name', in the checkout and in the user directory" || no "skipped count: $out"
+! grep -E 'qargi skill (import|link|accept) ' <<<"$out" | grep -qE 'evil|PWNED|bt |nl|esc|user \$' && grep -qE "qargi skill accept alpha fine\$" <<<"$out" && ok "no offer carries an unusual name; the usual one keeps its offers" || no "offers: $out"
+! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "the section prints no control character" || no "control characters in the section"
+[ ! -e "$T/PWNED" ] && [ ! -e PWNED ] && ok "(nothing was run)" || no "a name was executed"
+mkdir -p "$T/it's a repo"; proj quoted "$T/it's a repo"; mk "$T/it's a repo/.claude/skills" mine2
+line=$($DA packs check --target claude-code quoted 2>&1 | sed -n 's/^ *to keep it in the library: qargi skill import //p')
+eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo/.claude/skills/mine2" ] && ok "a checkout path with a quote and a space is shell-quoted in the offer" || no "path quoting: $line"
+rm -rf "$T/it's a repo" "$T/c/projects/quoted.json" "$US/user "*; rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine
+
 # --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
 mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi
 PYA="python3 -I $ROOT/lib/packs_audit.py"

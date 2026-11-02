@@ -162,6 +162,21 @@ mv "$T/render.gone" "$D"
 
 # --- a project name that is not one
 $DA packs link '../x' >/dev/null 2>&1 && no "a bad project name was accepted" || ok "a bad project name is refused"
+# --- names and paths that come from the repository are not trusted in the offers: unusual names get none, the rest are quoted, nothing prints a control character
+S=$R/.claude/skills; mkdir -p "$S"
+mkskilldir() { mkdir -p "$S/$1"; printf -- '---\nname: x\ndescription: Use for x.\n---\n' > "$S/$1/SKILL.md"; }
+mkskilldir fine; mkskilldir 'evil $(touch PWNED)'; mkskilldir 'bt `touch PWNED`'; mkskilldir 'semi;rm -rf x'; mkskilldir "$(printf 'nl\nline')"; mkskilldir "$(printf 'esc\033[31mred')"; mkskilldir "sp ace"
+out=$(lk 2>&1)
+[ "$(grep -c 'skipped: unusual name' <<<"$out")" = 12 ] && ok "link plan: each unusual name is marked 'skipped: unusual name' (in the plan and in the section after it)" || no "skipped count: $out"
+! grep -E 'qargi skill (import|link) ' <<<"$out" | grep -qE 'evil|PWNED|semi|nl|esc|sp ace' && grep -qE "qargi skill import .*/fine\$" <<<"$out" && ok "link plan: no offer for an unusual name, the offer for a usual one stays" || no "offers: $out"
+! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && ok "link plan: no control character is printed" || no "control characters in the link plan"
+[ ! -e PWNED ] && ok "(nothing was run)" || no "a name was executed"
+rm -rf "$S"; mkdir -p "$T/it's a repo with space"; git init -q -b main "$T/it's a repo with space"; proj alpha "$T/it's a repo with space"
+S2=$T/it\'s\ a\ repo\ with\ space/.claude/skills; mkdir -p "$S2/mine"; printf -- '---\nname: x\ndescription: Use for x.\n---\n' > "$S2/mine/SKILL.md"
+out=$(lk 2>&1); line=$(sed -n 's/^ *to keep it: qargi skill import //p' <<<"$out")
+eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "$T/it's a repo with space/.claude/skills/mine" ] && ok "link plan: a path with a quote and spaces is shell-quoted in the offer" || no "path quoting: $line / $out"
+rm -rf "$T/it's a repo with space"; proj alpha "$R"
+
 # --- the helper script run directly, as a member could: the gates still hold (a member run never applies; the state, the checkout and the
 # provider are the environment's and the stored answers', not the inputs file's)
 PYL="python3 -I $ROOT/lib/packs_link.py"; DAA=$ROOT/bin/qargi

@@ -31,6 +31,7 @@ the configuration directory being the environment's (paths.conf(), as the shell'
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 
@@ -41,10 +42,26 @@ import provider  # noqa: E402
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 PLACES = ("checkout", "render", "user")
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean(s):
+    """s without control characters: names and paths come from the checkout, the render and the home directory."""
+    return CTRL_RE.sub("", s) if isinstance(s, str) else str(s)
+
+
+def say(text=""):
+    """print text with the control characters removed from every line (the newlines between lines stay)."""
+    print("\n".join(clean(line) for line in text.split("\n")))
+
+
+def q(s):
+    """A word safe to paste into a shell: control characters out, then quoted."""
+    return shlex.quote(clean(s))
 
 
 def die(msg):
-    print("qargi: " + msg, file=sys.stderr)
+    print("qargi: " + clean(msg), file=sys.stderr)
     sys.exit(1)
 
 
@@ -206,41 +223,45 @@ LEGEND = {"qargi": "managed by qargi", "accepted": "you accepted this content", 
 
 
 def offers(inp, e):
+    """The commands that would deal with a skill, as text to paste: every name and path quoted. A name that is not a pack name gets
+    none ("skipped: unusual name"): it could not be imported or accepted by name, and its text is the repository's, not ours."""
     p, n = inp["project"], e["name"]
-    if e["state"] == "drifted":
-        return ["    review it, then accept the new content: qargi skill accept %s %s%s" % (p, n, "" if "checkout" in e["where"] else " --user")]
-    if e["state"] != "unmanaged":
+    if e["state"] not in ("drifted", "unmanaged"):
         return []
+    if not NAME_RE.fullmatch(n):
+        return ["    skipped: unusual name (no command is offered for it)"]
+    if e["state"] == "drifted":
+        return ["    review it, then accept the new content: qargi skill accept %s %s%s" % (q(p), q(n), "" if "checkout" in e["where"] else " --user")]
     out = []
     if "checkout" in e["where"]:
         lib = e.get("lib")
         if lib is None:
-            out += ["    to keep it in the library: qargi skill import %s" % e["shown"],
-                    "                               qargi skill link %s --scope project --project %s" % (n, p)]
+            out += ["    to keep it in the library: qargi skill import %s" % q(e["shown"]),
+                    "                               qargi skill link %s --scope project --project %s" % (q(n), q(p))]
         else:
-            out += ["    a library pack of this name has other content or is not approved: qargi skill show %s" % n]
-        out += ["    or accept it as it is:      qargi skill accept %s %s" % (p, n)]
+            out += ["    a library pack of this name has other content or is not approved: qargi skill show %s" % q(n)]
+        out += ["    or accept it as it is:      qargi skill accept %s %s" % (q(p), q(n))]
     else:
-        out += ["    to accept it as it is: qargi skill accept %s %s --user" % (p, n)]
+        out += ["    to accept it as it is: qargi skill accept %s %s --user" % (q(p), q(n))]
     return out
 
 
 def cmd_report(inp):
     sk, notes = states(inp)
-    print("skills a session would load:")
+    say("skills a session would load:")
     if not sk:
-        print("  (none)")
+        say("  (none)")
     for e in sk:
         extra = ["+".join(e["where"]), (e.get("hash") or "unreadable")[:12]] + ([e["detail"]] if e["detail"] else [])
-        print("  %-9s %s  (%s)" % (e["state"], e["name"], ", ".join(extra)))
+        say("  %-9s %s  (%s)" % (e["state"], clean(e["name"]), clean(", ".join(extra))))
         for o in offers(inp, e):
-            print(o)
+            say(o)
     for n in notes:
-        print("  " + n)
+        say("  " + clean(n))
     present = [s for s in LEGEND if any(e["state"] == s for e in sk)]
     if present:
         exc = layout(inp)["exclusion"] or {}
-        print("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
+        say("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
     sys.exit(1 if any(e["state"] == "drifted" for e in sk) else 0)
 
 
@@ -266,12 +287,12 @@ def cmd_target(inp, name, scope, outfile):
     if not e.get("hash"):
         die("cannot read the content of %s" % e["shown"])
     t = {"name": name, "hash": e["hash"], "path": e["shown"], "real": e["real"], "where": e["where"], "state": e["state"], "scope": scope}
-    print("accept plan for %s: skill %s (%s, content %s)" % (inp["project"], name, e["state"], e["hash"]))
-    print("  at:    %s" % e["shown"])
-    print("  scope: %s" % ("every project (--user)" if scope == "user" else "project " + inp["project"]))
+    say("accept plan for %s: skill %s (%s, content %s)" % (clean(inp["project"]), name, e["state"], e["hash"]))
+    say("  at:    %s" % clean(e["shown"]))
+    say("  scope: %s" % ("every project (--user)" if scope == "user" else "project " + inp["project"]))
     if e["state"] == "drifted":
-        print("  %s" % e["detail"])
-    print("  accepting records this name and content so that qargi stops reporting it; qargi does not manage the skill, and a later change drifts.")
+        say("  %s" % clean(e["detail"]))
+    say("  accepting records this name and content so that qargi stops reporting it; qargi does not manage the skill, and a later change drifts.")
     with open(outfile, "w") as fh:
         json.dump(t, fh)
 

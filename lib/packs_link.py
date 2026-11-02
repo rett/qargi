@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -38,10 +39,26 @@ import provider  # noqa: E402
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 BACKUP_SUFFIX = ".qargi-backup"
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean(s):
+    """s without control characters: names and paths come from the repository and must not move the cursor, recolour or break a line."""
+    return CTRL_RE.sub("", s) if isinstance(s, str) else str(s)
+
+
+def say(text=""):
+    """print text with the control characters removed from every line (the newlines between lines stay)."""
+    print("\n".join(clean(line) for line in text.split("\n")))
+
+
+def q(s):
+    """A word safe to paste into a shell: control characters out, then quoted."""
+    return shlex.quote(clean(s))
 
 
 def die(msg):
-    print("qargi: " + msg, file=sys.stderr)
+    print("qargi: " + clean(msg), file=sys.stderr)
     sys.exit(1)
 
 
@@ -197,43 +214,45 @@ def token_of(facts):
 
 
 def show_plan(facts):
-    p, link, render, backup, rel = facts["project"], facts["link"], facts["render"], facts["backup"], facts["rel"]
+    p, link, render, backup, rel = (clean(facts[k]) for k in ("project", "link", "render", "backup", "rel"))
     if facts["verb"] == "link":
-        print("link plan for %s: the checkout %s loads the project's packs from the render" % (p, facts["checkout"]))
-        print("  link:   %s" % link)
-        print("  target: %s" % render)
+        say("link plan for %s: the checkout %s loads the project's packs from the render" % (p, clean(facts["checkout"])))
+        say("  link:   %s" % link)
+        say("  target: %s" % render)
         if facts["kind"] == "absent":
-            print("  %s does not exist: create %s (if missing) and the symbolic link" % (rel, os.path.dirname(link)))
+            say("  %s does not exist: create %s (if missing) and the symbolic link" % (rel, os.path.dirname(link)))
         else:
-            print("  %s is a real directory with %d skill%s; nothing in it is tracked by git" % (rel, len(facts["kids"]), "" if len(facts["kids"]) == 1 else "s"))
+            say("  %s is a real directory with %d skill%s; nothing in it is tracked by git" % (rel, len(facts["kids"]), "" if len(facts["kids"]) == 1 else "s"))
             how = {"same": "the library has a pack of this name with identical content",
                    "differs": "a library pack of this name has other content; the render will shadow it",
                    "new": "not in the library"}
             for name, st in facts["kids"]:
-                print("    %-8s %s  (%s)" % (st, name, how[st]))
-                if st == "new":
-                    print("             to keep it: qargi skill import %s" % os.path.join(link, name))
-                    print("                         qargi skill link %s --scope project --project %s" % (name, p))
+                say("    %-8s %s  (%s)" % (st, clean(name), how[st]))
+                if st == "new" and not NAME_RE.fullmatch(name):
+                    say("             skipped: unusual name (no offer is printed for it)")
+                elif st == "new":
+                    say("             to keep it: qargi skill import %s" % q(os.path.join(link, name)))
+                    say("                         qargi skill link %s --scope project --project %s" % (q(name), q(p)))
             if facts.get("others"):
-                print("    other entries moved with it: %s" % ", ".join(facts["others"]))
-            print("  apply moves the directory to %s (nothing is deleted) and creates the link." % backup)
-            print("  Skills that are not imported and linked stop loading in the checkout until they are; they stay in the backup.")
-        print("  undo: qargi packs unlink %s" % p)
+                say("    other entries moved with it: %s" % ", ".join(clean(o) for o in facts["others"]))
+            say("  apply moves the directory to %s (nothing is deleted) and creates the link." % backup)
+            say("  Skills that are not imported and linked stop loading in the checkout until they are; they stay in the backup.")
+        say("  undo: qargi packs unlink %s" % q(p))
     else:
-        print("unlink plan for %s: remove the symbolic link %s (it points to %s)" % (p, link, render))
+        say("unlink plan for %s: remove the symbolic link %s (it points to %s)" % (p, link, render))
         if facts["restore"]:
-            print("  and move %s back to %s" % (backup, link))
+            say("  and move %s back to %s" % (backup, link))
         else:
-            print("  there is no backup, so %s will not exist afterwards" % rel)
+            say("  there is no backup, so %s will not exist afterwards" % rel)
     hint = exclude_hint(facts["checkout"], rel) if facts["verb"] == "link" else None
     if hint:
-        print(hint)
+        say(hint)
 
 
 def cmd_plan(verb, inp, tokenfile):
     facts = classify(verb, inp)
     if facts["kind"] == "linked":
-        print("already linked: %s -> %s" % (facts["link"], facts["render"]))
+        say("already linked: %s -> %s" % (clean(facts["link"]), clean(facts["render"])))
         return
     show_plan(facts)
     with open(tokenfile, "w") as fh:
@@ -260,19 +279,19 @@ def cmd_apply(verb, inp, token):
             if moved:
                 os.rename(backup, link)
             die("cannot create the link %s: %s; nothing was changed" % (link, e.strerror or e))
-        print("linked: %s -> %s" % (link, render))
+        say("linked: %s -> %s" % (link, render))
         if moved:
-            print("backup: %s (the former %s; qargi packs unlink %s moves it back)" % (backup, facts["rel"], facts["project"]))
+            say("backup: %s (the former %s; qargi packs unlink %s moves it back)" % (backup, facts["rel"], facts["project"]))
         hint = exclude_hint(facts["checkout"], facts["rel"])
         if hint:
-            print(hint)
+            say(hint)
         return
     os.unlink(link)
     if facts["restore"]:
         os.rename(backup, link)
-        print("unlinked: %s restored from %s" % (link, backup))
+        say("unlinked: %s restored from %s" % (link, backup))
     else:
-        print("unlinked: %s removed" % link)
+        say("unlinked: %s removed" % link)
 
 
 def main():
