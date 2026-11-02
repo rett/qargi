@@ -24,7 +24,7 @@
 #   packs.sh packs load [NAME] --role R [--project P]   what the role has enabled, or one pack's text (reads only)
 #   packs.sh packs apply INSTANCE --asked "..." [--plan TOKEN --approved "..."]   (existing cloud agent)
 #   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
-#   packs.sh packs check --target claude-code PROJECT                                  drift of that render (read only)
+#   packs.sh packs check --target claude-code PROJECT                                  drift of that render, then the skills a session would load (read only)
 #   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's .claude/skills a symlink to that render, or undo it
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
@@ -164,6 +164,29 @@ cc_inputs() { # project outfile
                                               review_ok:.[0].review_ok, exists:.[0].exists, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
   rm -f "$out.rows"
 }
+# The audit of the skills a session opened in the checkout would load (lib/packs_audit.py): the shell finds the directories (scan),
+# hashes them with content_hash, adds the library's record of the same name and the acceptances file, and the script judges.
+au_inputs() { # ccinputs outfile: the Claude Code inputs plus every visible skill with its content hash
+  local cc=$1 out=$2 skills='[]' line n real h lib lh la
+  python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" scan "$cc" "$out.scan" || return 1
+  while IFS= read -r line; do
+    n=$(jq -r .name <<<"$line"); real=$(jq -r .real <<<"$line")
+    h=$(content_hash "$real" 2>/dev/null </dev/null) || h=''
+    lib=null
+    if [ -d "$PACKS/skills/$n" ] && [ ! -L "$PACKS/skills/$n" ]; then
+      lh=$(content_hash "$PACKS/skills/$n" 2>/dev/null </dev/null) || lh=''
+      la=$(jq -r '.sha256 // ""' "$(record_of "$PACKS/skills/$n")" 2>/dev/null) || la=''
+      lib=$(jq -nc --arg h "$lh" --arg a "$la" '{hash:$h, approved:$a}')
+    fi
+    skills=$(jq -c --argjson e "$line" --arg h "$h" --argjson l "$lib" '. + [$e + {hash:$h, lib:$l}]' <<<"$skills")
+  done < <(jq -c '.[]' "$out.scan")
+  jq --argjson s "$skills" --arg a "$PACKS/accepted.json" '. + {skills:$s, accepted:$a}' "$cc" > "$out"
+  rm -f "$out.scan"
+}
+au_report() { # ccinputs workdir: print the section; the status is 1 when a skill is drifted
+  if au_inputs "$1" "$2/au.json"; then python3 -I "$(dirname "$(readlink -f "$0")")/packs_audit.py" report "$2/au.json"
+  else echo "skills a session would load: cannot be listed"; return 0; fi
+}
 cc_launch() { # dir: the exact command that loads the render
   local c="claude --add-dir $1"
   [ ! -f "$1/mcp.json" ] || c="$c --mcp-config $1/mcp.json"
@@ -195,7 +218,13 @@ cc_main() { # verb: apply|check
   CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
   cc_inputs "$prj" "$CC_W/in.json"
   live=$DA_STATE/claude/$prj
-  if [ "$1" = check ]; then python3 -I "$PY" check "$CC_W/in.json"; exit $?; fi
+  if [ "$1" = check ]; then
+    # read only: the section of the skills a session would load follows; only a drifted one adds to the exit status
+    local rc=0
+    python3 -I "$PY" check "$CC_W/in.json" || rc=1
+    au_report "$CC_W/in.json" "$CC_W" || rc=1
+    exit $rc
+  fi
   python3 -I "$PY" prep "$CC_W/in.json" || exit 1
   cc_lock "$prj"
   python3 -I "$PY" plan "$CC_W/in.json" "$CC_W/token" || exit 1
