@@ -555,5 +555,178 @@ class Cli(Tree):
         self.assertEqual(json.loads(q("show", "claude", "--json")[1]), CLAUDE)
 
 
+class Layout(Tree):
+    """The optional layout object: where a provider keeps skills, agents, settings and memory, and how a session is launched."""
+
+    def with_layout(self, **over):
+        d = descriptor()
+        d.setdefault("layout", {}).update(over)
+        return d
+
+    def test_the_shipped_claude_layout_is_valid_and_complete(self):
+        lay = descriptor()["layout"]
+        self.assertEqual(fails(descriptor()), [])
+        self.assertEqual(lay["project_skills_dir"], ".claude/skills")
+        self.assertEqual(lay["user_skills_dir"], "~/.claude/skills")
+        self.assertEqual([s["scope"] for s in lay["settings_files"]], ["user", "project", "project-local"])
+        self.assertEqual(lay["exclusion"], {"file_key": "skillOverrides", "off_value": "off"})
+        self.assertEqual(lay["checkout_key"], "nonalnum-dash")
+        self.assertEqual(lay["render_target"], "claude-code")
+        self.assertIn("{render}", lay["session_launch"])
+
+    def test_a_descriptor_without_a_layout_is_valid(self):
+        d = descriptor()
+        del d["layout"]
+        self.assertEqual(fails(d), [])
+
+    def test_unknown_layout_keys_are_rejected(self):
+        self.assertTrue(any("layout.hooks_dir" in m for m in fails(self.with_layout(hooks_dir=".x"))))
+        d = self.with_layout()
+        d["layout"]["settings_files"].append({"scope": "user", "path": "~/x", "extra": 1})
+        self.assertTrue(any("layout.settings_files[3].extra" in m for m in fails(d)))
+        self.assertTrue(any("layout.exclusion.mode" in m for m in fails(self.with_layout(exclusion={"file_key": "k", "off_value": "off", "mode": 1}))))
+
+    def test_layout_field_types_and_rules_are_checked(self):
+        self.assertTrue(fails(self.with_layout(project_skills_dir=3)))
+        self.assertTrue(fails(self.with_layout(settings_files=[{"scope": "world", "path": "x"}])))
+        self.assertTrue(fails(self.with_layout(checkout_key="rot13")))
+        self.assertTrue(any("project_skills_dir" in m for m in fails(self.with_layout(project_skills_dir="/abs/skills"))))
+        self.assertTrue(any("project_skills_dir" in m for m in fails(self.with_layout(project_skills_dir="../up"))))
+        self.assertTrue(any("user_skills_dir" in m for m in fails(self.with_layout(user_skills_dir="relative/skills"))))
+        self.assertTrue(any("session_launch" in m for m in fails(self.with_layout(session_launch="agent run"))))
+        self.assertTrue(any("memory_dir" in m for m in fails(self.with_layout(memory_dir="~/m/{checkout_key}", checkout_key=None))))
+        self.assertTrue(any("exclusion" in m for m in fails(self.with_layout(settings_files=None))))
+
+    def test_null_fields_are_valid(self):
+        nulls = {k: None for k in P.LAYOUT_FIELDS}
+        self.assertEqual(fails(self.with_layout(**nulls)), [])
+
+    def test_the_accessor_expands_the_home_and_leaves_project_paths_relative(self):
+        self.put("claude", CLAUDE)
+        lay = P.layout("claude", root=self.root, home="/h/me")
+        self.assertEqual(lay["user_skills_dir"], "/h/me/.claude/skills")
+        self.assertEqual(lay["user_agents_dir"], "/h/me/.claude/agents")
+        self.assertEqual(lay["project_skills_dir"], ".claude/skills")
+        self.assertEqual([s["path"] for s in lay["settings_files"]], ["/h/me/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"])
+        self.assertEqual(lay["memory_dir"], "/h/me/.claude/projects/{checkout_key}/memory")
+        self.assertEqual(CLAUDE["layout"]["user_skills_dir"], "~/.claude/skills")        # the descriptor itself is not changed
+
+    def test_the_accessor_defaults_the_home_to_the_environment(self):
+        self.put("claude", CLAUDE)
+        old = os.environ.get("HOME")
+        os.environ["HOME"] = "/env/home"
+        try:
+            self.assertEqual(P.layout("claude", root=self.root)["user_skills_dir"], "/env/home/.claude/skills")
+        finally:
+            os.environ["HOME"] = old
+
+    def test_a_provider_without_a_layout_has_every_field_null(self):
+        d = descriptor()
+        del d["layout"]
+        self.put("bare", dict(d, provider="bare"))
+        lay = P.layout("bare", root=self.root)
+        self.assertEqual(set(lay), set(P.LAYOUT_FIELDS))
+        self.assertTrue(all(v is None for v in lay.values()))
+
+    def test_require_returns_a_value_and_refuses_a_null_field_with_the_degrade_text(self):
+        d = self.with_layout(project_skills_dir=None)
+        self.put("claude", d)
+        self.assertEqual(P.require("claude", "user_skills_dir", "x", root=self.root, home="/h"), "/h/.claude/skills")
+        with self.assertRaises(P.Unsupported) as cm:
+            P.require("claude", "project_skills_dir", "link the checkout's skills directory to the render", root=self.root)
+        self.assertEqual(str(cm.exception), "provider claude has no project skills directory: link the checkout's skills directory to the render")
+        self.assertIsInstance(cm.exception, P.ProviderError)
+
+    def test_require_skills_wants_a_verified_skills_capability(self):
+        d = descriptor()
+        self.put("claude", d)
+        P.require_skills("claude", "audit", root=self.root)
+        d["capabilities"]["skills"]["local"]["verified_on"] = None
+        self.put("claude", d)
+        with self.assertRaises(P.Unsupported) as cm:
+            P.require_skills("claude", "audit the skills a session loads", root=self.root)
+        self.assertEqual(str(cm.exception), "provider claude has no skills support on the local surface: audit the skills a session loads")
+        d["capabilities"]["skills"]["local"].update(value="no", verified_on="2026-10-31")
+        self.put("claude", d)
+        with self.assertRaises(P.Unsupported):
+            P.require_skills("claude", "x", root=self.root)
+
+    def test_checkout_key_replaces_every_non_alphanumeric(self):
+        self.assertEqual(P.checkout_key("nonalnum-dash", "/home/me/My Proj.x/a_b"), "-home-me-My-Proj-x-a-b")
+        with self.assertRaises(P.ProviderError):
+            P.checkout_key("rot13", "/x")
+
+    def test_memory_dir_is_the_template_with_the_key_filled_in(self):
+        self.put("claude", CLAUDE)
+        self.assertEqual(P.memory_dir("claude", "/home/me/p.q", root=self.root, home="/h"), "/h/.claude/projects/-home-me-p-q/memory")
+        self.put("claude", self.with_layout(memory_dir=None))
+        with self.assertRaises(P.Unsupported):
+            P.memory_dir("claude", "/x", root=self.root)
+
+    def test_the_launch_line_keeps_an_optional_group_only_when_its_file_exists(self):
+        render = os.path.join(self.tmp, "render")
+        os.makedirs(render)
+        self.put("claude", CLAUDE)
+        self.assertEqual(P.launch_line("claude", render, root=self.root), "claude --add-dir %s" % render)
+        for f in ("mcp.json", "settings.json"):
+            with open(os.path.join(render, f), "w") as fh:
+                fh.write("{}")
+        self.assertEqual(P.launch_line("claude", render, root=self.root),
+                         "claude --add-dir %s --mcp-config %s/mcp.json --settings %s/settings.json" % (render, render, render))
+        self.put("claude", self.with_layout(session_launch=None))
+        with self.assertRaises(P.Unsupported):
+            P.launch_line("claude", render, root=self.root)
+
+    def test_project_provider_reads_the_answers_and_defaults_to_claude(self):
+        self.assertEqual(P.project_provider({"models": {"provider": "other"}}), "other")
+        self.assertEqual(P.project_provider({}), "claude")
+        self.assertEqual(P.project_provider(None), "claude")
+        self.assertEqual(P.project_provider({"models": {"provider": "Bad Name"}}), "claude")
+
+
+class LayoutCli(Cli):
+    def test_layout_prints_json_or_one_field(self):
+        rc, out, _ = self.run_cli("layout", "claude", "--home", "/h")
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["user_skills_dir"], "/h/.claude/skills")
+        rc, out, _ = self.run_cli("layout", "claude", "project_skills_dir")
+        self.assertEqual((rc, out), (0, ".claude/skills\n"))
+        rc, out, _ = self.run_cli("layout", "claude", "exclusion")
+        self.assertEqual(json.loads(out), {"file_key": "skillOverrides", "off_value": "off"})
+
+    def test_a_null_field_exits_3_with_the_degrade_text(self):
+        d = descriptor()
+        d["layout"]["project_skills_dir"] = None
+        self.put("claude", d)
+        rc, out, err = self.run_cli("layout", "claude", "project_skills_dir", "--would", "link the skills")
+        self.assertEqual((rc, out), (3, ""))
+        self.assertEqual(err, "qargi: provider claude has no project skills directory: link the skills\n")
+
+    def test_check_lists_a_missing_layout_facility_among_the_degrades(self):
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertNotIn("layout:", out)
+        d = descriptor()
+        d["layout"]["session_launch"] = None
+        self.put("claude", d)
+        rc, out, _ = self.run_cli("check", "claude")
+        self.assertEqual(rc, 0)
+        self.assertRegex(out, r"layout: session_launch\s+no \(")
+
+    def test_an_unknown_field_or_provider_is_not_exit_3(self):
+        self.assertEqual(self.run_cli("layout", "claude", "nope")[0], 2)
+        self.assertEqual(self.run_cli("layout", "nope")[0], 1)
+
+    def test_require_skills_and_launch(self):
+        self.assertEqual(self.run_cli("require-skills", "claude")[0], 0)
+        rc, out, _ = self.run_cli("launch", "claude", self.tmp)
+        self.assertEqual((rc, out), (0, "claude --add-dir %s\n" % self.tmp))
+        d = descriptor()
+        d["capabilities"]["skills"]["local"]["value"] = "no"
+        self.put("claude", d)
+        rc, _, err = self.run_cli("require-skills", "claude", "--would", "audit")
+        self.assertEqual(rc, 3)
+        self.assertIn("provider claude has no skills support on the local surface: audit", err)
+
+
 if __name__ == "__main__":
     unittest.main()
