@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi marshal forget NAME`: drops this machine's accepted marshal mark of one feature, so a stale mark (left after the feature was
+  deleted or re-created on the remote) stops reporting `rollback detected`. It needs integrity advisory or strict and a mark for NAME,
+  prints the mark's revision and commit in a plan whose token covers both, applies with `--plan` and your words (audited as
+  `marshal:forget`), touches no other feature and nothing on the remote, and is refused in a member run.
 - `qargi project adopt PROJECT`: closes the safe gaps of an attached repository. With a plan token and your words it creates the missing
   long-lived branches locally (at the default branch tip; none is moved) and writes the methodology files that do not exist as one commit
   on `agent/adopt-<methodology>` cut from develop, for you to review. It never overwrites a file, never pushes, leaves the working tree
@@ -302,6 +306,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the manual page no longer name them. `install.sh --user` removes the leftover links to them.
 
 ### Fixed
+- `qargi cloud show|check|login|unset` now refuse `--profile` and `--workspace-id` (only `set` takes them) instead of ignoring them;
+  `qargi agent for --surface` completes `local` and `cloud`; the test that keeps the help in step with the scripts now also covers
+  `lib/provider.sh`.
 - Read-only cloud roles now have the `write` built-in tool off as well as `edit` (a reviewer could still create files through
   `write`); an unknown class now counts as read-only instead of write, and `worker` and `reviewer` are reserved role names.
 - `qargi provision apply` no longer fails on the second and later roles of a project: an empty package list became `[""]`, which the shared environment update rejected, before the stores were attached and the instance registered.
