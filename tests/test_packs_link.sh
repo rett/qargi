@@ -127,10 +127,13 @@ out=$(ul 2>&1) && no "unlink touched a real directory" || { grep -q "is not a sy
 lgo >/dev/null; rm "$S"; mkdir "$S"; echo mine > "$S/x"
 out=$(ul 2>&1) && no "unlink with a real directory in place and a backup" || ok "unlink refuses when a real .claude/skills took the symlink's place"
 [ -f "$S/x" ] && [ -d "$bk" ] && ok "nothing moved" || no "moved"
-rm -r "$S"; out=$(ul 2>&1) && no "unlink with a backup but no link" || { grep -q "is not a symbolic link of this project's render" <<<"$out" && ok "unlink refuses a backup whose symlink is gone" || no "backup-only message: $out"; }
-[ -d "$bk" ] && ok "the backup stays" || no "backup gone"
-out=$(lk 2>&1) && no "link over an existing backup with no directory" || ok "link refuses while a backup exists, even with nothing at .claude/skills"
-mv "$bk" "$S"; diff -r "$T/snapshot" "$S" >/dev/null && ok "(the backup is the original directory)" || no "backup content"
+rm -r "$S"; out=$(ul 2>&1); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && grep -q "is not linked, but the backup $bk exists" <<<"$out" && grep -q "move $bk back to $S; there is no link to remove" <<<"$out" && [ -d "$bk" ] && [ ! -e "$S" ] \
+  && ok "unlink plans moving a backup back when its link is gone, and changes nothing" || no "backup-only plan: $out"
+out=$(lk 2>&1) && no "link over an existing backup with no directory" || { grep -q "qargi packs unlink alpha moves it back" <<<"$out" && ok "link refuses while a backup exists, and says unlink moves it back" || no "link over backup message: $out"; }
+ul --plan 000000000000 --approved x >/dev/null 2>&1 && no "backup-only unlink with a wrong token" || ok "the backup-only unlink needs its token too"
+out=$(ul --plan "$tok" --approved x 2>&1)
+[ -d "$S" ] && [ ! -L "$S" ] && [ ! -e "$bk" ] && diff -r "$T/snapshot" "$S" >/dev/null && [ -L "$S/mine/rl" ] && grep -q "restored from $bk (there was no link)" <<<"$out" && ok "the backup-only unlink moves the backup back, byte for byte" || no "backup-only apply: $out"
 
 # --- tracked files: the repository's owner decides
 git -C "$R" add -f .claude/skills; $G -C "$R" commit -q -m "track skills"
@@ -162,6 +165,69 @@ mv "$T/render.gone" "$D"
 
 # --- a project name that is not one
 $DA packs link '../x' >/dev/null 2>&1 && no "a bad project name was accepted" || ok "a bad project name is refused"
+# --- a stop in the middle of link or unlink says where the skills are and how to get them back (faults are injected with QARGI_TEST_FAULT)
+S=$R/.claude/skills; bk=$S.qargi-backup
+mkreal() { rm -rf "$S" "$bk" "$R"/.claude/.qargi-*; mkdir -p "$S"; cp -a "$T/snapshot/." "$S/"; }
+strays() { local f; for f in "$R"/.claude/.qargi-*; do [ -e "$f" ] || [ -L "$f" ] && echo "$f"; done; }   # the temporary links beside the skills directory
+nostray() { [ -z "$(strays)" ]; }
+same_as_snapshot() { [ -d "$1" ] && [ ! -L "$1" ] && diff -r "$T/snapshot" "$1" >/dev/null && [ -L "$1/mine/rl" ]; }
+mkreal; tok=$(lplan)
+out=$(QARGI_TEST_FAULT=after-tmp-link lk --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "injected fault after-tmp-link" <<<"$out" && grep -q "was not moved; nothing was changed" <<<"$out" && same_as_snapshot "$S" && [ ! -e "$bk" ] && nostray \
+  && ok "link: a stop before the move changes nothing, and the temporary link is gone" || no "after-tmp-link: rc=$rc $out; $(ls -A "$R/.claude")"
+out=$(QARGI_TEST_FAULT=after-backup lk --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "moved and put back; nothing was changed" <<<"$out" && same_as_snapshot "$S" && [ ! -e "$bk" ] && nostray \
+  && ok "link: a stop after the move puts the directory back and says so" || no "after-backup: rc=$rc $out; $(ls -A "$R/.claude")"
+out=$(QARGI_TEST_FAULT=after-backup,rollback lk --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "your skills are in $bk and $S does not exist" <<<"$out" && grep -q "qargi packs unlink alpha" <<<"$out" && grep -q "mv $bk $S" <<<"$out" && ! grep -q "nothing was changed" <<<"$out" \
+  && [ ! -e "$S" ] && [ ! -L "$S" ] && same_as_snapshot "$bk" && nostray \
+  && ok "link: when the directory cannot be put back, the message names the backup and the recovery, never 'nothing was changed'" || no "after-backup,rollback: rc=$rc $out; $(ls -A "$R/.claude")"
+out=$(ul); tok2=$(tok_of <<<"$out")
+[ -n "$tok2" ] && grep -q "is not linked, but the backup $bk exists" <<<"$out" && ul --plan "$tok2" --approved x >/dev/null 2>&1 && same_as_snapshot "$S" && [ ! -e "$bk" ] \
+  && ok "the recovery named in the message works: unlink moves the backup back" || no "recovery by unlink: $out; $(ls -A "$R/.claude")"
+mkreal; lgo >/dev/null; [ -L "$S" ] && same_as_snapshot "$bk" || no "setup: a linked checkout with a backup"
+tok=$(ulplan)
+out=$(QARGI_TEST_FAULT=after-aside ul --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "The link is in place and nothing was changed" <<<"$out" && [ "$(readlink "$S")" = "$D/.claude/skills" ] && same_as_snapshot "$bk" && nostray \
+  && ok "unlink: a stop after the link was moved aside puts it back" || no "unlink after-aside: rc=$rc $out; $(ls -A "$R/.claude")"
+out=$(QARGI_TEST_FAULT=after-aside,rollback ul --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "your skills are in $bk" <<<"$out" && grep -q "it is at $R/.claude/.qargi-unlink\.[0-9]* and $S does not exist" <<<"$out" && ! grep -q "nothing was changed" <<<"$out" \
+  && [ ! -e "$S" ] && [ ! -L "$S" ] && [ -n "$(strays)" ] && same_as_snapshot "$bk" \
+  && ok "unlink: when the link cannot be put back, the message names where it is and where the skills are" || no "unlink after-aside,rollback: rc=$rc $out; $(ls -A "$R/.claude")"
+out=$(ul); tok2=$(tok_of <<<"$out")
+[ -n "$tok2" ] && grep -q "is not linked, but the backup" <<<"$out" && ul --plan "$tok2" --approved x >/dev/null 2>&1 && same_as_snapshot "$S" && [ ! -e "$bk" ] \
+  && ok "unlink finishes the job from there: the backup goes back" || no "unlink recovery: $out"
+rm -f "$R"/.claude/.qargi-unlink.*
+mkreal; lgo >/dev/null; tok=$(ulplan)
+out=$(QARGI_TEST_FAULT=after-restore ul --plan "$tok" --approved x 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "The skills are back at $S" <<<"$out" && grep -q "a temporary symbolic link $R/.claude/.qargi-unlink\.[0-9]* remains" <<<"$out" && same_as_snapshot "$S" && [ ! -e "$bk" ] && [ -n "$(strays)" ] \
+  && ok "unlink: a stop after the move back says the skills are back and names the leftover link" || no "unlink after-restore: rc=$rc $out; $(ls -A "$R/.claude")"
+rm -f "$R"/.claude/.qargi-unlink.*
+
+# --- the checkout changed between the plan and the act: apply works through descriptors and refuses what is no longer as planned
+held() { rm -f "$T"/hold.*; ( QARGI_TEST_HOLD=$T/hold "$@" >"$T/held.out" 2>&1; echo $? >"$T/held.rc" ) & HELD=$!; for _ in $(seq 300); do [ -e "$T/hold.reached" ] && return 0; sleep 0.1; done; return 1; }
+release() { : > "$T/hold.go"; wait "$HELD"; HRC=$(cat "$T/held.rc"); HOUT=$(cat "$T/held.out"); }
+mkreal; tok=$(lplan); mkdir -p "$T/elsewhere2"
+held lk --plan "$tok" --approved x || no "setup: the hold was not reached"
+mv "$R/.claude" "$T/claude.moved"; ln -s "$T/elsewhere2" "$R/.claude"; release
+[ "$HRC" != 0 ] && grep -q "is a symbolic link or not a directory now" <<<"$HOUT" && grep -q "nothing was changed" <<<"$HOUT" && [ -z "$(ls -A "$T/elsewhere2")" ] && same_as_snapshot "$T/claude.moved/skills" && [ ! -e "$T/claude.moved/skills.qargi-backup" ] \
+  && ok "a .claude replaced by a symbolic link between the plan and the apply is refused, and nothing is written through it" || no "swapped .claude: rc=$HRC $HOUT; $(ls -A "$T/elsewhere2")"
+rm "$R/.claude"; mv "$T/claude.moved" "$R/.claude"
+tok=$(lplan); held lk --plan "$tok" --approved x || no "setup: the hold was not reached"
+mkdir "$bk"; release
+[ "$HRC" != 0 ] && grep -q "$bk exists now" <<<"$HOUT" && same_as_snapshot "$S" && [ -z "$(ls -A "$bk")" ] && nostray \
+  && ok "a backup that appears between the plan and the apply is not replaced" || no "late backup: rc=$HRC $HOUT"
+rmdir "$bk"
+rm -rf "$S"; tok=$(lplan); held lk --plan "$tok" --approved x || no "setup: the hold was not reached"
+mkdir -p "$S"; echo mine > "$S/f"; release
+[ "$HRC" != 0 ] && grep -q "exists now (it did not when the plan was made)" <<<"$HOUT" && [ "$(cat "$S/f")" = mine ] && [ ! -L "$S" ] \
+  && ok "a directory that appears where a link was to be made is left alone" || no "late directory: rc=$HRC $HOUT"
+mkreal; lgo >/dev/null; tok=$(ulplan); held ul --plan "$tok" --approved x || no "setup: the hold was not reached"
+rm "$S"; ln -s "$T/other/skills" "$S"; release
+[ "$HRC" != 0 ] && grep -q "not a symbolic link to this project's render any more" <<<"$HOUT" && [ "$(readlink "$S")" = "$T/other/skills" ] && [ "$(cat "$T/other/skills/f")" = keep ] && same_as_snapshot "$bk" \
+  && ok "a link swapped for a foreign one before the unlink is not removed" || no "swapped link: rc=$HRC $HOUT"
+rm "$S"; mv "$bk" "$S"; rm -rf "$R"/.claude/.qargi-*
+
 # --- names and paths that come from the repository are not trusted in the offers: unusual names get none, the rest are quoted, nothing prints a control character
 S=$R/.claude/skills; mkdir -p "$S"
 mkskilldir() { mkdir -p "$S/$1"; printf -- '---\nname: x\ndescription: Use for x.\n---\n' > "$S/$1/SKILL.md"; }
