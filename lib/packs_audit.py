@@ -24,7 +24,9 @@ Called by packs.sh, which holds the facts only the shell knows (the content hash
   packs_audit.py acceptance FILE SCOPE PROJECT NAME    print one stored acceptance as JSON, or exit 1
   packs_audit.py store accept|unaccept FILE SCOPE PROJECT NAME [HASH PATH APPROVED AT]   the only writer of accepted.json
 
-Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600.
+Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600. `store` refuses in a
+member run (a directory `qargi local prepare` made, at or above the working directory) and writes only <conf>/packs/accepted.json,
+the configuration directory being the environment's (paths.conf(), as the shell's DA_CONF): another FILE is refused.
 """
 import json
 import os
@@ -33,6 +35,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import marshal_refs  # noqa: E402  (in_member_run)
+import paths  # noqa: E402
 import provider  # noqa: E402
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
@@ -321,6 +325,11 @@ def cmd_acceptance(path, scope, project, name):
 def cmd_store(verb, path, scope, project, name, rest):
     if not NAME_RE.match(name):
         die("not a skill name: " + name)
+    if marshal_refs.in_member_run():
+        die("skill %s is not available in a member run: only the lead's session records which skills are accepted; nothing was changed" % verb)
+    mine = os.path.join(os.path.abspath(paths.conf()), "packs", "accepted.json")
+    if os.path.abspath(path) != mine:
+        die("the acceptances are written to %s only, not to %s; nothing was changed" % (mine, path))
     data = read_for_write(path)
     if verb == "accept":
         h, p, approved, at = (rest + ["", "", "", ""])[:4]

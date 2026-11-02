@@ -19,7 +19,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink and qargi import (it restores the pack library). Read-only verbs (list, show, check,
     effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
-    `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py);
+    `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
+    verbs call: packs_link.py is packs link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
@@ -91,7 +92,8 @@ import glob, json, os, re, shlex, sys
 
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
-HANDOFF_SUBST = re.compile(r"marshal(?:\.sh)?[\"']*\s+[\"']*handoff[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
+HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
+AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*[^;&|\n]*(?:\$\(|`)")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
 COPIERS = {"cp", "mv", "ln", "install", "rsync"}            # the last argument is the destination
@@ -104,7 +106,9 @@ EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py")              # the command and the scripts behind the refused verbs
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py")
+# the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
+# marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file)
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 MEMORY_NOTE = "propose it in your report"
@@ -568,6 +572,8 @@ def bash_skill_refusal(command, here, depth):
     if HANDOFF_SUBST.search(command):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
+    if AUDIT_SUBST.search(command):
+        return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     segs = SEGMENT.split(SUBST.sub(";", command))
     stack = []                                           # the directories pushd left behind
     for n, seg in enumerate(segs):
@@ -645,6 +651,14 @@ def skill_verb(prog, rest):
         words = ["marshal"] + words
     if name == "feature.sh":
         words = ["feature"] + words
+    if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
+        words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
+    if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
+        if words[:1] != ["store"] and not any("$" in w or "`" in w for w in words):
+            return None
+        words = ["skill", "unaccept" if "unaccept" in words[:2] else "accept"]
+    if name == "marshal_handoff.py":
+        words = ["marshal", "handoff"] + words
     if name in ("provider.py", "provider.sh"):
         words = ["provider"] + words
     if name in ("tierplan.py", "memplan.py"):          # apply writes the tiers and plan-init/plan-move write a plan file; plan (--out) writes a plan file; show only reads
@@ -663,7 +677,8 @@ def skill_verb(prog, rest):
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
     if area == "marshal" and verb in MARSHAL_SIGNING:
         return MarshalReason("qargi marshal %s %s and is not available to an agent (only status, check and handoff without --write are); %s" % (verb, MARSHAL_SIGNING[verb], MARSHAL_NOTE))
-    if area == "marshal" and verb == "handoff" and any(t == "--write" or t.startswith("--write=") or "$" in t or "`" in t for t in rest):
+    if area == "marshal" and verb == "handoff" and any(t == "--write" or t.startswith("--write=") or ("--write".startswith(t) and len(t) > 2 and t.startswith("--"))
+                                                       or "$" in t or "`" in t for t in rest):
         return MarshalReason("qargi marshal handoff --write writes a file (or takes an argument it cannot read from a variable) and is not available to an agent (handoff without --write, status and check are); %s"
                              % MARSHAL_NOTE)
     if area == "marshal" and verb not in MARSHAL_READ:
