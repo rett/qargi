@@ -28,6 +28,7 @@
 #   packs.sh packs apply --target claude-code PROJECT [--plan TOKEN --approved "..."]   render for a local Claude Code session
 #   packs.sh packs check --target claude-code PROJECT                                  drift of that render, then the skills a session would load (read only)
 #   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's .claude/skills a symlink to that render, or undo it
+#                                                                       (the plan also lists the skills a session would load)
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
 #
 # Imported content is untrusted instructions: it is shown (files, scripts, URLs, secret findings),
@@ -269,6 +270,8 @@ cl_main() { # verb: link|unlink
   if [ -d "$DA_STATE/claude" ] && [ ! -L "$DA_STATE/claude" ]; then cc_lock "$prj"; fi
   cl_inputs "$prj" "$CC_W/in.json"
   python3 -I "$PY" plan "$1" "$CC_W/in.json" "$CC_W/token" || exit 1
+  # the plan is shown with what a session would load now (a drifted skill is not a reason to stop here: it only informs)
+  [ -n "$APPROVED" ] || au_report "$CC_W/in.json" "$CC_W" || true
   [ -s "$CC_W/token" ] || exit 0   # already linked: no plan, no token
   tok=$(cat "$CC_W/token")
   if [ -z "$APPROVED" ]; then
