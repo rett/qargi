@@ -181,5 +181,106 @@ line=$(sed -n 's/.* or mv \(.*\)\. Nothing was deleted\./\1/p' <<<"$out")
 eval "set -- $line"; [ "$#" = 2 ] && [ "$1" = "$bk" ] && [ "$2" = "$L" ] && ok "the recovery command in a message is shell-quoted" || no "recovery quoting: $line / $out"
 CO=$R L=$R/$DEST bk=$R/$DEST.qargi-backup
 
+# --- entry-symlinks: the directory stays real, one link per entry, only qargi's own links are ever touched
+M=entry-symlinks DEST=.rt2/agents SRC=$STATE/render/alpha/ent CO=$R; L=$R/$DEST
+mkdir -p "$SRC/sub" "$L"; printf 'a\n' > "$SRC/a.md"; printf 'b\n' > "$SRC/b.md"; echo s > "$SRC/sub/f"; echo h > "$SRC/.hidden"
+echo mine > "$L/mine.md"; ln -s "$T/other" "$L/ext.md"
+before=$(snap "$STATE" "$L")
+out=$(pl link 2>&1); tok=$(tok_of <<<"$out")
+[ -n "$tok" ] && grep -q "^link plan for alpha: the checkout $R loads the project's agents from the source, one link per entry" <<<"$out" && grep -qE "^ +create +a.md" <<<"$out" && grep -qE "^ +create +sub" <<<"$out" \
+  && grep -qE "^ +skipped +.hidden" <<<"$out" && grep -q "entries that are not qargi's are left alone" <<<"$out" && [ "$before" = "$(snap "$STATE" "$L")" ] && ok "entries: the plan lists each entry, skips what is hidden, prints a token and writes nothing" || no "entries plan: $out"
+out=$(ap link "$tok" 2>&1)
+[ -d "$L" ] && [ ! -L "$L" ] && [ -L "$L/a.md" ] && [ "$(readlink "$L/a.md")" = "$SRC/a.md" ] && [ -L "$L/sub" ] && [ -f "$L/sub/f" ] && [ ! -e "$L/.hidden" ] && [ ! -e "$L.qargi-backup" ] && ok "entries: the directory stays real and each entry is a link into the source, with no backup" || no "entries apply: $out"
+[ "$(cat "$L/mine.md")" = mine ] && [ ! -L "$L/mine.md" ] && [ "$(readlink "$L/ext.md")" = "$T/other" ] && ok "entries: the user's own file and a foreign link are untouched" || no "own entries changed"
+grep -q "^linked: $L: 3 entries from $SRC" <<<"$out" && grep -q "^  created a.md" <<<"$out" && grep -q "git does not ignore" <<<"$out" && grep -q "^    .rt2/agents/a.md$" <<<"$out" && ok "entries: the result is listed and the links git does not ignore are named" || no "entries output: $out"
+out=$(pl link 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^already linked: $L -> $SRC" <<<"$out" && [ -z "$(tok_of <<<"$out")" ] && ok "entries: running link again says already linked, with no token" || no "entries again: rc=$rc $out"
+out=$(ap link "$tok" 2>&1) && no "an old token was applied to a linked directory" || { grep -q "the plan changed since it was approved" <<<"$out" && ok "entries: the old token is refused once everything is linked" || no "old token: $out"; }
+# a stale link of ours goes, a source entry that is new is linked, a link of ours that points at the wrong entry is changed
+rm "$SRC/b.md"; printf 'c\n' > "$SRC/c.md"; rm "$L/a.md"; ln -s "$SRC/b.md" "$L/a.md"
+out=$(pl link 2>&1); tok=$(tok_of <<<"$out")
+grep -qE "^ +remove +b.md +\(a link of ours; the source has no entry" <<<"$out" && grep -qE "^ +create +c.md" <<<"$out" && grep -qE "^ +relink +a.md" <<<"$out" && grep -qE "^ +keep +sub" <<<"$out" && ok "entries: the plan says what is created, kept, relinked and removed" || no "mixed plan: $out"
+ap link "$tok" >/dev/null 2>&1
+[ ! -e "$L/b.md" ] && [ ! -L "$L/b.md" ] && [ "$(readlink "$L/a.md")" = "$SRC/a.md" ] && [ "$(readlink "$L/c.md")" = "$SRC/c.md" ] && [ "$(cat "$L/mine.md")" = mine ] && [ "$(readlink "$L/ext.md")" = "$T/other" ] && ok "entries: the stale link is removed, the wrong one changed, the new one made, the foreign ones kept" || no "mixed apply: $(ls -la "$L")"
+# collisions: a real entry (file or directory) or a foreign link where an entry is to go
+printf 'd\n' > "$SRC/d.md"; echo real > "$L/d.md"
+out=$(pl link 2>&1) && no "planned over a real file" || { grep -q "$L/d.md exists and is a real file that qargi did not make; refusing to replace it" <<<"$out" && ok "entries: a name collision with a real file is refused" || no "collision file: $out"; }
+rm "$L/d.md"; mkdir "$L/d.md"; out=$(pl link 2>&1) && no "planned over a real directory" || { grep -q "d.md exists and is a real directory" <<<"$out" && ok "entries: a name collision with a real directory is refused" || no "collision dir: $out"; }
+rmdir "$L/d.md"; ln -s "$T/other" "$L/d.md"; out=$(pl link 2>&1) && no "planned over a foreign link" || { grep -q "d.md is a symbolic link to $T/other, not into this project's agents source" <<<"$out" && ok "entries: a name collision with a foreign link is refused" || no "collision link: $out"; }
+[ "$(readlink "$L/d.md")" = "$T/other" ] && [ ! -e "$L/d.md.new" ] && ok "entries: a refused plan creates nothing, not even the entries that were free" || no "collision wrote"
+rm "$L/d.md"; rm "$SRC/d.md"
+# tracked
+printf 'e\n' > "$SRC/e.md"; ln -s "$SRC/e.md" "$L/e.md"; git -C "$R" add -f .rt2/agents/e.md; $G -C "$R" commit -q -m trk; rm "$L/e.md"; ln -s "$T/other" "$L/e.md"
+out=$(pl link 2>&1) && no "planned over a tracked path" || ok "entries: an entry that git tracks is refused"
+git -C "$R" rm -q --cached .rt2/agents/e.md; $G -C "$R" commit -q -m untrk; rm -f "$L/e.md" "$SRC/e.md"
+# unlink
+out=$(pl unlink 2>&1); tok=$(tok_of <<<"$out")
+grep -q "^unlink plan for alpha: remove the 3 links in $L that point into $SRC" <<<"$out" && ! grep -q "mine.md\|ext.md" <<<"$out" && ok "entries: the unlink plan names only the links of ours" || no "unlink plan: $out"
+ap unlink "$tok" >/dev/null 2>&1
+[ ! -L "$L/a.md" ] && [ ! -L "$L/c.md" ] && [ ! -L "$L/sub" ] && [ -d "$L" ] && [ "$(cat "$L/mine.md")" = mine ] && [ "$(readlink "$L/ext.md")" = "$T/other" ] && ok "entries: unlink removes our links and keeps the directory and everything else" || no "unlink apply: $(ls -la "$L")"
+out=$(pl unlink 2>&1) && no "unlinked with nothing of ours" || { grep -q "has no entry linked to the agents source of alpha; nothing to unlink" <<<"$out" && ok "entries: unlink with nothing of ours is refused" || no "unlink nothing: $out"; }
+# the directory does not exist yet: it is made; and a stop afterwards removes it again
+rm -rf "$R/.rt2"; tok=$(ptok link)
+out=$(QARGI_TEST_FAULT=after-entry-1 ap link "$tok" 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "injected fault after-entry-1" <<<"$out" && grep -q "2 changes were made and put back; nothing was changed (a missing directory above it may have been created, empty)" <<<"$out" && [ ! -e "$L" ] && [ -z "$(ls -A "$R/.rt2")" ] && ok "entries fault: a stop after the first link undoes it and the directory made for it" || no "fault absent: rc=$rc $out; $(ls -A "$R")"
+# a stop with the undo failing: where the links are is told
+mkdir -p "$L"; echo mine > "$L/mine.md"; printf "x\n" > "$SRC/it's me.md"; tok=$(ptok link)
+out=$(QARGI_TEST_FAULT=after-entry-2,rollback ap link "$tok" 2>&1); rc=$?
+n=$(find "$L" -maxdepth 1 -type l | wc -l)
+[ "$rc" != 0 ] && grep -q "2 of 2 changes could not be put back: created the link c.md; created the link a.md" <<<"$out" && grep -q "Run the same command again to finish it" <<<"$out" && ! grep -q "nothing was changed" <<<"$out" && [ "$n" = 2 ] && [ "$(cat "$L/mine.md")" = mine ] && ok "entries fault: when the undo fails, the message says what stays and how to finish" || no "fault rollback: rc=$rc n=$n $out"
+out=$(go link 2>&1); n=$(find "$L" -maxdepth 1 -type l | wc -l)
+[ "$n" = 4 ] && [ "$(readlink "$L/a.md")" = "$SRC/a.md" ] && ok "entries fault: running link again finishes the job from there" || no "finish: n=$n $out"
+# a stop during unlink puts the links back
+tok=$(ptok unlink)
+out=$(QARGI_TEST_FAULT=after-entry-2 ap unlink "$tok" 2>&1); rc=$?
+n2=$(find "$L" -maxdepth 1 -type l | wc -l)
+[ "$rc" != 0 ] && grep -q "2 changes were made and put back; nothing was changed" <<<"$out" && [ "$n2" = 4 ] && [ "$(readlink "$L/sub")" = "$SRC/sub" ] && ok "entries fault: a stop during unlink puts the removed links back" || no "unlink fault: rc=$rc n=$n2 $out"
+# names: quoted and without control characters in the plan; a name with a quote and a space is created
+out=$(pl unlink 2>&1); line=$(sed -n "s/^ *remove  *\('it.*\)\$/\1/p" <<<"$out")
+eval "set -- $line"; [ "$#" = 1 ] && [ "$1" = "it's me.md" ] && ok "entries: a name with a quote and a space is shell-quoted in the plan" || no "name quoting: $line / $out"
+ap unlink "$(ptok unlink)" >/dev/null 2>&1; rm -f "$SRC/it's me.md"
+esc=$(printf 'x\033[31mred.md'); ln -s "$SRC/gone.md" "$L/$esc"; mkdir -p "$SRC"; printf 'z\n' > "$SRC/$(printf 'y\033[31mred.md')"
+out=$(pl link 2>&1)
+! LC_ALL=C tr -d '\n' <<<"$out" | grep -q '[[:cntrl:]]' && grep -qE "^ +skipped" <<<"$out" && grep -qE "^ +remove +'?x\[31mred.md" <<<"$out" && ok "entries: a control character in a name is never printed; a source name with one is skipped" || no "control chars: $out"
+ap link "$(ptok link)" >/dev/null 2>&1; [ ! -L "$L/$esc" ] && ok "entries: a stale link of ours is removed whatever its name" || no "esc link kept"
+rm -f "$SRC"/y*; ap unlink "$(ptok unlink)" >/dev/null 2>&1
+# the plan token covers the source listing and the classification
+tok=$(ptok link)
+printf 'late\n' > "$SRC/late.md"; out=$(ap link "$tok" 2>&1) && no "a plan was applied after the source gained an entry" || { grep -q "the plan changed since it was approved" <<<"$out" && ok "token: an entry added to the source after the plan makes the plan stale" || no "token source: $out"; }
+tok=$(ptok link); echo real > "$L/late.md" ; ln -sf "$SRC/c.md" "$L/zz.md"; out=$(ap link "$tok" 2>&1) && no "a plan was applied after a collision appeared" || ok "token: a collision that appears after the plan is refused at apply"
+rm -f "$L/late.md" "$L/zz.md"; tok=$(ptok link)
+ln -s "$SRC/c.md" "$L/zz.md"; out=$(ap link "$tok" 2>&1) && no "a plan was applied after a stale link appeared" || { grep -q "the plan changed" <<<"$out" && ok "token: a stale link of ours that appears after the plan makes the plan stale" || no "token stale: $out"; }
+rm -f "$L/zz.md" "$SRC/late.md"; ap unlink "$(ptok unlink)" >/dev/null 2>&1
+# between the plan and the apply: an entry appears where a link was to go; nothing else is made
+tok=$(ptok link); held() { rm -f "$T"/hold.*; ( QARGI_TEST_HOLD=$T/hold "$@" >"$T/held.out" 2>&1; echo $? >"$T/held.rc" ) & HELD=$!; for _ in $(seq 300); do [ -e "$T/hold.reached" ] && return 0; sleep 0.1; done; return 1; }
+release() { : > "$T/hold.go"; wait "$HELD"; HRC=$(cat "$T/held.rc"); HOUT=$(cat "$T/held.out"); }
+held ap link "$tok" || no "setup: the hold was not reached"
+echo late > "$L/c.md"; release
+[ "$HRC" != 0 ] && grep -q "c.md exists now (it did not when the plan was made)" <<<"$HOUT" && [ "$(find "$L" -maxdepth 1 -type l | wc -l)" = 0 ] && [ "$(cat "$L/c.md")" = late ] && ok "entries: an entry that appears between the plan and the apply is left alone and nothing else is made" || no "late entry: rc=$HRC $HOUT; $(ls -la "$L")"
+rm -f "$L/c.md"
+tok=$(ptok link); held ap link "$tok" || no "setup: the hold was not reached"
+mv "$R/.rt2" "$T/rt2.moved"; mkdir -p "$T/elsewhere3"; ln -s "$T/elsewhere3" "$R/.rt2"; release
+[ "$HRC" != 0 ] && grep -q "is a symbolic link or not a directory now" <<<"$HOUT" && [ -z "$(ls -A "$T/elsewhere3")" ] && ok "entries: a parent that became a link between the plan and the apply is refused and nothing is written through it" || no "swapped parent: rc=$HRC $HOUT"
+rm "$R/.rt2"; mv "$T/rt2.moved" "$R/.rt2"
+rm -rf "$R/.rt2"
+# the destination or a parent is not what is expected
+tok=$(ptok link)
+mkdir -p "$R/.rt2"; ln -s "$T/outside" "$R/.rt2/agents"; out=$(pl link 2>&1) && no "linked into a destination that is a symlink" || { grep -q "$L is a symbolic link; refusing (mode entry-symlinks keeps a real directory" <<<"$out" && ok "entries: a destination that is a symbolic link is refused" || no "dest link: $out"; }
+rm "$R/.rt2/agents"; echo f > "$R/.rt2/agents"; out=$(pl link 2>&1) && no "linked into a file" || { grep -q "exists and is not a directory; refusing" <<<"$out" && ok "entries: a destination that is a file is refused" || no "dest file: $out"; }
+rm -rf "$R/.rt2"; ln -s "$T/outside" "$R/.rt2"
+out=$(pl link 2>&1) && no "linked through a symlinked parent" || { grep -q "$R/.rt2 is a symbolic link; refusing" <<<"$out" && ok "entries: a symlinked parent is refused" || no "parent link: $out"; }
+out=$(ap link "$tok" 2>&1) && no "applied through a symlinked parent" || ok "entries: a plan made before the parent became a link is refused at apply"
+out=$(pl unlink 2>&1) && no "unlinked through a symlinked parent" || ok "entries: unlink through a symlinked parent is refused"
+[ -z "$(ls -A "$T/outside")" ] && ok "entries: nothing is written outside the checkout" || no "entries wrote outside"
+rm "$R/.rt2"
+# the worktree
+CO=$T/wt; out=$(go link 2>&1)
+[ -L "$T/wt/$DEST/a.md" ] && [ ! -e "$R/.rt2" ] && ok "entries: in a worktree the links land in that worktree only" || no "entries worktree: $out"
+ap unlink "$(ptok unlink)" >/dev/null 2>&1; CO=$R
+# a member run never applies
+tok=$(ptok link); spec
+out=$(cd "$T/run/out" && python3 -I "$T/drv.py" "$ROOT/lib" apply link "$T/spec.json" "$tok" 2>&1) && no "applied in a member run" || { grep -q "is not available in a member run" <<<"$out" && [ ! -e "$R/.rt2" ] && ok "entries: a member run never applies" || no "entries member run: $out"; }
+M=dir-symlink; rm -rf "$SRC"
+
 rm -rf "$T"
 exit $fail
