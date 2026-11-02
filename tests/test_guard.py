@@ -1384,5 +1384,106 @@ class ProviderHook(unittest.TestCase):
             self.refused_before_judging(["--provider", name], name, word)
 
 
+class ProviderRoots(unittest.TestCase):
+    """The skills and agents directories the guard protects are the ones the provider definitions name (resources.skills and
+    resources.agents: project_dir and user_dir), whatever runtime they belong to."""
+    setUp_skills, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
+    FAKECLI = {"skills": {"project_dir": ".agents/skills", "user_dir": "~/.fakecli/skills", "items": "dir-per-item", "entry": "SKILL.md",
+                          "link": {"project": "dir-symlink", "user": "none"}},
+               "agents": {"project_dir": ".fake/agents", "user_dir": "~/.fake/agents", "items": "file-per-item", "ext": ".toml",
+                          "link": {"project": "none", "user": "none"}},
+               "settings": {"files": [{"scope": "user", "path": "~/.fake/config.toml", "format": "toml"}], "allow_pointer": None},
+               "memory": {"user_dir": "~/.fake/memory", "link": {"user": "dir-symlink"}}}
+
+    def setUp(self):
+        self.setUp_skills()
+        for d in ("home/.fakecli/skills/x", "home/.fake/agents", "home/.claude/plugins", "proj/.agents/skills/p", "proj/.fake/agents", "proj/.fake/other",
+                  "run/clone/.agents/skills/p"):
+            os.makedirs(os.path.join(self.t, d), exist_ok=True)
+
+    def define(self, name, resources, raw=None):
+        d = os.path.join(self.conf, "packs", "providers", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            if raw is not None:
+                f.write(raw)
+            else:
+                json.dump(runtime(name, resources=resources), f)
+
+    def refused(self, c):
+        r = self.bash(c)
+        self.assertEqual(r.returncode, 2, (c, r.stderr))
+        self.assertIn("a protected location (skills, the pack library, credentials)", r.stderr, c)
+
+    def test_without_a_definition_that_names_them_those_directories_are_not_protected(self):
+        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > ~/.fake/agents/m.toml", "echo y > %s/.agents/skills/p/SKILL.md" % self.proj,
+                  "echo y > %s/.fake/agents/m.toml" % self.proj, "rm -rf %s/.fake" % self.proj):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_the_directories_of_a_definition_in_the_library_are_protected(self):
+        self.define("fakecli", self.FAKECLI)
+        p = self.proj
+        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > $HOME/.fake/agents/m.toml", "rm -rf ~/.fakecli/skills/x", "cp a ~/.fake/agents/",
+                  "echo y > %s/.agents/skills/p/SKILL.md" % p, "echo y > %s/.fake/agents/m.toml" % p, "cd %s && echo y > .fake/agents/m.toml" % p,
+                  "touch %s/sub/.agents/skills/q" % p, "rm -rf %s/.fake" % p, "rm -rf %s/.agents" % p, "mv %s/.fake /tmp/gone" % p,
+                  "rm -rf ../../proj/.agents/skills/p", "tee %s/.fake/agents/n.toml < /dev/null" % p):
+            self.refused(c)
+        for tool, path in (("Write", "~/.fakecli/skills/x/SKILL.md"), ("Edit", "~/.fake/agents/m.toml"), ("NotebookEdit", p + "/.agents/skills/p/n.ipynb"),
+                           ("Write", p + "/.fake/agents/m.toml"), ("Write", "../../proj/.agents/skills/p/SKILL.md")):
+            r = self.call(tool, {"notebook_path" if tool == "NotebookEdit" else "file_path": path})
+            self.assertEqual(r.returncode, 2, (tool, path, r.stderr))
+            self.assertIn("a protected location", r.stderr)
+            self.assertIn("%s on %s would change" % (tool, path), r.stderr)
+
+    def test_only_those_directories_are_protected(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > ~/.fakecli/other.txt", "echo y > ~/.fake/config.toml", "echo y > ~/.fake/memory/m.md", "echo y > %s/.agents/other" % self.proj,
+                  "echo y > %s/.fake/other/x" % self.proj, "echo y > %s/agents/m.toml" % self.proj, "rm -rf %s/.fake/other" % self.proj,
+                  "ls ~/.fakecli/skills; cat %s/.fake/agents/m.toml" % self.proj):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+
+    def test_inside_the_clone_they_are_the_work_product_as_the_claude_ones_are(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > .agents/skills/p/SKILL.md", "mkdir -p .fake/agents && touch .fake/agents/m.toml", "rm -rf .agents", "rm -rf .claude"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        os.symlink(os.path.join(self.home, ".fakecli/skills"), os.path.join(self.clone, "to-user"))
+        self.refused("echo y > to-user/x/SKILL.md")                       # a link that leads out of the clone to a protected one is followed
+
+    def test_the_claude_directories_stay_protected_beside_them(self):
+        self.define("fakecli", self.FAKECLI)
+        for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json",
+                  "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
+            self.refused(c)
+        self.assertEqual(self.bash("echo x > %s/home/.claude/settings.json" % self.t).returncode, 0)
+
+    def test_a_definition_with_an_unusable_path_protects_nothing_by_it(self):
+        res = {"skills": {"project_dir": "../up/skills", "user_dir": "/etc/skills", "items": "dir-per-item"},
+               "agents": {"project_dir": "/abs/agents", "user_dir": "relative/agents", "items": "file-per-item"}, "mcp": None}
+        self.define("odd", res)
+        self.define("empty", {})
+        self.define("onlyuser", {"skills": {"user_dir": "~/.only/skills", "items": "dir-per-item"}})
+        self.assertEqual(self.bash("echo y > /etc/skills/x; echo y > relative/agents/m; echo y > %s/up/skills/x" % self.t).returncode, 0)
+        self.refused("echo y > ~/.only/skills/x")
+
+    def test_definitions_that_cannot_be_read_refuse_the_calls_that_need_the_roots(self):
+        self.define("fakecli", self.FAKECLI)
+        self.define("garbled", None, raw="{not json")
+        r = self.bash("echo y > %s/notes.txt" % self.proj)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("qargi guard: internal error", r.stderr)
+        self.assertIn("garbled", r.stderr)
+        self.assertIn("refusing the call because the guard could not check it", r.stderr)
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 2)
+        for c in ("ls -la", "cat %s/notes.txt" % self.proj, "git status", "echo hi"):              # a call that writes nowhere needs no roots
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        self.assertEqual(self.bash("git push").returncode, 2)
+
+    def test_a_name_defined_twice_refuses_too(self):
+        self.define("claude", {})                                         # the shipped provider's name
+        r = self.bash("echo y > %s/notes.txt" % self.proj)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("defined twice", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
