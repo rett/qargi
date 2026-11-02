@@ -324,6 +324,10 @@ out=$($FX packs apply --target agentx-render beta 2>&1); rc=$?
 [ "$rc" = 3 ] && grep -q "^qargi: provider agentx has no packs renderer for target agentx-render: " <<<"$out" && ok "a render target nothing renders is refused with exit 3" || no "no renderer: rc=$rc $out"
 out=$($DA packs check --target claude-code alpha 2>&1); [ -n "$out" ] && ok "claude keeps answering to --target claude-code" || no "claude target"
 # there is no default provider: answers without models.provider are refused with exit 2 and the fix, by every verb that needs one
+out=$($FX packs check beta 2>&1); rc=$?
+[ "$rc" = 1 ] && [ "$out" = "qargi: --target is agentx-render (or managed-agents / none for a cloud instance); check needs --target agentx-render" ] && ok "check without --target names the project's provider's render target, not claude-code" || no "no target message: rc=$rc $out"
+out=$($FX packs apply --target none beta 2>&1); rc=$?
+[ "$rc" = 1 ] && grep -q "^qargi: --target is agentx-render (or managed-agents" <<<"$out" && ! grep -q claude <<<"$out" && ok "--target none names the provider's render target too" || no "target none message: rc=$rc $out"
 jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 for v in "packs link alpha" "packs unlink alpha" "packs check --target claude-code alpha" "packs apply --target claude-code alpha"; do
   out=$($DA $v 2>&1); rc=$?

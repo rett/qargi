@@ -229,9 +229,14 @@ cc_lock() { # project: exclusive lock for plan+swap on PROVIDER/.PROJECT.lock; t
 }
 # --target names the render target of the project's provider (layout.render_target); the renderer for it is dispatched here. The
 # only renderer is the Claude Code one (packs_claude.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
+rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
+  local rt='' pv
+  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
+  echo "--target is ${rt:-the render target of the provider of the project} (or managed-agents / none for a cloud instance); check needs --target ${rt:-that target}"
+}
 rt_main() { # verb: apply|check with --target
   local prj=${ARGS[0]:-} rt
-  [ -n "$TARGET" ] || die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code"
+  [ -n "$TARGET" ] || die "$(rt_say "$prj")"
   [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
   prov_of "$prj"
   rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
@@ -364,7 +369,7 @@ if [ "$KIND" = packs ]; then
   case $VERB:$TARGET in
     link:*|unlink:*) cl_main "$VERB";;
     apply:|apply:managed-agents) ;;
-    apply:none) die "--target is claude-code (or managed-agents / none for a cloud instance); check needs --target claude-code";;
+    apply:none) die "$(rt_say "${ARGS[0]:-}")";;
     apply:*|check:*) rt_main "$VERB";;
   esac
   case $VERB in
