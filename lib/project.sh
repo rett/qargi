@@ -51,14 +51,27 @@ try:
     c = json.load(open(path))
 except Exception as e:
     print("not valid JSON: %s" % e); sys.exit(1)
-# the models and the model-id pattern are the project's provider's (models.provider, default claude)
-pname = (c.get("models") or {}).get("provider", "claude") if isinstance(c, dict) and isinstance(c.get("models"), dict) else "claude"
-try:
-    D = provider.load(pname)
-except provider.ProviderError:
-    D = provider.load("claude")
-model_ok = re.compile(D["model_pattern"])
-aliases = [a for a in D["aliases"].values() if a]
+# the models and the model-id pattern are the project's provider's (models.provider). There is no default provider: with none named, or
+# one that has no descriptor, the provider-specific checks (the model-id pattern and the tier names) are skipped and a model id only has
+# to look like one; the `finding:` line for that is printed by no_provider after a successful validate.
+_m = c.get("models") if isinstance(c, dict) else None
+pname = _m.get("provider") if isinstance(_m, dict) else None
+D = None
+if isinstance(pname, str) and pname.strip():
+    try:
+        D = provider.load(pname.strip())
+    except provider.ProviderError:
+        D = None
+if D:
+    model_ok = re.compile(D["model_pattern"])
+    aliases = [a for a in D["aliases"].values() if a]
+    tier_names = list(D["tiers"])
+    def like(tier): return "a model id like %s" % D["tiers"][tier]
+else:
+    model_ok = re.compile(r"[a-z0-9][a-z0-9.-]*")
+    aliases = []
+    tier_names = list(provider.TIERS)
+    def like(tier): return "a model id (lower-case letters, digits, . and -; the provider's own pattern is checked once models.provider names one)"
 bad = []
 def need(cond, msg):
     if not cond: bad.append(msg)
@@ -102,7 +115,7 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
         bad.append("%s.push.mode: only 'none' is implemented; the coordinator and agent push policies are not built yet" % p)
     po = cfg.get("packs_off", [])
     need(isinstance(po, list) and all(isinstance(x, str) and re.fullmatch(r"(skill|tool):[a-z0-9][a-z0-9-]{0,40}", x) for x in po), "%s.packs_off: a list like [\"skill:name\", \"tool:name\"]" % p)
-    need(model_ok.fullmatch(cfg.get("model", "") or ""), "%s.model: a model id like %s" % (p, D["tiers"]["balanced"]))
+    need(cfg.get("model") is None or (isinstance(cfg["model"], str) and model_ok.fullmatch(cfg["model"])), "%s.model: %s (or leave it out: the provider's balanced model)" % (p, like("balanced")))
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
     need(isinstance(cfg.get("pip", []), list), "%s.pip: a list of Python packages" % p)
@@ -115,7 +128,7 @@ prof = c.get("profiles")
 if prof is not None:
     import os
     md = json.load(open(os.path.join(sys.argv[3], "model-defaults.json")))
-    tiers_ok = D["tiers"]
+    tiers_ok = tier_names
     def role_class(rn):
         for d in (os.path.join(sys.argv[4], "roles", rn), os.path.join(sys.argv[5], "roles", rn)):
             try: return json.load(open(os.path.join(d, "role.json"))).get("class", "write")
@@ -137,7 +150,7 @@ if prof is not None:
         elif "base" in pf and pf["base"] not in bases:
             bad.append("%s.base: one of %s" % (p, ", ".join(bases))); b = None
         if "tier" in pf: need(pf["tier"] in tiers_ok, "%s.tier: one of %s" % (p, ", ".join(tiers_ok)))
-        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in aliases or model_ok.fullmatch(pf["model"])), "%s.model: %s or a model id like %s" % (p, ", ".join(aliases), D["tiers"]["balanced"]))
+        if "model" in pf: need(isinstance(pf["model"], str) and (pf["model"] in aliases or model_ok.fullmatch(pf["model"])), "%s.model: %s" % (p, (", ".join(aliases) + " or " if aliases else "") + like("balanced")))
         if "effort" in pf: need(pf["effort"] in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
         if "purpose" in pf: need(isinstance(pf["purpose"], str) and len(pf["purpose"]) <= 300, "%s.purpose: a string of at most 300 characters" % p)
         if "abilities" in pf:
@@ -174,7 +187,7 @@ teams = c.get("teams", {})
 need(isinstance(teams, dict), "teams: an object of named teams")
 if isinstance(teams, dict) and teams:
     ld = c.get("lead", {})
-    need(model_ok.fullmatch((ld or {}).get("model", "") or ""), "lead.model: a model id like %s (needed when teams are defined)" % D["tiers"]["deep"])
+    need(model_ok.fullmatch((ld or {}).get("model", "") or ""), "lead.model: %s (needed when teams are defined)" % like("deep"))
     need((ld or {}).get("effort") in efforts, "lead.effort: %s" % "|".join(sorted(efforts)))
     for tn, t in teams.items():
         p = "teams.%s" % tn
@@ -224,11 +237,19 @@ EOF
 }
 
 # no_provider FILE [NAME]: prints the finding and returns 0 when the answers name no provider (models.provider missing, not a string or blank:
-# the same rule as provider.py project_provider). Never an error: a project without one is stored and used as before, but the verbs that
-# need a provider (packs apply/check --target, packs link/unlink, skill accept, marshal handoff) refuse it with exit 2.
+# the same rule as provider.py project_provider), or name one that has no descriptor (lib/providers/NAME.json). Never an error: a project
+# without one is stored and used as before, but the verbs that need a provider (agent, provision, packs apply/check --target, packs
+# link/unlink, skill accept, marshal handoff, a session) refuse it with exit 2, and validate skips the provider's model checks.
 no_provider() {
-  jq -e '(if (.models | type) == "object" then .models.provider else null end) as $p | ($p | type) != "string" or ($p | test("^\\s*$"))' "$1" >/dev/null 2>&1 || return 1
-  echo "finding: models.provider is not set and there is no default provider: qargi project set ${2:-$(jq -r '.project // "NAME"' "$1")} models.provider PROVIDER (qargi provider list)"
+  local p
+  if jq -e '(if (.models | type) == "object" then .models.provider else null end) as $p | ($p | type) != "string" or ($p | test("^\\s*$"))' "$1" >/dev/null 2>&1; then
+    echo "finding: models.provider is not set and there is no default provider: qargi project set ${2:-$(jq -r '.project // "NAME"' "$1")} models.provider PROVIDER (qargi provider list)"
+    return 0
+  fi
+  p=$(jq -r '.models.provider | strings | gsub("^\\s+|\\s+$"; "")' "$1" 2>/dev/null) || return 1
+  case $p in schema|adapter-schema) ;; *) [ ! -f "$(dirname "$(readlink -f "$0")")/providers/$p.json" ] || return 1;; esac
+  [ -n "$p" ] || return 1
+  echo "finding: models.provider '$p' has no descriptor under lib/providers/ (qargi provider list): its model ids and tiers were not checked"
 }
 
 case $verb in

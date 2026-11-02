@@ -429,9 +429,26 @@ class Derived(Tree):
         a["profiles"] = {"tiny": {"base": "worker", "model": "sonnet"}}
         self.assertIn("profiles.tiny.model: z1, z2, z3, z4 or a model id like zeta-2", self.validate(a)[1])
 
-    def test_an_unknown_provider_in_the_answers_validates_as_the_default_one(self):
+    def test_an_unknown_provider_in_the_answers_validates_without_its_model_checks_and_with_a_finding(self):
         a, _ = self.answers("nope")
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("finding: models.provider 'nope' has no descriptor", out)
+        a["roles"]["build"]["model"] = "any-model-1"
         self.assertEqual(self.validate(a)[0], 0)
+
+    def test_no_provider_in_the_answers_validates_with_the_finding_and_never_names_one(self):
+        a, _ = self.answers()
+        a["models"] = {}
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("finding: models.provider is not set", out)
+        a["roles"]["build"]["model"] = "gpt"
+        self.assertEqual(self.validate(a)[0], 0)      # a model that looks like an id: only the provider's own pattern could refuse it
+        a["roles"]["build"]["model"] = "NOT AN ID"
+        rc, out = self.validate(a)
+        self.assertEqual(rc, 1)
+        self.assertNotIn("claude", out)
 
     def test_attach_proposes_the_balanced_model_of_the_descriptor(self):
         repo = os.path.join(self.tmp, "widget")
