@@ -1410,7 +1410,7 @@ def cmd_of(args):
     name is resolved; a notice goes to stderr when it was); without, what models.provider says when it is one name."""
     opts, pos, i = {}, [], 0
     while i < len(args):
-        if args[i] in ("--conf", "--surface") and i + 1 < len(args):
+        if args[i] in ('--conf', "--surface") and i + 1 < len(args):
             opts[args[i]], i = args[i + 1], i + 2
         else:
             pos.append(args[i])
@@ -1418,7 +1418,7 @@ def cmd_of(args):
     if len(pos) != 1 or "--surface" in opts and opts["--surface"] not in SURFACES or any(a.startswith("--") for a in pos):
         print("usage: qargi provider of PROJECT [--conf DIR] [--surface local|cloud]", file=sys.stderr)
         return 2
-    project, conf, surface = pos[0], opts.get("--conf"), opts.get("--surface")
+    project, conf, surface = pos[0], opts.get('--conf'), opts.get("--surface")
     if surface is None:
         print(provider_of_project(project, conf))
         return 0
