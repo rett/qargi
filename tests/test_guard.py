@@ -613,6 +613,41 @@ class Marshal(unittest.TestCase):
                  "qargi marshal Claim", "qargi marshal CLAIM", "qargi marshal STATUS", "qargi marshal Status", "qargi marshal statuss", "qargi marshal check2"]
         self.refused(cmds)
 
+    def test_handoff_is_a_read_for_a_member_until_it_is_given_a_file_to_write(self):
+        """marshal handoff reads like status and check do; only --write (a file is made) is refused, however it is run, and so is an
+        argument the guard cannot read because a variable holds it."""
+        for c in ("qargi marshal handoff", "qargi marshal handoff f", "qargi marshal handoff f --project proj", "qargi marshal handoff f --json",
+                  "qargi marshal handoff --as me", "/opt/q/bin/qargi marshal handoff f", "bin/qargi marshal handoff f --json", "env FOO=1 qargi marshal handoff f",
+                  "bash -c 'qargi marshal handoff f'", "bash lib/marshal.sh handoff f", "echo $(qargi marshal handoff f)", "ls; qargi marshal handoff f",
+                  "qargi marshal handoff f | head -5", "timeout 5 qargi marshal handoff f --json"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        cmds = []
+        for w in ("--write note.md", "--write /tmp/x/note.md", "--write=note.md", "--json --write note.md", "f --write note.md", "f --project proj --write note.md"):
+            cmds += ["qargi marshal handoff %s" % w, "/opt/q/bin/qargi marshal handoff %s" % w, "bin/qargi marshal handoff %s" % w,
+                     "env FOO=1 qargi marshal handoff %s" % w, "sudo qargi marshal handoff %s" % w, "bash -c 'qargi marshal handoff %s'" % w,
+                     "sh -c \"qargi marshal handoff %s\"" % w, "eval 'qargi marshal handoff %s'" % w, "echo $(qargi marshal handoff %s)" % w,
+                     "true && qargi marshal handoff %s" % w, "ls; qargi marshal handoff %s" % w, "qargi 'marshal' 'handoff' %s" % w,
+                     "bash lib/marshal.sh handoff %s" % w, "lib/marshal.sh marshal handoff %s" % w, "nohup qargi marshal handoff %s" % w]
+        cmds += ["qargi marshal handoff f '--write' note.md", "qargi marshal handoff f \"--write\" note.md", "qargi marshal handoff f $OPT note.md",
+                 "qargi marshal handoff f ${OPT:---json}", "qargi marshal handoff f `echo --json`", "v=handoff; qargi marshal $v f",
+                 "qargi marshal handoff f $(echo --write) note.md", "qargi marshal handoff f `echo --write` note.md", "bash -c 'qargi marshal handoff f $(echo --write) x'",
+                 "qargi marshal handoff $(echo f --write note.md)", "bash lib/marshal.sh handoff f $(echo --write) note.md"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr)
+            self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
+        res = self.bash("qargi marshal handoff f --write note.md")
+        self.assertIn("handoff --write writes a file", res.stderr)
+
+    def test_the_other_marshal_verbs_are_still_refused_with_handoff_named_as_a_read(self):
+        res = self.bash("qargi marshal claim f")
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("only status, check and handoff without --write are", res.stderr)
+        self.assertEqual(self.bash("qargi marshal handoffs f").returncode, 2)
+        self.assertEqual(self.bash("qargi marshal Handoff f").returncode, 2)
+
     def test_feature_verbs_that_write_the_marshal_are_refused_however_they_are_run(self):
         """feature start, finish and verify create, finish and renew the lead's record (marshal_start, marshal_finish and the
         renewer): a member whose working directory lies outside its run would push them with the lead's credentials."""
