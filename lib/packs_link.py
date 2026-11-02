@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Link a project's repository to the Claude Code render of its packs.
+"""Link a project's repository to the render of its packs for the project's provider.
 
-`qargi packs apply --target claude-code PROJECT` renders the project's skills under <state>/claude/PROJECT/.claude/skills.
-Loading them needed `claude --add-dir`. `packs link` instead makes CHECKOUT/.claude/skills a symbolic link to that
-directory, so a session opened in the checkout loads the packs by itself; `packs unlink` undoes it.
+`qargi packs apply --target T PROJECT` renders the project's skills under <state>/PROVIDER/PROJECT/<skills dir>, where T is the
+render target and <skills dir> the project skills directory of the provider's layout (lib/providers/NAME.json, read through
+lib/provider.py; nothing here names a provider). Loading them needed the provider's launch command. `packs link` instead makes
+CHECKOUT/<skills dir> a symbolic link to that directory, so a session opened in the checkout loads the packs by itself;
+`packs unlink` undoes it.
 
 Called by packs.sh, which holds the project's lock and gathers the facts only the shell knows into an inputs file:
-  {project, state, checkout, kids:[{name, hash, lib}]}
-where kids are the skill directories of a real CHECKOUT/.claude/skills (hash: their content hash; lib: the content hash of
-the library pack of that name, or null).
+  {project, provider, state, checkout, kids:[{name, hash, lib}]}
+where kids are the skill directories of a real CHECKOUT/<skills dir> (hash: their content hash; lib: the content hash of
+the library pack of that name, or null). A provider without a project skills directory, or without verified skills support,
+is refused with exit status 3.
 
   packs_link.py plan  link|unlink INPUTS TOKENFILE   print the plan and write the plan token (none when there is nothing to do)
   packs_link.py apply link|unlink INPUTS TOKEN       re-plan, refuse if the plan changed, then change the file system
 
-The only paths written are CHECKOUT/.claude (when missing), CHECKOUT/.claude/skills and CHECKOUT/.claude/skills.qargi-backup.
+The only paths written are the directories above the link inside the checkout (when missing), the link itself and the backup
+of a real directory, beside it (<skills dir>.qargi-backup).
 Nothing is ever deleted except the symbolic link this tool made.
 """
 import hashlib
@@ -23,8 +27,11 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import provider  # noqa: E402
+
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
-BACKUP = "skills.qargi-backup"
+BACKUP_SUFFIX = ".qargi-backup"
 
 
 def die(msg):
@@ -45,27 +52,34 @@ def linked(path, render):
     return os.path.islink(path) and os.path.realpath(path) == os.path.realpath(render)
 
 
+def skills_dir(inp):
+    """The project skills directory of the project's provider (relative to a checkout or a render), or exit 3."""
+    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render")
+    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render")
+
+
 def render_path(inp):
     project = inp["project"]
     if not NAME_RE.match(project) or ".." in project:
         die("not a project name: " + project)
-    return os.path.join(os.path.abspath(inp["state"]), "claude", project, ".claude", "skills")
+    return os.path.join(os.path.abspath(inp["state"]), inp["provider"], project, skills_dir(inp))
 
 
 def render_ready(inp, render):
     """Refuse a render that is missing or reached through a symbolic link inside the state directory."""
-    state = os.path.abspath(inp["state"])
-    p = state
-    for part in ("claude", inp["project"], ".claude", "skills"):
+    p = os.path.abspath(inp["state"])
+    for part in [inp["provider"], inp["project"]] + skills_dir(inp).split("/"):
         p = os.path.join(p, part)
         if os.path.islink(p):
             die("%s is a symbolic link; refusing" % p)
     if not os.path.isdir(render):
-        die("there is no render of %s yet: run qargi packs apply --target claude-code %s first" % (inp["project"], inp["project"]))
+        target = provider.layout(inp["provider"])["render_target"]
+        how = "run qargi packs apply --target %s %s first" % (target, inp["project"]) if target else "qargi does not make one for this provider"
+        die("there is no render of %s yet: %s" % (inp["project"], how))
 
 
 def locate(inp):
-    """(checkout realpath, .claude/skills path, backup path) of a checkout that is the top of a git work tree."""
+    """(checkout realpath, skills path, backup path) of a checkout that is the top of a git work tree."""
     co = inp.get("checkout") or ""
     if not co:
         die("project %s has no checkout (repo.path is empty): qargi project set %s repo.path DIR" % (inp["project"], inp["project"]))
@@ -75,36 +89,41 @@ def locate(inp):
     rc, top = git(base, "rev-parse", "--show-toplevel")
     if rc != 0 or os.path.realpath(top.strip()) != base:
         die("%s is not the top of a git work tree; refusing" % co)
-    cdir = os.path.join(base, ".claude")
-    if os.path.islink(cdir):
-        die("%s is a symbolic link; refusing (the link would be created outside the checkout's own files)" % cdir)
-    if os.path.lexists(cdir) and not os.path.isdir(cdir):
-        die("%s exists and is not a directory; refusing" % cdir)
-    return base, os.path.join(cdir, "skills"), os.path.join(cdir, BACKUP)
+    parts = skills_dir(inp).split("/")
+    cdir = base
+    for part in parts[:-1]:
+        cdir = os.path.join(cdir, part)
+        if os.path.islink(cdir):
+            die("%s is a symbolic link; refusing (the link would be created outside the checkout's own files)" % cdir)
+        if os.path.lexists(cdir) and not os.path.isdir(cdir):
+            die("%s exists and is not a directory; refusing" % cdir)
+    link = os.path.join(cdir, parts[-1])
+    return base, link, link + BACKUP_SUFFIX
 
 
-def tracked(base):
-    rc, out = git(base, "ls-files", "--", ".claude/skills")
+def tracked(base, rel):
+    rc, out = git(base, "ls-files", "--", rel)
     return rc == 0 and out.strip() != ""
 
 
-def exclude_hint(base):
-    """A line telling the owner to ignore .claude/skills, or None when git already ignores it. Nothing is edited."""
-    rc, _ = git(base, "check-ignore", "-q", "--", ".claude/skills")
+def exclude_hint(base, rel):
+    """A line telling the owner to ignore the skills directory, or None when git already ignores it. Nothing is edited."""
+    rc, _ = git(base, "check-ignore", "-q", "--", rel)
     if rc == 0:
         return None
     rc, path = git(base, "rev-parse", "--git-path", "info/exclude")
     path = path.strip() if rc == 0 and path.strip() else ".git/info/exclude"
     if not os.path.isabs(path):
         path = os.path.join(base, path)
-    return "warning: git does not ignore .claude/skills, so the link shows up as untracked; to keep it out of git status add this line to %s:\n    .claude/skills" % path
+    return "warning: git does not ignore %s, so the link shows up as untracked; to keep it out of git status add this line to %s:\n    %s" % (rel, path, rel)
 
 
 def classify(verb, inp):
     """The facts of the plan (a JSON-able dict) for verb link|unlink; refuses what must not be touched."""
     render = render_path(inp)
     base, link, backup = locate(inp)
-    facts = {"verb": verb, "project": inp["project"], "checkout": base, "link": link, "render": render, "backup": backup, "kids": []}
+    rel = skills_dir(inp)
+    facts = {"verb": verb, "project": inp["project"], "checkout": base, "link": link, "render": render, "backup": backup, "rel": rel, "kids": []}
     present = os.path.lexists(link)
     if verb == "link":
         render_ready(inp, render)
@@ -113,9 +132,9 @@ def classify(verb, inp):
                 facts["kind"] = "linked"
                 return facts
             die("%s is a symbolic link to %s, not to this project's render; refusing to replace it" % (link, os.readlink(link)))
-        if tracked(base):
-            die("files under .claude/skills are tracked by git in %s: the repository's owner decides how its skills are loaded; "
-                "qargi does not touch tracked files" % base)
+        if tracked(base, rel):
+            die("files under %s are tracked by git in %s: the repository's owner decides how its skills are loaded; "
+                "qargi does not touch tracked files" % (rel, base))
         if os.path.lexists(backup):
             die("%s already exists; move it away first (qargi never overwrites or deletes a backup)" % backup)
         if not present:
@@ -142,7 +161,7 @@ def classify(verb, inp):
         facts["restore"] = os.path.lexists(backup)
         return facts
     if present:
-        die("%s is not a symbolic link (a real .claude/skills has taken its place); refusing to touch it" % link)
+        die("%s is not a symbolic link (a real %s has taken its place); refusing to touch it" % (link, rel))
     if os.path.lexists(backup):
         die("%s exists but %s is not a symbolic link of this project's render; refusing to move it" % (backup, link))
     die("%s is not linked to the render of %s; nothing to unlink" % (link, inp["project"]))
@@ -153,15 +172,15 @@ def token_of(facts):
 
 
 def show_plan(facts):
-    p, link, render, backup = facts["project"], facts["link"], facts["render"], facts["backup"]
+    p, link, render, backup, rel = facts["project"], facts["link"], facts["render"], facts["backup"], facts["rel"]
     if facts["verb"] == "link":
         print("link plan for %s: the checkout %s loads the project's packs from the render" % (p, facts["checkout"]))
         print("  link:   %s" % link)
         print("  target: %s" % render)
         if facts["kind"] == "absent":
-            print("  .claude/skills does not exist: create %s (if missing) and the symbolic link" % os.path.dirname(link))
+            print("  %s does not exist: create %s (if missing) and the symbolic link" % (rel, os.path.dirname(link)))
         else:
-            print("  .claude/skills is a real directory with %d skill%s; nothing in it is tracked by git" % (len(facts["kids"]), "" if len(facts["kids"]) == 1 else "s"))
+            print("  %s is a real directory with %d skill%s; nothing in it is tracked by git" % (rel, len(facts["kids"]), "" if len(facts["kids"]) == 1 else "s"))
             how = {"same": "the library has a pack of this name with identical content",
                    "differs": "a library pack of this name has other content; the render will shadow it",
                    "new": "not in the library"}
@@ -180,8 +199,8 @@ def show_plan(facts):
         if facts["restore"]:
             print("  and move %s back to %s" % (backup, link))
         else:
-            print("  there is no backup, so .claude/skills will not exist afterwards")
-    hint = exclude_hint(facts["checkout"]) if facts["verb"] == "link" else None
+            print("  there is no backup, so %s will not exist afterwards" % rel)
+    hint = exclude_hint(facts["checkout"], rel) if facts["verb"] == "link" else None
     if hint:
         print(hint)
 
@@ -216,8 +235,8 @@ def cmd_apply(verb, inp, token):
             die("cannot create the link %s: %s; nothing was changed" % (link, e.strerror or e))
         print("linked: %s -> %s" % (link, render))
         if moved:
-            print("backup: %s (the former .claude/skills; qargi packs unlink %s moves it back)" % (backup, facts["project"]))
-        hint = exclude_hint(facts["checkout"])
+            print("backup: %s (the former %s; qargi packs unlink %s moves it back)" % (backup, facts["rel"], facts["project"]))
+        hint = exclude_hint(facts["checkout"], facts["rel"])
         if hint:
             print(hint)
         return
@@ -236,6 +255,11 @@ def main():
         with open(sys.argv[3]) as fh:
             inp = json.load(fh)
         (cmd_plan if sys.argv[1] == "plan" else cmd_apply)(sys.argv[2], inp, sys.argv[4])
+    except provider.Unsupported as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        sys.exit(3)
+    except provider.ProviderError as e:
+        die(str(e))
     except OSError as e:
         die("%s: %s" % (e.filename or "file system error", e.strerror or e))
 
