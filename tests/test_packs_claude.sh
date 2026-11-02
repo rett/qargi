@@ -117,6 +117,25 @@ rm "$T/s/claude"
 $DA packs apply --target nope alpha >/dev/null 2>&1 && no "unknown target accepted" || ok "an unknown target is refused"
 $DA packs check alpha >/dev/null 2>&1 && no "check without a target" || ok "check needs a target"
 
+# --- compatible_providers: a pack the project's provider cannot use is left out of the render, with a note, never rendered silently
+mkp() { $DA skill new "$1" --compatible "$2" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; $DA skill link "$1" --scope project --project alpha >/dev/null; }
+mkp s-other elsewhere; mkp s-rt claude; mkp s-mix "elsewhere,claude"
+out=$(apply)
+grep -q "skipped skill s-other: not compatible with claude (it declares elsewhere)" <<<"$out" && ok "the plan says which pack was skipped and why" || no "skip line in the plan: $out"
+grep -q "added .*skill s-rt" <<<"$out" && grep -q "added .*skill s-mix" <<<"$out" && ! grep -q "added .*skill s-other" <<<"$out" && ok "a pack that names the project's runtime is rendered, one that does not is not" || no "plan packs: $out"
+go >/dev/null
+[ -f "$D/.claude/skills/s-rt/SKILL.md" ] && [ -f "$D/.claude/skills/s-mix/SKILL.md" ] && [ ! -e "$D/.claude/skills/s-other" ] && ! jq -e '[.packs[].name]|index("s-other")' "$D/MANIFEST.json" >/dev/null && ok "the skipped pack is not in the render or its manifest" || no "render has s-other"
+out=$(check 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^note: skipped skill s-other: not compatible with claude" <<<"$out" && ok "check passes and notes the skip (a skip is not a finding)" || no "check (rc=$rc): $out"
+$DA skill effective alpha build | grep -q "^skipped skill s-other: not compatible with claude" && ok "effective shows the skipped pack" || no "effective: $($DA skill effective alpha build)"
+# the pack's declaration changes: the render is then stale and says so
+jq '.compatible_providers = ["claude"]' "$T/c/packs/skills/s-other/.pack.json" > "$T/rec.tmp" && cp "$T/rec.tmp" "$T/c/packs/skills/s-other/.pack.json"
+out=$(check 2>&1) && no "check passed after a declaration was edited by hand" || { grep -q "skill:s-other: library drift\|skill s-other" <<<"$out" && ok "a declaration edited by hand is drift, not a quiet skip or a quiet render" || no "edited declaration: $out"; }
+jq '.compatible_providers = ["elsewhere"]' "$T/c/packs/skills/s-other/.pack.json" > "$T/rec.tmp" && cp "$T/rec.tmp" "$T/c/packs/skills/s-other/.pack.json"
+check >/dev/null 2>&1 && ok "put back, check passes" || no "check after putting the declaration back"
+$DA skill unlink s-other --scope project --project alpha >/dev/null; $DA skill unlink s-rt --scope project --project alpha >/dev/null; $DA skill unlink s-mix --scope project --project alpha >/dev/null; go >/dev/null
+rm -rf "$T/s/claude"   # the next case needs no render of alpha
+
 # --- the cloud path does not take the new route
 $DA packs apply nobody --asked x --target managed-agents >/dev/null 2>&1; [ ! -e "$T/s/claude/alpha" ] && ok "managed-agents still means the cloud path" || no "cloud route"
 exit $fail
