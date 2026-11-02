@@ -3,7 +3,7 @@
 renderer and the `command` renderer. Hermetic: every file is made in a temporary directory.
 Run: python3 tests/test_render.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import hashlib, json, os, random, sys, tomllib, unittest
+import hashlib, json, os, random, shutil, subprocess, sys, tempfile, time, tomllib, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -681,6 +681,279 @@ class MapRenderer(unittest.TestCase):
     def test_the_result_is_valid_for_the_cli_json(self):
         r = self.render()
         self.assertEqual(json.loads(json.dumps(r)), r)
+
+
+# ---------------------------------------------------------------- the command renderer
+
+class CommandBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="render.")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = os.path.join(self.tmp, "pack")
+        os.makedirs(os.path.join(self.root, "renderers"))
+        self.n = 0
+
+    def script(self, body, name=None, mode=0o755, shebang=True):
+        """An executable python script in the pack; returns its path relative to the root."""
+        self.n += 1
+        rel = name or "renderers/r%d" % self.n
+        with open(os.path.join(self.root, rel), "w") as f:
+            f.write(("#!%s\n" % sys.executable if shebang else "") + body)
+        os.chmod(os.path.join(self.root, rel), mode)
+        return rel
+
+    def spec(self, rel, *args, **kw):
+        s = {"engine": "command", "command": [rel] + list(args), "path": "{name}.out"}
+        s.update(kw)
+        return s
+
+    def run_(self, body, d=None, **kw):
+        return R.render_command(defn() if d is None else d, self.spec(self.script(body), *kw.pop("args", ())), root=self.root, **kw)
+
+    def refuses(self, match, *a, **kw):
+        with self.assertRaisesRegex(R.RenderError, match):
+            self.run_(*a, **kw)
+
+    ECHO = "import json, sys\nd = json.load(sys.stdin)\nprint('name=' + d['definition']['name'])\n"
+
+
+class CommandRenderer(CommandBase):
+
+    def test_the_output_is_the_file(self):
+        r = self.run_(self.ECHO)
+        self.assertEqual(r["content"], "name=build-1\n")
+        self.assertEqual(r["path"], "build-1.out")
+        self.assertEqual(r["sha256"], hashlib.sha256(b"name=build-1\n").hexdigest())
+        self.assertRegex(r["inputs_hash"], r"^[0-9a-f]{64}$")
+        self.assertEqual(sorted(r), ["content", "inputs_hash", "notes", "path", "sha256"])
+
+    def test_stdin_holds_the_definition_the_spec_and_what_the_resolver_said(self):
+        body = "import json, sys\nsys.stdout.write(json.dumps(json.load(sys.stdin), sort_keys=True))\n"
+        spec = self.spec(self.script(body))
+        r = R.render_command(defn(), spec, root=self.root, resolver=resolver)
+        got = json.loads(r["content"])
+        self.assertEqual(got["definition"], defn())
+        self.assertEqual(got["spec"], spec)
+        self.assertEqual(got["resolved"], {"model": "m-bal", "effort": "hi"})
+        got = json.loads(R.render_command(defn(), spec, root=self.root)["content"])
+        self.assertEqual(got["resolved"], {})
+
+    def test_no_shell_arguments_are_literal(self):
+        body = "import sys\nprint(sys.argv[1] + '|' + sys.argv[2])\n"
+        evil = "$(touch %s); `x` * ;" % os.path.join(self.tmp, "pwned")
+        r = R.render_command(defn(), self.spec(self.script(body), evil, "a b"), root=self.root)
+        self.assertEqual(r["content"], evil + "|a b\n")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "pwned")))
+
+    def test_the_environment_is_a_fixed_small_set_and_the_cwd_a_temporary_directory(self):
+        body = "import json, os\nprint(json.dumps({'env': sorted(os.environ), 'cwd': os.getcwd(), 'home': os.environ['HOME'], 'path': os.environ['PATH']}))\n"
+        with mock.patch.dict(os.environ, {"QARGI_SECRET": "x", "ANTHROPIC_API_KEY": "k", "PATH": "/nonexistent", "PYTHONPATH": "/x", "LD_PRELOAD": "/x"}):
+            got = json.loads(self.run_(body)["content"])
+        self.assertEqual(got["env"], sorted(R.CHILD_ENV_KEYS))
+        self.assertNotEqual(got["path"], "/nonexistent")
+        self.assertEqual(got["home"], got["cwd"])
+        self.assertNotEqual(os.path.realpath(got["cwd"]), os.path.realpath(os.getcwd()))
+        self.assertFalse(os.path.exists(got["cwd"]), "the temporary directory is removed")
+
+    def test_exit_status_not_zero_is_an_error_with_the_stderr(self):
+        self.refuses("status 3.*boom: no catalog", "import sys\nprint('partial')\nsys.stderr.write('boom: no catalog\\n')\nsys.exit(3)\n")
+        self.refuses("signal", "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n")
+
+    def test_timeout(self):
+        t0 = time.monotonic()
+        with self.assertRaisesRegex(R.RenderError, "timed out"):
+            R.render_command(defn(), self.spec(self.script("import time\ntime.sleep(30)\n"), timeout=0.5), root=self.root)
+        self.assertLess(time.monotonic() - t0, 10)
+        with self.assertRaisesRegex(R.RenderError, "timed out"):                        # the caller's limit is an upper bound
+            R.render_command(defn(), self.spec(self.script("import time\ntime.sleep(30)\n"), timeout=100), root=self.root, timeout=0.5)
+        with self.assertRaisesRegex(R.RenderError, "timed out"):                        # the default limit applies without either
+            with mock.patch.object(R, "DEFAULT_TIMEOUT", 0.5):
+                R.render_command(defn(), self.spec(self.script("import time\ntime.sleep(30)\n")), root=self.root)
+
+    def test_the_whole_process_group_is_killed_on_timeout(self):
+        pidfile = os.path.join(self.tmp, "child.pid")
+        body = ("import os, subprocess, sys, time\nc = subprocess.Popen(['sleep', '60'])\nprint(c.pid, file=open(%r, 'w'))\ntime.sleep(60)\n" % pidfile)
+        with self.assertRaisesRegex(R.RenderError, "timed out"):
+            R.render_command(defn(), self.spec(self.script(body), timeout=1.5), root=self.root)
+        with open(pidfile) as f:
+            pid = int(f.read())
+        for _ in range(50):
+            try:
+                os.kill(pid, 0)
+                with open("/proc/%d/stat" % pid) as f:
+                    if f.read().split(")")[-1].split()[0] == "Z":
+                        break
+            except (ProcessLookupError, FileNotFoundError):
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("the child of the renderer is still running")
+
+    def test_a_script_that_never_reads_a_big_definition_does_not_hang(self):
+        big = defn(body="x" * 1_000_000)
+        r = R.render_command(big, self.spec(self.script("print('done')\n")), root=self.root)
+        self.assertEqual(r["content"], "done\n")
+        with self.assertRaisesRegex(R.RenderError, "larger"):
+            R.render_command(defn(body="x" * (5 * 1024 * 1024)), self.spec(self.script("print('done')\n")), root=self.root)
+
+    def test_the_output_must_be_utf8_text_of_a_sane_size(self):
+        self.refuses("UTF-8", "import sys\nsys.stdout.buffer.write(b'ok \\xff\\xfe')\n")
+        self.refuses("NUL", "import sys\nsys.stdout.buffer.write(b'ok\\x00ok')\n")
+        self.refuses("nothing|empty", "pass\n")
+        self.refuses("larger", "import sys\nsys.stdout.write('x' * %d)\n" % (R.MAX_BYTES + 1))
+        self.assertEqual(len(self.run_("import sys\nsys.stdout.write('x' * %d)\n" % R.MAX_BYTES)["content"]), R.MAX_BYTES)
+        t0 = time.monotonic()
+        self.refuses("larger", "import sys\nwhile True:\n    sys.stdout.write('x' * 65536)\n    sys.stdout.flush()\n")      # never stops: killed at the cap
+        self.assertLess(time.monotonic() - t0, 20)
+
+    def test_the_declared_format_is_checked(self):
+        spec = self.spec(self.script("print('{\"a\": 1}')\n"), format="json")
+        self.assertEqual(R.render_command(defn(), spec, root=self.root)["content"], '{"a": 1}\n')
+        for fmt, text, ok in (("json", "{nope", False), ("toml", "a = 1\\n", True), ("toml", "a = = 1\\n", False),
+                              ("markdown-frontmatter", "---\\nanything: [at all]\\n---\\n\\nbody\\n", True), ("markdown-frontmatter", "no front matter\\n", False),
+                              ("yaml", "a: &x [free, form]\\n", True), ("text", "words\\n", True)):
+            with self.subTest(fmt=fmt, text=text):
+                spec = self.spec(self.script("import sys\nsys.stdout.write('%s')\n" % text), format=fmt)
+                if ok:
+                    R.render_command(defn(), spec, root=self.root)
+                else:
+                    with self.assertRaisesRegex(R.RenderError, fmt):
+                        R.render_command(defn(), spec, root=self.root)
+
+    def test_deterministic_and_the_hash_follows_the_script(self):
+        rel = self.script(self.ECHO)
+        spec = self.spec(rel)
+        a = R.render_command(defn(), spec, root=self.root)
+        self.assertEqual(a, R.render_command(defn(), spec, root=self.root))
+        with open(os.path.join(self.root, rel), "a") as f:
+            f.write("# a comment\n")
+        b = R.render_command(defn(), spec, root=self.root)
+        self.assertEqual(a["content"], b["content"])
+        self.assertNotEqual(a["inputs_hash"], b["inputs_hash"])                           # a changed script makes the render stale
+        self.assertNotEqual(b["inputs_hash"], R.render_command(defn(description="x"), spec, root=self.root)["inputs_hash"])
+        self.assertNotEqual(b["inputs_hash"], R.render_command(defn(), spec, root=self.root, extra={"catalog": 1})["inputs_hash"])
+
+    # ---- which file may be run
+
+    def test_the_command_must_stay_inside_the_root(self):
+        rel = self.script(self.ECHO)
+        outside = os.path.join(self.tmp, "outside")
+        with open(outside, "w") as f:
+            f.write("#!%s\nprint('outside')\n" % sys.executable)
+        os.chmod(outside, 0o755)
+        os.symlink(outside, os.path.join(self.root, "renderers", "link-out"))
+        os.symlink(os.path.join(self.root, rel), os.path.join(self.root, "renderers", "link-in"))
+        os.symlink(self.tmp, os.path.join(self.root, "dirlink"))
+        ok = [rel, "renderers/../" + rel, "./" + rel, os.path.join(self.root, rel), "renderers/link-in"]
+        for c in ok:
+            with self.subTest(ok=c):
+                self.assertEqual(R.render_command(defn(), self.spec(c), root=self.root)["content"], "name=build-1\n")
+        for c in ["../outside", "renderers/../../outside", outside, "renderers/link-out", "dirlink/outside", "/bin/sh", "", "renderers/missing", "renderers"]:
+            with self.subTest(refused=c):
+                with self.assertRaises(R.RenderError):
+                    R.render_command(defn(), self.spec(c), root=self.root)
+
+    def test_a_relative_command_needs_a_root(self):
+        rel = self.script(self.ECHO)
+        with self.assertRaisesRegex(R.RenderError, "root"):
+            R.render_command(defn(), self.spec(rel), root=None)
+        # an absolute one is the caller's choice when it gives no root
+        self.assertEqual(R.render_command(defn(), self.spec(os.path.join(self.root, rel)), root=None)["content"], "name=build-1\n")
+
+    def test_only_a_regular_executable_text_file(self):
+        os.mkfifo(os.path.join(self.root, "fifo"))
+        with self.assertRaisesRegex(R.RenderError, "regular"):
+            R.render_command(defn(), self.spec("fifo"), root=self.root)
+        with self.assertRaisesRegex(R.RenderError, "regular"):
+            R.render_command(defn(), self.spec("renderers"), root=self.root)
+        with self.assertRaisesRegex(R.RenderError, "executable"):
+            R.render_command(defn(), self.spec(self.script(self.ECHO, mode=0o644)), root=self.root)
+        for name, data in (("elf", b"\x7fELF\x02\x01\x01\x00" + bytes(100)), ("latin", b"#!/bin/sh\necho caf\xe9\n"), ("zip", b"PK\x03\x04" + bytes(50))):
+            with self.subTest(name=name):
+                path = os.path.join(self.root, name)
+                with open(path, "wb") as f:
+                    f.write(data)
+                os.chmod(path, 0o755)
+                with self.assertRaisesRegex(R.RenderError, "text"):
+                    R.render_command(defn(), self.spec(name), root=self.root)
+        big = os.path.join(self.root, "big")
+        with open(big, "w") as f:
+            f.write("#!/bin/sh\n" + "# pad\n" * 300000)
+        os.chmod(big, 0o755)
+        with self.assertRaisesRegex(R.RenderError, "larger"):
+            R.render_command(defn(), self.spec("big"), root=self.root)
+
+    def test_a_text_file_the_system_cannot_run(self):
+        self.script("print(1)\n", name="renderers/noshebang", shebang=False)
+        with self.assertRaisesRegex(R.RenderError, "cannot run"):
+            R.render_command(defn(), self.spec("renderers/noshebang"), root=self.root)
+
+    def test_bad_argv_and_spec(self):
+        rel = self.script(self.ECHO)
+        for bad in ({"command": []}, {"command": rel}, {"command": [rel, 3]}, {"command": [rel, "a\x00b"]}, {"command": [3]}, {"timeout": 0}, {"timeout": "5"},
+                    {"timeout": True}, {"format": "xml"}, {"nope": 1}, {"engine": "map"}, {"path": 3}, {"path": "../x"}):
+            with self.subTest(bad=bad):
+                spec = self.spec(rel)
+                spec.update(bad)
+                with self.assertRaises(R.RenderError):
+                    R.render_command(defn(), spec, root=self.root)
+        with self.assertRaises(R.RenderError):
+            R.render_command(defn(), {"engine": "command", "path": "x"}, root=self.root)
+
+    def test_the_definition_is_checked_like_the_map_renderers(self):
+        with self.assertRaisesRegex(R.RenderError, "class"):
+            R.render_command(defn(**{"class": "root"}), self.spec(self.script(self.ECHO)), root=self.root)
+
+
+class Dispatch(CommandBase):
+    def test_render_picks_the_engine(self):
+        self.assertEqual(R.render(defn(), spec(), resolver=resolver)["content"], GOLDEN_MD)
+        self.assertEqual(R.render(defn(), self.spec(self.script(self.ECHO)), root=self.root)["content"], "name=build-1\n")
+        with self.assertRaisesRegex(R.RenderError, "engine"):
+            R.render(defn(), {"engine": "adapter"})
+        with self.assertRaisesRegex(R.RenderError, "spec"):
+            R.render(defn(), [])
+
+
+class Cli(CommandBase):
+    def cli(self, *args):
+        return subprocess.run([sys.executable, os.path.join(LIB, "render.py")] + list(args), capture_output=True, text=True, timeout=60)
+
+    def files(self, d, s):
+        for name, v in (("spec.json", s), ("def.json", d)):
+            with open(os.path.join(self.root, name), "w") as f:
+                json.dump(v, f)
+        return os.path.join(self.root, "spec.json"), os.path.join(self.root, "def.json")
+
+    def test_render_prints_the_result_as_json(self):
+        sp, df = self.files(defn(), spec(resolve=TABLES))
+        r = self.cli("render", sp, df)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertEqual(json.loads(r.stdout), R.render_map(defn(), spec(resolve=TABLES)))
+        self.assertEqual(json.loads(r.stdout)["content"], GOLDEN_MD)
+
+    def test_a_command_spec_is_relative_to_the_spec_file(self):
+        sp, df = self.files(defn(), self.spec(self.script(self.ECHO)))
+        r = self.cli("render", sp, df)
+        self.assertEqual((r.returncode, json.loads(r.stdout)["content"]), (0, "name=build-1\n"))
+        sp, df = self.files(defn(), self.spec("../outside"))
+        r = self.cli("render", sp, df)
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        self.assertIn("root", r.stderr)
+
+    def test_errors_exit_1_and_usage_exits_2(self):
+        sp, df = self.files(defn(), spec())                       # no resolver for the model field
+        r = self.cli("render", sp, df)
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        self.assertRegex(r.stderr, r"^render: .*resolver")
+        self.assertEqual(self.cli("render", sp, os.path.join(self.root, "missing.json")).returncode, 1)
+        with open(os.path.join(self.root, "bad.json"), "w") as f:
+            f.write("{nope")
+        self.assertEqual(self.cli("render", sp, os.path.join(self.root, "bad.json")).returncode, 1)
+        for args in ([], ["render"], ["render", sp], ["render", sp, df, "x"], ["emit", sp, df]):
+            r = self.cli(*args)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("usage:", r.stderr)
 
 
 if __name__ == "__main__":
