@@ -35,12 +35,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-valid_name() { # name [project] -> dies with the rule
-  local n=$1 b lc p
+valid_name() { # name provider -> dies with the rule (the reserved names are the provider's)
+  local n=$1 b lc p=$2
   printf '%s' "$n" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#n}" -le 40 ] \
     || die "'$n' is not a member name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
   lc=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')
-  p=$(provider_for "${2:-}") || exit 1
   for b in $(jq -r '.local.reserved_names[]' "$PROVIDERS/$p.json"); do
     [ "$lc" != "$b" ] || die "'$n' is a built-in agent type of the provider; choose another name"
   done
@@ -87,10 +86,9 @@ project_in_effect() { # explicit-project-or-empty -> that project, else the one 
   if [ -n "$1" ]; then echo "$1"; else python3 -I "$root/lib/help.py" infer; fi
 }
 
-provider_for() { # project-or-empty -> the active provider (the project's models.provider, default claude); dies when it has no file
-  local f=$DA_CONF/projects/$1.json p=claude
-  [ -z "$1" ] || [ ! -f "$f" ] || p=$(jq -r '.models.provider // "claude" | tostring' "$f" 2>/dev/null) || p=claude
-  if ! printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || [ "$p" = schema ] || [ "$p" = adapter-schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
+provider_for() { # project-or-empty -> the project's provider (models.provider; no default, see project_provider); dies when it has no descriptor
+  local p; p=$(project_provider "$1") || return $?   # exit 2 with the shared message: no project, no such project, no provider
+  if [ "$p" = schema ] || [ "$p" = adapter-schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
     die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -maxdepth 1 -name '*.json' ! -name schema.json ! -name adapter-schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
   fi
   echo "$p"
@@ -111,10 +109,10 @@ adapter_for() { # provider -> the path of its local adapter; dies when the descr
   echo "$root/$a"
 }
 
-default_for() { # project ability field -> the project's answer for it, else the table's value (a tier is resolved through the active provider)
+default_for() { # project ability field provider -> the project's answer for it, else the table's value (a tier is resolved through the project's provider)
   local v; v=$(project_answer "$1" "$2" "$3")
   if [ -z "$v" ]; then
-    if [ "$3" = model ]; then v=$(tier_model "$(provider_for "$1")" "$(jq -r --arg r "$(default_row "$2")" '.profiles[$r].tier' "$DEFAULTS")")
+    if [ "$3" = model ]; then v=$(tier_model "$4" "$(jq -r --arg r "$(default_row "$2")" '.profiles[$r].tier' "$DEFAULTS")")
     else v=$(jq -r --arg r "$(default_row "$2")" --arg k "$3" '.profiles[$r][$k]' "$DEFAULTS"); fi
   fi
   echo "$v"
@@ -134,10 +132,13 @@ render() { # name abilities-csv model effort-or-empty provider -> the definition
 }
 
 add() {
-  local n=${POS[0]:-} a list='' dir file seq first bc prov text ro ORIG_EFFORT=$EFFORT
+  local n=${POS[0]:-} eproj a list='' dir file seq first bc prov text ro ORIG_EFFORT=$EFFORT
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
-  prov=$(provider_for "$PROJ") || exit 1
-  valid_name "$n" "$PROJ"
+  # the provider is the project's (models.provider; no default): --project, else the project in effect here. Only --project puts the member in
+  # the project's repository; without it the member is a user-level one and the project in effect lends its provider for this run
+  eproj=$(project_in_effect "$PROJ")
+  prov=$(provider_for "$eproj") || exit $?
+  valid_name "$n" "$prov"
   jq -e --arg n "$n" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already (qargi agent list)"
   bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
   [ -z "$bc" ] || [ -n "$ABIL" ] || ABIL=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
@@ -150,10 +151,10 @@ add() {
   first=${list%%,*}
   # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
   ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
-  [ -z "$ro" ] || barrier_guard local "$(project_in_effect "$PROJ")"   # the barrier is the project in effect's (--project, QARGI_PROJECT, the checkout); none: refused
+  [ -z "$ro" ] || barrier_guard local "$eproj"
   adapter_for "$prov" >/dev/null || exit 1
-  [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model)
-  [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort)
+  [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model "$prov")
+  [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort "$prov")
   if no_effort "$prov"; then   # the provider cannot be told how hard to think: the member records none
     [ -z "$ORIG_EFFORT" ] || echo "qargi: note: effort ignored ($prov has no effort control)" >&2
     EFFORT=''
@@ -235,7 +236,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
   pf=$(pf_json "$proj")
-  prov=$(provider_for "$proj") || exit 1
+  prov=$(provider_for "$proj") || exit $?
   tiers=$(jq -c .tiers "$PROVIDERS/$prov.json"); aliases=$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")
   rc=$(role_classes)
   ! no_effort "$prov" || noeff=true
@@ -317,7 +318,7 @@ RESOLVEJQ="$RESOLVE_HEAD"'
 
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
   local role=$1 prof=$2 proj=$3 pf prov res code noeff=false mem mm want ov
-  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit $?
   ! no_effort "$prov" || noeff=true
   res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
     --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
@@ -356,7 +357,7 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   local role=$1 prof=$2 proj=$3 pf prov res code noeff=false base cls row model alias effort req out rc adapter ovm=no ove=yes
   local inst='' legacy=true brec='' rec rm n why='' ov alt
   [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
-  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit 1
+  pf=$(pf_json "$proj"); prov=$(provider_for "$proj") || exit $?
   ! no_effort "$prov" || noeff=true
   res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
     --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
@@ -432,7 +433,8 @@ case $verb in
     old=${POS[0]:-}; new=${POS[1]:-}
     [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW"
     rec=$(jq -ce --arg n "$old" '.[$n]' "$MEMBERS_FILE") || die "no member named $old (qargi agent list)"
-    valid_name "$new" "$(jq -r '.project // ""' <<<"$rec")"
+    prov=$(provider_for "$(project_in_effect "$(jq -r '.project // ""' <<<"$rec")")") || exit $?
+    valid_name "$new" "$prov"
     jq -e --arg n "$new" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already"
     f=$(jq -r .file <<<"$rec"); nf=$(dirname "$f")/$new.md
     [ ! -e "$nf" ] || die "$nf exists already"
@@ -443,7 +445,7 @@ case $verb in
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
-    prov=$(provider_for "$(jq -r '.project // ""' <<<"$rec")") || exit 1
+    prov=$(provider_for "$(project_in_effect "$(jq -r '.project // ""' <<<"$rec")")") || exit $?
     new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(jq -r '.aliases.balanced // .tiers.balanced' "$PROVIDERS/$prov.json")" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
     if [ -f "$f" ] && [ "$new" = "$(cat "$f")" ]; then echo "member $n is current ($f)"; exit 0; fi
