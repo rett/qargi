@@ -163,7 +163,7 @@ COMMANDS = {
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "prefer that project's own members and read its profiles (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
-                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE"),
+                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort)")],
                         desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when it is registered; otherwise the first registered member of the role's class (shown as legacy). A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
