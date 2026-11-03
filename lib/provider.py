@@ -11,7 +11,10 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   catalog(family) / models_of(name, surface=None) / model_for(models, tier)
                                        a family's catalog; the resolved models of a runtime (catalog followed, '*' expanded); the
                                        model name passed for a tier (alias or id)
-  validate(descriptor, name=None)      [("fail"|"warn", message), ...]; name is the file name the provider must carry
+  validate(descriptor, name=None)      [("fail"|"warn", message), ...]; name is the file name the provider must carry. A key or a string with a
+                                       control, escape or bidi character (also one written as a JSON escape, \\u001b) is the only failure reported
+  vis(text)                            text with control, escape and bidi characters written out; print() of this module (and of local_run.py)
+                                       writes every string through it, so nothing a definition holds reaches the terminal raw
   cap(name, surface, capability)       "yes", "partial", "no" or "unverified" (the file says yes or partial, but with no
                                        verified_on date)
   effective(name, surface, capability, project=None)
@@ -113,6 +116,37 @@ import sys
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def _review():
+    """lib/conformance/review.py (the text-only and escape rules, one place for them), or None when this file is run without its neighbours."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    try:
+        from conformance import review
+    except ImportError:
+        return None
+    return review
+
+
+def vis(text):
+    """text with every control, escape, bidi or surrogate character written out (\\x1b, \\u202e), tab and newline kept. Without
+    conformance/ beside this file every character that is not printable is written out, which is the same and a little more."""
+    r = _review()
+    if r:
+        return r.vis(text)
+    return "".join(c if c.isprintable() or c in "\t\n" else "\\x%02x" % ord(c) if ord(c) < 256 else "\\u%04x" % ord(c) for c in str(text))
+
+
+_print = print
+
+
+def print(*args, **kw):  # noqa: A001  (this module's print: what a definition holds is written through vis)
+    """The print of this module. A definition (a name, a note, a command, a path) is read from files a person may not have written, so its
+    control, escape or bidi characters are written out and cannot move the cursor, erase or hide a line, or reorder text."""
+    _print(*[vis(a) if isinstance(a, str) else a for a in args], **kw)
+
+
 TOOL = os.path.dirname(HERE)                      # the tool root: the checkout, or the installed copy
 PROVIDERS = os.path.join(HERE, "providers")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -806,11 +840,39 @@ def _layout_problems(lay):
     return bad
 
 
+def _control_problems(d):
+    """[("fail", message)] for a control, escape or bidi character in any key or string of a parsed definition, whether it was written raw or
+    as a JSON escape (the bytes of the file are then plain ASCII, so a scan of the file cannot see it). It is the only finding returned for
+    such a document: the other messages would carry the key or the value they complain about."""
+    r = _review()
+    if r:
+        return [("fail", m) for m in r.strings_problems(d)]
+    out = []
+
+    def walk(x, path):                           # without conformance/: the same rule, tested with str.isprintable (a little stricter)
+        if isinstance(x, dict):
+            for k, v in x.items():
+                here = "%s.%s" % (path, k) if path else str(k)
+                if isinstance(k, str) and not k.isprintable():
+                    out.append(("fail", "%s: the key has a control or bidi character, which can change what a reader sees; a definition holds plain one-line text" % vis(here)))
+                walk(v, here)
+        elif isinstance(x, list):
+            for i, v in enumerate(x):
+                walk(v, "%s[%d]" % (path, i))
+        elif isinstance(x, str) and not x.isprintable():
+            out.append(("fail", "%s: the value has a control or bidi character, which can change what a reader sees; a definition holds plain one-line text" % vis(path or "the document")))
+    walk(d, "")
+    return out[:10]
+
+
 def validate(d, name=None):
     """Findings for a descriptor: schema violations and the rules a schema cannot state are "fail"; a missing verified_on
     date is a "warn". name, when given, is the file name the provider must equal. A document of schema 2 goes to validate2()."""
     if isinstance(d, dict) and type(d.get("schema")) is int and d["schema"] == 2:
         return validate2(d, name)
+    ctl = _control_problems(d)
+    if ctl:
+        return ctl
     sch = schema()
     raw = []
     _check(d, sch, sch, "", raw)
@@ -1009,7 +1071,9 @@ def validate_extension(d, name=None):
     """The findings for an extension pack (schema 2, kind extension): the node of schema-2.json, then the rules a schema cannot state
     (the name equals the directory name, provides equals the capabilities that adds names, every path stays inside the pack or the
     checkout). The name it carries is `extension`. A message worded by a rule below replaces the schema's own for the same field."""
-    out = []
+    out = _control_problems(d)
+    if out:
+        return out
     for k in d:
         if k not in EXTENSION_KEYS:
             out.append(("fail", "%s: additional property is not allowed" % k))
@@ -1062,6 +1126,9 @@ def validate_extension(d, name=None):
 def validate2(d, name=None):
     """validate() for a document of schema 2: the node of schema-2.json for its kind, then the rules a schema cannot state. name, when
     given, is the file (or directory) name the definition must carry. An extension goes to validate_extension()."""
+    ctl = _control_problems(d)
+    if ctl:
+        return ctl
     if isinstance(d, dict) and d.get("kind") == "extension":
         return validate_extension(d, name)
     sch = schema2()
