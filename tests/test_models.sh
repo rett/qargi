@@ -38,7 +38,7 @@ $DA agent add b1 --project pbase --abilities build >/dev/null 2>&1 && [ "$(mline
 $DA agent add r1 --project pbase --abilities review >/dev/null 2>&1 && [ "$(mline r1 model claude-opus-5-5)" = 1 ] && [ "$(mline r1 effort high)" = 1 ] && ok "add: review gets the review row" || no "review default"
 $DA agent add t1 --project pbase --abilities test,build >/dev/null 2>&1 && [ "$(mline t1 effort low)" = 1 ] && ok "add: the first listed ability decides" || no "first ability"
 ! grep -q '{{' "$A/b1.md" && sed -n 1,3p "$A/b1.md" | grep -q '^---$' && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/b1.md") && ok "no placeholder and no blank frontmatter line" || no "frontmatter"
-jq -e '.b1.model == "claude-sonnet-5-5" and .b1.effort == "high"' "$T/c/agents.json" >/dev/null && ok "the registry records them" || no "registry"
+jq -e '.projects.pbase.b1 | .model == "claude-sonnet-5-5" and .effort == "high"' "$T/c/agents.json" >/dev/null && ok "the registry records them" || no "registry"
 
 # a custom role falls back to its class
 for pair in "tw:write" "ro:read-only"; do
@@ -68,7 +68,7 @@ $DA agent add rf --project pbase --abilities build --model claude-haiku-5-5 --ef
 sed -i '/^effort:/d' "$A/rf.md"
 $DA agent refresh rf >/dev/null 2>&1 && [ "$(mline rf effort medium)" = 1 ] && [ "$(mline rf model claude-haiku-5-5)" = 1 ] && ok "refresh keeps the recorded effort and model" || no "refresh"
 # an old member without effort has no effort line
-jq '.old = {abilities:["build"], file:($f), model:"sonnet", effort:null, project:"pbase", created:"x", seq:99}' --arg f "$A/old.md" "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+jq '.projects.pbase.old = {roles:["build"], file:($f), model:"sonnet", effort:null, created:"x", seq:99}' --arg f "$A/old.md" "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 $DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: sonnet$' "$A/old.md" && ! grep -q '^effort:' "$A/old.md" && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/old.md") && ok "a member without effort renders no effort line" || no "old member"
 
 # agent models

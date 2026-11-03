@@ -92,7 +92,7 @@ refused() { # name rc output: the exit was 2 and the message carries the accept 
 # 1. qargi agent add: a member that only reviews is read-only, on the local surface
 out=$("$DA" agent add judge --abilities review --project alpha 2>&1); rc=$?
 refused "agent add: a reviewing member is refused where local has no barrier" "$rc" "$out" nobarrier local alpha
-{ [ "$(jq 'has("judge")' "$T/c/agents.json")" = false ] && [ ! -e "$T/repo-alpha/.claude/agents/judge.md" ]; } && ok "and nothing was made" || no "judge was made"
+{ [ "$(jq '[(.projects // {})[] | keys[]] | index("judge") != null' "$T/c/agents.json")" = false ] && [ ! -e "$T/repo-alpha/.claude/agents/judge.md" ]; } && ok "and nothing was made" || no "judge was made"
 "$DA" agent add forge --abilities build,review --project alpha >/dev/null 2>&1 && ok "a member that can write is not a read-only role: allowed" || no "forge refused"
 "$DA" agent add reviewer --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "the reviewer base is read-only too" || no "reviewer base"
 out=$("$DA" agent add gjudge --abilities review --project gamma 2>&1); rc=$?
@@ -141,7 +141,7 @@ acceptp cloud
 "$DA" agent add judge --abilities review --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "the cloud acceptance does not cover local" || no "local covered by cloud"
 "$DA" local prepare --repo "$T/repo-alpha" --base main --slug rv3 --scratch "$T/scr" --role review >/dev/null 2>&1; [ $? = 2 ] && ok "prepare is still refused on local" || no "prepare after cloud accept"
 acceptp local
-"$DA" agent add judge --abilities review --project alpha >/dev/null 2>&1 && jq -e 'has("judge")' "$T/c/agents.json" >/dev/null && ok "local accepted: the reviewing member is added" || no "agent add after accept"
+"$DA" agent add judge --abilities review --project alpha >/dev/null 2>&1 && jq -e '.projects.alpha | has("judge")' "$T/c/agents.json" >/dev/null && ok "local accepted: the reviewing member is added" || no "agent add after accept"
 out=$("$DA" local prepare --repo "$T/repo-alpha" --base main --slug rv3 --scratch "$T/scr" --role review 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^CLASS=read-only' <<<"$out"; } && ok "local accepted: prepare makes the read-only run" || no "prepare after accept: rc=$rc $out"
 [ "$(audit)" = 3 ] && ok "each acceptance left its audit line (the first section made one)" || no "audit count $(audit)"
@@ -172,10 +172,10 @@ grep -q 'effort: ignored (nobarrier has no effort control)' <<<"$out" && ok "age
 "$DA" agent models --project gamma --json | jq -e '.effort_control == true and .profiles.build.effort == "high"' >/dev/null && ok "--json: claude keeps its efforts" || no "models json claude"
 out=$("$DA" agent for build --project alpha 2>&1); [ "$(awk '{print $3}' <<<"$out")" = default ] && ok "agent for: the effort resolves to the member's default" || no "for effort: $out"
 "$DA" agent for build --project alpha --json | jq -e '.effort == null' >/dev/null && ok "agent for --json: effort is null" || no "for json"
-[ "$(jq -r '.forge.effort' "$T/c/agents.json")" = null ] && ok "a member added on that provider records no effort" || no "member effort: $(jq -c .forge "$T/c/agents.json")"
+[ "$(jq -r '.projects.alpha.forge.effort' "$T/c/agents.json")" = null ] && ok "a member added on that provider records no effort" || no "member effort: $(jq -c .projects.alpha.forge "$T/c/agents.json")"
 out=$("$DA" agent add forge2 --abilities build --effort high --project alpha 2>&1)
-{ [ "$(jq -r '.forge2.effort' "$T/c/agents.json")" = null ] && grep -q 'effort ignored' <<<"$out"; } && ok "an explicit --effort is dropped, with a note" || no "explicit effort: $out"
-"$DA" agent add forge3 --abilities build --project gamma >/dev/null 2>&1; [ "$(jq -r '.forge3.effort' "$T/c/agents.json")" = high ] && ok "claude members keep their effort" || no "claude effort"
+{ [ "$(jq -r '.projects.alpha.forge2.effort' "$T/c/agents.json")" = null ] && grep -q 'effort ignored' <<<"$out"; } && ok "an explicit --effort is dropped, with a note" || no "explicit effort: $out"
+"$DA" agent add forge3 --abilities build --project gamma >/dev/null 2>&1; [ "$(jq -r '.projects.gamma.forge3.effort' "$T/c/agents.json")" = high ] && ok "claude members keep their effort" || no "claude effort"
 
 # --- no per-dispatch model override: a profile whose model is not the member's is refused
 "$DA" agent add worker --abilities build --model sonnet --project beta >/dev/null 2>&1 || no "worker not added"

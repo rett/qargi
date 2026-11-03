@@ -406,7 +406,7 @@ class AgentAdd(Tree):
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         if os.path.exists(conf):
             with open(conf) as f:
-                self.assertNotIn("forge", json.load(f))
+                self.assertNotIn("forge", json.load(f).get("projects", {}).get("alpha", {}))
 
     def test_the_file_written_says_what_the_adapters_template_says(self):
         """The member file is made from the renderers.agent data of claude-code, no longer by the adapter's dispatch-local; the template
@@ -429,7 +429,7 @@ class AgentAdd(Tree):
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         with open(conf) as f:
             m = json.load(f)
-        m["forge"]["model"] = None
+        m["projects"]["alpha"]["forge"]["model"] = None
         with open(conf, "w") as f:
             json.dump(m, f)
         rc, out = self.qargi("agent", "refresh", "forge")

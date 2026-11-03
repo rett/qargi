@@ -26,7 +26,7 @@ class T(unittest.TestCase):
         with open(os.path.join(self.conf, "install.json"), "w") as f:
             json.dump({"tool_root": self.tool}, f)
         with open(os.path.join(self.conf, "agents.json"), "w") as f:
-            json.dump({"forge": {}}, f)
+            json.dump({"schema": 2, "projects": {"alpha": {"forge": {}}, "beta": {"forge": {}, "scribe": {}}}}, f)
         self.env = dict(os.environ, HOME=self.t, QARGI_CONF=self.conf, QARGI_STATE=self.state, QARGI_SUDO="", QARGI_TEST_MARK=self.mark)
 
     def commit(self, version, msg):
@@ -65,7 +65,8 @@ class T(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.head(), git(self.origin, "rev-parse", "HEAD"))
         self.assertIn("--user", open(self.mark).read())              # install.sh --user ran
-        self.assertIn("qargi agent refresh", r.stdout)
+        for cmd in ("qargi agent refresh forge --project alpha", "qargi agent refresh forge --project beta", "qargi agent refresh scribe --project beta"):
+            self.assertIn(cmd, r.stdout)          # a name two projects hold is refreshed once for each
 
     def test_default_branch_is_the_current_one(self):
         self.commit("0.2.0", "next")
