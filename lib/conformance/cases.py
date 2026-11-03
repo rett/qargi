@@ -19,7 +19,8 @@ The cases:
   barrier-adapter  read_only_barrier   the conformance harness (lib/conformance/run.sh) on the adapter of the pack, case 8
   adapter-cost     session_budget_ceiling   the harness, case 7 (cost is in cents or null), for a pack with an adapter and a conformance/ stub
 Pack code (an adapter, a command renderer, the stub) runs only from a private copy of a SEALED pack, after the hashes were checked
-(provider.exec_copy); an unsealed pack, or a directory, gets the cases that run no pack code."""
+(provider.exec_copy, whose copy provider.discard_exec_copy removes, with the temporary directory around it); an unsealed pack, or a
+directory, gets the cases that run no pack code."""
 import json
 import os
 import re
@@ -147,7 +148,7 @@ def render_agent(doc, directory, name, sealed, usable):
                 return {"render-agent": result("skip", "a command renderer runs only from a sealed library pack")}
             cmd = spec.get("command")
             rel = cmd[0] if isinstance(cmd, list) and cmd else None
-            tmp, _ = P.exec_copy(name, rel)
+            tmp, _ = P.exec_copy(name, rel)       # tmp is the pack inside qargi-exec.XXXX/: discard_exec_copy removes the whole of it
             root = tmp
         resolver = resolver_of(doc)
         seen = []
@@ -162,7 +163,7 @@ def render_agent(doc, directory, name, sealed, usable):
         return {"render-agent": result("fail", str(e))}
     finally:
         if tmp:
-            shutil.rmtree(os.path.dirname(tmp), ignore_errors=True)
+            P.discard_exec_copy(tmp)
 
 
 # ---- link-skills ------------------------------------------------------------------------------------------------------------------
@@ -385,4 +386,4 @@ def adapter_harness(doc, directory, name, sealed, usable):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         if copy:
-            shutil.rmtree(os.path.dirname(copy), ignore_errors=True)
+            P.discard_exec_copy(copy)

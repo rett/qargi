@@ -30,13 +30,22 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   accepted(project, surface)           the project's recorded acceptance of a surface with no read-only barrier, or None
   require_barrier(provider, surface, project)
                                        ("yes"|"partial"|"accepted"|"refused", text): may a read-only role run on this surface?
-  layout(name, home=None)              the descriptor's layout: every field of LAYOUT_FIELDS, null when the provider has none; read
+  composed(name, surface, project=None) definition() for a project: with a project, compose()'s definition (the one to read resources,
+                                       renderers, barrier and capabilities from when a project is known)
+  layout(name, home=None, project=None) the descriptor's layout: every field of LAYOUT_FIELDS, null when the provider has none; read
                                        from the resources of its definition; a leading ~ is expanded with home (default $HOME)
-                                       when it is read, never in the file
-  require(name, field, would)          the layout field, or Unsupported (a ProviderError): "provider NAME has no FACILITY: WOULD"
-  require_skills(name, would)          the same refusal when the skills capability is not yes or partial (verified) on local
+                                       when it is read, never in the file; with a project (here and in the four below) from the composed
+                                       definition, so what an enabled extension adds is there
+  require(name, field, would, project=None)
+                                       the layout field, or Unsupported (a ProviderError): "provider NAME has no FACILITY: WOULD"
+  require_skills(name, would, project=None)
+                                       the same refusal when the skills capability is not yes or partial (verified) on local
   memory_dir(name, checkout) / checkout_key(rule, path) / launch_line(name, render)
                                        the layout's templates filled in
+  adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
+                                       the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
+                                       it lists); the second runs it and removes the copy
+  discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
   project_provider(answers, project)   models.provider of the project's answers; there is no default: NoProvider (exit 2)
   provider_of(answers, surface)        the runtime for one surface: models.provider is a name (runtime or family) or {local, cloud};
                                        a surface left unset is NoProvider (exit 2). resolve_runtime(name, surface) is the rule: a
@@ -66,12 +75,18 @@ Usage: provider.py list
        provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
                                          prints yes, partial or no (what enforcement may rely on; with a project, as composed with its
                                          enabled extensions); exit 1 when the provider does not list the surface, 2 on a conflict
-       provider.py layout NAME [FIELD] [--would TEXT] [--home DIR]
+       provider.py layout NAME [FIELD] [--would TEXT] [--home DIR] [--project P]
                                          the layout as JSON, or one field (a string as it is, an object as JSON); a null
                                          field exits 3 with "provider NAME has no FACILITY: TEXT"
-       provider.py require-skills NAME [--would TEXT]
-                                         exit 3 with that refusal unless the provider supports skills on the local surface
-       provider.py launch NAME RENDER    the command that starts a session on the render directory RENDER (exit 3: none)
+       provider.py require-skills NAME [--would TEXT] [--project P]
+                                         exit 3 with that refusal unless the provider supports skills on the local surface (with a project:
+                                         as composed with its enabled extensions; so for layout and launch)
+       provider.py adapter-run NAME SURFACE VERB [--check]
+                                         the request on stdin to the adapter's VERB, its answer on stdout, its exit status; --check runs
+                                         nothing and exits 3 with the reason unless it could run
+       provider.py model NAME SURFACE TIER
+                                         the model id of a tier of the runtime on a surface
+       provider.py launch NAME RENDER [--project P]   the command that starts a session on the render directory RENDER (exit 3: none)
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -296,7 +311,9 @@ def exec_copy(name, rel, root=None, library=None, tmp=None):
     """(directory, path): a private copy (mode 0700, in tmp or the temporary directory) of the library pack NAME, and the executable rel in
     it. The pack must be sealed with that executable approved: the content hash and the executable's hash are compared with the record
     before the copy is made and again on the copy, so what runs is what was approved, whatever happens to the library meanwhile. The
-    caller removes the directory. Refused (Refused) for a pack that is not sealed, or an executable the record does not list."""
+    copy sits in a directory of its own, tmp/qargi-exec.XXXX/, and `directory` is the pack inside it (tmp/qargi-exec.XXXX/NAME): what
+    the caller removes afterwards is the PARENT of `directory`, so that no empty qargi-exec.XXXX is left behind; discard_exec_copy(directory)
+    does exactly that. Refused (Refused) for a pack that is not sealed, or an executable the record does not list."""
     import shutil
     import tempfile
     e = entry_any(name, root, library)
@@ -324,6 +341,17 @@ def exec_copy(name, rel, root=None, library=None, tmp=None):
         shutil.rmtree(d, ignore_errors=True)
         raise
     return dst, os.path.join(dst, rel)
+
+
+def discard_exec_copy(directory):
+    """Remove what exec_copy made: the temporary directory that holds the copy, given the `directory` exec_copy returned (the pack
+    inside it). Refuses to remove anything that is not shaped like that (a directory whose parent is not a qargi-exec.* one), so a wrong
+    argument cannot delete the temporary directory itself or anything above it. No error when it is already gone."""
+    import shutil
+    parent = os.path.dirname(os.path.abspath(directory))
+    if not os.path.basename(parent).startswith("qargi-exec."):
+        raise ProviderError("%s is not a copy made by exec_copy; not removed" % directory)
+    shutil.rmtree(parent, ignore_errors=True)
 
 
 def names(root=None, library=None):
@@ -417,6 +445,16 @@ def definition(name, surface=None, root=None, library=None):
     if surface not in docs:
         raise ProviderError("the provider %s does not list the surface %s" % (name, surface))
     return copy.deepcopy(docs[surface])
+
+
+def composed(name, surface=None, project=None, root=None, library=None, conf=None):
+    """The definition a consumer of a PROJECT acts on: definition(name, surface), and with a project the runtime composed with the
+    extensions the project enabled (compose()), so the resources, renderers, barrier and capabilities an extension adds are there. The
+    same as definition() without a project, or when the project enables none. Without a surface the runtime must serve only one."""
+    base = definition(name, surface, root, library)
+    if not project:
+        return base
+    return compose(name, base["surface"], project, root=root, library=library, conf=conf)["definition"]
 
 
 def definitions_unsealed(name, root=None, library=None):
@@ -1385,17 +1423,21 @@ def _layout_from(doc):
             "render_target": ses.get("render_target"), "session_launch": ses.get("launch")}
 
 
-def layout(name, root=None, home=None, library=None):
+def layout(name, root=None, home=None, library=None, project=None, conf=None):
     """The layout of a provider: every field of LAYOUT_FIELDS (None where the definition has none, or has no resources at all). It is
     read from the resources (a schema 1 layout is mapped to them) and the session. A leading ~ is expanded here with home (default:
-    $HOME), so the definition stays portable. Project paths stay relative to the checkout. Resources that break the schema are a
-    ProviderError."""
+    $HOME), so the definition stays portable. Project paths stay relative to the checkout. With a project, the resources are those of the
+    runtime composed with the project's enabled extensions (a resource an extension adds is there; the runtime's own are unchanged).
+    Resources that break the schema are a ProviderError."""
     e = _entry(name, root, library)
     docs = _docs(e)
     bad = [m for lvl, m in validate(_read(e), name) if lvl == "fail" and m.startswith(("layout", "resources"))]
     if bad:
         raise ProviderError("provider '%s' has a bad layout: %s" % (name, bad[0]))
-    out = _layout_from(docs.get("local") or next(iter(docs.values()), {}))
+    doc = docs.get("local") or next(iter(docs.values()), {})
+    if project and doc:
+        doc = compose(name, doc["surface"], project, root=root, library=library, conf=conf)["definition"]
+    out = _layout_from(doc)
     home = home or os.path.expanduser("~")
     for k in _HOME_FIELDS:
         out[k] = _home(out[k], home)
@@ -1406,20 +1448,21 @@ def layout(name, root=None, home=None, library=None):
     return out
 
 
-def require(name, field, would, root=None, home=None, library=None):
+def require(name, field, would, root=None, home=None, library=None, project=None, conf=None):
     """The layout field, or Unsupported: provider NAME has no FACILITY: WOULD (what the verb would have done with it)."""
     if field not in LAYOUT_FIELDS:
         raise ProviderError("unknown layout field '%s'" % field)
-    v = layout(name, root, home, library)[field]
+    v = layout(name, root, home, library, project, conf)[field]
     if v is None or v == []:
         raise Unsupported("provider %s has no %s: %s" % (name, FACILITY[field], would))
     return v
 
 
-def require_skills(name, would, root=None, library=None):
+def require_skills(name, would, root=None, library=None, project=None, conf=None):
     """Unsupported unless the provider's skills capability is yes or partial (with a verification date) on the local surface,
-    where a session loads skills from the directories of the layout."""
-    if effective(name, "local", "skills", root, library) == "no":
+    where a session loads skills from the directories of the layout. With a project, a skills capability an enabled extension provides
+    and has verified counts."""
+    if effective(name, "local", "skills", root, library, project=project, conf=conf) == "no":
         raise Unsupported("provider %s has no skills support on the local surface: %s" % (name, would))
 
 
@@ -1593,18 +1636,18 @@ def checkout_key(rule, path):
     raise ProviderError("unknown checkout key rule '%s'" % rule)
 
 
-def memory_dir(name, checkout, root=None, home=None, library=None):
+def memory_dir(name, checkout, root=None, home=None, library=None, project=None, conf=None):
     """The provider's own memory directory for a checkout, or Unsupported."""
-    tpl = require(name, "memory_dir", "locate the provider's own memory notes for a checkout", root, home, library)
+    tpl = require(name, "memory_dir", "locate the provider's own memory notes for a checkout", root, home, library, project, conf)
     if "{checkout_key}" in tpl:
-        tpl = tpl.replace("{checkout_key}", checkout_key(require(name, "checkout_key", "name the provider's memory directory of a checkout", root, home, library), checkout))
+        tpl = tpl.replace("{checkout_key}", checkout_key(require(name, "checkout_key", "name the provider's memory directory of a checkout", root, home, library, project, conf), checkout))
     return tpl
 
 
-def launch_line(name, render, root=None, library=None):
+def launch_line(name, render, root=None, library=None, project=None, conf=None):
     """The command that starts a session on the render directory, or Unsupported. A [...] group of the template stays only when
     the file named by its last word exists once {render} is filled in."""
-    tpl = require(name, "session_launch", "print the command that starts a session on the render", root, library=library).replace("{render}", render)
+    tpl = require(name, "session_launch", "print the command that starts a session on the render", root, library=library, project=project, conf=conf).replace("{render}", render)
 
     def group(m):
         words = m.group(1).split()
@@ -1883,6 +1926,86 @@ def adapter_problem(d, tool=None, directory=None):
     return None
 
 
+def adapter_exec(name, surface, verb, root=None, library=None):
+    """(path, cleanup) of the adapter of a runtime on a surface, ready to run for VERB. A shipped adapter is the file in the tool; a library
+    pack's is run only as a private copy of the sealed pack (exec_copy: the content and the executable's hash are checked against the
+    record), and cleanup is the directory discard_exec_copy() removes afterwards (None for a shipped one). Unsupported when the runtime has
+    no adapter on that surface or its adapter_verbs do not list VERB (a schema 1 descriptor lists none: it serves what it implements);
+    Drift or Refused when a library pack is not sealed or does not approve its adapter."""
+    e = _entry(name, root, library)
+    doc = _docs(e).get(surface)
+    if doc is None:
+        raise ProviderError("the provider %s does not list the surface %s" % (name, surface))
+    raw = _read(e)
+    if type(raw.get("schema")) is int and raw["schema"] == 1 and isinstance(raw.get("adapter"), str):
+        # a schema 1 descriptor names its adapter as a path under the tool root (lib/providers/NAME/adapter), whatever its own name is
+        tool = TOOL if root is None else os.path.dirname(os.path.dirname(os.path.abspath(root)))
+        path, top = os.path.join(tool, raw["adapter"]), os.path.join(tool, "lib", "providers")
+        if (os.path.isabs(raw["adapter"]) or os.path.normpath(raw["adapter"]) != raw["adapter"] or not os.path.isfile(path) or not os.access(path, os.X_OK)
+                or not os.path.realpath(path).startswith(os.path.realpath(top) + os.sep)):
+            raise Unsupported("the adapter of provider %s, %s, is missing or not an executable under lib/providers/ of the tool" % (name, raw["adapter"]))
+        return path, None
+    ad = doc.get("adapter")
+    if not isinstance(ad, str) or not ad:
+        raise Unsupported("provider %s has no adapter on the %s surface: it cannot %s" % (name, surface, verb))
+    verbs = doc.get("adapter_verbs")
+    if isinstance(verbs, list) and verb not in verbs:
+        raise Unsupported("the adapter of provider %s does not serve %s" % (name, verb))
+    if os.path.isabs(ad) or os.path.normpath(ad) != ad or ad.startswith(".."):
+        raise ProviderError("the adapter of provider %s, '%s', is not a path inside the definition's directory" % (name, ad))
+    if e["origin"] == "library":
+        directory, path = exec_copy(name, ad, root, library)
+        return path, directory
+    path = os.path.join(e["dir"], ad)
+    if not os.path.isfile(path) or not os.access(path, os.X_OK) or not os.path.realpath(path).startswith(os.path.realpath(e["dir"]) + os.sep):
+        raise Unsupported("the adapter of provider %s, %s, is missing or not an executable inside the tool" % (name, ad))
+    return path, None
+
+
+def run_adapter(name, surface, verb, data, root=None, library=None, env=None):
+    """(exit status, stdout, stderr) of the adapter's VERB with the request `data` (text) on its standard input; the private copy of a
+    library adapter is removed afterwards. The errors of adapter_exec() are raised."""
+    import subprocess
+    path, cleanup = adapter_exec(name, surface, verb, root, library)
+    try:
+        r = subprocess.run([path, verb], input=data, capture_output=True, text=True, env=env)
+        return r.returncode, r.stdout, r.stderr
+    finally:
+        if cleanup:
+            discard_exec_copy(cleanup)
+
+
+def cmd_adapter(args):
+    """adapter-run NAME SURFACE VERB [--check]: the request on standard input goes to the adapter's VERB, its answer to standard output
+    and its error output to standard error; the exit status is the adapter's. --check only says whether it could run (exit 3 and
+    why when it could not), and runs nothing."""
+    check = "--check" in args
+    pos = [a for a in args if a != "--check"]
+    if len(pos) != 3 or pos[1] not in SURFACES:
+        print("usage: qargi provider adapter-run NAME local|cloud VERB [--check]", file=sys.stderr)
+        return 2
+    name, surface, verb = pos
+    if check:
+        path, cleanup = adapter_exec(name, surface, verb)
+        if cleanup:
+            discard_exec_copy(cleanup)
+        return 0
+    data = sys.stdin.read()
+    rc, out, err = run_adapter(name, surface, verb, data)
+    sys.stdout.write(out)
+    sys.stderr.write(err)
+    return rc
+
+
+def cmd_model(args):
+    """model NAME SURFACE TIER: the model id of a tier of the runtime on a surface."""
+    if len(args) != 3 or args[1] not in SURFACES or args[2] not in TIERS:
+        print("usage: qargi provider model NAME local|cloud %s" % "|".join(TIERS), file=sys.stderr)
+        return 2
+    print(models_of(args[0], args[1])["tiers"][args[2]]["model"])
+    return 0
+
+
 def cmd_check(name):
     e, d, findings = findings_of(name)
     v2 = _is2(d)
@@ -1947,15 +2070,15 @@ def cmd_migrate(args):
     return 0
 
 
-def cmd_layout(name, field, would, home):
-    lay = layout(name, home=home)
+def cmd_layout(name, field, would, home, project=None):
+    lay = layout(name, home=home, project=project)
     if field is None:
         print(json.dumps(lay, indent=2))
         return 0
     if field not in LAYOUT_FIELDS:
         print("qargi: unknown layout field '%s'; one of %s" % (field, ", ".join(LAYOUT_FIELDS)), file=sys.stderr)
         return 2
-    v = require(name, field, would or "the verb needs it", home=home)
+    v = require(name, field, would or "the verb needs it", home=home, project=project)
     print(v if isinstance(v, str) else json.dumps(v))
     return 0
 
@@ -1987,7 +2110,7 @@ def cmd_of(args):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | model NAME SURFACE TIER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -2027,6 +2150,10 @@ def main(argv):
             for d in skills_dirs(rest[0] if rest else None):
                 print(d)
             return 0
+        if verb == "adapter-run":
+            return cmd_adapter(rest)
+        if verb == "model":
+            return cmd_model(rest)
         if verb == "of":
             return cmd_of(rest)
         if verb == "migrate":
@@ -2034,18 +2161,18 @@ def main(argv):
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):
-                if rest[i] in ('--would', '--home') and i + 1 < len(rest):
+                if rest[i] in ('--would', '--home', '--project') and i + 1 < len(rest):
                     opts[rest[i]], i = rest[i + 1], i + 2
                 else:
                     pos.append(rest[i])
                     i += 1
             if verb == "layout" and len(pos) in (1, 2):
-                return cmd_layout(pos[0], pos[1] if len(pos) == 2 else None, opts.get('--would'), opts.get('--home'))
+                return cmd_layout(pos[0], pos[1] if len(pos) == 2 else None, opts.get('--would'), opts.get('--home'), opts.get('--project'))
             if verb == "require-skills" and len(pos) == 1:
-                require_skills(pos[0], opts.get('--would') or "the verb needs it")
+                require_skills(pos[0], opts.get('--would') or "the verb needs it", project=opts.get('--project'))
                 return 0
             if verb == "launch" and len(pos) == 2:
-                print(launch_line(pos[0], pos[1]))
+                print(launch_line(pos[0], pos[1], project=opts.get('--project')))
                 return 0
     except Unsupported as e:
         print("qargi: %s" % e, file=sys.stderr)

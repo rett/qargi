@@ -3141,6 +3141,149 @@ class ExtensionConflicts(ExtensionBase):
         self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "mcpext", "verified.json")))
 
 
+class ProjectConsumers(ExtensionBase):
+    """What acts for a PROJECT reads the runtime composed with the extensions the project enabled: layout, require, require-skills and
+    launch with project=, and the adapter and the exec copies of a library runtime found by lib/provider.py instead of by path."""
+
+    def setUp(self):
+        super().setUp()
+        self.put("plaincli", runtime("plaincli", capabilities={"mcp": {"value": "yes", "note": "m"}}))
+        self.put("skillext", skill_ext())
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["skillext"]})
+        self.project("beta", {"provider": {"local": "plaincli"}})
+
+    def run_p(self, *args, data=None, tmpdir=None):
+        env = dict(self.env, TMPDIR=tmpdir) if tmpdir else self.env
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py")] + list(args), capture_output=True, text=True, env=env,
+                           input=data if data is not None else "", cwd=self.tmp)
+        return r.returncode, r.stdout, r.stderr
+
+    def test_composed_is_the_definition_without_a_project_and_the_merged_one_with_it(self):
+        self.assertEqual(P.composed("plaincli", "local"), P.definition("plaincli", "local"))
+        self.assertEqual(P.composed("plaincli", "local", "beta"), P.definition("plaincli", "local"))     # a project that enabled none
+        self.assertEqual(P.composed("plaincli", "local", "alpha")["resources"]["skills"]["project_dir"], ".fake/skills")
+        self.assertEqual(P.composed("plaincli", "local", "alpha"), P.compose("plaincli", "local", project="alpha")["definition"])
+        self.assertNotIn("skills", P.definition("plaincli", "local")["resources"])                      # the base is not touched
+
+    def test_the_layout_of_a_project_has_the_resources_an_extension_adds(self):
+        self.assertIsNone(P.layout("plaincli")["project_skills_dir"])
+        self.assertIsNone(P.layout("plaincli", project="beta")["project_skills_dir"])
+        self.assertEqual(P.layout("plaincli", project="alpha")["project_skills_dir"], ".fake/skills")
+        self.assertEqual(P.require("plaincli", "project_skills_dir", "x", project="alpha"), ".fake/skills")
+        for project in (None, "beta"):
+            with self.assertRaises(P.Unsupported):
+                P.require("plaincli", "project_skills_dir", "x", project=project)
+        rc, out, err = self.run_p("layout", "plaincli", "project_skills_dir", "--project", "alpha")
+        self.assertEqual((rc, out.strip()), (0, ".fake/skills"), err)
+        self.assertEqual(self.run_p("layout", "plaincli", "project_skills_dir")[0], 3)
+        self.assertEqual(self.run_p("layout", "plaincli", "project_skills_dir", "--project", "beta")[0], 3)
+        self.assertEqual(json.loads(self.run_p("layout", "plaincli", "--project", "alpha")[1])["project_skills_dir"], ".fake/skills")
+
+    def test_skills_count_for_a_project_only_when_the_extension_is_verified(self):
+        with self.assertRaises(P.Unsupported):                                       # claimed by the extension, not verified yet
+            P.require_skills("plaincli", "link", project="alpha")
+        self.assertEqual(self.run_p("require-skills", "plaincli", "--project", "alpha")[0], 3)
+        self.assertEqual(self.q("check", "skillext", "--project", "alpha")[0], 0)
+        P.require_skills("plaincli", "link", project="alpha")
+        self.assertEqual(self.run_p("require-skills", "plaincli", "--project", "alpha")[0], 0)
+        for project in (None, "beta"):                                               # a project that did not enable it still has none
+            with self.assertRaises(P.Unsupported):
+                P.require_skills("plaincli", "link", project=project)
+        self.assertEqual(self.run_p("require-skills", "plaincli")[0], 3)
+
+    def test_the_launch_line_and_the_memory_directory_follow_the_composed_resources(self):
+        self.put("sesext", cap_ext("sesext", "plaincli", ["resume"], adds={"capabilities": {"resume": {"value": "yes", "note": "n"}},
+                                                                             "resources": {"memory": {"user_dir": "~/.fake/mem/{checkout_key}", "checkout_key": "sha256-16", "link": {"user": "dir-symlink"}}}}))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["sesext"]})
+        with self.assertRaises(P.Unsupported):
+            P.memory_dir("plaincli", "/some/checkout")
+        d = P.memory_dir("plaincli", "/some/checkout", project="alpha", home="/h")
+        self.assertRegex(d, r"^/h/\.fake/mem/[0-9a-f]{16}$")
+
+    def test_exec_copy_leaves_no_temp_directory_behind_once_discarded(self):
+        self.put("adcli", fake_runtime("adcli", adapter="adapter", adapter_verbs=["resolve"]), files={"adapter": "#!/bin/sh\necho '{}'\n"}, execs=("adapter",), exec_names="adapter")
+        tmp = os.path.join(self.tmp, "tt")
+        os.makedirs(tmp)
+        copy, path = P.exec_copy("adcli", "adapter", tmp=tmp)
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertEqual(len(os.listdir(tmp)), 1)
+        P.discard_exec_copy(copy)
+        self.assertEqual(os.listdir(tmp), [])
+        P.discard_exec_copy(copy)                                                    # gone already: no error
+        for wrong in (tmp, os.path.join(tmp, "x")):                                  # not made by exec_copy: never removed
+            os.makedirs(os.path.join(tmp, "x"), exist_ok=True)
+            with self.assertRaises(P.ProviderError):
+                P.discard_exec_copy(wrong)
+            self.assertTrue(os.path.isdir(wrong))
+
+    def test_the_cases_of_check_leave_no_temp_directory_behind(self):
+        tmp = os.path.join(self.tmp, "tt")
+        os.makedirs(tmp)
+        d = fake_runtime("rcli", renderers={"agent": {"engine": "command", "command": ["renderers/agent"], "path": "{name}.md", "format": "markdown-frontmatter"}},
+                         capabilities={"agent_definitions": {"value": "yes"}})
+        self.put("rcli", d, files={"renderers/agent": RENDERER}, execs=("renderers/agent",), exec_names="renderers/agent")
+        rc, out, err = self.run_p("check", "rcli", tmpdir=tmp)
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("ok   render-agent", out)
+        self.assertEqual(os.listdir(tmp), [])
+
+    def adapter_pack(self, name="adcli", verbs=("resolve", "start-session"), cloud=False):
+        script = "#!/bin/sh\nprintf '{\"verb\": \"%s\", \"path\": \"%s\", \"stdin\": \"' \"$1\" \"$0\"; cat | tr -d '\\n\"'; printf '\"}\\n'\n"
+        d = fake_runtime(name, adapter="adapter", adapter_verbs=list(verbs))
+        if cloud:
+            d["surface"] = "cloud"
+        self.put(name, d, files={"adapter": script}, execs=("adapter",), exec_names="adapter")
+
+    def test_a_library_adapter_runs_as_a_private_copy_that_is_removed_afterwards(self):
+        self.adapter_pack()
+        tmp = os.path.join(self.tmp, "tt")
+        os.makedirs(tmp)
+        rc, out, err = self.run_p("adapter-run", "adcli", "local", "resolve", data="hello", tmpdir=tmp)
+        self.assertEqual(rc, 0, err)
+        j = json.loads(out)
+        self.assertEqual((j["verb"], j["stdin"]), ("resolve", "hello"))
+        self.assertIn("qargi-exec.", j["path"])                                       # not the library's file
+        self.assertNotIn(self.lib, j["path"])
+        self.assertEqual(os.listdir(tmp), [])
+        self.assertEqual(self.run_p("adapter-run", "adcli", "local", "resolve", "--check", tmpdir=tmp)[0], 0)
+        self.assertEqual(os.listdir(tmp), [])
+
+    def test_an_adapter_verb_the_runtime_does_not_list_is_unsupported_and_not_called(self):
+        self.adapter_pack(verbs=("resolve",))
+        rc, out, err = self.run_p("adapter-run", "adcli", "local", "start-session", data="x")
+        self.assertEqual((rc, out), (3, ""))
+        self.assertIn("does not serve start-session", err)
+        self.put("noad", fake_runtime("noad"))
+        rc, _, err = self.run_p("adapter-run", "noad", "local", "resolve", data="x")
+        self.assertEqual(rc, 3)
+        self.assertIn("provider noad has no adapter on the local surface", err)
+        self.assertEqual(self.run_p("adapter-run", "adcli", "cloud", "resolve", data="x")[0], 1)          # a surface it does not serve
+
+    def test_a_changed_library_adapter_is_not_run(self):
+        self.adapter_pack()
+        with open(os.path.join(self.lib, "adcli", "adapter"), "a") as f:
+            f.write("echo drift\n")
+        rc, out, err = self.run_p("adapter-run", "adcli", "local", "resolve", data="x")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("changed since it was sealed", err)
+
+    def test_a_shipped_adapter_is_found_by_the_loader_and_checked(self):
+        self.assertEqual(self.run_p("adapter-run", "claude-platform", "cloud", "start-session", "--check")[0], 0)
+        self.assertEqual(self.run_p("adapter-run", "claude", "cloud", "resolve", "--check")[0], 0)           # schema 1 compatibility file
+        self.assertEqual(self.run_p("adapter-run", "claude-platform", "cloud", "dispatch-local", "--check")[0], 3)
+        rc, out, err = self.run_p("adapter-run", "claude-platform", "cloud", "resolve", data=json.dumps({"surface": "cloud", "tier": "balanced", "effort": None, "profile": "build"}))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["model"], "claude-sonnet-5-5")
+
+    def test_model_prints_the_id_of_a_tier_for_a_surface(self):
+        rc, out, _ = self.run_p("model", "claude-platform", "cloud", "balanced")
+        self.assertEqual((rc, out.strip()), (0, "claude-sonnet-5-5"))
+        self.assertEqual(self.run_p("model", "claude", "cloud", "balanced")[1].strip(), "claude-sonnet-5-5")
+        self.assertEqual(self.run_p("model", "plaincli", "local", "deep")[1].strip(), "my-model")
+        self.assertEqual(self.run_p("model", "plaincli", "cloud", "deep")[0], 1)
+        self.assertEqual(self.run_p("model", "plaincli", "local", "huge")[0], 2)
+
+
 class ExtensionSchema(unittest.TestCase):
     def good(self):
         return {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "surface": "local", "provides": ["resume", "skills"],
