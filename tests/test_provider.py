@@ -951,6 +951,33 @@ class BarrierClaim(Tree):
                 self.assertEqual(self.problems(d), [])
         self.assertEqual(self.problems(runtime("claimant")), [])                       # no claim at all
 
+    def test_arguments_that_do_not_hold_a_read_only_member_are_no_barrier(self):
+        """Only non-empty arguments for the class read-only count: class_argv for another class, an empty read-only list, a class group of
+        another class, or a read-only group with nothing in it hold nothing, so the claim is the same fail-open as with no arguments."""
+        base = runtime("claimant")["dispatch"]
+        nothing = (("class_argv of write only", dict(base, class_argv={"write": ["--w"]})),
+                   ("empty read-only list", dict(base, class_argv={"read-only": []})),
+                   ("empty class_argv list", dict(base, class_argv=[])),
+                   ("write group", dict(base, argv=base["argv"] + [{"class": "write", "then": ["--w"]}])),
+                   ("empty read-only group", dict(base, argv=base["argv"] + [{"class": "read-only", "then": []}])),
+                   ("read-only group holding only an empty if", dict(base, argv=base["argv"] + [{"class": "read-only", "then": [{"if": "model", "then": []}]}])),
+                   ("read-only group inside a write group", dict(base, argv=base["argv"] + [{"class": "write", "then": [{"class": "read-only", "then": ["--ro"]}]}])))
+        for label, d in nothing:
+            with self.subTest(label):
+                self.assertFalse(P.has_class_args(d), label)
+                self.assertEqual(len(self.problems(self.claim(barrier={"kind": "none"}, dispatch=d))), 1)
+                self.assertIsNotNone(P.barrier_claim_problem(self.claim(barrier={"kind": "none"}, dispatch=d)))
+        holds = (("class_argv list", dict(base, class_argv=["--ro"])),
+                 ("class_argv read-only", dict(base, class_argv={"write": ["--w"], "read-only": ["--ro"]})),
+                 ("read-only group", dict(base, argv=base["argv"] + [{"class": "read-only", "then": ["--ro"]}])),
+                 ("read-only group in an if", dict(base, argv=base["argv"] + [{"if": "model", "then": [{"class": "read-only", "then": ["--ro"]}]}])),
+                 ("if in a read-only group", dict(base, argv=base["argv"] + [{"class": "read-only", "then": [{"if": "model", "then": ["--ro"]}]}])))
+        for label, d in holds:
+            with self.subTest(label):
+                self.assertTrue(P.has_class_args(d), label)
+                self.assertEqual(self.problems(self.claim(barrier={"kind": "none"}, dispatch=d)), [])
+        self.assertFalse(P.has_class_args(None))
+
     def test_the_helper_the_run_uses_says_the_same(self):
         self.assertIn("read_only_barrier", P.barrier_claim_problem(self.claim(barrier={"kind": "none"})))
         self.assertIsNone(P.barrier_claim_problem(self.claim(barrier={"kind": "hook"})))

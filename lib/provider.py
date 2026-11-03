@@ -1095,12 +1095,24 @@ def validate2(d, name=None):
 
 
 def has_class_args(disp):
-    """Does a dispatch carry read-only arguments: class_argv, or a {"class": ...} group in argv (also inside an {"if": ..., "then": [...]})?"""
-    def has(items):
-        return any(isinstance(i, dict) and ("class" in i or has(i.get("then") or [])) for i in items if isinstance(i, dict))
+    """Does a dispatch carry arguments for a read-only member: a non-empty class_argv (a list, or the list under "read-only"), or a
+    {"class": "read-only"} group with an argument in argv (also inside an {"if": ..., "then": [...]})? Arguments for any other class, an empty
+    list and an empty group hold nothing, so they do not count."""
+    def has(items, ro):
+        for i in items if isinstance(items, list) else ():
+            if isinstance(i, str):
+                if ro:
+                    return True
+            elif isinstance(i, dict):
+                if "class" in i:
+                    if i["class"] == "read-only" and has(i.get("then"), True):         # a group of another class is never expanded for a read-only run
+                        return True
+                elif has(i.get("then"), ro):
+                    return True
+        return False
     disp = disp if isinstance(disp, dict) else {}
-    argv = disp.get("argv")
-    return bool(disp.get("class_argv")) or (isinstance(argv, list) and has(argv))
+    ca = disp.get("class_argv")
+    return has(ca.get("read-only") if isinstance(ca, dict) else ca, True) or has(disp.get("argv"), False)
 
 
 def barrier_claim_problem(doc, by=None):
