@@ -149,10 +149,10 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
 export QARGI_PROJECT=alpha   # a member belongs to a project, and the project's models.provider renders it: alpha gets a checkout
 git init -q "$T/repoa"; jq --arg p "$T/repoa" '.repo.path = $p' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
-$YES agent add builder --project alpha --abilities build,test >/dev/null 2>&1; $YES agent add judge --project alpha --abilities review >/dev/null 2>&1
+$YES agent add worker --project alpha >/dev/null 2>&1; $YES agent add reviewer --project alpha >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
   [ "$a" = "$b" ] && ok "local: 'for $args' is the same with --surface local" || no "local differs for $args: [$a] vs [$b]"
 done
-[ "$($YES agent for build)" = "builder sonnet high build" ] && [ "$($YES agent for review)" = "judge opus high review" ] && ok "local output keeps its shape: MEMBER ALIAS EFFORT PROFILE" || no "local shape: $($YES agent for build)"
+[ "$($YES agent for build)" = "worker sonnet high build" ] && [ "$($YES agent for review)" = "reviewer opus high review" ] && ok "local output keeps its shape: MEMBER ALIAS EFFORT PROFILE" || no "local shape: $($YES agent for build)"
 exit $fail
