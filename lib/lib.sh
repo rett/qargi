@@ -25,15 +25,16 @@ if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ "$DA_ROOT" = "$H
 fi
 REG=$DA_CONF/instances.json
 TRK=$DA_STATE/sessions.json
-MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {name: {abilities, file, model, effort, project}}
+MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {"schema": 2, "projects": {PROJECT: {NAME: {roles, file, model, effort, ...}}}}
 export BETA=managed-agents-2026-04-01
 
 mkdir -p "$DA_CONF" "$DA_STATE"
 chmod 700 "$DA_CONF" "$DA_STATE"
 [ -n "${QARGI_CONF:-}${QARGI_STATE:-}" ] || chmod 700 "$DA_ROOT"
-for f in "$REG" "$TRK" "$MEMBERS_FILE"; do
+for f in "$REG" "$TRK"; do
   [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
 done
+[ -f "$MEMBERS_FILE" ] || { echo '{"schema":2,"projects":{}}' > "$MEMBERS_FILE"; chmod 600 "$MEMBERS_FILE"; }
 
 # Naming convention (see README): <project>-<component>[-<role>]. Project and role
 # are single lower-case tokens (no dashes) so a name parses unambiguously; the

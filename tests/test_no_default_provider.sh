@@ -94,7 +94,7 @@ out=$("$DA" agent add m1 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q -- '--project NAME' <<<"$out" && ! grep -qi claude <<<"$out"; } && ok "agent add: no --project is refused and says to pass it" || no "agent add without --project: rc=$rc $out"
 out=$("$DA" agent add m1 --project nosuch 2>&1); rc=$?
 { [ "$rc" = 2 ] && [ "$out" = "qargi: no such project 'nosuch'" ]; } && ok "agent add: an unknown project says so" || no "agent add unknown project: rc=$rc $out"
-[ "$(jq length "$T/c/agents.json" 2>/dev/null || echo 0)" = 0 ] && [ ! -e "$T/repo-np/.claude/agents" ] && ok "and nothing was made" || no "a member was made for a project with no provider"
+[ "$(jq '[(.projects // {})[] | keys[]] | length' "$T/c/agents.json" 2>/dev/null || echo 0)" = 0 ] && [ ! -e "$T/repo-np/.claude/agents" ] && ok "and nothing was made" || no "a member was made for a project with no provider"
 out=$("$DA" agent models --project np 2>&1); refuses "agent models --project: a project with none is refused" "$?" "$out" np
 out=$("$DA" agent for build --project np 2>&1); refuses "agent for --project: a project with none is refused" "$?" "$out" np
 out=$("$DA" agent for build --project np --surface cloud 2>&1); refuses "agent for --surface cloud: a project with none is refused" "$?" "$out" np
@@ -106,9 +106,9 @@ out=$(cd "$T" && "$DA" agent for build 2>&1); rc=$?
 "$DA" agent list >/dev/null 2>&1 && ok "agent list needs no provider" || no "agent list"
 
 out=$("$DA" agent add mc --project cl 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(jq -r '.mc.model' "$T/c/agents.json")" = claude-sonnet-5-5 ]; } && ok "agent add: claude, the model default is its balanced model" || no "agent add claude: rc=$rc $out"
+{ [ "$rc" = 0 ] && [ "$(jq -r '.projects.cl.mc.model' "$T/c/agents.json")" = claude-sonnet-5-5 ]; } && ok "agent add: claude, the model default is its balanced model" || no "agent add claude: rc=$rc $out"
 out=$("$DA" agent add mf --project fk 2>&1); rc=$?
-{ [ "$rc" = 0 ] && [ "$(jq -r '.mf.model' "$T/c/agents.json")" = fake-m-1 ]; } && ok "agent add: the fake provider, the model default is its balanced model" || no "agent add fake: rc=$rc $out"
+{ [ "$rc" = 0 ] && [ "$(jq -r '.projects.fk.mf.model' "$T/c/agents.json")" = fake-m-1 ]; } && ok "agent add: the fake provider, the model default is its balanced model" || no "agent add fake: rc=$rc $out"
 "$DA" agent add fake-builtin --project fk >/dev/null 2>&1 && no "a reserved name of the fake provider was accepted" || ok "agent add: the reserved names are the project's provider's"
 "$DA" agent add general-purpose --project fk >/dev/null 2>&1 && ok "and claude's reserved names are not reserved for another provider" || no "claude's reserved name refused for the fake provider"
 out=$("$DA" agent models --project cl --json 2>&1); { [ "$(jq -r .provider <<<"$out")" = claude ] && jq -e '.profiles[] | select(.name == "build") | .model_id == "claude-sonnet-5-5"' <<<"$out" >/dev/null; } && ok "agent models: claude" || no "models claude: $out"
@@ -126,12 +126,7 @@ cp "$T/cl.keep" "$T/c/projects/cl.json"
 out=$("$DA" agent rename mc mc2 2>&1); [ "$?" = 0 ] && ok "agent rename: works again once the provider is back" || no "rename: $out"
 # a member belongs to a project and takes that project's provider, each time it is rendered; the project in effect (QARGI_PROJECT) lends nothing
 out=$(QARGI_PROJECT=cl "$DA" agent add ul 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q -- '--project NAME' <<<"$out" && ! jq -e 'has("ul")' "$T/c/agents.json" >/dev/null; } && ok "agent add: the project in effect is not enough, --project is required" || no "add under QARGI_PROJECT: rc=$rc $out"
-# a record with no project (an earlier version kept user-level members) is refused, whatever project is in effect
-jq '.ul = .mc2 | .ul.project = null' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
-out=$(QARGI_PROJECT=cl "$DA" agent refresh ul 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'belongs to no project' <<<"$out" && ! grep -qi claude <<<"$out"; } && ok "agent refresh: a member of no project is refused even with a project in effect" || no "no-project refresh: rc=$rc $out"
-jq 'del(.ul)' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+{ [ "$rc" = 2 ] && grep -q -- '--project NAME' <<<"$out" && ! jq -e '[(.projects // {})[] | keys[]] | index("ul")' "$T/c/agents.json" >/dev/null; } && ok "agent add: the project in effect is not enough, --project is required" || no "add under QARGI_PROJECT: rc=$rc $out"
 
 # --- provision plan: the model default comes from the project's provider (the answers here name no role model)
 mdl() { sed -n '/^model:/,/^[a-z]/p' "$T/s/provision/$1-build/agents/$1-build/agent.md" 2>/dev/null | tr -d '\n'; }   # the model block of the rendered agent
@@ -268,14 +263,14 @@ out=$( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c; project_provider ol cloud 2>&1 ); ref
 out=$( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c; project_provider oc local 2>&1 ); refuses_s "project_provider: ... the local one too" "$?" "$out" oc local
 # both surfaces named: the member is the local runtime's, the instance's model the cloud runtime's
 "$DA" agent add mob --project ob >/dev/null 2>&1
-[ "$(jq -r '.mob.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ob: a member takes the local runtime's balanced model" || no "ob member model: $(jq -c .mob "$T/c/agents.json")"
+[ "$(jq -r '.projects.ob.mob.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ob: a member takes the local runtime's balanced model" || no "ob member model: $(jq -c .projects.ob.mob "$T/c/agents.json")"
 out=$("$DA" agent models --project ob --json 2>&1); [ "$(jq -r .provider <<<"$out" 2>/dev/null)" = fakeprov ] && ok "ob: agent models shows the local runtime" || no "ob models: $out"
 out=$("$DA" agent for build --project ob --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ob: agent for resolves on the local runtime" || no "ob for: $out"
 out=$("$DA" provision plan --project ob --role build 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q 'claude-sonnet-5-5' <<<"$(mdl ob)" && ! grep -q 'fake-m-1' <<<"$(mdl ob)"; } && ok "ob: provision plan takes the cloud runtime's balanced model" || no "ob provision: rc=$rc [$(mdl ob)] $(head -3 <<<"$out")"
 jq '. + {"ob-worker": .["np-worker"], "ol-worker": .["np-worker"], "ol-review": .["np-review"], "oc-worker": .["np-worker"], "oc-review": .["np-review"]}' "$T/c/instances.json" > "$T/i.tmp" && mv "$T/i.tmp" "$T/c/instances.json"
 # only local named: members work, everything on the cloud surface is refused with the surface and the command
-"$DA" agent add mol --project ol >/dev/null 2>&1; [ "$(jq -r '.mol.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ol: a member works on the local runtime" || no "ol member: $(jq -c .mol "$T/c/agents.json")"
+"$DA" agent add mol --project ol >/dev/null 2>&1; [ "$(jq -r '.projects.ol.mol.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ol: a member works on the local runtime" || no "ol member: $(jq -c .projects.ol.mol "$T/c/agents.json")"
 out=$("$DA" agent for build --project ol --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ol: agent for (local) works" || no "ol for: $out"
 out=$("$DA" provision plan --project ol --role build 2>&1); refuses_s "ol: provision plan needs the cloud runtime and says so" "$?" "$out" ol cloud
 out=$("$DA" agent for build --project ol --surface cloud 2>&1); refuses_s "ol: agent for --surface cloud is refused" "$?" "$out" ol cloud
@@ -321,7 +316,7 @@ out=$("$DA" project set sa models.provider.local fakeprov 2>&1); rc=$?
   && ok "project set models.provider.local on a project with none writes the object and names what is left" || no "set local: rc=$rc $out $(jq -c .models "$T/c/projects/sa.json")"
 out=$("$DA" project set sa models.provider.cloud claude 2>&1); rc=$?
 { [ "$rc" = 0 ] && jq -e '.models.provider == {"local":"fakeprov","cloud":"claude"}' "$T/c/projects/sa.json" >/dev/null && ! grep -q '^finding' <<<"$out"; } && ok "project set models.provider.cloud completes it, with no finding" || no "set cloud: rc=$rc $out"
-out=$("$DA" agent add msa --project sa 2>&1); [ "$(jq -r .msa.model "$T/c/agents.json")" = fake-m-1 ] && ok "and the verbs work on it" || no "agent add on sa: $out"
+out=$("$DA" agent add msa --project sa 2>&1); [ "$(jq -r .projects.sa.msa.model "$T/c/agents.json")" = fake-m-1 ] && ok "and the verbs work on it" || no "agent add on sa: $out"
 storeo sb '"claude"'
 out=$("$DA" project set sb models.provider.local fakeprov 2>&1); rc=$?
 { [ "$rc" = 0 ] && jq -e '.models.provider == {"local":"fakeprov","cloud":"claude"}' "$T/c/projects/sb.json" >/dev/null && grep -q "was the single name 'claude'" <<<"$out"; } \
