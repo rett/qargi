@@ -46,6 +46,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
                                        the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
                                        it lists); the second runs it and removes the copy
+  notes_of(project)                    (runtime, {topic: text}): the notes of the definition of the project's local runtime, composed (notes: an
+                                       optional object of topic name to one line of text, at most 16 topics of 2000 characters)
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
@@ -90,7 +92,11 @@ Usage: provider.py list
        provider.py model NAME SURFACE TIER
                                          the model id of a tier of the runtime on a surface
        provider.py launch NAME RENDER [--project P]   the command that starts a session on the render directory RENDER (exit 3: none)
-       provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
+       provider.py notes [TOPIC] [--project P]
+                                         the text of a notes topic of the definition of the project's local runtime (composed with its enabled
+                                         extensions; the project is P, else the one in effect), or the topic names when none is given; exit 1
+                                         when the runtime has no such topic, 2 when the project has no local runtime
+       provider.py skills-dirs [NAME]   the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
                                          name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
@@ -2045,6 +2051,57 @@ def cmd_model(args):
     return 0
 
 
+def _project_in_effect():
+    """The project in effect (QARGI_PROJECT, else the one whose repository holds the current directory), or None: lib/help.py's rule."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    try:
+        import help as H
+        return H.infer_project()
+    except Exception:
+        return None
+
+
+def notes_of(project, conf=None, root=None, library=None):
+    """(runtime, {topic: text}) of a project: the notes of the definition of its local runtime, as composed with the extensions the project
+    enabled. NoProvider (exit 2) when the project does not exist or names no provider for the local surface; there is no default."""
+    runtime, _ = resolve_project(_stored_answers(project, conf), "local", project, root, library)
+    doc = composed(runtime, "local", project, root, library, conf)
+    notes = doc.get("notes")
+    return runtime, notes if isinstance(notes, dict) else {}
+
+
+def cmd_notes(args):
+    """notes [TOPIC] [--project P]: the text of a notes topic of the project's local runtime, or the topic names when none is given. Exit 1
+    when the runtime has no such topic (the message names both and lists the topics there are)."""
+    topics, project, i = [], None, 0
+    while i < len(args):
+        if args[i] == "--project" and i + 1 < len(args) and project is None:
+            project, i = args[i + 1], i + 2
+        elif args[i].startswith("--"):
+            topics = [None, None]
+            break
+        else:
+            topics.append(args[i])
+            i += 1
+    if len(topics) > 1:
+        print("usage: qargi provider notes [TOPIC] [--project P]", file=sys.stderr)
+        return 2
+    runtime, notes = notes_of(project or _project_in_effect())
+    if not topics:
+        if not notes:
+            print("qargi: the runtime %s has no notes" % runtime, file=sys.stderr)
+            return 1
+        print("\n".join(sorted(notes)))
+        return 0
+    if topics[0] not in notes:
+        print("qargi: the runtime %s has no notes topic '%s'%s" % (runtime, topics[0], "; its topics: " + ", ".join(sorted(notes)) if notes else " (it has no notes)"),
+              file=sys.stderr)
+        return 1
+    print(notes[topics[0]])
+    return 0
+
+
 def cmd_check(name):
     e, d, findings = findings_of(name)
     bad = adapter_problem(d, e["dir"])
@@ -2118,7 +2175,7 @@ def cmd_of(args):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | model NAME SURFACE TIER | of PROJECT [--surface S]")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -2162,6 +2219,8 @@ def main(argv):
             return cmd_adapter(rest)
         if verb == "addenda":
             return cmd_addenda(rest)
+        if verb == "notes":
+            return cmd_notes(rest)
         if verb == "model":
             return cmd_model(rest)
         if verb == "of":
