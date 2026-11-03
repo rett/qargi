@@ -66,6 +66,9 @@ AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARG
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
                "and says 'remote not checked' when origin cannot be reached.")
+TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read-only gh release view, through QARGI_GH, default gh; "
+            "a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because "
+            "a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb.")
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
@@ -281,7 +284,7 @@ COMMANDS = {
         "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. "
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
-                 "a develop whose head passed the whole suite. Pushing, merging and tagging need the plan token and an approval."),
+                 "a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval."),
         "scripts": ["release.sh"],
         "verbs": {
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
@@ -289,13 +292,19 @@ COMMANDS = {
                           desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. "
                                 "A project without a man page or changelog is not checked for that part.")),
-            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT], desc=REMOTE_NOTE),
-            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT]),
+            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT], desc=REMOTE_NOTE + " " + TAG_NOTE),
+            "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
+                           desc=TAG_NOTE + " The exit status stays the suite's result."),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED], desc=REMOTE_NOTE),
             "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. " + REMOTE_NOTE)),
+            "publish": verb("Create the GitHub release of an existing tag, with its changelog section as the notes", [("VERSION", "none")], [PROJECT_OPT, PLAN, APPROVED],
+                            desc=("For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, "
+                                  "the VERSION section of CHANGELOG.md at the tag and the command: gh release create VERSION --verify-tag --title \"PROJECT VERSION\" --notes-file FILE "
+                                  "(gh is run through QARGI_GH, default gh, and must be logged in). It refuses when GitHub has the release already, when the tag is missing, "
+                                  "and when the changelog section is empty; --verify-tag makes gh refuse a tag that is not on origin. Needs the plan token and an approval; a member run cannot publish.")),
         },
     },
     "provision": {
