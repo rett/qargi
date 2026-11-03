@@ -67,13 +67,13 @@ recorded, not verified: it is not proof that a person agreed.
 - **A local Claude Code session:** `qargi packs apply --target claude-code PROJECT`
   prints the plan (what is added, changed or removed, shadowed skills, tools that need
   credentials) and a token; with `--plan TOKEN --approved "..."` it renders the union of
-  the project's roles into `~/.qargi/state/claude/PROJECT/` (skills under
+  the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (skills under
   `.claude/skills`, `mcp.json`, `settings.json`, `MANIFEST.json`) and prints the launch
   line `claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json`.
   Same rule as the cloud apply: show the person the plan and wait for their go-ahead.
   Nothing is written into a repository or `~/.claude`; role scoping is advisory (the
   render is the union of roles); the guard refuses a member any write under
-  `state/claude/`. Vault credentials a tool needs are reported: the person configures
+  `state/render/`. Vault credentials a tool needs are reported: the person configures
   them. `qargi packs check --target claude-code PROJECT` reports drift and shadowing
   (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
   read only.

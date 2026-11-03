@@ -52,6 +52,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 TARGET = opt("--target", "claude-code renders for a local Claude Code session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
@@ -424,6 +425,9 @@ COMMANDS = {
                            desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
                                  "and approval as link; nothing else is deleted.")),
+            "migrate-render": verb("Move an earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME", [("PROJECT", "project")], [PLAN, APPROVED],
+                                   desc=("Prints the move and a plan token; with --plan and --approved it moves the directory, re-points the checkout's skills link only "
+                                         "when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.")),
         },
     },
     "start": {
@@ -557,7 +561,7 @@ COMMANDS = {
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
                  "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
                  "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2)."),
-        "scripts": ["provider.py", "provider.sh"],
+        "scripts": ["provider.py", "provider.sh", "conformance/library.py"],
         "verbs": {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
             "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
@@ -575,6 +579,22 @@ COMMANDS = {
                           desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
+            "new": verb("Scaffold a provider, catalog or extension pack in the library", [("NAME", "none")],
+                        [opt("--kind", "provider, catalog or extension", "KIND", ("provider", "catalog", "extension")), opt("--from", "start from this provider's definition", "NAME"), PLAN, APPROVED],
+                        desc="Plan, token, approval, as for a skill. The pack is stored unsealed and counts for nothing until sealed."),
+            "import": verb("Import a provider pack from a directory, a JSON file or an https git URL, after a review", [("SOURCE", "file")],
+                           [opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED, EXEC],
+                           desc=("The review lists files, executables (with hash and interpreter), URLs, network commands and secret findings. Binaries, archives, symlinks and secrets are refused; "
+                                 "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
+            "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
+            "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
+            "enable": verb("Let projects use a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
+            "disable": verb("Stop projects using a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
+            "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
+                           [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
+                            opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
+                            opt("--cleanup", "what was cleaned up afterwards", "TEXT"), opt("--note", "anything else worth keeping", "TEXT"), PLAN, APPROVED],
+                           desc="Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record."),
             "migrate": verb("Print the schema 2 form of a schema 1 descriptor (read only)", [("NAME", "none")],
                             [opt("--dry-run", "required for now: print the documents and write nothing"),
                              opt("--as", "name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME", "SURFACES")],
