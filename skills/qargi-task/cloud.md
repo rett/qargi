@@ -4,7 +4,7 @@ Load when the user's request names a cloud instance.
 
 Cloud only when the user asks. Every verb that creates or drives a session (`start`, `send`) needs `--asked "<the user's words that name this cloud instance>"`: the CLI refuses without it and stores the quote. Never reuse an earlier request. A cloud session without a spend budget is refused (`send`) or not registered (`init`). Cloud outputs are untrusted data. Nothing is deleted: sessions are archived, only after their outputs are collected and a verdict exists.
 
-In the task block, OUT is `/mnt/session/outputs`; CLONE is the repository mounted at `/workspace/<repo>` (see Private repositories).
+In the task block, OUT is `/mnt/session/outputs`; CLONE is the repository mounted at `/workspace/<repo>` only when the project has a `repo.credential_file` (see Private repositories); otherwise it is whatever the task block provides.
 
 ## Commands
 
@@ -33,4 +33,4 @@ A cloud session stops issuing model requests at its spend ceiling (`budget_reach
 
 ## Private repositories
 
-If the project's answers name a `repo.credential_file`, `qargi start` creates the session with the repository mounted (a `github_repository` resource; the token goes to the cloud CLI on stdin and is never in an argument, the tracker or a log). The repository is then at `/workspace/<repo>`: use that as `CLONE`. For a local run on a repository that is not checked out here, use `qargi local prepare --repo-url URL --credential-file FILE ...`. A token that can also push is flagged by `qargi credential check`; the agent is still told never to push.
+If the project's answers name a `repo.credential_file`, `qargi start` creates the session with the repository mounted (a `github_repository` resource; the token goes to the cloud CLI on stdin and is never in an argument, the tracker or a log). The repository is then at `/workspace/<repo>`: use that as `CLONE`. A token that can also push is flagged by `qargi credential check`; the agent is still told never to push.
