@@ -3001,7 +3001,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi canon
 Bring a project's two memory stores to the standard layout and keep them there.
 .PP
-The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an index with a Load column). plan and apply move a store from any older version without losing a note.
+The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed.
 .RS
 .TP
 .BI "check " "[PROJECT]"
@@ -3020,11 +3020,6 @@ Print every step needed to reach the current canon (changes nothing).
 .TP
 .BI "\-\-kind " "KIND"
 which store: memory or reference (default: both).
-.RE
-.RS
-.TP
-.BI "\-\-default\-role " "ROLE"
-where an old reference store's files go.
 .RE
 .RE
 .RS
@@ -3045,11 +3040,6 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RS
-.TP
-.BI "\-\-default\-role " "ROLE"
-as for plan.
 .RE
 .RE
 .RS
