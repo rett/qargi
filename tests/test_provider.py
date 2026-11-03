@@ -1113,6 +1113,35 @@ class Loader(V2Tree):
         d = P.load("fam-cli", **self.kw())
         self.assertEqual((d["tiers"]["fast"], d["aliases"]["fast"], d["model_pattern"]), ("fam-small", "small", "^fam-[a-z0-9.-]+$"))
 
+    def test_summary_is_what_a_reader_needs_of_a_runtime_on_one_surface(self):
+        self.put_catalog("fam")
+        self.put("fam-cli", runtime("fam-cli", family="fam", models={"catalog": "fam", "use": "alias"}, agents={"reserved_names": ["builtin"]}))
+        self.put("fakecli", runtime("fakecli"))
+        s = P.summary("fam-cli", "local", **self.kw())
+        self.assertEqual((s["provider"], s["surface"], s["surfaces"], s["model_pattern"], s["use"]), ("fam-cli", "local", ["local"], "^fam-[a-z0-9.-]+$", "alias"))
+        self.assertEqual((s["tiers"]["fast"], s["aliases"]["fast"], s["tier_detail"]["fast"]["model"]), ("fam-small", "small", "fam-small"))
+        self.assertEqual((s["effort"]["low"], s["effort"]["xhigh"]), ("low", None))
+        self.assertEqual(s["reserved_names"], ["builtin"])
+        self.assertIsNone(s["adapter"])                                       # a fixture names none
+        d = P.summary("fakecli", **self.kw())                                 # one surface served: it need not be named
+        self.assertEqual((d["tiers"], d["aliases"], d["reserved_names"]), ({t: "my-model" for t in P.TIERS}, {t: None for t in P.TIERS}, []))
+        with self.assertRaises(P.ProviderError):
+            P.summary("fakecli", "cloud", **self.kw())                       # not served on that surface
+        with self.assertRaises(P.ProviderError) as cm:
+            P.summary("nope", "local", **self.kw())
+        self.assertIn("available: fakecli, fam-cli", str(cm.exception))
+
+    def test_summary_of_the_shipped_runtimes_names_their_adapter_and_their_catalog_models(self):
+        cat = P.catalog("claude")
+        for name, surface in (("claude-code", "local"), ("claude-platform", "cloud")):
+            with self.subTest(name):
+                s = P.summary(name, surface)
+                self.assertEqual(s["adapter"], "lib/providers/%s/adapter" % name)
+                self.assertEqual(s["tiers"], {t: r["model"] for t, r in cat["tiers"].items()})
+                self.assertEqual((s["model_pattern"], s["effort"]), (cat["pattern"], cat["effort"]))
+        self.assertTrue(P.summary("claude-code", "local")["reserved_names"])
+        self.assertEqual(P.summary("claude-platform", "cloud")["reserved_names"], [])
+
     def test_a_catalog_reference_to_nothing_or_to_a_runtime_is_refused(self):
         self.put("lost", runtime("lost", models={"catalog": "nope", "use": "id"}))
         with self.assertRaises(P.ProviderError) as cm:

@@ -529,6 +529,8 @@ class Derived(Tree):
     def test_validate_follows_the_model_pattern_and_aliases_of_the_projects_provider(self):
         self.other()
         a, _ = self.answers("zeta")
+        self.assertEqual(self.validate(a)[0], 0)                      # the template names no model: nothing to refuse
+        a["roles"]["build"]["model"] = "claude-sonnet-5-5"            # another family's id does not fit zeta's pattern
         rc, out = self.validate(a)
         self.assertEqual(rc, 1)
         self.assertIn("roles.build.model: a model id like zeta-2", out)

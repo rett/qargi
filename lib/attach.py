@@ -184,27 +184,34 @@ def provider_arg(prov=None, local=None, cloud=None):
 
 
 def balanced_model(provider):
-    """The balanced model of the provider the options name, to default the roles' models to: a string is a provider with a descriptor, else a
-    family that resolves on some surface; an object is checked per surface (a name there is a runtime or a family) and gives a model only when
-    the runtimes it names agree on it. A name that cannot be used ends the verb (exit 1)."""
+    """The balanced model id of the provider the options name, to default the roles' models to: a string is a runtime (the model of each
+    surface it serves) or else a family that resolves on some surface; an object is checked per surface (a name there is a runtime or a
+    family) and gives a model only when the runtimes it names agree on it. The id, not an alias: the roles' models are read on both
+    surfaces. A name that cannot be used ends the verb (exit 1)."""
+    def balanced(runtime, surface):
+        return PV.models_of(runtime, surface)["tiers"]["balanced"]["model"]
     try:
         if isinstance(provider, dict):
-            models = {PV.load(PV.resolve_runtime(n, sf))["tiers"]["balanced"] for sf, n in provider.items()}
-            return models.pop() if len(models) == 1 else None
+            return _agreed({balanced(PV.resolve_runtime(n, sf), sf) for sf, n in provider.items()})
         try:
-            return PV.load(provider)["tiers"]["balanced"]
+            return _agreed({balanced(provider, sf) for sf in PV.surfaces_of(provider)})
         except PV.ProviderError as e:
             models, err = set(), e
             for sf in PV.SURFACES:
                 try:
-                    models.add(PV.load(PV.resolve_runtime(provider, sf))["tiers"]["balanced"])
+                    models.add(balanced(PV.resolve_runtime(provider, sf), sf))
                 except PV.ProviderError:
                     pass
             if not models:
                 raise err
-            return models.pop() if len(models) == 1 else None
+            return _agreed(models)
     except PV.ProviderError as e:
         raise SystemExit("qargi: --provider: %s" % e)
+
+
+def _agreed(models):
+    """The one model the runtimes agree on, else None."""
+    return next(iter(models)) if len(models) == 1 else None
 
 
 def detect(d, name=None, methodology="gitflow", provider=None):
