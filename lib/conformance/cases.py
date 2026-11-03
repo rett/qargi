@@ -252,6 +252,15 @@ def fill(v, run, clone, out):
     return v
 
 
+def hook_problem(hook):
+    """What is wrong with hook protocol data according to the guard itself (lib/guard.py hook_problem), or None."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("qargi_guard_hook_data", os.path.join(LIB, "guard.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.hook_problem(hook)
+
+
 def barrier_hook(doc, directory, name, sealed, usable):
     bar = doc.get("barrier") if isinstance(doc.get("barrier"), dict) else {}
     if bar.get("kind") != "hook":
@@ -261,6 +270,9 @@ def barrier_hook(doc, directory, name, sealed, usable):
         return {"barrier-hook": result("skip", "the guard reads the hook data of a usable library or shipped definition by name; seal the pack first")}
     if doc.get("surface") != "local":
         return {"barrier-hook": result("na")}
+    why = hook_problem(hook)
+    if why:                                               # data the guard would not use, or one whose refusal reads as an allow: no corpus call can tell
+        return {"barrier-hook": result("fail", "the guard cannot use the hook data: " + why)}
     tmp = tempfile.mkdtemp(prefix="qargi-barrier.")
     try:
         os.chmod(tmp, 0o700)
