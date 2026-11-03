@@ -6,7 +6,7 @@
 # file and of what it was rendered from: `list` and `models` show STALE when the definition, the catalog or the body changed since
 # (qargi agent refresh) and DRIFT when the file was edited by hand. A name is unique within its project, so two projects can each have a worker.
 #
-#   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] --project P
+#   agent.sh add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P
 #   agent.sh list [--project P]
 #   agent.sh rename OLD NEW [--project P]
 #   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort
@@ -186,10 +186,10 @@ pdesc() { # runtime surface -> its summary on that surface: tiers (ids), aliases
 }
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
+POS=() ROLES='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --abilities) ABIL=$2; shift 2;;
+    --roles) ROLES=$2; shift 2;;
     --model) MODEL=$2; shift 2;;
     --effort) EFFORT=$2; shift 2;;
     --project) PROJ=$2; shift 2;;
@@ -340,20 +340,20 @@ write_member() { # rendered-json file: say what the runtime could not express, t
 
 add() {
   local n=${POS[0]:-} a list='' dir file seq first bc prov r ro ORIG_EFFORT=$EFFORT
-  [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] --project P"
+  [ -n "$n" ] || die "usage: qargi agent add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P"
   need_project "agent add" "$PROJ"
   # the provider is the project's (models.provider; no default); the member's file goes where the runtime links the project's agents
   prov=$(provider_for "$PROJ" local) || exit $?
   valid_name "$n" "$prov"
   jq -e --arg p "$PROJ" --arg n "$n" '.projects[$p][$n] != null' "$MEMBERS_FILE" >/dev/null && die "a member named $n exists already in project $PROJ (qargi agent list)"
   bc=$(jq -r --arg n "$n" '.bases[$n].class // empty' "$DEFAULTS")   # a base name takes the abilities of its class only
-  [ -z "$bc" ] || [ -n "$ABIL" ] || ABIL=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
-  for a in $(printf '%s' "${ABIL:-build,write,review,test}" | tr ',' ' '); do
-    [ "$a" != lead ] && valid_role "$a" || die "--abilities: a comma-separated list of roles ($DA_ROLES; qargi role list)"
-    [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--abilities: $n is a base of the $bc class; $a is $(role_class "$a")"
+  [ -z "$bc" ] || [ -n "$ROLES" ] || ROLES=$(jq -r --arg n "$n" '.bases[$n].abilities | join(",")' "$DEFAULTS")
+  for a in $(printf '%s' "${ROLES:-build,write,review,test}" | tr ',' ' '); do
+    [ "$a" != lead ] && valid_role "$a" || die "--roles: a comma-separated list of roles ($DA_ROLES; qargi role list)"
+    [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--roles: $n is a base of the $bc class; $a is $(role_class "$a")"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
-  [ -n "$list" ] || die "--abilities: give at least one"
+  [ -n "$list" ] || die "--roles: give at least one"
   first=${list%%,*}
   # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
   ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
@@ -643,7 +643,7 @@ case $verb in
         | sort_by(.seq // 0)[] | [.project, .name, (.roles | join(",")), (.model // "-") + "/" + (.effort // "default"),
         (.file + (if ($st[.project + "/" + .name] // []) | length > 0 then " (" + (($st[.project + "/" + .name]) | join(", ")) + ")" else "" end))] | @tsv' "$MEMBERS_FILE")
     if [ -n "$rows" ]; then column -t -s "$(printf '\t')" <<<"$rows"
-    else echo "no members${PROJ:+ in project $PROJ} yet: qargi agent add NAME [--abilities build,write,review,test] --project ${PROJ:-P}"; fi;;
+    else echo "no members${PROJ:+ in project $PROJ} yet: qargi agent add NAME [--roles build,write,review,test] --project ${PROJ:-P}"; fi;;
   rename)
     old=${POS[0]:-}; new=${POS[1]:-}
     [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW [--project P]"

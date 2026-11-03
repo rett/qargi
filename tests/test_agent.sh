@@ -17,7 +17,7 @@ A=$T/repop/.claude/agents
 fm() { $DA agent for "$@" --json 2>/dev/null | jq -r .member; }   # the member name only
 has_member() { jq -e --arg n "$1" '[(.projects // {})[] | keys[]] | index($n) != null' "$T/c/agents.json" >/dev/null; }
 
-out=$($DA agent add forge --project pbase --abilities build,test 2>&1) && [ -f "$A/forge.md" ] && ok "add renders the member definition" || no "add: $out"
+out=$($DA agent add forge --project pbase --roles build,test 2>&1) && [ -f "$A/forge.md" ] && ok "add renders the member definition" || no "add: $out"
 # the file is what the runtime's renderers.agent data makes of the neutral definition (agents/member.json and member.body.md): the front matter
 # is pinned here byte for byte, the body is the neutral body with the runtime's skills directory in it
 { cat <<'EOS'
@@ -53,18 +53,20 @@ grep -q '^name: forge$' "$A/forge.md" && grep -q 'build, test' "$A/forge.md" && 
 grep -q 'matcher: "Bash|Edit|Write|NotebookEdit|Read|Grep"' "$A/forge.md" && grep -q 'command: qargi __guard$' "$A/forge.md" && ok "the guard covers Bash and the edit tools" || no "hook"
 grep -q 'onFailure: block$' "$A/forge.md" && grep -q '^ *timeout: [0-9]' "$A/forge.md" && ok "the guard hook blocks when it fails or times out" || no "hook failure setting"
 ! grep -q '{{' "$A/forge.md" && ok "no placeholder is left" || no "placeholder left"
-$DA agent add scribe --project pbase --abilities write --model opus --effort medium >/dev/null 2>&1 && grep -q '^model: opus$' "$A/scribe.md" && ok "model is the one given" || no "model"
+$DA agent add scribe --project pbase --roles write --model opus --effort medium >/dev/null 2>&1 && grep -q '^model: opus$' "$A/scribe.md" && ok "model is the one given" || no "model"
 $DA agent add omni --project pbase >/dev/null 2>&1 && jq -e '.projects.pbase.omni.roles == ["build","write","review","test"]' "$T/c/agents.json" >/dev/null && ok "a member serves all four abilities by default" || no "default abilities"
 for bad in Forge "two--dashes" "-x" general-purpose Explore statusline-setup review lead forge; do
   $DA agent add "$bad" --project pbase >/dev/null 2>&1 && no "the name '$bad' was accepted" || ok "the name '$bad' is refused"
 done
-$DA agent add other --project pbase --abilities build,deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+$DA agent add other --project pbase --roles build,deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+out=$($DA agent add old --project pbase --abilities build 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "unknown option --abilities" <<<"$out" && [ ! -e "$A/old.md" ] && ok "--abilities is gone: an unknown option" || no "--abilities still accepted: $out"
 touch "$A/taken.md"; $DA agent add taken --project pbase >/dev/null 2>&1 && no "an existing file was replaced" || ok "a definition that exists is never replaced"
 
 [ -z "$(fm build)$(fm test)$(fm write)" ] && ok "for: members named forge, scribe or omni serve nobody; only the bases (worker, reviewer) are dispatched" || no "for named members: $(fm build) $(fm write)"
 $DA agent for review >/dev/null 2>&1 && no "a member that can write was returned for review: $($DA agent for review)" || ok "for: a member serving build and review (write class) never serves review"
 $DA agent list | grep -q "^pbase  *scribe  *write  *opus/medium" && ok "list shows abilities, project, model and effort" || no "list: $($DA agent list)"
-$DA agent add judge --project pbase --abilities review >/dev/null 2>&1 && grep -q 'command: qargi __guard --class read-only$' "$A/judge.md" && ok "a member that only reviews is read-only by class in its hook" || no "review class"
+$DA agent add judge --project pbase --roles review >/dev/null 2>&1 && grep -q 'command: qargi __guard --class read-only$' "$A/judge.md" && ok "a member that only reviews is read-only by class in its hook" || no "review class"
 ! grep -q -- '--class' "$A/forge.md" && ! grep -q -- '--class' "$A/scribe.md" 2>/dev/null && ok "a member with other abilities names no class" || no "class on a writer"
 $DA agent remove judge >/dev/null 2>&1
 
@@ -72,7 +74,7 @@ $DA agent remove judge >/dev/null 2>&1
 git init -q "$T/repo"
 jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high"}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
-$DA agent add smith --abilities build --project alpha >/dev/null 2>&1 && [ -f "$T/repo/.claude/agents/smith.md" ] && ok "--project puts it in the repository" || no "project add"
+$DA agent add smith --roles build --project alpha >/dev/null 2>&1 && [ -f "$T/repo/.claude/agents/smith.md" ] && ok "--project puts it in the repository" || no "project add"
 grep -qx '/.claude/agents/smith.md' "$T/repo/.git/info/exclude" && [ -z "$(git -C "$T/repo" status --porcelain)" ] && ok "and hides it from git" || no "exclude"
 $DA agent add worker --project alpha >/dev/null 2>&1
 [ "$(cd "$T/repo" && QARGI_PROJECT='' fm build)" = worker ] && [ -z "$(fm build)" ] && [ "$(fm build --project alpha)" = worker ] && ok "for resolves the members of the project in effect, and of no other" || no "project for"
@@ -89,7 +91,7 @@ $DA agent remove omni >/dev/null 2>&1; $DA agent for review >/dev/null 2>&1 && n
 $DA agent for review 2>&1 | grep -q "qargi agent add reviewer --project pbase" && ok "the hint names the command" || no "hint"
 
 # DRIFT: the file was edited by hand; STALE: it is not what the definition renders today (or nothing is on record)
-$DA agent add drifty --project pbase --abilities build >/dev/null 2>&1; cp "$A/drifty.md" "$T/drifty.keep"
+$DA agent add drifty --project pbase --roles build >/dev/null 2>&1; cp "$A/drifty.md" "$T/drifty.keep"
 printf '\nA line added by hand.\n' >> "$A/drifty.md"
 $DA agent list | grep -q "drifty .*drifty.md (DRIFT)$" && ok "list: an edited file is DRIFT" || no "list drift: $($DA agent list | grep drifty)"
 $DA agent models --json | jq -e '.members[] | select(.name == "drifty") | .state == ["DRIFT"] and (.flags | any(startswith("DRIFT")))' >/dev/null && $DA agent models --json | jq -e '.warnings | any(.name == "drifty" and (.message | startswith("DRIFT")))' >/dev/null \
@@ -122,7 +124,7 @@ git init -q "$T/repo-t"
 jq -n --arg p "$T/repo-t" '{schema:1,project:"tomlp",repo:{url:"https://github.com/example/tomlp",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"faketoml"},memory:{},budget_cents:500}' > "$T/c/projects/tomlp.json"
 toml() { python3 -c 'import tomllib,sys,json; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$1" 2>&1; }
-out=$($DA agent add tomler --abilities build,test --project tomlp 2>&1); F=$T/repo-t/.fake/agents/tomler.toml
+out=$($DA agent add tomler --roles build,test --project tomlp 2>&1); F=$T/repo-t/.fake/agents/tomler.toml
 [ -f "$F" ] && ok "faketoml: the file is where its definition says (.fake/agents, .toml)" || no "faketoml add: $out"
 tj=$(toml "$F")
 jq -e '.name == "tomler" and .model == "fake-m" and .effort == "h" and .mode == "write" and .tools == ["sh","cat","ed","tee"] and (.description | startswith("A qargi member")) and (.prompt | startswith("You are a qargi member")) and (.prompt | contains("`skills` directory"))' <<<"$tj" >/dev/null \
@@ -130,7 +132,7 @@ jq -e '.name == "tomler" and .model == "fake-m" and .effort == "h" and .mode == 
 grep -q "optional tool 'search_text' has no native name" <<<"$out" && ok "faketoml: a tool it cannot name is dropped with a note" || no "tool note: $out"
 grep -qx '/.fake/agents/tomler.toml' "$T/repo-t/.git/info/exclude" && [ -z "$(git -C "$T/repo-t" status --porcelain)" ] && ok "faketoml: hidden from git by the path its definition gives" || no "faketoml exclude"
 jq -e '.projects.tomlp.tomler | .provider == "faketoml" and .render.path == "tomler.toml" and .file == "'"$F"'"' "$T/c/agents.json" >/dev/null && $DA agent list | grep -q "tomler .*tomler.toml$" && ok "faketoml: recorded, and current" || no "faketoml record"
-out=$($DA agent add tomler2 --abilities build --effort xhigh --project tomlp 2>&1); tj=$(toml "$T/repo-t/.fake/agents/tomler2.toml")
+out=$($DA agent add tomler2 --roles build --effort xhigh --project tomlp 2>&1); tj=$(toml "$T/repo-t/.fake/agents/tomler2.toml")
 { jq -e 'has("effort") | not' <<<"$tj" >/dev/null && grep -q "effort: omitted" <<<"$out"; } && ok "faketoml: an effort the runtime has no value for is left out, with a note" || no "xhigh: $out $tj"
 printf '# hand\n' >> "$F"
 $DA agent list | grep -q "tomler .*tomler.toml (DRIFT)$" && ok "faketoml: a hand edit is DRIFT" || no "faketoml drift: $($DA agent list | grep tomler)"
@@ -146,7 +148,7 @@ $DA agent rename tomler smithy >/dev/null 2>&1; S=$T/repo-t/.fake/agents/smithy.
 grep -qx '/.fake/agents/smithy.toml' "$T/repo-t/.git/info/exclude" && [ -z "$(git -C "$T/repo-t" status --porcelain)" ] && ok "and hides the new file from git" || no "rename exclude"
 $DA agent list | grep 'smithy ' | grep -q '(' && no "renamed member flagged: $($DA agent list | grep smithy)" || ok "and it is current under the new name"
 # a read-only member needs a barrier on a runtime that has none (the project must accept it), as ever
-$DA agent add toml-judge --abilities review --project tomlp >/dev/null 2>&1; [ $? = 2 ] && ok "faketoml: a reviewing member is refused where the runtime has no barrier" || no "faketoml review"
+$DA agent add toml-judge --roles review --project tomlp >/dev/null 2>&1; [ $? = 2 ] && ok "faketoml: a reviewing member is refused where the runtime has no barrier" || no "faketoml review"
 # a runtime that claims read_only_barrier, attested, with barrier kind none and no read-only arguments has no barrier either: a reviewing member is refused
 LIBC=$T/c/packs/providers/claimtoml; mkdir -p "$LIBC"
 jq '.provider = "claimtoml" | .capabilities = {read_only_barrier: {value:"yes", verified_on:"2026-11-02", source:"test", note:"claim"}}' "$LIB/definition.json" > "$LIBC/definition.json"
@@ -159,24 +161,24 @@ PY
 git init -q "$T/repo-c"
 jq -n --arg p "$T/repo-c" '{schema:1,project:"claimp",repo:{url:"https://github.com/example/claimp",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claimtoml"},memory:{},budget_cents:500}' > "$T/c/projects/claimp.json"
-out=$($DA agent add claim-judge --abilities review --project claimp 2>&1); rc=$?
+out=$($DA agent add claim-judge --roles review --project claimp 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q 'claimtoml' <<<"$out" && grep -q 'barrier.kind is none' <<<"$out" && [ ! -e "$T/repo-c/.fake/agents/claim-judge.toml" ]; } \
   && ok "a reviewing member is refused where the runtime only claims a barrier (attested, kind none): it names the claim, and nothing is made" || no "claimtoml review: rc=$rc $out"
-out=$($DA agent add claim-builder --abilities build --project claimp 2>&1); rc=$?
+out=$($DA agent add claim-builder --roles build --project claimp 2>&1); rc=$?
 { [ $rc = 0 ] && [ -f "$T/repo-c/.fake/agents/claim-builder.toml" ]; } && ok "and a building member of that runtime is not affected" || no "claimtoml build: rc=$rc $out"
 # a library runtime with no renderer and no adapter cannot serve members
 LIB2=$T/c/packs/providers/norender; mkdir -p "$LIB2"
 jq '.provider = "norender" | del(.renderers)' "$LIB/definition.json" > "$LIB2/definition.json"
 python3 -I tests/handseal.py "$LIB2"
 jq '.models.provider = "norender"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
-out=$($DA agent add nope1 --abilities build --project tomlp 2>&1); rc=$?
+out=$($DA agent add nope1 --roles build --project tomlp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "norender" <<<"$out" && grep -q "renderers.agent" <<<"$out" && [ ! -e "$T/repo-t/.fake/agents/nope1.toml" ]; } && ok "a runtime with no member renderer is refused, naming it, and nothing is made" || no "norender: rc=$rc $out"
 # the providers named in a refusal come from the loader: the library's too, and none of the schema files
 LIB3=$T/c/packs/providers/badcat; mkdir -p "$LIB3"
 jq '.provider = "badcat" | .models = {catalog: "nocat", use: "id"}' "$LIB/definition.json" > "$LIB3/definition.json"
 python3 -I tests/handseal.py "$LIB3"
 jq '.models.provider = "badcat"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
-out=$($DA agent add nope3 --abilities build --project tomlp 2>&1); rc=$?
+out=$($DA agent add nope3 --roles build --project tomlp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
 
 # where a member's file goes: a member belongs to a project, and its file goes where the runtime links the project's agents; there are no user-level members
@@ -184,11 +186,11 @@ for m in $($DA agent list | awk '{print $2}'); do $DA agent remove "$m" >/dev/nu
 rm -rf "$A"
 out=$($DA agent add bare 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q -- '--project NAME' <<<"$out" && ! grep -q -- '--user' <<<"$out" && [ ! -e "$A/bare.md" ] && ! has_member bare; } && ok "add without --project is refused (exit 2), says so, and writes nothing" || no "bare add: rc=$rc $out"
-out=$(QARGI_PROJECT='' $DA agent add bare --abilities build 2>&1); rc=$?
+out=$(QARGI_PROJECT='' $DA agent add bare --roles build 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q -- '--project NAME' <<<"$out"; } && ok "and so it is with no project in effect either" || no "bare add, no project in effect: rc=$rc $out"
-out=$($DA agent add lvl --abilities build --user 2>&1); rc=$?
+out=$($DA agent add lvl --roles build --user 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'unknown option --user' <<<"$out" && [ ! -e "$A/lvl.md" ] && ! has_member lvl; } && ok "--user is an unknown option of add and writes nothing" || no "add --user: rc=$rc $out"
-$DA agent add lvl --abilities build --project pbase >/dev/null 2>&1 && [ -f "$A/lvl.md" ] && jq -e '.projects.pbase.lvl | has("project") | not' "$T/c/agents.json" >/dev/null && ok "add --project writes the file and records it under the project" || no "add --project"
+$DA agent add lvl --roles build --project pbase >/dev/null 2>&1 && [ -f "$A/lvl.md" ] && jq -e '.projects.pbase.lvl | has("project") | not' "$T/c/agents.json" >/dev/null && ok "add --project writes the file and records it under the project" || no "add --project"
 out=$($DA agent refresh lvl --user 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'unknown option --user' <<<"$out"; } && ok "--user is an unknown option of refresh" || no "refresh --user: rc=$rc $out"
 out=$($DA agent rename lvl lvl2 --user 2>&1); rc=$?; { [ $rc != 0 ] && grep -q 'unknown option --user' <<<"$out" && [ -f "$A/lvl.md" ] && [ ! -e "$A/lvl2.md" ]; } && ok "--user is an unknown option of rename and moves nothing" || no "rename --user: rc=$rc $out"
 $DA agent rename lvl lvl2 >/dev/null 2>&1 && [ -f "$A/lvl2.md" ] && [ ! -e "$A/lvl.md" ] && ok "rename works without any placement option" || no "rename"
@@ -227,7 +229,7 @@ for body in '{"forge":{"abilities":["build"],"file":"/x/forge.md","model":"opus"
 done
 echo '{}' > "$T/c/agents.json"
 out=$($DA agent list 2>&1); { grep -q 'no members yet' <<<"$out" && [ "$(cat "$T/c/agents.json")" = '{}' ]; } && ok "an empty object reads as no members" || no "empty object: $out"
-$DA agent add fresh --abilities build --project pbase >/dev/null 2>&1 && jq -e '.schema == 2 and (.projects.pbase | keys == ["fresh"])' "$T/c/agents.json" >/dev/null && ok "and the first add writes the current shape" || no "add to {}: $(cat "$T/c/agents.json")"
+$DA agent add fresh --roles build --project pbase >/dev/null 2>&1 && jq -e '.schema == 2 and (.projects.pbase | keys == ["fresh"])' "$T/c/agents.json" >/dev/null && ok "and the first add writes the current shape" || no "add to {}: $(cat "$T/c/agents.json")"
 $DA agent remove fresh >/dev/null 2>&1; jq -e '.projects == {}' "$T/c/agents.json" >/dev/null && ok "the last member of a project leaves no empty project" || no "empty project left: $(cat "$T/c/agents.json")"
 cp "$T/agents.keep" "$T/c/agents.json"
 # the members of a project go to the runtime's member render when its definition links the project's agents (entry-symlinks here)
@@ -238,7 +240,7 @@ git init -q "$T/repo-l"
 jq -n --arg p "$T/repo-l" '{schema:1,project:"linkp",repo:{url:"https://github.com/example/linkp",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"fakelink"},memory:{},budget_cents:500}' > "$T/c/projects/linkp.json"
 MD=$T/s/render/linkp/fakelink.agents
-out=$($DA agent add lk --abilities build --project linkp 2>&1)
+out=$($DA agent add lk --roles build --project linkp 2>&1)
 { [ -f "$MD/lk.toml" ] && [ ! -e "$T/repo-l/.fake" ] && [ ! -e "$HOME/.fake" ] && [ ! -e "$A/lk.md" ]; } && ok "linked runtime: a project's member is rendered into the member render (not the checkout, not the user's directory)" || no "linked add: $out"
 grep -q "qargi project link linkp --resource agents" <<<"$out" && ok "linked runtime: add says how the checkout gets it" || no "link note: $out"
 jq -e --arg f "$MD/lk.toml" '.projects.linkp.lk | .file == $f and has("project") == false and .render.path == "lk.toml"' "$T/c/agents.json" >/dev/null && $DA agent list | grep -q "^linkp  *lk " && ok "linked runtime: recorded at the render, current" || no "linked record"
@@ -248,7 +250,7 @@ out=$($DA agent refresh lk --project linkp 2>&1); grep -q "is current" <<<"$out"
 $DA agent rename lk lk2 >/dev/null 2>&1; [ -f "$MD/lk2.toml" ] && [ ! -e "$MD/lk.toml" ] && jq -e '.projects.linkp.lk2.file == "'"$MD"'/lk2.toml"' "$T/c/agents.json" >/dev/null && ok "linked runtime: rename keeps the member in the render" || no "linked rename: $(ls "$MD")"
 # a member an earlier version wrote into the checkout is moved to the render by refresh (the old file only while it is what qargi wrote)
 mkdir -p "$T/repo-l/.fake/agents"; rm -f "$T/repo-l/.fake/agents/lk.toml"
-$DA agent add old1 --abilities build --project linkp >/dev/null 2>&1; $DA agent add old2 --abilities build --project linkp >/dev/null 2>&1
+$DA agent add old1 --roles build --project linkp >/dev/null 2>&1; $DA agent add old2 --roles build --project linkp >/dev/null 2>&1
 for m in old1 old2; do cp "$MD/$m.toml" "$T/repo-l/.fake/agents/$m.toml"; rm -f "$MD/$m.toml"; jq --arg m "$m" --arg f "$T/repo-l/.fake/agents/$m.toml" '.projects.linkp[$m].file = $f' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"; done
 echo '# by hand' >> "$T/repo-l/.fake/agents/old2.toml"
 out=$($DA agent refresh old1 2>&1)
@@ -259,14 +261,14 @@ out=$($DA agent remove old1 2>&1); grep -q "project link linkp --resource agents
 $DA agent remove old2 >/dev/null 2>&1; $DA agent remove lk2 >/dev/null 2>&1
 
 # a base name takes only the abilities of its class
-$DA agent add worker --project pbase --abilities review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
-$DA agent add worker --project pbase --abilities build,review >/dev/null 2>&1 && no "worker accepted build,review" || ok "add worker refuses a mixed list"
-$DA agent add reviewer --project pbase --abilities build >/dev/null 2>&1 && no "reviewer accepted build" || ok "add reviewer refuses an ability of the write class"
-$DA agent add reviewer --project pbase --abilities review,test >/dev/null 2>&1 && no "reviewer accepted review,test" || ok "add reviewer refuses a mixed list"
-$DA agent add worker --project pbase --abilities tw >/dev/null 2>&1; [ ! -e "$A/worker.md" ] && ok "a refused base leaves no definition" || no "worker.md written"
-e=$($DA agent add reviewer --project pbase --abilities write 2>&1); grep -q 'reviewer' <<<"$e" && grep -q 'read-only' <<<"$e" && ok "and says which class the base has" || no "base message: $e"
+$DA agent add worker --project pbase --roles review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
+$DA agent add worker --project pbase --roles build,review >/dev/null 2>&1 && no "worker accepted build,review" || ok "add worker refuses a mixed list"
+$DA agent add reviewer --project pbase --roles build >/dev/null 2>&1 && no "reviewer accepted build" || ok "add reviewer refuses an ability of the write class"
+$DA agent add reviewer --project pbase --roles review,test >/dev/null 2>&1 && no "reviewer accepted review,test" || ok "add reviewer refuses a mixed list"
+$DA agent add worker --project pbase --roles tw >/dev/null 2>&1; [ ! -e "$A/worker.md" ] && ok "a refused base leaves no definition" || no "worker.md written"
+e=$($DA agent add reviewer --project pbase --roles write 2>&1); grep -q 'reviewer' <<<"$e" && grep -q 'read-only' <<<"$e" && ok "and says which class the base has" || no "base message: $e"
 mkdir -p "$T/c/roles/tw"; jq -n '{class:"write"}' > "$T/c/roles/tw/role.json"; echo "the tw role" > "$T/c/roles/tw/ROLE.md"
-$DA agent add worker --project pbase --abilities tw,test >/dev/null 2>&1 && jq -e '.projects.pbase.worker.roles == ["tw","test"]' "$T/c/agents.json" >/dev/null && ok "a custom write role fits the worker" || no "worker tw"
+$DA agent add worker --project pbase --roles tw,test >/dev/null 2>&1 && jq -e '.projects.pbase.worker.roles == ["tw","test"]' "$T/c/agents.json" >/dev/null && ok "a custom write role fits the worker" || no "worker tw"
 $DA agent remove worker >/dev/null 2>&1
 $DA agent add worker --project pbase >/dev/null 2>&1 && jq -e '.projects.pbase.worker.roles == ["build","write","test"]' "$T/c/agents.json" >/dev/null && ok "add worker with no list serves the base's abilities" || no "worker default"
 $DA agent add reviewer --project pbase >/dev/null 2>&1 && jq -e '.projects.pbase.reviewer.roles == ["review"]' "$T/c/agents.json" >/dev/null && grep -q -- '--class read-only' "$A/reviewer.md" && ok "add reviewer with no list serves review, read-only by class" || no "reviewer default"
@@ -278,23 +280,23 @@ for pair in "tw:write" "ro:read-only"; do
   r=${pair%%:*}; c=${pair##*:}; mkdir -p "$T/c/roles/$r"
   jq -n --arg c "$c" '{class:$c}' > "$T/c/roles/$r/role.json"; echo "the $r role" > "$T/c/roles/$r/ROLE.md"
 done
-$DA agent add builder --project pbase --abilities build,test >/dev/null 2>&1
+$DA agent add builder --project pbase --roles build,test >/dev/null 2>&1
 out=$($DA agent for build 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'qargi agent add worker --project pbase' <<<"$out"; } && ok "for: a member of another name serves nobody, and the hint names the base to add" || no "builder served: rc=$rc $out"
-$DA agent add worker --project pbase --abilities build,write,test >/dev/null 2>&1
+$DA agent add worker --project pbase --roles build,write,test >/dev/null 2>&1
 [ "$($DA agent for build)" = "worker sonnet high build" ] && [ "$($DA agent for test)" = "worker sonnet low test" ] && [ "$($DA agent for write)" = "worker sonnet medium write" ] && ok "for: one line, MEMBER MODEL EFFORT PROFILE, from the base member" || no "worker: $($DA agent for build)"
 jq -e . <<<"$($DA agent for build --json)" >/dev/null && $DA agent for build --json | jq -e '.member == "worker" and (has("legacy") | not) and (has("member_scope") | not) and .role == "build" and .class == "write" and .profile == "build" and .profile_source == "shipped" and .base == "worker"
   and .tier == "balanced" and .model == "sonnet" and .model_id == "claude-sonnet-5-5" and .effort == "high" and .opt_in == false and (.purpose | length > 0)' >/dev/null && ok "for --json: the whole answer" || no "json: $($DA agent for build --json)"
 $DA agent for tw --json | jq -e '.member == "worker" and .profile == "build" and .profile_source == "class-fallback" and .class == "write"' >/dev/null && ok "a custom write role with no profile uses the build row" || no "custom write: $($DA agent for tw --json 2>&1)"
 $DA agent for ro >/dev/null 2>&1 && no "a read-only role resolved with no read-only member" || ok "a read-only role never resolves to a write member"
-$DA agent add judge --project pbase --abilities review >/dev/null 2>&1
+$DA agent add judge --project pbase --roles review >/dev/null 2>&1
 $DA agent for review >/dev/null 2>&1 && no "a read-only member named judge served review: $($DA agent for review)" || ok "review: a read-only member that is not named reviewer serves nobody"
 $DA agent for ro >/dev/null 2>&1 && no "a custom read-only role was served by judge" || ok "and neither does it serve a custom read-only role"
-$DA agent add mix --project pbase --abilities build,review >/dev/null 2>&1
+$DA agent add mix --project pbase --roles build,review >/dev/null 2>&1
 $DA agent remove judge >/dev/null 2>&1
 $DA agent for review >/dev/null 2>&1 && no "mixed member returned for review: $($DA agent for review)" || ok "a mixed member is write class and never serves review"
 $DA agent for build --json | jq -e '.member == "worker"' >/dev/null && ok "a mixed member still serves its write abilities" || no "mix build"
-$DA agent add reviewer --project pbase --abilities review >/dev/null 2>&1
+$DA agent add reviewer --project pbase --roles review >/dev/null 2>&1
 [ "$($DA agent for ro)" = "reviewer opus high review" ] && $DA agent for ro --json | jq -e '.profile_source == "class-fallback" and .profile == "review"' >/dev/null && ok "a custom read-only role uses the review row" || no "custom ro"
 [ "$($DA agent for review)" = "reviewer opus high review" ] && [ "$($DA agent for review --profile auditor)" = "reviewer haiku low auditor" ] && ok "for --profile auditor: the reviewer at haiku low" || no "auditor: $($DA agent for review --profile auditor)"
 [ "$($DA agent for review --profile advisor)" = "reviewer opus high advisor" ] && $DA agent for review --profile researcher --json | jq -e '.model == "fable" and .opt_in == true and .effort == "high"' >/dev/null && ok "advisor and researcher" || no "advisor/researcher"
@@ -348,7 +350,7 @@ imp "$OVL" || no "could not import ovl"
 git init -q "$T/repo-v"
 jq -n --arg p "$T/repo-v" '{schema:1,project:"locp",repo:{url:"https://github.com/example/locp",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},
   profiles:{quick:{base:"worker",tier:"fast"}},models:{provider:"locov",extensions:["ovl"]},memory:{},budget_cents:500}' > "$T/c/projects/locp.json"
-$DA agent add worker --abilities build --project locp >/dev/null 2>&1 || no "add worker: $($DA agent add worker --abilities build --project locp 2>&1)"
+$DA agent add worker --roles build --project locp >/dev/null 2>&1 || no "add worker: $($DA agent add worker --roles build --project locp 2>&1)"
 e=$($DA agent for build --profile quick --project locp 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q "per_dispatch_model_override is not supported on local" <<<"$e"; } && ok "extension enabled but unverified: the member keeps its own model; another profile's model is refused (exit 2)" || no "ext unverified: rc=$rc $e"
 python3 -I - <<'PY'
@@ -372,10 +374,10 @@ imp "$RNX" || no "could not import rnext"
 git init -q "$T/repo-r"
 jq -n --arg p "$T/repo-r" '{schema:1,project:"rnp",repo:{url:"https://github.com/example/rnp",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},
   models:{provider:"rnl"},memory:{},budget_cents:500}' > "$T/c/projects/rnp.json"
-out=$($DA agent add rn1 --abilities build --project rnp 2>&1); rc=$?
+out=$($DA agent add rn1 --roles build --project rnp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "renderers.agent" <<<"$out"; } && ok "extension not enabled: a runtime with no member renderer cannot serve members" || no "rnl without extension: rc=$rc $out"
 jq '.models.extensions = ["rnext"]' "$T/c/projects/rnp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/rnp.json"
-out=$($DA agent add rn1 --abilities build --project rnp 2>&1); RF=$T/s/render/rnp/rnl.agents/rn1.toml; [ -f "$RF" ] || RF=$T/repo-r/.fake/agents/rn1.toml
+out=$($DA agent add rn1 --roles build --project rnp 2>&1); RF=$T/s/render/rnp/rnl.agents/rn1.toml; [ -f "$RF" ] || RF=$T/repo-r/.fake/agents/rn1.toml
 { [ -f "$RF" ] && [ "$(toml "$RF" | jq -r .name)" = rn1 ]; } && ok "extension enabled: the member is rendered by the renderer the extension added" || no "rnl with extension: $out"
 $DA agent list | grep 'rn1 ' | grep -q '(' && no "rn1 flagged right after add: $($DA agent list | grep rn1)" || ok "and it is current"
 python3 -I - "$T/c/packs/providers/rnext" <<'PY'
