@@ -389,11 +389,11 @@ COMMANDS = {
                                 "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
                                 "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
                                 "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
-                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/claude/PROJECT, replacing the "
+                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), replacing the "
                                 "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
                                 "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
                                 "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
-                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.\n"
+                                "repository or into ~/.claude, and members cannot write under the state's render/ directory.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
                                 "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
@@ -572,7 +572,7 @@ COMMANDS = {
         "verbs": {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
             "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
-                         [opt("--json", "machine-readable")]),
+                         [opt("--json", "machine-readable"), opt("--project", "show it as this project sees it, with its verified extensions composed in", "PROJECT", "project")]),
             "accept": verb("Record that you accept a provider surface that has no read-only barrier", [("NAME", "none")],
                            [opt("--surface", "the surface the acceptance covers", "SURFACE", ("local", "cloud")),
                             opt("--no-barrier", "accept running the review role without a read-only barrier on that surface"),
@@ -582,7 +582,8 @@ COMMANDS = {
                            desc="Without --plan and --approved it prints what would be recorded and a plan token. Applied, it writes models.accept_no_barrier.SURFACE "
                                 "(who, when, why) to the project's answers and the audit log. It is the only way a provider surface whose read-only barrier "
                                 "is not supported can serve the review role."),
-            "check": verb("Validate a descriptor and say what degrades", [("NAME", "none")],
+            "check": verb("Validate a definition (a library name or a directory) and say what degrades", [("NAME|DIR", "none")],
+                          [opt("--project", "check it as this project composes it with its enabled extensions", "PROJECT", "project")],
                           desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
@@ -595,8 +596,13 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let projects use a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "disable": verb("Stop projects using a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
+            "enable": verb("Let a project use a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED],
+                           desc="An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified."),
+            "disable": verb("Stop a project using a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED]),
+            "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
+                                [opt("--check", "check that the adapter and the verb exist and print nothing else")],
+                                desc="A verb the definition does not list exits 3."),
+            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),

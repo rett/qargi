@@ -262,10 +262,16 @@ class Skills(unittest.TestCase):
             self.assertIn("qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent", r.stderr)
 
     def test_lets_the_read_only_provider_verbs_through(self):
-        for c in ("qargi provider list", "qargi provider show claude", "qargi provider check claude", "python3 -I lib/provider.py require-barrier claude cloud",
+        for c in ("qargi provider list", "qargi provider show claude", "python3 -I lib/provider.py require-barrier claude cloud",
                   "python3 -I lib/provider.py effective claude local read_only_barrier", "echo qargi provider accept", "grep -n 'provider accept' lib/commands.py"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_provider_check_to_a_member(self):
+        # it records its result in verified.json, so it is not a read
+        r = self.bash("qargi provider check claude")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("changes the provider definitions", r.stderr)
 
     def test_refuses_packs_seed_to_a_member(self):
         for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
@@ -1670,7 +1676,7 @@ class ProviderVerbs(unittest.TestCase):
         self.assertNotIn("changes the provider definitions", r.stderr)
 
     def test_lets_the_verbs_that_only_read_through(self):
-        for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider check claude", "qargi provider effective claude local skills",
+        for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider effective claude local skills",
                   "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
                   "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
                   "echo qargi provider seal x", "grep -n 'provider migrate' lib/provider.py", "cat provider.sh"):
