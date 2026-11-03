@@ -66,6 +66,14 @@ Usage: provider.py list
        provider.py migrate NAME --dry-run [--as local=X,cloud=Y]
                                          prints the schema 2 documents of a schema 1 descriptor (an object, or an array when it is split
                                          into a catalog and one runtime per surface); notes on stderr; writes nothing
+The library verbs (lib/conformance/library.py; every one that writes is a plan, a token and --approved, and leaves an audit line; a member
+is refused all of them by the guard):
+       provider.py new NAME [--kind provider|catalog|extension] [--from minimal|command|hook-cli|PROVIDER]    scaffold an unsealed pack
+       provider.py import SOURCE [--name N] [--ref R] [--path SUB] [--plan T --approved W [--approve-exec a,b]]   a directory, one JSON file or an https git URL
+       provider.py seal NAME [--plan T --approved W [--approve-exec a,b]]       approve the pack as it is now (after you edited it)
+       provider.py attest NAME CAP --asked W ...   the plan and the record of a live check you ran; it never runs or spends anything
+       provider.py enable|disable PROJECT EXT [--plan T --approved W [--approve-exec a,b]]   an extension for one project
+       provider.py remove NAME [--plan T --approved W]
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import copy
 import hashlib
@@ -80,6 +88,7 @@ TOOL = os.path.dirname(HERE)                      # the tool root: the checkout,
 PROVIDERS = os.path.join(HERE, "providers")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 SURFACES = ("local", "cloud")
+LIBRARY_VERBS = ("new", "import", "seal", "remove", "enable", "disable", "attest")
 TIERS = ("fast", "balanced", "deep", "frontier")
 
 
@@ -1433,6 +1442,17 @@ def findings_of(name, root=None, library=None):
     return e, raw, findings
 
 
+def _library_module():
+    """lib/conformance/library.py (the lifecycle of library packs), or None when this file is run without its neighbours."""
+    sys.path.insert(0, HERE)
+    sys.modules.setdefault("provider", sys.modules[__name__])      # the module the library imports is this one, also when this file is the script
+    try:
+        from conformance import library
+    except ImportError:
+        return None
+    return library
+
+
 def cmd_list():
     for n in names():
         try:
@@ -1441,7 +1461,12 @@ def cmd_list():
             print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % ex))
             continue
         surfaces = [raw["surface"]] if _is2(raw) and raw.get("surface") in SURFACES else _surfaces(raw)
-        print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), "  (library)" if e["origin"] == "library" else ""))
+        sealed = seal_state(e)[0]
+        note = "  (library%s)" % (", unsealed" if sealed == "unsealed" else ", changed since sealed" if sealed == "drift" else "") if e["origin"] == "library" else ""
+        print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), note))
+    lib = _library_module()
+    if lib:
+        lib.list_other_kinds()
     return 0
 
 
@@ -1590,7 +1615,8 @@ def cmd_migrate(args):
         return 2
     raw = _read(_entry(pos[0]))
     if not opts.get("dry"):
-        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form", file=sys.stderr)
+        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form. "
+              "There is nothing to write into the library: its definitions are schema 2 already, and a shipped schema 1 file is replaced by the release that ships it", file=sys.stderr)
         return 2
     docs, notes = migrate(raw, names or None)
     for n in notes:
@@ -1637,7 +1663,8 @@ def cmd_of(args):
 
 
 def main(argv):
-    usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
+    usage = ("usage: qargi provider list | show NAME [--json] | check NAME | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
+             "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
              "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
         print(usage, file=sys.stderr)
@@ -1652,7 +1679,15 @@ def main(argv):
             return cmd_list()
         pos = [a for a in rest if a != "--json"]
         if verb == "show" and len(pos) == 1 and len(rest) - len(pos) <= 1:
-            return cmd_show(pos[0], "--json" in rest)
+            lib = _library_module()
+            rc = lib.show_pack(pos[0], "--json" in rest) if lib else None   # a library catalog or extension; a provider is shown below
+            return rc if rc is not None else cmd_show(pos[0], "--json" in rest)
+        if verb in LIBRARY_VERBS:
+            lib = _library_module()
+            if lib is None:
+                print("qargi: provider %s needs lib/conformance/, which is not beside this file" % verb, file=sys.stderr)
+                return 1
+            return lib.run(verb, rest)
         if verb == "check" and len(rest) == 1:
             return cmd_check(rest[0])
         if verb == "effective" and len(rest) == 3:

