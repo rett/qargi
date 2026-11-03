@@ -165,7 +165,7 @@ an attest, and `provider show RUNTIME --project P` shows which pack provided eac
 
 ## Using a runtime
 
-- Members are written by the project's local runtime: `qargi agent add NAME --abilities LIST
+- Members are written by the project's local runtime: `qargi agent add NAME --roles LIST
   --project P` (see `/qargi-instances`). A runtime without agent files refuses `agent add`.
 - `qargi project link P` links the project's skills, agents and memory into the work tree you run
   it in, the way the runtime says (`/qargi-project`).

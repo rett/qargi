@@ -250,7 +250,7 @@ $DA project link lp --plan 000000000000 --approved x >/dev/null 2>&1 && no "appl
 [ ! -e "$LD" ] && ok "project link: a refused apply changes nothing" || no "refused apply linked"
 
 # agents: a member of the project is rendered into the member render, and linking puts one link per member in the checkout
-out=$($DA agent add smith --abilities build --project lp 2>&1)
+out=$($DA agent add smith --roles build --project lp 2>&1)
 { [ -f "$MD/smith.toml" ] && [ ! -e "$LR/.fake" ] && grep -q "project link lp --resource agents" <<<"$out"; } && ok "agent add --project: the file goes to the member render, not the checkout, and the note names the link verb" || no "agent add: $out $(ls -A "$LR")"
 jq -e --arg f "$MD/smith.toml" '.projects.lp.smith | .file == $f and has("project") == false' "$T/c/agents.json" >/dev/null && ok "and the record says so" || no "record"
 mkdir -p "$LR/.fake/agents"; echo mine > "$LR/.fake/agents/own.toml"                  # the user's own agent beside it
@@ -260,7 +260,7 @@ out=$(lgo link lp 2>&1)
 tail -1 "$T/s/audit.log" | jq -e '.verb=="project:link" and .approved=="test"' >/dev/null && ok "project link is audit-logged" || no "audit: $(tail -1 "$T/s/audit.log")"
 out=$($DA project link lp 2>&1); { grep -q "already linked: $LD" <<<"$out" && grep -q "already linked: $LR/.fake/agents -> $MD" <<<"$out" && [ -z "$(tokp <<<"$out")" ]; } && ok "project link: when everything is linked there is no plan to approve" || no "relink: $out"
 # a member added later is picked up by the next link, and one removed is dropped
-$DA agent add anvil --abilities test --project lp >/dev/null 2>&1; lgo link lp >/dev/null 2>&1
+$DA agent add anvil --roles test --project lp >/dev/null 2>&1; lgo link lp >/dev/null 2>&1
 [ -L "$LR/.fake/agents/anvil.toml" ] && ok "project link: a member added later is linked by the next run" || no "second member"
 $DA agent remove anvil >/dev/null 2>&1; lgo link lp >/dev/null 2>&1
 [ ! -e "$LR/.fake/agents/anvil.toml" ] && [ ! -L "$LR/.fake/agents/anvil.toml" ] && [ -L "$LR/.fake/agents/smith.toml" ] && ok "project link: a removed member's link is dropped, the others stay" || no "stale link: $(ls -la "$LR/.fake/agents")"
@@ -342,7 +342,7 @@ CRD=$T/s/render/lc/claude-code/.claude/skills; mkdir -p "$CRD/s1"; echo s > "$CR
 CD=$HOME/.claude/projects/$(sed 's/[^A-Za-z0-9]/-/g' <<<"$CR")/memory
 out=$(lgo link lc 2>&1)
 { [ -L "$CR/.claude/skills" ] && [ "$(readlink "$CR/.claude/skills")" = "$CRD" ] && [ -L "$CD" ] && [ "$(readlink "$CD")" = "$CM" ] && grep -q "^agents: not linked, the runtime links no agents at project level" <<<"$out"; } && ok "claude: skills and memory linked in one apply, agents skipped with the reason" || no "claude link: $out"
-$DA agent add jones --abilities build --project lc >/dev/null 2>&1
+$DA agent add jones --roles build --project lc >/dev/null 2>&1
 { [ -f "$CR/.claude/agents/jones.md" ] || [ -f "$CR/.claude/skills/../agents/jones.md" ]; } && ok "claude: a project member is still written into the checkout's agents directory, as before (its definition does not link agents)" || no "claude member location"
 lgo unlink lc >/dev/null 2>&1
 { [ ! -e "$CR/.claude/skills" ] && [ ! -e "$CD" ] && [ -d "$CRD/s1" ] && [ -f "$CM/b.md" ]; } && ok "claude: unlink with no resource named undoes every one that is linked" || no "claude unlink"

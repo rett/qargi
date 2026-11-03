@@ -124,7 +124,7 @@ packs attached to it, not for its ability:
 | `test` | test | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
 | `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
 
-The members are yours to name: `qargi agent add forge --abilities build,test --project P` renders
+The members are yours to name: `qargi agent add forge --roles build,test --project P` renders
 the one member definition qargi ships through the project's local runtime into that runtime's own
 file (for Claude Code `forge.md`, in the repository's agents directory, hidden from git, or in the
 project's member render once `qargi project link` is applied), with the abilities it serves (all
