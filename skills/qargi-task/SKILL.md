@@ -151,7 +151,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
    - **Command runtime** (a headless CLI; there is no member file, so there is nothing to spawn). Save the task block to
      `RUN/task.md`, check the command with `qargi local run RUN --dry-run` (it prints the argv, the working directory and the
      prompt, and runs nothing), then `qargi local run RUN [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout S]`. The
-     command is built from the definition as an array, without a shell, in the run's credential-less environment, with the member's
+     command is built from the definition as an array, without a shell, in a scrubbed environment (only what the pack's `env_pass` lists, which the review shows), with the member's
      prompt and the task block composed into one prompt; its output goes to `OUT/transcript`. `--again` runs a second time in the same
      run. A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one
      (`qargi provider accept`). The runtime is not a sandbox: it runs as the user, so step 3 matters more. An in-session runtime is

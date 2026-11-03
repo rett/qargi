@@ -30,8 +30,9 @@ There is no default. Ask for each surface, and leave one out if the project neve
 
 - `qargi project set P models.provider.local NAME` and `models.provider.cloud NAME` (also
   `project new|attach --provider-local X --provider-cloud Y`, or `--provider X` for one name).
-- A family name works when exactly one runtime of it serves that surface (`claude` is
-  `claude-code` locally). A runtime that does not serve the surface is refused.
+- A family name works when exactly one runtime of it serves that surface (name the
+  runtime itself, `claude-code` or `claude-platform`: the bare name `claude` is still the older
+  single definition and goes in the legacy cleanup). A runtime that does not serve the surface is refused.
 - A verb that needs a surface the answers leave out stops with exit 2 and says which.
 
 ## Add a runtime with no code
