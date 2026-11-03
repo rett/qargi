@@ -819,6 +819,19 @@ class Schema2(unittest.TestCase):
         self.one(runtime(notes=["spawn"]), 'notes: ["spawn"] is not of type object')
         self.one(runtime(notes="text"), "notes: 'text' is not of type object")
 
+    def test_a_local_runtime_that_works_in_the_session_warns_when_it_has_no_spawn_note(self):
+        in_session = {"mode": "in-session"}
+        def warned(d):
+            return [m for m in warns(d) if "spawn" in m]
+        self.assertEqual(len(warned(runtime(dispatch=in_session))), 1)
+        self.assertEqual(len(warned(runtime(dispatch=in_session, notes={"alpha": "x"}))), 1)
+        self.assertEqual(fails(runtime(dispatch=in_session)), [])                              # a warning, never a failure
+        self.assertEqual(warned(runtime(dispatch=in_session, notes={"spawn": "Start it."})), [])
+        self.assertEqual(warned(runtime()), [])                                                 # a command runtime is started by qargi local run
+        self.assertEqual(warned(runtime(surface="cloud", dispatch=in_session)), [])
+        self.assertIn("spawn", warned(runtime(dispatch=in_session))[0])
+        self.assertEqual(warned(CODE), [])                                                     # the shipped runtime has it
+
     def test_provider_notes_refuses_with_exit_2_what_it_cannot_read_and_exits_1_for_a_missing_topic(self):
         import contextlib, io
         def run(side_effect=None, ret=None, *args):
