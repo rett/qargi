@@ -78,6 +78,24 @@ run alpha --project noprov
 run alpha --project cloudonly
 { [ $rc = 2 ] && [ -z "$out" ] && grep -q "no local provider" <<<"$err"; } && ok "a project with no local runtime is exit 2 (the verb asks for the local surface)" || no "cloud only: rc=$rc out=$out err=$err"
 
+# the shipped runtime of Claude Code has the topics the skills point at, and the text of a topic is what the verb prints
+mkproj onclaude '{"local":"claude-code","cloud":"claude-platform"}'
+run --project onclaude
+{ [ $rc = 0 ] && [ "$out" = "commands
+exploration
+identity
+session-model
+skills-dir
+spawn" ]; } && ok "the shipped claude-code lists its topics" || no "claude-code topics: rc=$rc out=$out err=$err"
+run spawn --project onclaude
+{ [ $rc = 0 ] && grep -q 'subagent_type' <<<"$out"; } && ok "claude-code says how a lead spawns a member" || no "claude-code spawn: rc=$rc out=$out err=$err"
+topics=$(grep -rhoE 'qargi provider notes [a-z][a-z0-9-]*' skills packs contract roles agents 2>/dev/null | awk '{print $4}' | sort -u)
+missing=
+for t in $topics; do run "$t" --project onclaude; [ $rc = 0 ] || missing="$missing $t"; done
+[ -z "$missing" ] && ok "every topic a skill points at exists in claude-code${topics:+ ($(tr '\n' ' ' <<<"$topics" | sed 's/ $//'))}" || no "skills point at topics claude-code lacks:$missing"
+run spawn --project cloudonly
+[ $rc = 2 ] && ok "claude-platform is a cloud runtime: a project with only it has no local notes" || no "cloud only spawn: rc=$rc"
+
 # usage
 run a b --project withnotes
 [ $rc = 2 ] && ok "two topics are a usage error" || no "two topics: rc=$rc"

@@ -1660,6 +1660,14 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
                 self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
 
+    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_none(self):
+        notes = P.definition("claude-code")["notes"]
+        self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertIn("subagent_type", notes["spawn"])
+        self.assertIn('{"skillOverrides": {"NAME": "off"}}', notes["skills-dir"])
+        self.assertIn("Not verified", notes["identity"])                         # it says plainly what is not verified
+        self.assertNotIn("notes", P.definition("claude-platform"))
+
     def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
         self.assertEqual(P.layout("claude-code", home="/h")["user_skills_dir"], "/h/.claude/skills")
         self.assertEqual(P.summary("claude-code")["reserved_names"], CODE["agents"]["reserved_names"])
