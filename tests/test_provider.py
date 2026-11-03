@@ -1703,7 +1703,10 @@ class Addenda(V2Tree):
         self.refused("contract_addenda: a.md is not a file")
         os.rmdir(os.path.join(d, "a.md"))
         for data, why in ((b"text\x00more", "is not text"), (b"\xff\xfe bytes", "is not text"), (b"esc \x1b[2J", "is not text"),
-                          ("bidi \u202e text".encode(), "is not text"), (b"\x7fELF\x02", "is not text"), (b"x" * (P.ADDENDUM_MAX + 1), "is longer than %d bytes" % P.ADDENDUM_MAX)):
+                          ("bidi \u202e text".encode(), "is not text"), (b"\x7fELF\x02", "is not text"),
+                          ("tag \U000e0041 char".encode(), "is not text"), ("zero\u200bwidth".encode(), "is not text"), ("bom \ufeff inside".encode(), "is not text"),
+                          ("soft\u00adhyphen".encode(), "is not text"), ("private \ue000 use".encode(), "is not text"), ("unassigned \u0378".encode(), "is not text"),
+                          ("line\u2028separator".encode(), "is not text"), (b"carriage\rreturn", "is not text"), (b"x" * (P.ADDENDUM_MAX + 1), "is longer than %d bytes" % P.ADDENDUM_MAX)):
             self.write(d, "a.md", data)
             self.refused("contract_addenda: a.md " + why)
         self.write(d, "a.md", "tab\tand\nnewline are text\n")
