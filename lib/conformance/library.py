@@ -42,6 +42,15 @@ if LIB not in sys.path:
 import provider as P  # noqa: E402                         (lib/provider.py puts itself in sys.modules under this name when it is the script)
 from conformance import review as R  # noqa: E402
 
+_print = print
+
+
+def print(*args, **kw):  # noqa: A001  (this module's print: every word is written through R.vis)
+    """The print of this module. What a pack holds (file names, lines of its files, strings of its definition) is printed for a person to read
+    and approve, so a control, escape or bidi character in it is written out (\\x1b, \\u202e) and cannot erase, hide or reorder a line of the review."""
+    _print(*[R.vis(a) if isinstance(a, str) else a for a in args], **kw)
+
+
 KINDS = ("provider", "catalog", "extension")
 KEYS = {"provider": "provider", "catalog": "family", "extension": "extension"}
 FROM_KINDS = ("minimal", "command", "hook-cli")

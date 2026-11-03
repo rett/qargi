@@ -127,6 +127,8 @@ write_record() { # path kind source compat-json
     '{kind:$k, source:$src, sha256:$h, stored:$t, compatible_providers:$c}' > "$(record_of "$1")"
 }
 
+showable() { python3 -I "$REVIEWPY" vis; }   # stdin with control, escape and bidi characters written out: what a pack holds never reaches the terminal raw
+
 # What a reviewer needs to see before trusting a pack; prints findings, returns 1 on a FAIL.
 review() { # kind path [compat-json]: the declaration is the third argument while the pack has no record yet (import, seed), else the record's
   local p=$2 rc=0 n size c cw
@@ -138,19 +140,19 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     head -1 "$p/SKILL.md" | grep -qx -- '---' || { echo "FAIL: SKILL.md has no front matter"; rc=1; }
     grep -q '^name: *[a-z0-9]' "$p/SKILL.md" || { echo "FAIL: SKILL.md front matter has no name"; rc=1; }
     grep -q '^description: *[^< ]' "$p/SKILL.md" || { echo "FAIL: SKILL.md front matter has no real description"; rc=1; }
-    # the owner's policy for every pack: only text (no binary, archive, special file or symbolic link, no NUL byte, invalid UTF-8); the same
-    # rules as the provider packs (conformance/review.py)
+    # the owner's policy for every pack: only text (no binary, archive, special file or symbolic link, no NUL byte, invalid UTF-8, control or
+    # bidi character in a file or its name); the failures come escaped, from the same rules as the provider packs (conformance/review.py)
     pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
     n=$(find "$p" -type f ! -name .pack.json | wc -l); size=$(find "$p" -type f ! -name .pack.json -exec cat {} + | wc -c)
     echo "files: $n, $size bytes"
     { [ "$n" -le 100 ] && [ "$size" -le 2000000 ]; } || { echo "FAIL: more than 100 files or 2 MB"; rc=1; }
-    (cd "$p" && find . -type f ! -name .pack.json | sed 's#^\./#  #' | sort | head -40)
+    (cd "$p" && find . -type f ! -name .pack.json | sed 's#^\./#  #' | sort | head -40) | showable
     local scripts; scripts=$(cd "$p" && find . -type f ! -name .pack.json \( -perm /111 -o -name '*.sh' -o -name '*.py' -o -name '*.js' -o -name '*.rb' \) | sed 's#^\./#  #')
-    [ -z "$scripts" ] || { echo "executable or script files (the agent may run these):"; echo "$scripts"; }
+    [ -z "$scripts" ] || { echo "executable or script files (the agent may run these):"; echo "$scripts" | showable; }
     local urls; urls=$(grep -rhoE 'https?://[A-Za-z0-9._~:/?#@!$&*+,;=%-]+' "$p" 2>/dev/null | sort -u | head -15)
-    [ -z "$urls" ] || { echo "URLs mentioned:"; echo "$urls" | sed 's/^/  /'; }
+    [ -z "$urls" ] || { echo "URLs mentioned:"; echo "$urls" | sed 's/^/  /' | showable; }
     local net; net=$(grep -rnE '\b(curl|wget|ssh|scp|nc|ncat)\b' "$p" 2>/dev/null | head -8 | cut -c1-150)
-    [ -z "$net" ] || { echo "network commands mentioned:"; echo "$net" | sed 's/^/  /'; }
+    [ -z "$net" ] || { echo "network commands mentioned:"; echo "$net" | sed 's/^/  /' | showable; }
     if grep -rqE 'sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY' "$p"; then echo "FAIL: looks like a secret"; rc=1; fi
   else
     jq -e . "$p" >/dev/null 2>&1 || { echo "FAIL: not valid JSON"; return 1; }
