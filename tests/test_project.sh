@@ -68,6 +68,8 @@ chkm "accept_no_barrier empty reason" ".models.accept_no_barrier.cloud=($ACC | .
 # models.provider: the template has it, empty (there is no default provider); validate reports an empty or missing one as a finding
 # line and still exits 0, so storing and every flow after it work as before
 jq -e '.models.provider == ""' <<<"$base" >/dev/null && echo "ok   the template has models.provider as an empty string" || { echo "FAIL template models.provider"; fail=1; }
+jq -e '.roles | all(.[]; has("model") and .model == null)' <<<"$base" >/dev/null && echo "ok   the template names no model for a role (the provider's tier applies once one is set)" || { echo "FAIL template role models"; fail=1; }
+$DA project template demo | grep -qi claude && { echo "FAIL the template names a vendor"; fail=1; } || echo "ok   the template names no vendor"
 fnd() { # name jq-filter wanted(yes|no): does validate print the models.provider finding, with exit 0?
   local f=$T/a.json out rc; jq "$2" <<<"$base" > "$f"
   out=$($DA project validate "$f" 2>&1); rc=$?
@@ -83,6 +85,7 @@ fnd "validate: a provider that is not a string is a finding" '.models.provider=3
 fnd "validate: a provider named is no finding"               '.models.provider="claude"' no
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
+grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider claude >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
