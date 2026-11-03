@@ -115,6 +115,52 @@
       "output-style-setup"
     ]
   },
+  "renderers": {
+    "agent": {
+      "engine": "map",
+      "format": "markdown-frontmatter",
+      "path": "{name}.md",
+      "body": "body",
+      "fields": [
+        {"from": "name", "to": "name", "refuse_if_missing": true},
+        {"from": "description", "to": "description", "refuse_if_missing": true},
+        {"from": "model", "to": "model", "refuse_if_missing": true},
+        {"from": "effort", "to": "effort", "resolve": "effort"},
+        {
+          "from": "tools",
+          "to": "tools",
+          "tool_map": {
+            "shell": "Bash",
+            "read": "Read",
+            "edit": "Edit",
+            "write": "Write",
+            "search_text": "Grep",
+            "search_files": "Glob",
+            "monitor": "Monitor",
+            "stop_task": "TaskStop",
+            "tool_search": "ToolSearch",
+            "skill": "Skill"
+          },
+          "transform": [{"join": ", "}],
+          "guarantee_for": ["read-only"]
+        },
+        {
+          "to": "hooks",
+          "refuse_if_missing": true,
+          "value": {
+            "PreToolUse": [
+              {
+                "matcher": "Bash|Edit|Write|NotebookEdit|Read|Grep",
+                "hooks": [
+                  {"type": "command", "command": "{barrier.guard_command}", "timeout": 20, "onFailure": "block"}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
   "dispatch": {
     "mode": "in-session"
   },
