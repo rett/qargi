@@ -663,9 +663,8 @@ class Planning(Stores):
         self.assertTrue(P.split({nineteen: B.note(nineteen, "# x\n", "1")}, {"prefix": ["/d0"]}, {}, False, TODAY, "c", None, B.cloud_problem))
 
     def test_canon_check_accepts_the_archive(self):
-        files = {"/README.md": "# r\n", "/_template.md": "t"}
-        plan = C.make_plan("reference", {p: B.note(p, c, "i%d" % n) for n, (p, c) in enumerate(files.items())}, "demo", ["build"], "build", SEED, TODAY)
-        mems = {p: v["content"] for p, v in C.simulate({p: B.note(p, c, p) for p, c in files.items()}, plan["ops"]).items()}
+        plan = C.make_plan("reference", {}, "demo", ["build"], "build", SEED, TODAY)
+        mems = {p: v["content"] for p, v in C.simulate({}, plan["ops"]).items()}
         guide = "# G\n\nKind: guide\nApplies to: any\nSources: me\n"
         mems["/_archive/%s/roles/build/guide.md" % TODAY] = P.add_origin(guide, "archived from /roles/build/guide.md@%s on %s" % (B.digest(guide)[:12], TODAY))
         mems["/_archive/%s/roles/build/other.md" % TODAY] = guide              # no segment of ours: where did it come from?
@@ -679,28 +678,28 @@ class Planning(Stores):
         self.assertNotIn("FAIL", r.stdout)
 
     def test_migrate_reuses_the_canon_plan(self):
-        files = {"/README.md": "# old\n\n| Path | Purpose | Load when |\n|---|---|---|\n| sandbox/a.md | a | always |\n",
-                 "/_template.md": "t", "/sandbox/a.md": "# a\nKind: sandbox\nApplies to: any\nSources: t\nCheck: true\nVerified: 2026-10-01 by t\n"}
+        """memplan.migrate is the canon's own plan for a store: for an empty store, the seed and the marker."""
         for kind in self.kinds:
-            b = self.store(kind, files)
+            b = self.store(kind, {})
             mems = b.list()
             plan = P.migrate(mems, C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
             direct = C.make_plan("memory", mems, "demo", ["build", "write"], "build", SEED, TODAY)
+            self.assertEqual(plan["from_version"], "empty")
             self.assertEqual([o["op"] for o in plan["target"]["ops"]], [o["op"] for o in direct["ops"]])
             B.apply_ops(b, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)
             want = {p: v["content"] for p, v in C.simulate(mems, direct["ops"]).items()}
             self.assertEqual(self.snap(b), want)
-            self.assertIn("/shared/sandbox/a.md", want)
+            self.assertIn("/CANON.md", want)
+            self.assertIn("/roles/write/INDEX.md", want)
             again = P.migrate(b.list(), C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
             self.assertEqual(again["target"]["ops"], [])                         # idempotent
-            self.assertTrue(set(files) - {"/README.md", "/sandbox/a.md"} <= set(want))
             with self.assertRaises(ValueError):
                 P.migrate(mems, 1, "memory", "demo", ["build"], "build", SEED, TODAY)
-            drift = b.list()
-            b.update("/README.md", "edited meanwhile")
-            with self.assertRaises(B.StaleError):                                # a migration planned on older notes is refused
-                B.apply_ops(b, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)
-            del drift
+            fresh = self.store(kind, {})
+            plan = P.migrate(fresh.list(), C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
+            fresh.create("/README.md", "written meanwhile")
+            with self.assertRaises(B.StaleError):                                # a set-up planned on an empty store is refused once it is not
+                B.apply_ops(fresh, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)
 
 
 class Invariants(Stores):

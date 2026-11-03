@@ -43,9 +43,10 @@ Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` h
 ## Changing the canon
 
 The layout of memory stores is versioned (`canon/CANON.md`, `canon/layout.json`).
-A change to it needs a new version, a migration in `lib/canon.py`, a simulation
-run (`python3 tests/canon_sim.py KIND FIXTURE.jsonl`: plan, apply in memory,
-plan again must be empty, check must pass) and a CHANGELOG entry.
+A change to it needs a new version, a migration in `lib/canon.py` from the
+version before it (only the current version is a target, so none is kept for
+older ones), a case in `tests/test_canon.py` (plan, apply in memory, plan again
+must be empty, check must pass) and a CHANGELOG entry.
 
 ## Versioning
 
