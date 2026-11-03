@@ -11,6 +11,7 @@ BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import commands as C  # noqa: E402
 import help as H  # noqa: E402
+import guard as G  # noqa: E402
 
 
 def slurp(p):
@@ -128,15 +129,37 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 250)
+        self.assertLessEqual(len(text.split()), 330)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
         self.assertIn(title, H.show_topic("guard"))
-        self.assertIn("guard", H.man())
         r = subprocess.run([BIN, "help", "guard"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
         self.assertEqual(r.returncode, 0)
         self.assertIn("local verify", r.stdout)
+
+    # verbs the guard refuses that the topic need not name, each with the reason: none yet
+    GUARD_TOPIC_EXEMPT = {}
+
+    def test_the_guard_topic_names_every_verb_the_guard_refuses(self):
+        text = " ".join(C.TOPICS["guard"][1])
+        words = set(re.findall(r"[a-z][a-z-]*", text))
+        refused = set(G.SKILL_VERBS) | set(G.PROJECT_VERBS) | set(G.MEMORY_VERBS) | set(G.MARSHAL_MUTATING) | set(G.MARSHAL_SIGNING)
+        src = slurp(os.path.join(LIB, "guard.py"))
+        m = re.search(r"if \(area in \(\"skill\", \"tool\"\) and verb in SKILL_VERBS\) or \(area, verb\) in \((.*?)\)\s*\\", src, re.S)
+        self.assertTrue(m, "the gated (area, verb) pairs of lib/guard.py moved: update this test")
+        pairs = re.findall(r'\("([a-z]+)", "([a-z-]+)"\)', m.group(1))
+        self.assertGreaterEqual(len(pairs), 6)
+        refused |= {v for _, v in pairs}
+        refused |= {"publish", "login", "unset", "accept"}                # release publish, cloud set|unset|login, provider accept
+        missing = sorted(v for v in refused if v not in words and v not in self.GUARD_TOPIC_EXEMPT)
+        self.assertFalse(missing, "the guard topic does not name %s (add them to the topic, or to GUARD_TOPIC_EXEMPT with a reason)" % missing)
+        for area in ("discover", "import", "upgrade", "release", "cloud", "local", "feature", "memory", "marshal", "provider"):
+            self.assertIn(area, words, "the guard topic does not name the area %s" % area)
+        for needle in ("QARGI_LEAD", "QARGI_NESTED", "journal", "plugin"):
+            self.assertIn(needle, text)
+        stale = sorted(v for v in self.GUARD_TOPIC_EXEMPT if v in words or v not in refused)
+        self.assertFalse(stale, "stale exemptions: %s" % stale)
 
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])

@@ -1025,14 +1025,16 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of "
         "what the member returned is the backstop.",
-        "It refuses verbs that change shared state: skills, tools and packs (new, import, seal, link, remove, accept, packs apply), project link, init and "
-        "models answers, providers (all but the read verbs), release publish, the marshal (all but status, check and handoff without --write), feature "
-        "start, finish and verify, memory tiers, cloud set, unset and login, upgrade and local run.",
-        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills and agents directories, the installed "
-        "copy of the tool, and the render, marshal and feature directories of the state. Reading stays allowed except the lead's signing key. It refuses "
-        "git push, changing a git remote, gh, ssh, scp and sftp.",
+        "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
+        "discover install; import; packs apply, seed, link, unlink and migrate-render; project set (models answers), init, link and unlink; "
+        "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
+        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
+        "directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. "
+        "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
         "The read-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.",
-        "Setting QARGI_NESTED is refused. It skips a plan token check and does not stand in for one.",
+        "Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.",
         "A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
