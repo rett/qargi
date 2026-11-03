@@ -185,6 +185,8 @@ def doc_findings(doc, name):
         return ["kind: %r is not one of %s" % (doc.get("kind") if isinstance(doc, dict) else None, ", ".join(KINDS))], []
     f = P.validate2(doc, name)
     fails = [m for lvl, m in f if lvl == "fail"]
+    if doc["kind"] == "provider" and P.barrier_claim_problem(doc):      # a claimed barrier with nothing behind it is a fail-open: never verified
+        fails.append(P.barrier_claim_problem(doc))
     warns = [m for lvl, m in f if lvl == "warn" and "verified_on: not verified" not in m]   # a library claim is verified by check or attest, not by a date
     if doc["kind"] == "provider" and isinstance(doc.get("models"), dict) and "catalog" in doc["models"]:
         try:
@@ -821,6 +823,13 @@ def check_extension(doc, d, name, e, state, opts):
         print("nothing is verified: it does not apply there")
         return 0
     print("composed onto %s on %s%s" % (base, surface, " (project %s)" % opts["--project"] if opts.get("--project") else ""))
+    why = P.barrier_claim_problem(comp["definition"], by="%s (composed onto %s)" % (name, base)) if comp["provenance"].get("capabilities.read_only_barrier") == name else None
+    if why:                                                        # the claim is the extension's and the composition has nothing behind it
+        print("fail: %s" % why)
+        print("nothing is verified while the pack fails")
+        if state == "sealed":
+            P.record_verification(name, {})
+        return 1
     results = cases.run_extension(comp, name, d, opts)
     mine = {c[13:]: comp["definition"]["capabilities"][c[13:]] for c, pack in comp["provenance"].items() if pack == name and c.startswith("capabilities.")}
     return record_results({"capabilities": mine}, results, name, state, lambda: P.extension_hash(name, base, surface))
