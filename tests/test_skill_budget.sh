@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# The weight of the texts a member or a lead loads, and three ways it can only shrink.
+# The weight of the texts a member or a lead loads, and three ways it is held in place.
 #
 # The texts: skills/**/*.md, contract/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md,
 # packs/skills/**/*.md and the contract addenda of the shipped runtimes (lib/providers/*/*.md, which a cloud agent's prompt carries). Every word of them costs context in every session that loads them, so:
 #
-#  1. Budget. tests/skill-budget.txt holds `PATH MAX_WORDS` per line (sorted; `#` starts a comment). A text over its ceiling
-#     fails, a text that is not listed fails, and a listed text that is gone fails. When you shorten a text, lower its
-#     ceiling to the new `wc -w`; raising one is a review decision and is done by editing the file, never by a flag here.
+#  1. Budget. tests/skill-budget.txt holds `PATH MAX_WORDS` per line (sorted; `#` starts a comment). A ceiling is exact: a text
+#     over its ceiling fails, and so does one under it ("lower the ceiling to N"), so a longer text and a text with slack both
+#     need an edit of the file, which shows in review. A text that is not listed fails, and a listed text that is gone fails.
 #  2. Duplicates. A sentence of 12 words or more (case and spacing ignored, fenced code left out) that stands in two or more
-#     different texts fails, unless tests/skill-dup-allowlist.txt lists it (`SHA12 prefix`, sorted). An entry whose sentence
-#     is no longer duplicated fails: delete it. So the list only shrinks.
+#     different texts fails, unless tests/skill-dup-allowlist.txt lists it (`SHA12 file, file`, sorted) with exactly the texts it
+#     stands in: a sentence allowed in two texts fails when a third has it. An entry whose sentence is no longer duplicated, or
+#     no longer in those texts, fails: edit or delete it.
 #  3. Verbs. Every `qargi X Y` example in backticks (and every line of a code block that starts with `qargi `) must name a
 #     command of lib/commands.py (the table tests/test_help.py checks against the scripts) and, when that command has verbs,
 #     one of its verbs. Words that are placeholders (NAME, <x>, [x]), flags and quoted text end the example; `a|b` stands for
@@ -29,6 +30,11 @@ case ${1:-} in
 esac
 BUDGET=tests/skill-budget.txt DUPS=tests/skill-dup-allowlist.txt VERBS=tests/skill-verbs-allowlist.txt
 for f in "$BUDGET" "$DUPS" "$VERBS"; do [ -f "$f" ] || { no "no $f"; exit 1; }; done
+# the three lists are sorted (byte order, comments and blank lines left out), so a change to one is a small diff
+for f in "$BUDGET" "$DUPS" "$VERBS"; do
+  if [ "$(grep -vE '^[[:space:]]*(#|$)' "$f")" = "$(grep -vE '^[[:space:]]*(#|$)' "$f" | LC_ALL=C sort)" ]; then ok "$f is sorted"
+  else no "$f is not sorted (LC_ALL=C sort it, comments first)"; fi
+done
 
 # the shipped texts
 mapfile -t TEXTS < <({ find skills packs/skills contract lib/providers -type f -name '*.md'; ls roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md; } 2>/dev/null | sort)
@@ -49,13 +55,14 @@ for t in "${TEXTS[@]}"; do
   if [ -z "${ceil[$t]:-}" ]; then no "not in $BUDGET: $t ($n words); add it with a ceiling of $n"; missing=$((missing + 1)); continue; fi
   [ "$report" = 0 ] || printf '%6d words  ceiling %6d  slack %5d  %s\n' "$n" "${ceil[$t]}" $((${ceil[$t]} - n)) "$t"
   if [ "$n" -gt "${ceil[$t]}" ]; then no "over its ceiling: $t has $n words, ceiling ${ceil[$t]} (shorten it)"; over=$((over + 1)); fi
+  if [ "$n" -lt "${ceil[$t]}" ]; then no "under its ceiling: $t has $n words, ceiling ${ceil[$t]} (lower the ceiling to $n in $BUDGET)"; over=$((over + 1)); fi
 done
 for p in "${!ceil[@]}"; do
   [ -f "$p" ] || { no "stale entry in $BUDGET: $p is gone (delete the line)"; stale=$((stale + 1)); continue; }
   found=0; for t in "${TEXTS[@]}"; do [ "$t" != "$p" ] || { found=1; break; }; done
   [ "$found" = 1 ] || { no "stale entry in $BUDGET: $p is not one of the shipped texts (delete the line)"; stale=$((stale + 1)); }
 done
-[ $((bad + over + missing + stale)) != 0 ] || ok "all ${#TEXTS[@]} texts are listed and within their ceilings"
+[ $((bad + over + missing + stale)) != 0 ] || ok "all ${#TEXTS[@]} texts are listed, each with a ceiling equal to its word count"
 
 # 2 and 3, from the same texts
 python3 -I - "$DUPS" "$VERBS" "${TEXTS[@]}" <<'PY' || fail=1
@@ -137,7 +144,17 @@ for h in new:
     say(False, "a sentence of %d words is in %d texts (say it once, where it is needed): %s | %s ... | %s" % (len(s.split()), len(f), h, s[:60], ", ".join(f)))
 for h in sorted(set(allowed) - set(dup)):
     say(False, "stale entry in %s (the sentence is no longer in two texts; delete the line): %s" % (dups_file, allowed[h]))
-if not new and set(allowed) <= set(dup):
+
+
+def allowed_files(line):
+    return sorted(x.strip() for x in line.split(None, 1)[1].split(",")) if len(line.split(None, 1)) > 1 else []
+
+
+moved = [h for h in sorted(set(allowed) & set(dup)) if allowed_files(allowed[h]) != dup[h][1]]
+for h in moved:
+    say(False, "the sentence %s is allowed in %s but stands in %s (a sentence allowed in some texts is not allowed in another; fix the text or the line)"
+        % (h, ", ".join(allowed_files(allowed[h])) or "no text", ", ".join(dup[h][1])))
+if not new and not moved and set(allowed) <= set(dup):
     say(True, "no sentence of 12 words or more is in two texts, apart from the %d of %s" % (len(allowed), dups_file))
 
 
