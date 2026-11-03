@@ -1,0 +1,10 @@
+# Sentences of 12 words or more that stand in two or more texts: SHA12 and the texts. Sorted; delete a line when its duplicate is gone.
+4445ffaaf65f agents/member.body.md, agents/member.md
+4c57b9bb9d4b skills/qargi-flow/SKILL.md, skills/qargi-task/SKILL.md
+57599f11f2e0 agents/member.body.md, agents/member.md
+809283832851 roles/build/ROLE.md, roles/review/ROLE.md, roles/test/ROLE.md, roles/write/ROLE.md
+99c0372deeba roles/build/ROLE.md, roles/test/ROLE.md, roles/write/ROLE.md
+a1faa308a04a agents/member.body.md, agents/member.md
+aa373cfb48b3 agents/member.body.md, agents/member.md
+e5bb5e33a601 skills/qargi-flow/SKILL.md, skills/qargi-providers/SKILL.md, skills/qargi-session/SKILL.md
+f07e870d873d agents/member.body.md, agents/member.md
