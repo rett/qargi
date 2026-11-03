@@ -6,7 +6,7 @@ set -u
 # Where the data lives (lib/paths.py does the same for the Python scripts; keep the two in step; its docstring has the
 # whole story): QARGI_CONF and QARGI_STATE name a directory (tests do), else QARGI_HOME/config and QARGI_HOME/state,
 # else ~/.qargi/config and ~/.qargi/state. XDG_CONFIG_HOME and XDG_STATE_HOME are not used for qargi's data (the ant
-# CLI keeps its login in the former); they only locate the earlier layout, which `qargi migrate home` copies.
+# CLI keeps its login in the former).
 # A dev run (a checkout other than the one install.sh recorded in the live <config>/install.json, with nothing named)
 # keeps its data in <tool root>/.qargi instead, so a branch checkout never touches live data.
 QARGI_TOOL=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
@@ -17,12 +17,6 @@ if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ -f "$HOME/.qargi
 fi
 DA_CONF=${QARGI_CONF:-$DA_ROOT/config}
 DA_STATE=${QARGI_STATE:-$DA_ROOT/state}
-# Only the earlier layout exists and nothing was named: stop, so no empty new root appears beside the old data.
-if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ "$DA_ROOT" = "$HOME/.qargi" ] && [ ! -e "$HOME/.qargi" ] && [ ! -L "$HOME/.qargi" ] \
-   && { [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/qargi" ] || [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/qargi" ]; }; then
-  echo "qargi: qargi keeps its data in $HOME/.qargi now; yours is still in the earlier XDG directories. Nothing was changed. Run: qargi migrate home (it shows the plan first and copies, so the old directories stay as a backup)." >&2
-  exit 1
-fi
 REG=$DA_CONF/instances.json
 TRK=$DA_STATE/sessions.json
 MEMBERS_FILE=$DA_CONF/agents.json   # the members you named (qargi agent add): {"schema": 2, "projects": {PROJECT: {NAME: {roles, file, model, effort, ...}}}}
@@ -141,7 +135,7 @@ mem_dump() {
 }
 
 # mem_exec_ops STORE PLAN_JSON: run a plan's steps ({ops: [move|create|update|marker]}) against a store, in order;
-# stops at the first failure. canon.sh and migrate.sh plan with Python and execute with this.
+# stops at the first failure. canon.sh plans with Python and execute with this.
 mem_exec_ops() {
   local store=$1 plan=$2 n=0 op f
   while IFS= read -r op <&3; do
