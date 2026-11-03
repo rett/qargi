@@ -59,7 +59,7 @@
       "note": "MCP servers in the provisioned agent"
     }
   },
-  "resources": {},
+  "resources": {"contract_addenda": ["cloud-run.md"]},
   "agents": null,
   "dispatch": {
     "mode": "adapter"

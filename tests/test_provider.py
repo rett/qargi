@@ -26,8 +26,10 @@ CATALOG = shipped("catalogs/claude.json")         # the models of both
 
 
 def descriptor():
-    """A copy of the shipped claude-code definition."""
-    return copy.deepcopy(CODE)
+    """A copy of the shipped claude-code definition, without its contract addenda (the files stay in the shipped directory; a copy in another has none)."""
+    d = copy.deepcopy(CODE)
+    d["resources"].pop("contract_addenda", None)
+    return d
 
 
 def fails(d, name=None):
@@ -310,6 +312,7 @@ class CliBase(Tree):
         d = copy.deepcopy(base)
         d.update(provider=name, family=None, adapter=None)
         del d["adapter_verbs"]
+        d.get("resources", {}).pop("contract_addenda", None)               # its directory is not copied, so neither are the files it names
         mutate(d)
         self.put(name, d)
 
@@ -788,6 +791,25 @@ class Schema2(unittest.TestCase):
             self.one(runtime(adapter=ad), "adapter: '%s' is not a path inside the definition's directory" % ad)
         for ad in ("adapter", "bin/adapter", None):
             self.assertEqual(fails(runtime(adapter=ad), "mylocal"), [])
+
+    def test_contract_addenda_is_an_optional_list_of_relative_file_names_inside_the_definitions_directory(self):
+        def res(v):
+            return runtime(surface="cloud", resources={"contract_addenda": v})
+        for ok in (["cloud-run.md"], ["a.md", "b.md"], ["sub/c.md"], []):
+            self.assertEqual(P.validate2(res(ok), "mylocal"), [], ok)
+        self.assertEqual(P.validate2(runtime(surface="cloud", resources={}), "mylocal"), [])
+        self.one(res("cloud-run.md"), "resources.contract_addenda: 'cloud-run.md' is not of type array")
+        self.one(res([7]), "resources.contract_addenda[0]: ")
+        self.one(res(["a.md", "a.md"]), "resources.contract_addenda: has a duplicate item")
+        for bad in ("", "/abs.md", "~/x.md", "../x.md", "a/../../x.md", "a//b.md", "./a.md", "a/", "."):
+            self.one(res([bad]), "resources.contract_addenda[0]: '%s' is not a file inside the definition's directory" % bad)
+        self.one(res(["a.md", "../x.md"]), "resources.contract_addenda[1]: '../x.md' is not a file inside the definition's directory")
+
+    def test_an_extension_cannot_add_contract_addenda(self):
+        ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "mycloud", "provides": [],
+               "adds": {"resources": {"contract_addenda": ["x.md"]}}}
+        self.assertTrue(any("adds.resources.contract_addenda: an extension cannot add contract addenda" in m for lvl, m in P.validate2(ext, "addon") if lvl == "fail"),
+                        P.validate2(ext, "addon"))
 
     def test_every_violation_is_reported_not_only_the_first(self):
         self.assertGreaterEqual(len(fails(runtime(extra=1, surface="x", family="Bad"), "mylocal")), 3)
@@ -1523,6 +1545,29 @@ class V2Cli(CliBase):
         self.put_lib("libad", runtime("libad", adapter="adapter"), {"adapter": 0o755})
         self.assertIn("adapter: adapter (exists, executable)", self.run_cli("check", "libad")[1])
 
+    def test_check_and_addenda_look_for_the_contract_addenda_in_the_definitions_own_directory(self):
+        self.put("withadd", runtime("withadd", surface="cloud", resources={"contract_addenda": ["add.md"]}))
+        rc, out, _ = self.run_cli("check", "withadd")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: contract_addenda: add.md does not exist", out)
+        rc, _, err = self.run_cli("addenda", "withadd", "cloud")
+        self.assertEqual(rc, 1)
+        self.assertIn("qargi: contract_addenda: add.md does not exist", err)
+        os.makedirs(os.path.join(self.root, "withadd"))
+        with open(os.path.join(self.root, "withadd", "add.md"), "w") as f:
+            f.write("# Addendum\nline\n")
+        rc, out, _ = self.run_cli("check", "withadd")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.run_cli("addenda", "withadd", "cloud"), (0, "# Addendum\nline\n", ""))
+        self.assertEqual(self.run_cli("addenda", "claude-platform", "cloud")[0], 0)
+        rc, out, _ = self.run_cli("addenda", "claude-code", "local")
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("# In a Claude Code run\n"), out)
+        self.assertEqual(self.run_cli("addenda", "withadd", "local")[0], 1)
+        self.assertEqual(self.run_cli("addenda", "withadd")[0], 2)
+        self.put_lib("libadd", runtime("libadd", surface="cloud", resources={"contract_addenda": ["add.md"]}), {"add.md": 0o644})
+        self.assertEqual(self.run_cli("addenda", "libadd", "cloud"), (0, "#!/bin/sh\n", ""))
+
     def test_check_degrades_follow_the_record_for_a_library_definition(self):
         self.put_lib("libcli", runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "read_only_barrier": cell("yes", "2026-11-02")},
                                       barrier={"kind": "sandbox-args"}))
@@ -1586,9 +1631,18 @@ class ShippedClaude(unittest.TestCase):
         self.assertEqual(P.launch_line("claude-code", "/r"), "claude --add-dir /r")
         self.assertEqual(P.definition("claude-code")["session"]["render_target"], "claude-code")
 
-    def test_claude_platform_has_no_local_resources(self):
+    def test_claude_platform_has_no_local_resources_only_its_contract_addendum(self):
         doc = P.definition("claude-platform")
-        self.assertEqual((doc["resources"], doc["agents"]), ({}, None))
+        self.assertEqual((doc["resources"], doc["agents"]), ({"contract_addenda": ["cloud-run.md"]}, None))
+        texts = P.contract_addenda("claude-platform", "cloud")
+        self.assertEqual(len(texts), 1)
+        self.assertTrue(texts[0].startswith("# In a cloud run\n"))
+        self.assertIn("OUT is /mnt/session/outputs", texts[0])
+        local = P.contract_addenda("claude-code", "local")           # the local runtime's own rules about its surface, delivered in the run's contract directory
+        self.assertEqual(len(local), 1)
+        self.assertTrue(local[0].startswith("# In a Claude Code run\n"))
+        self.assertIn("run_in_background", local[0])
+        self.assertEqual(P.definition("claude-code")["resources"]["contract_addenda"], ["local-run.md"])
         with self.assertRaises(P.Unsupported):
             P.require("claude-platform", "project_skills_dir", "link skills")
 
@@ -1610,6 +1664,94 @@ class ShippedClaude(unittest.TestCase):
         self.assertEqual(P.provider_of({"models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}}, "cloud"), "claude-platform")
         with self.assertRaises(P.NoProvider):                            # the cloud runtime does not serve the local surface
             P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha")
+
+
+class Addenda(V2Tree):
+    """P.contract_addenda(): the texts a runtime's definition adds to the member contract, read from files inside its own directory."""
+
+    def rt(self, *names, **over):
+        d = runtime("cloudrt", surface="cloud", resources={"contract_addenda": list(names)}, **over)
+        self.put("cloudrt", d)
+        os.makedirs(os.path.join(self.root, "cloudrt"), exist_ok=True)
+        return os.path.join(self.root, "cloudrt")
+
+    def write(self, directory, rel, data):
+        path = os.path.join(directory, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data if isinstance(data, bytes) else data.encode())
+        return path
+
+    def refused(self, needle, *args, **kw):
+        with self.assertRaises(P.ProviderError) as cm:
+            P.contract_addenda("cloudrt", "cloud", **self.kw())
+        self.assertIn(needle, str(cm.exception))
+
+    def test_the_texts_come_in_the_order_the_definition_lists_them(self):
+        d = self.rt("b.md", "sub/a.md")
+        self.write(d, "b.md", "# B\nsecond\n")
+        self.write(d, "sub/a.md", "# A\n")
+        self.assertEqual(P.contract_addenda("cloudrt", "cloud", **self.kw()), ["# B\nsecond\n", "# A\n"])
+
+    def test_a_definition_with_none_gives_none(self):
+        self.put("cloudrt", runtime("cloudrt", surface="cloud"))
+        self.assertEqual(P.contract_addenda("cloudrt", "cloud", **self.kw()), [])
+        self.rt()
+        self.assertEqual(P.contract_addenda("cloudrt", "cloud", **self.kw()), [])
+
+    def test_a_surface_the_runtime_does_not_serve_is_refused(self):
+        self.rt()
+        with self.assertRaises(P.ProviderError) as cm:
+            P.contract_addenda("cloudrt", "local", **self.kw())
+        self.assertIn("does not list the surface local", str(cm.exception))
+
+    def test_a_missing_file_a_directory_and_a_file_that_is_not_text_are_refused(self):
+        d = self.rt("a.md")
+        self.refused("contract_addenda: a.md does not exist")
+        os.mkdir(os.path.join(d, "a.md"))
+        self.refused("contract_addenda: a.md is not a file")
+        os.rmdir(os.path.join(d, "a.md"))
+        for data, why in ((b"text\x00more", "is not text"), (b"\xff\xfe bytes", "is not text"), (b"esc \x1b[2J", "is not text"),
+                          ("bidi \u202e text".encode(), "is not text"), (b"\x7fELF\x02", "is not text"),
+                          ("tag \U000e0041 char".encode(), "is not text"), ("zero\u200bwidth".encode(), "is not text"), ("bom \ufeff inside".encode(), "is not text"),
+                          ("soft\u00adhyphen".encode(), "is not text"), ("private \ue000 use".encode(), "is not text"), ("unassigned \u0378".encode(), "is not text"),
+                          ("line\u2028separator".encode(), "is not text"), (b"carriage\rreturn", "is not text"), (b"x" * (P.ADDENDUM_MAX + 1), "is longer than %d bytes" % P.ADDENDUM_MAX)):
+            self.write(d, "a.md", data)
+            self.refused("contract_addenda: a.md " + why)
+        self.write(d, "a.md", "tab\tand\nnewline are text\n")
+        self.assertEqual(P.contract_addenda("cloudrt", "cloud", **self.kw()), ["tab\tand\nnewline are text\n"])
+
+    def test_a_path_that_leaves_the_directory_is_refused_even_through_a_link(self):
+        d = self.rt("link.md")
+        outside = self.write(self.tmp, "outside.md", "not mine\n")
+        os.symlink(outside, os.path.join(d, "link.md"))
+        self.refused("contract_addenda: link.md leaves the definition's directory")
+        os.remove(os.path.join(d, "link.md"))
+        self.write(d, "real.md", "mine\n")
+        os.symlink("real.md", os.path.join(d, "link.md"))                    # a link that stays inside is only another name
+        self.assertEqual(P.contract_addenda("cloudrt", "cloud", **self.kw()), ["mine\n"])
+        self.rt("../outside.md")
+        self.refused("resources.contract_addenda[0]: '../outside.md' is not a file inside the definition's directory")
+
+    def test_check_reports_what_the_loader_would_refuse(self):
+        d = self.rt("a.md")
+        _, raw, _ = P.findings_of("cloudrt", **self.kw())
+        self.assertEqual(P.addenda_problems(raw, d), ["contract_addenda: a.md does not exist"])
+        self.write(d, "a.md", "ok\n")
+        self.assertEqual(P.addenda_problems(raw, d), [])
+        self.assertEqual(P.addenda_problems(runtime(), d), [])
+
+    def test_a_library_pack_is_read_only_while_it_is_what_was_sealed(self):
+        d = os.path.join(self.library, "libcloud")
+        os.makedirs(d)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(runtime("libcloud", surface="cloud", resources={"contract_addenda": ["a.md"]}), f)
+        self.write(d, "a.md", "sealed text\n")
+        hand_seal(d)
+        self.assertEqual(P.contract_addenda("libcloud", "cloud", **self.kw()), ["sealed text\n"])
+        self.write(d, "a.md", "changed after the seal\n")
+        with self.assertRaises(P.Drift):
+            P.contract_addenda("libcloud", "cloud", **self.kw())
 
 
 class SealedPacks(V2Tree):
@@ -2081,6 +2223,14 @@ class Policy(LibraryBase):
         d = fake_runtime(adapter="adapter")
         self.refused(self.source(doc=d), "FAIL: adapter (the adapter) is not in the pack")
 
+    def test_a_definition_that_names_a_missing_contract_addendum_is_refused_and_one_that_has_it_is_not(self):
+        d = fake_runtime(surface="cloud", resources={"contract_addenda": ["add.md"]})
+        self.refused(self.source(doc=d), "FAIL: contract_addenda: add.md does not exist")
+        ok = self.source(doc=d, files={"add.md": "# Addendum\n"})
+        rc, out, err = self.q("import", ok)
+        self.assertEqual(rc, 0, (out, err))
+        self.assertNotIn("FAIL", out)
+
     def test_the_argv_templates_and_the_commands_they_need_are_shown(self):
         out = self.q("import", self.source())[1]
         self.assertIn("needs on PATH (installed by you, not part of the pack): fakecli", out)
@@ -2239,6 +2389,13 @@ class Scaffold(LibraryBase):
         self.assertEqual((d["provider"], d["family"], d.get("adapter")), ("mycode", None, None))
         self.assertTrue(all(c["verified_on"] is None for c in d["capabilities"].values()))
         self.assertEqual(d["models"]["pattern"], P.catalog("claude")["pattern"])
+
+    def test_from_a_provider_does_not_copy_a_reference_to_files_it_does_not_copy(self):
+        self.apply("new", "mycloud", "--from", "claude-platform")
+        d = jread(os.path.join(self.lib, "mycloud", "definition.json"))
+        self.assertNotIn("contract_addenda", d["resources"])
+        self.apply("seal", "mycloud")
+        self.assertEqual(P.contract_addenda("mycloud", "cloud"), [])
 
     def test_usage_errors(self):
         for args in (("new",), ("new", "a", "--kind", "widget"), ("new", "a", "--from", "claude-code", "--kind", "catalog"), ("new", "a", "--bogus"), ("import",),
@@ -2513,6 +2670,7 @@ class Cases(LibraryBase):
     def adapter_pack(self, name, adapter_text=None):
         """A pack with the claude-code adapter and its stand-in transport, as a library pack named `name`."""
         d = P.definition("claude-code")
+        d["resources"].pop("contract_addenda", None)
         d["provider"] = name
         d["adapter"] = "adapter"
         d["capabilities"] = {"read_only_barrier": {"value": "yes", "note": "n"}}

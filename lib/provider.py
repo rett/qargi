@@ -46,6 +46,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
                                        the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
                                        it lists); the second runs it and removes the copy
+  contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
+                                       own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
   discard_exec_copy(directory)         remove what exec_copy made (its parent directory, qargi-exec.XXXX)
   project_provider(answers, project)   models.provider of the project's answers; there is no default: NoProvider (exit 2)
   provider_of(answers, surface)        the runtime for one surface: models.provider is a name (runtime or family) or {local, cloud};
@@ -108,6 +110,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -795,7 +798,12 @@ def _exclusion_problems(label, ex, settings_scopes):
     return bad
 
 
-def _resource_problems(res):
+def _plain_relative(v):
+    """A relative path as normpath writes it, inside its directory: not empty, not absolute, no ~, no .. , no . or empty part, no trailing /."""
+    return isinstance(v, str) and bool(v) and not v.startswith(("/", "~")) and os.path.normpath(v) == v and v != "." and ".." not in v.split("/")
+
+
+def _resource_problems(res, extension=False):
     """The rules of the resources a schema cannot state (the types are the schema's): project paths stay inside the checkout, user
     paths start with ~/, {checkout_key} needs a rule, an exclusion has the keys its form reads."""
     if not isinstance(res, dict):
@@ -831,6 +839,12 @@ def _resource_problems(res):
                     bad.append("%s: the user file '%s' does not start with ~/" % (lab, f["path"]))
             else:
                 add(_path_problem(lab, f["path"], False))
+    ca = res.get("contract_addenda")
+    if extension and ca is not None:
+        bad.append("resources.contract_addenda: an extension cannot add contract addenda (only a runtime's own definition has them)")
+    for i, n in enumerate(ca if isinstance(ca, list) and not extension else ()):
+        if isinstance(n, str) and not _plain_relative(n):
+            bad.append("resources.contract_addenda[%d]: '%s' is not a file inside the definition's directory (a relative path, no .., no ~, no empty part)" % (i, n))
     mem = res.get("memory")
     if isinstance(mem, dict) and isinstance(mem.get("user_dir"), str):
         add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
@@ -884,7 +898,7 @@ def validate_extension(d, name=None):
         if verbs is not None and not (isinstance(verbs, dict) and all(isinstance(v, str) and _inside(v) for v in verbs.values())):
             out.append(("fail", "adds.adapter_verbs: {VERB: a path inside the pack}"))
         if isinstance(adds.get("resources"), dict):
-            out += [("fail", "adds." + m) for m in _resource_problems(adds["resources"])]
+            out += [("fail", "adds." + m) for m in _resource_problems(adds["resources"], extension=True)]
     rq = d.get("requires")
     if rq is not None and not isinstance(rq, dict):
         out.append(("fail", "requires: an object"))
@@ -1703,6 +1717,8 @@ def findings_of(name, root=None, library=None):
         _docs(e)
     except ProviderError as ex:
         findings.append(("fail", str(ex)))
+    if raw.get("kind") == "provider":
+        findings += [("fail", m) for m in addenda_problems(raw, e["dir"])]
     return e, raw, findings
 
 
@@ -1833,6 +1849,99 @@ def adapter_problem(d, directory):
     if not os.access(path, os.X_OK):
         return "adapter: %s is not executable" % ad
     return None
+
+
+ADDENDUM_MAX = 16384
+# a character no contract text may hold: a control (but tab and newline), any format character (Cf: tags U+E0000-E007F, zero-width, bidi, the
+# byte order mark, the soft hyphen), a private-use, surrogate or unassigned code point, and the line and paragraph separators
+_ADDENDUM_BAD_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"))
+
+
+def _addendum_has_bad_character(text):
+    return any(unicodedata.category(ch) in _ADDENDUM_BAD_CATEGORIES for ch in text if ch not in "\t\n")
+
+
+def _read_addendum(directory, rel):
+    """The text of the contract addendum rel in directory, or ProviderError saying why not: it must be a file that stays inside the directory
+    (a link that points out of it is refused), UTF-8 text with no control, format (tag, zero-width, bidi, byte order mark), private-use or unassigned character but tab and newline, and at most ADDENDUM_MAX bytes."""
+    path = os.path.join(directory, rel)
+    if not os.path.lexists(path):
+        raise ProviderError("contract_addenda: %s does not exist" % rel)
+    real, base = os.path.realpath(path), os.path.realpath(directory)
+    if not real.startswith(base + os.sep):
+        raise ProviderError("contract_addenda: %s leaves the definition's directory" % rel)
+    if not os.path.isfile(real):
+        raise ProviderError("contract_addenda: %s is not a file" % rel)
+    try:
+        with open(real, "rb") as f:
+            raw = f.read(ADDENDUM_MAX + 1)
+    except OSError as ex:
+        raise ProviderError("contract_addenda: %s cannot be read (%s)" % (rel, ex.strerror)) from ex
+    if len(raw) > ADDENDUM_MAX:
+        raise ProviderError("contract_addenda: %s is longer than %d bytes" % (rel, ADDENDUM_MAX))
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    if text is None or _addendum_has_bad_character(text):
+        raise ProviderError("contract_addenda: %s is not text (UTF-8 with no control, format, private-use or unassigned characters)" % rel)
+    return text
+
+
+def _addenda_names(doc):
+    """The names doc lists under resources.contract_addenda; ProviderError for a list that is not what the schema says."""
+    res = doc.get("resources") if isinstance(doc.get("resources"), dict) else {}
+    names = res.get("contract_addenda")
+    if names is None:
+        return []
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names) or len(set(names)) != len(names):
+        raise ProviderError("resources.contract_addenda: an array of distinct file names")
+    for i, n in enumerate(names):
+        if not _plain_relative(n):
+            raise ProviderError("resources.contract_addenda[%d]: '%s' is not a file inside the definition's directory" % (i, n))
+    return names
+
+
+def addenda_problems(doc, directory):
+    """[message] for the contract addenda of a definition document that cannot be used from directory (the definition's own): none for a
+    definition that lists none. The same refusals as contract_addenda(), for `provider check` and the review of a pack."""
+    try:
+        names = _addenda_names(doc)
+    except ProviderError:
+        return []                                  # the shape is validate2()'s to report
+    bad = []
+    for n in names:
+        try:
+            _read_addendum(directory, n)
+        except ProviderError as ex:
+            bad.append(str(ex))
+    return bad
+
+
+def contract_addenda(name, surface, root=None, library=None):
+    """The texts that the definition of a runtime adds to the member contract, in the order it lists them (resources.contract_addenda), []
+    when it lists none. A cloud agent's prompt carries them after the contract; they are the runtime's own rules about its surface, so the
+    neutral contract never names it. ProviderError when the runtime does not serve the surface, a file is missing, is not plain text or leaves
+    the definition's directory; for a library pack Drift when it is not what was sealed (also when it changed while it was read)."""
+    e = _entry(name, root, library)
+    doc = _docs(e).get(surface)
+    if doc is None:
+        raise ProviderError("the provider %s does not list the surface %s" % (name, surface))
+    texts = [_read_addendum(e["dir"], n) for n in _addenda_names(doc)]
+    if texts and e["origin"] == "library":
+        state, why = seal_state(e)
+        if state != "sealed":
+            raise Drift("pack '%s' %s while it was read; its contract addenda are not used" % (name, why or state))
+    return texts
+
+
+def cmd_addenda(args):
+    """addenda NAME SURFACE: the contract addenda of a runtime, as they are added to the contract, to standard output (nothing when it has none)."""
+    if len(args) != 2 or args[1] not in SURFACES:
+        print("usage: qargi provider addenda NAME local|cloud", file=sys.stderr)
+        return 2
+    sys.stdout.write("".join(contract_addenda(args[0], args[1])))
+    return 0
 
 
 def adapter_exec(name, surface, verb, root=None, library=None):
@@ -1979,7 +2088,7 @@ def cmd_of(args):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | model NAME SURFACE TIER | of PROJECT [--surface S]")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | model NAME SURFACE TIER | of PROJECT [--surface S]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -2021,6 +2130,8 @@ def main(argv):
             return 0
         if verb == "adapter-run":
             return cmd_adapter(rest)
+        if verb == "addenda":
+            return cmd_addenda(rest)
         if verb == "model":
             return cmd_model(rest)
         if verb == "of":

@@ -73,9 +73,8 @@ A note lives in exactly one tier. `CANON.md`, `README.md`, `_template.md`, every
   note path present in two or more tiers as a FAIL. A missing, empty or unreachable tier is
   an INFO line. Exit 1 on any FAIL; the last line is `N fail, M warn, K tiers checked`.
 
-Rules for agents: write only under `roles/<your role>/` of the memory store. `shared/` is
-curated, written by promotion (`qargi canon promote --approved`) or by the person; propose a
-shared note in your report, never write it.
+Rules for agents: members propose, the lead files. A member writes no tier and proposes notes
+in its report. `shared/` is curated, written by promotion (`qargi canon promote --approved`) or by the person.
 
 - `qargi memory init TIER [--project P] [--plan TOKEN --approved "..."]` creates the tier
   `repo`, `project`, `shared` or `system` as an empty store of the standard layout (the
@@ -112,7 +111,6 @@ get` or from the tier's directory. Cloud reads have short timeouts, a missing `a
 the cloud tier unreachable and the directory tiers still load, and a repo tier with
 uncommitted changes adds a warning.
 
-Agents never run `init` or `move` (the guard refuses them) and still write only under
-`roles/<their role>/`; they propose changes in their report and the lead files them.
+Agents never run `init` or `move` (the guard refuses them) and write no tier; they propose changes in their report and the lead files them.
 
 `qargi memory get STORE_ID /path.md` reads one note. In Claude Code, the SessionStart hook runs `qargi hook session-start`: inside a registered project's repository it loads the memory tiers and the reference store as described above (a README, the indexes and the `always` notes, capped); other notes are read on demand.

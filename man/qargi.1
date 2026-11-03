@@ -730,6 +730,13 @@ check that the adapter and the verb exist and print nothing else.
 .RE
 .RS
 .TP
+.BI "addenda " "NAME SURFACE"
+Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface).
+.br
+resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. A file that is missing, is not text or leaves the directory is refused.
+.RE
+.RS
+.TP
 .BI "model " "NAME SURFACE TIER"
 Print the model a runtime maps a tier to on a surface.
 .RE
@@ -2538,7 +2545,7 @@ print the argv, the working directory and the prompt, and run nothing.
 .B prepare
 Make the clone and the wrapper for a local agent.
 .br
-Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.
+Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT: the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime\-addenda.md) to copy into the task. A caller that evals the output must stop at the blank line.
 When the project (found by matching the repository against the stored answers) has a Claude Code render (packs apply \-\-target claude\-code) that has drifted, prepare also prints a WARNING block to stderr with the findings and the fix, packs apply \-\-target claude\-code PROJECT. The run goes on, and stdout and the TASK\-BLOCK PATHS block are unchanged.
 .RS
 .TP
@@ -2687,7 +2694,7 @@ Check what an agent returned and put it on a task branch.
 .BI "check " "RUN_DIR"
 Check a run: numbered patches, messages, manifest, groups.
 .br
-Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md that has a Findings section instead of patches.
+Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.
 .RS
 .TP
 .B \-\-allow\-empty

@@ -619,6 +619,9 @@ COMMANDS = {
             "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
                                 [opt("--check", "check that the adapter and the verb exist and print nothing else")],
                                 desc="A verb the definition does not list exits 3."),
+            "addenda": verb("Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface)", [("NAME", "none"), ("SURFACE", "none")],
+                            desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
+                                 "A file that is missing, is not text or leaves the directory is refused."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
@@ -665,7 +668,7 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
                             desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.\n"
+                                  "BASE_SHA, CONTRACT: the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md) to copy into the task. A caller that evals the output must stop at the blank line.\n"
                                   "When the project (found by matching the repository against the stored answers) has a Claude Code render "
                                   "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
                                   "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
@@ -690,7 +693,7 @@ COMMANDS = {
             "check": verb("Check a run: numbered patches, messages, manifest, groups", [("RUN_DIR", "dir")],
                           [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
                           desc=("Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
-                                "A review run passes with a report.md that has a Findings section instead of patches.")),
+                                "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
                           desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "

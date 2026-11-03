@@ -50,7 +50,13 @@
             "instructions": {"$ref": "#/$defs/res_instructions"},
             "mcp": {"$ref": "#/$defs/res_mcp"},
             "settings": {"$ref": "#/$defs/res_settings"},
-            "memory": {"$ref": "#/$defs/res_memory"}
+            "memory": {"$ref": "#/$defs/res_memory"},
+            "contract_addenda": {
+              "description": "Text files in the definition's own directory that are added to the member contract of a cloud agent's prompt, in this order (a cloud runtime's rules about its own surface). Each is a relative file name inside the directory, plain text (UTF-8, no control, format, private-use or unassigned characters), at most 16384 bytes; `provider check` fails on one that is missing or is not. Not available to an extension.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string"}
+            }
           }
         },
         "agents": {
