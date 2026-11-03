@@ -26,8 +26,10 @@ CATALOG = shipped("catalogs/claude.json")         # the models of both
 
 
 def descriptor():
-    """A copy of the shipped claude-code definition."""
-    return copy.deepcopy(CODE)
+    """A copy of the shipped claude-code definition, without its contract addenda (the files stay in the shipped directory; a copy in another has none)."""
+    d = copy.deepcopy(CODE)
+    d["resources"].pop("contract_addenda", None)
+    return d
 
 
 def fails(d, name=None):
@@ -310,6 +312,7 @@ class CliBase(Tree):
         d = copy.deepcopy(base)
         d.update(provider=name, family=None, adapter=None)
         del d["adapter_verbs"]
+        d.get("resources", {}).pop("contract_addenda", None)               # its directory is not copied, so neither are the files it names
         mutate(d)
         self.put(name, d)
 
@@ -1557,7 +1560,9 @@ class V2Cli(CliBase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.run_cli("addenda", "withadd", "cloud"), (0, "# Addendum\nline\n", ""))
         self.assertEqual(self.run_cli("addenda", "claude-platform", "cloud")[0], 0)
-        self.assertEqual(self.run_cli("addenda", "claude-code", "local"), (0, "", ""))
+        rc, out, _ = self.run_cli("addenda", "claude-code", "local")
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("# In a Claude Code run\n"), out)
         self.assertEqual(self.run_cli("addenda", "withadd", "local")[0], 1)
         self.assertEqual(self.run_cli("addenda", "withadd")[0], 2)
         self.put_lib("libadd", runtime("libadd", surface="cloud", resources={"contract_addenda": ["add.md"]}), {"add.md": 0o644})
@@ -1633,7 +1638,11 @@ class ShippedClaude(unittest.TestCase):
         self.assertEqual(len(texts), 1)
         self.assertTrue(texts[0].startswith("# In a cloud run\n"))
         self.assertIn("OUT is /mnt/session/outputs", texts[0])
-        self.assertEqual(P.contract_addenda("claude-code", "local"), [])
+        local = P.contract_addenda("claude-code", "local")           # the local runtime's own rules about its surface, delivered in the run's contract directory
+        self.assertEqual(len(local), 1)
+        self.assertTrue(local[0].startswith("# In a Claude Code run\n"))
+        self.assertIn("run_in_background", local[0])
+        self.assertEqual(P.definition("claude-code")["resources"]["contract_addenda"], ["local-run.md"])
         with self.assertRaises(P.Unsupported):
             P.require("claude-platform", "project_skills_dir", "link skills")
 
@@ -2661,6 +2670,7 @@ class Cases(LibraryBase):
     def adapter_pack(self, name, adapter_text=None):
         """A pack with the claude-code adapter and its stand-in transport, as a library pack named `name`."""
         d = P.definition("claude-code")
+        d["resources"].pop("contract_addenda", None)
         d["provider"] = name
         d["adapter"] = "adapter"
         d["capabilities"] = {"read_only_barrier": {"value": "yes", "note": "n"}}
