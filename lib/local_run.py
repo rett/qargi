@@ -47,6 +47,15 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import provider as P  # noqa: E402
 
+_print = print
+
+
+def print(*args, **kw):  # noqa: A001  (this module's print: what a definition names is written through P.vis)
+    """The print of this module: a command, an argument or a note that comes from a runtime definition is written with its control, escape and
+    bidi characters shown (\\x1b), so that --dry-run and the outcome lines cannot move the cursor or hide a line. The prompt is written as it is."""
+    _print(*[P.vis(a) if isinstance(a, str) else a for a in args], **kw)
+
+
 TOOL = os.path.dirname(HERE)
 PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 ALIASES = {"effort": "effort_native", "out": "out_dir", "prompt": "prompt_arg"}
