@@ -162,15 +162,16 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 
 # a runtime whose definition claims read_only_barrier (and the owner attested it) with barrier kind none and no read-only arguments in its
-# dispatch: nothing would hold the member, yet the capability reads as yes. A fail-open: the read-only run is refused like any barrier-less one
+# dispatch: nothing would hold the member, so the capability reads as no, however it was attested (a fail-closed answer): the read-only run is refused
+# like any barrier-less one, and the refusal says the claim has nothing behind it
 mk fakeclaim "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakeclaim",family:null,surface:"local",models:$m,
   capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
   dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
 verify_ro fakeclaim
 setprov fakeclaim; prep "$T/r" rv2c review; task
-[ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = yes ] && ok "fail-open claim: the attested claim reads as yes (that is the hole)" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
+[ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = no ] && ok "fail-open claim: the attested claim with nothing behind it reads as no" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+{ [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier.kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
   && ok "a read-only run of a runtime that claims a barrier it does not have is refused (exit 2) with the accept command" || no "fail-open claim, dry: rc=$rc $out"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "fail-open claim, real: rc=$rc $out"
