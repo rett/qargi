@@ -1354,6 +1354,20 @@ class ProviderHook(unittest.TestCase):
         for w in words:
             self.assertIn(w, r.stderr)
 
+    def test_the_shipped_claude_code_definition_is_a_usable_hook(self):
+        # --provider claude-code reads the data the file ships; it must judge as the built-in default does, not refuse every call
+        def call(name, tool_input, *more):
+            return self.run_guard(["--provider", "claude-code", *more], {"tool_name": name, "tool_input": tool_input, "cwd": self.clone})
+        r = call("Bash", {"command": "git push origin main"})
+        self.assertEqual((r.returncode, r.stdout), (2, ""))
+        self.assertIn("Agents never push", r.stderr)
+        for name, tool_input in (("Bash", {"command": "ls -la"}), ("Edit", {"file_path": "src/a.go"}), ("Read", {"file_path": "src/a.go"}), ("Grep", {"path": "src"})):
+            r = call(name, tool_input)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), name)
+        r = call("Write", {"file_path": os.path.join(self.t, "e")}, "--class", "read-only")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("under the review ability", r.stderr)
+
     def test_a_provider_whose_hook_cannot_be_read_refuses_every_call(self):
         self.refused_before_judging(["--provider"], "--provider")
         self.refused_before_judging(["--provider", "nosuch"], "nosuch")
@@ -1382,6 +1396,38 @@ class ProviderHook(unittest.TestCase):
             name = "bad%d" % n
             self.define(name, barrier={"kind": "hook", "hook": bad})
             self.refused_before_judging(["--provider", name], name, word)
+
+
+    def test_hook_data_that_would_let_a_call_through_unjudged_is_refused(self):
+        # incomplete data must not become "nothing to judge": a write tool with no path pointers reads no path (so the write is allowed),
+        # and a hook with no shell tool judges no command. Each of these is refused before any call is judged, whatever the call is.
+        no_pp = {k: v for k, v in FAKEMD_HOOK.items() if k != "path_pointers"}
+        lib = os.path.join(self.conf, "packs/skills/s/SKILL.md")
+        bad_hooks = (("nopp", no_pp, "path_pointers"),
+                     ("emptypp", {**FAKEMD_HOOK, "path_pointers": []}, "path_pointers"),
+                     ("emptymap", {**FAKEMD_HOOK, "path_pointers": {}}, "path_pointers"),
+                     ("nowrite", {**FAKEMD_HOOK, "path_pointers": {"read": ["/event/args/target"]}}, "path_pointers"),
+                     ("emptywrite", {**FAKEMD_HOOK, "path_pointers": {"write": [], "read": ["/event/args/target"]}}, "path_pointers"),
+                     ("noread", {**FAKEMD_HOOK, "path_pointers": {"write": ["/event/args/target"]}}, "path_pointers"),
+                     ("noshell", {**FAKEMD_HOOK, "tool_names": {k: v for k, v in FAKEMD_HOOK["tool_names"].items() if k != "shell"}}, "shell"),
+                     ("emptyshell", {**FAKEMD_HOOK, "tool_names": {**FAKEMD_HOOK["tool_names"], "shell": []}}, "shell"),
+                     ("notools", {**FAKEMD_HOOK, "tool_names": {}}, "shell"))
+        for name, bad, word in bad_hooks:
+            self.define(name, barrier={"kind": "hook", "hook": bad})
+            self.refused_before_judging(["--provider", name], name, word)
+            r = self.run_guard(["--provider", name], {"event": {"tool": "patch_file", "args": {"target": lib}}, "workdir": self.clone})
+            self.assertEqual(r.returncode, 2, (name, r))
+            self.assertIn("hook protocol", r.stderr)
+
+    def test_hook_data_that_names_no_tool_of_a_kind_needs_no_pointers_for_it(self):
+        # the shell tool is required; a kind with no tools (here: no write and no search tool) needs no path pointers of its own
+        hook = {**FAKEMD_HOOK, "tool_names": {"shell": ["run_shell"], "read": ["open_file"]}, "path_pointers": {"read": ["/event/args/target"]}}
+        self.define("readonly-ish", barrier={"kind": "hook", "hook": hook})
+        r = self.run_guard(["--provider", "readonly-ish"], {"event": {"tool": "run_shell", "args": {"cmd": "git push"}}, "workdir": self.clone})
+        self.assertEqual(r.returncode, 0, r)
+        self.assertIn("Agents never push", self.denied_md(r))
+        self.define("search-via-read", barrier={"kind": "hook", "hook": {**hook, "tool_names": {**hook["tool_names"], "search": ["grep_tree"]}}})
+        self.assertEqual(self.run_guard(["--provider", "search-via-read"], {"event": {"tool": "grep_tree", "args": {"target": "src"}}, "workdir": self.clone}).returncode, 0)
 
 
 class ProviderRoots(unittest.TestCase):
@@ -1465,24 +1511,44 @@ class ProviderRoots(unittest.TestCase):
         self.assertEqual(self.bash("echo y > /etc/skills/x; echo y > relative/agents/m; echo y > %s/up/skills/x" % self.t).returncode, 0)
         self.refused("echo y > ~/.only/skills/x")
 
-    def test_definitions_that_cannot_be_read_refuse_the_calls_that_need_the_roots(self):
+    def test_a_definition_that_cannot_be_read_is_skipped_with_a_note_and_the_others_still_protect(self):
+        # one broken definition in the library must not make the guard refuse every write: its directories are unknown, the rest are not
         self.define("fakecli", self.FAKECLI)
         self.define("garbled", None, raw="{not json")
+        self.define("wrongname", None, raw=json.dumps(runtime("someone-else", resources={"skills": {"project_dir": ".elsewhere/skills"}})))
         r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("qargi guard: internal error", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stderr.count("qargi guard: "), 1, r.stderr)                 # one note, not one per definition or per path
+        self.assertIn("skipped", r.stderr)
         self.assertIn("garbled", r.stderr)
-        self.assertIn("refusing the call because the guard could not check it", r.stderr)
-        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 2)
+        self.assertIn("wrongname", r.stderr)
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, "notes.txt")}).returncode, 0)
         for c in ("ls -la", "cat %s/notes.txt" % self.proj, "git status", "echo hi"):              # a call that writes nowhere needs no roots
-            self.assertEqual(self.bash(c).returncode, 0, c)
+            r = self.bash(c)
+            self.assertEqual((r.returncode, r.stderr), (0, ""), c)
         self.assertEqual(self.bash("git push").returncode, 2)
+        # the definitions that load keep their roots, and so does Claude Code
+        for c in ("echo y > ~/.fakecli/skills/x/SKILL.md", "echo y > %s/.fake/agents/m.toml" % self.proj, "echo y > ~/.claude/skills/x/SKILL.md",
+                  "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
+            self.refused(c)
+        self.assertEqual(self.call("Write", {"file_path": os.path.join(self.proj, ".fake", "agents", "m.toml")}).returncode, 2)
 
-    def test_a_name_defined_twice_refuses_too(self):
+    def test_the_claude_directories_stay_protected_when_their_definition_clashes_or_is_broken(self):
+        # a library definition with the name of a shipped one makes both unusable (a clash); the Claude Code directories are still held
+        self.define("claude-code", {"skills": {"project_dir": ".other/skills", "items": "dir-per-item"}})
+        r = self.bash("echo y > %s/notes.txt" % self.proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("claude-code", r.stderr)
+        for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > %s/.claude/skills/p/SKILL.md" % self.proj,
+                  "echo y > %s/.claude/agents/m.md" % self.proj, "rm -rf %s/.claude" % self.proj):
+            self.refused(c)
+
+    def test_a_name_defined_twice_is_skipped_with_a_note_too(self):
         self.define("claude", {})                                         # the shipped provider's name
         r = self.bash("echo y > %s/notes.txt" % self.proj)
-        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("defined twice", r.stderr)
+        self.refused("echo y > %s/.claude/skills/p/SKILL.md" % self.proj)
 
 
 class RuntimeRender(unittest.TestCase):

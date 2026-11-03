@@ -119,7 +119,25 @@
     "mode": "in-session"
   },
   "barrier": {
-    "kind": "adapter"
+    "kind": "hook",
+    "hook": {
+      "input": "json-stdin",
+      "tool_pointer": "/tool_name",
+      "command_pointer": "/tool_input/command",
+      "cwd_pointer": "/cwd",
+      "path_pointers": {
+        "write": ["/tool_input/file_path", "/tool_input/notebook_path"],
+        "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]
+      },
+      "tool_names": {
+        "shell": ["Bash"],
+        "write": ["Edit", "Write", "NotebookEdit", "MultiEdit"],
+        "read": ["Read", "NotebookRead"],
+        "search": ["Grep"]
+      },
+      "deny": {"exit": 2, "stream": "stderr"},
+      "allow": {"exit": 0}
+    }
   },
   "session": {
     "launch": "claude --add-dir {render}[ --mcp-config {render}/mcp.json][ --settings {render}/settings.json]",
