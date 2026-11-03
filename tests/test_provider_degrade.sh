@@ -185,8 +185,8 @@ out=$("$DA" agent add forge2 --abilities build --effort high --project alpha 2>&
 out=$("$DA" agent for build --project beta 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^worker sonnet' <<<"$out"; } && ok "a profile with the member's own model resolves" || no "own model: rc=$rc $out"
 out=$("$DA" agent for build --profile big --project beta 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'nomodel' <<<"$out" && grep -q 'one member per profile' <<<"$out" && grep -q 'agent add' <<<"$out" && grep -q 'opus' <<<"$out"; } \
-  && ok "a profile with another model is refused (exit 2) and one member per profile is suggested" || no "model override: rc=$rc $out"
+{ [ "$rc" = 2 ] && grep -q 'nomodel' <<<"$out" && grep -q 'agent add worker --model opus --project beta' <<<"$out"; } \
+  && ok "a profile with another model is refused (exit 2) and the worker with that model is suggested" || no "model override: rc=$rc $out"
 "$DA" agent add worker --abilities build --model sonnet --project gamma >/dev/null 2>&1
 out=$("$DA" agent for build --profile big --project gamma 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q ' opus ' <<<"$out"; } && ok "claude can override the model per dispatch: the same profile resolves" || no "claude override: rc=$rc $out"
