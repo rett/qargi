@@ -50,6 +50,11 @@ grep -qF "# In a cloud run" <<<"$RL" && no "the lead got the cloud-only part" ||
 [ ! -e contract/cloud-run.md ] && [ -f lib/providers/claude-platform/cloud-run.md ] && ok "cloud-run.md is a resource of the claude-platform definition, not of contract/" || no "cloud-run.md is in the wrong place"
 [ "$(grep -nE -e '^# (Output files|In a cloud run|Role: build)' <<<"$RB" | cut -d: -f2- | sed 's/ (.*//' | paste -sd,)" = "# Output files,# In a cloud run,# Role: build" ] && ok "the addendum follows the contract and the output format" || no "order: $(grep -n '^# ' <<<"$RB" | head)"
 grep -qF "OUT is /mnt/session/outputs" <<<"$RB" && ok "the addendum states the cloud output directory" || no "no output directory in the addendum"
+# the neutral texts hold no hosted directory and no rule that conflicts with the contract (outputs go to OUT, memory notes are proposed)
+grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "a neutral text names the hosted output directory" || ok "the contract, the preamble and the role seeds do not name the hosted output directory"
+grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
+grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
+grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the build prompt does not name RUN_DIR"
 # no project, a project without a cloud runtime, one whose runtime does not resolve, an unknown one: no addendum, and no default runtime
 mkproj nocloud '{"local":"claude-code"}'; mkproj ghost '{"cloud":"nosuchrt"}'
 for pr in "" nocloud ghost nosuchproj; do
