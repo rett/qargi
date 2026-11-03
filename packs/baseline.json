@@ -4,17 +4,20 @@
     {
       "kind": "skill",
       "name": "shellcheck-gate",
-      "propose": "tracked *.sh"
+      "propose": "tracked *.sh",
+      "compatible_providers": ["any"]
     },
     {
       "kind": "skill",
       "name": "keep-a-changelog",
-      "propose": "changelog keepachangelog"
+      "propose": "changelog keepachangelog",
+      "compatible_providers": ["any"]
     },
     {
       "kind": "skill",
       "name": "gitflow-member",
-      "propose": "methodology gitflow"
+      "propose": "methodology gitflow",
+      "compatible_providers": ["any"]
     }
   ]
 }

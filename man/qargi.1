@@ -9,7 +9,7 @@ qargi \- A gathering place for agent work: dispatch, review, remember
 .B qargi help
 [\fIcommand\fR|\fItopic\fR]
 .SH DESCRIPTION
-qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
+qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or a cloud agent (only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
 .PP
 Every command takes \fB\-\-help\fR. A command that changes shared resources prints a plan and applies it only with \fB\-\-plan\fR and \fB\-\-approved\fR; a cloud command needs \fB\-\-asked\fR. See APPROVALS.
 .SH CONCEPTS
@@ -17,7 +17,7 @@ Task: you describe one task and an executable check that decides it is done. An 
 .PP
 Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
-Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
+Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
 You decide: the coordinator re\-verifies everything an agent returns (qargi review check), applies it as separate commits, and asks you before anything is pushed.
 .SH APPROVALS
@@ -115,6 +115,16 @@ the provider the project's agents run on (models.provider, with its models); not
 .RE
 .RS
 .TP
+.BI "\-\-provider\-local " "NAME"
+the runtime of the local surface (models.provider.local); use it with \-\-provider\-cloud instead of \-\-provider.
+.RE
+.RS
+.TP
+.BI "\-\-provider\-cloud " "NAME"
+the runtime of the cloud surface (models.provider.cloud).
+.RE
+.RS
+.TP
 .BI "\-\-plan " "TOKEN"
 the plan token printed by the same command without \-\-approved.
 .RE
@@ -149,6 +159,16 @@ the repository URL, when it has no origin remote.
 .TP
 .BI "\-\-provider " "NAME"
 the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list).
+.RE
+.RS
+.TP
+.BI "\-\-provider\-local " "NAME"
+the runtime of the local surface (models.provider.local); use it with \-\-provider\-cloud instead of \-\-provider.
+.RE
+.RS
+.TP
+.BI "\-\-provider\-cloud " "NAME"
+the runtime of the cloud surface (models.provider.cloud).
 .RE
 .RS
 .TP
@@ -193,7 +213,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "set " "[NAME] PATH VALUE"
 Change one answer.
 .br
-PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.
+PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.
 .RE
 .RS
 .TP
@@ -209,6 +229,48 @@ List the stored projects.
 .TP
 .BI "validate " "FILE"
 Check an answers file without storing it.
+.RE
+.RS
+.TP
+.BI "link " "[PROJECT]"
+Make this work tree load the project's skills, agents and memory from ~/.qargi.
+.br
+One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). A real directory in the way is moved to NAME.qargi\-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. A member's guard refuses it.
+.RS
+.TP
+.BI "\-\-resource " "LIST"
+what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "unlink " "[PROJECT]"
+Undo project link in this work tree and restore the backups.
+.RS
+.TP
+.BI "\-\-resource " "LIST"
+what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
 .RE
 .TP
 .B qargi methodology
@@ -294,13 +356,13 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
+A member is a local agent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
 .RS
 .TP
 .BI "add " "NAME"
 Create a member under a name you choose.
 .br
-The definition is rendered by the provider of the project in effect: \-\-project, else QARGI_PROJECT, else the project whose checkout you are in. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider).
+A member belongs to a project, and the definition is rendered by the provider of that project. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no \-\-project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user\-level directory.
 .RS
 .TP
 .BI "\-\-abilities " "LIST"
@@ -319,7 +381,7 @@ effort level, written into the definition and recorded with the member (default 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it.
+the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
 .RE
 .RE
 .RS
@@ -331,6 +393,11 @@ List the members, their abilities and definitions.
 .TP
 .BI "rename " "OLD NEW"
 Rename a member and its definition.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
 .RE
 .RS
 .TP
@@ -338,6 +405,11 @@ Rename a member and its definition.
 Re\-render a member from the member definition qargi ships now.
 .br
 Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
 .RE
 .RS
 .TP
@@ -370,7 +442,7 @@ The base member is the one the profile names (worker for build, write and test, 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-prefer that project's own members and read its profiles (default: the project of the current directory).
+the project whose members serve and whose profiles apply (default: the project of the current directory).
 .RE
 .RS
 .TP
@@ -437,6 +509,11 @@ Print one provider: tiers and models, effort levels and the capability matrix pe
 .B \-\-json
 machine\-readable.
 .RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+show it as this project sees it, with its verified extensions composed in.
+.RE
 .RE
 .RS
 .TP
@@ -477,10 +554,232 @@ the plan token printed without it.
 .RE
 .RS
 .TP
-.BI "check " "NAME"
-Validate a descriptor and say what degrades.
+.BI "check " "NAME|DIR"
+Validate a definition (a library name or a directory) and say what degrades.
 .br
 Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles therefore cannot be served (for example review where the read\-only barrier is not supported).
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+check it as this project composes it with its enabled extensions.
+.RE
+.RE
+.RS
+.TP
+.BI "new " "NAME"
+Scaffold a provider, catalog or extension pack in the library.
+.br
+Plan, token, approval, as for a skill. The pack is stored unsealed and counts for nothing until sealed.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+provider, catalog or extension.
+.RE
+.RS
+.TP
+.BI "\-\-from " "NAME"
+start from this provider's definition.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "import " "SOURCE"
+Import a provider pack from a directory, a JSON file or an https git URL, after a review.
+.br
+The review lists files, executables (with hash and interpreter), URLs, network commands and secret findings. Binaries, archives, symlinks and secrets are refused; opaque blobs are flagged. A pack with executables also needs \-\-approve\-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.
+.RS
+.TP
+.BI "\-\-name " "NAME"
+store it under this name.
+.RE
+.RS
+.TP
+.BI "\-\-ref " "REF"
+the git ref to pin.
+.RE
+.RS
+.TP
+.BI "\-\-path " "SUB"
+a subdirectory of the source.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
+.RE
+.RE
+.RS
+.TP
+.BI "seal " "NAME"
+Record the current content of a library provider pack as approved.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
+.RE
+.RE
+.RS
+.TP
+.BI "remove " "NAME"
+Remove a library provider pack.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "enable " "[PROJECT] EXTENSION"
+Let a project use a library extension pack.
+.br
+An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
+.RE
+.RE
+.RS
+.TP
+.BI "disable " "[PROJECT] EXTENSION"
+Stop a project using a library extension pack.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "adapter\-run " "NAME SURFACE VERB"
+Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards).
+.br
+A verb the definition does not list exits 3.
+.RS
+.TP
+.B \-\-check
+check that the adapter and the verb exist and print nothing else.
+.RE
+.RE
+.RS
+.TP
+.BI "model " "NAME SURFACE TIER"
+Print the model a runtime maps a tier to on a surface.
+.RE
+.RS
+.TP
+.BI "attest " "NAME CAPABILITY"
+Record a capability you verified by hand or by a paid run (never runs or spends anything itself).
+.br
+Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record.
+.RS
+.TP
+.BI "\-\-asked " "WORDS"
+your words asking for this spend check.
+.RE
+.RS
+.TP
+.BI "\-\-did " "TEXT"
+what was run, in your words.
+.RE
+.RS
+.TP
+.BI "\-\-result " "RESULT"
+the outcome.
+.RE
+.RS
+.TP
+.BI "\-\-cost\-cents " "N"
+what it cost, in cents.
+.RE
+.RS
+.TP
+.BI "\-\-cleanup " "TEXT"
+what was cleaned up afterwards.
+.RE
+.RS
+.TP
+.BI "\-\-note " "TEXT"
+anything else worth keeping.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "migrate " "NAME"
+Print the schema 2 form of a schema 1 descriptor (read only).
+.br
+One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. Notes go to stderr. The written form (a plan and your approval) is not built yet, so without \-\-dry\-run it exits 2.
+.RS
+.TP
+.B \-\-dry\-run
+required for now: print the documents and write nothing.
+.RE
+.RS
+.TP
+.BI "\-\-as " "SURFACES"
+name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME.
+.RE
 .RE
 .TP
 .B qargi provision
@@ -774,11 +1073,21 @@ Skills and tools share one library with globally unique names; a link attaches o
 .TP
 .BI "new " "NAME"
 Create a pack from a template.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RE
 .RS
 .TP
 .BI "import " "SOURCE"
 Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -819,6 +1128,13 @@ Show a pack.
 .TP
 .BI "seal " "NAME"
 Approve the current content of a pack (after you edited it).
+.br
+A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"
@@ -950,11 +1266,21 @@ A tool is an MCP server with an explicit list of allowed tools and a permission 
 .TP
 .BI "new " "NAME"
 Create a pack from a template.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RE
 .RS
 .TP
 .BI "import " "SOURCE"
 Import a pack from a directory, file or pinned git URL, after a review.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-name " "NAME"
@@ -995,6 +1321,13 @@ Show a pack.
 .TP
 .BI "seal " "NAME"
 Approve the current content of a pack (after you edited it).
+.br
+A pack with no compatible_providers needs \-\-compatible once; giving it again changes the declaration and the plan says so.
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with: runtime or family names, comma separated, or any.
+.RE
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"
@@ -1104,7 +1437,7 @@ the project (default: inferred from here).
 Update an existing cloud agent, or render for a local Claude Code session.
 .br
 Without \-\-target (or with managed\-agents) this updates the existing cloud agent INSTANCE with its skills and tools; the lead's GitHub tool arrives this way when the project grants a cloud push. It needs \-\-asked, and always needs \-\-plan (QARGI_NESTED does not skip it); a local member's guard refuses it.
-With \-\-target claude\-code it takes PROJECT instead of INSTANCE and needs no \-\-asked. Without \-\-approved it prints a plan token. With \-\-plan and \-\-approved it renders the project's enabled skills and tools into $QARGI_STATE/claude/PROJECT, replacing the previous render atomically, and prints the exact `claude \-\-add\-dir ...` launch line (with \-\-mcp\-config and \-\-settings when the render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a repository or into ~/.claude, and members cannot write under the state's claude/ directory.
+With \-\-target claude\-code it takes PROJECT instead of INSTANCE and needs no \-\-asked. Without \-\-approved it prints a plan token. With \-\-plan and \-\-approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude\-code for this target), replacing the previous render atomically, and prints the exact `claude \-\-add\-dir ...` launch line (with \-\-mcp\-config and \-\-settings when the render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a repository or into ~/.claude, and members cannot write under the state's render/ directory.
 The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist name outside letters, digits, _, . and \-. Each plan stages into its own hidden directory and a lock serializes concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token approved; the token also covers the file modes, which the manifest records.
 .RS
 .TP
@@ -1196,6 +1529,23 @@ the plan token printed by the same command without \-\-approved.
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
+.RS
+.TP
+.B migrate\-render
+Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
+.br
+Prints the move and a plan token; with \-\-plan and \-\-approved it moves the directory, re\-points the checkout's skills link only when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
 .TP
 .B qargi discover
 Find, recommend and install tools for the roles of a project.
@@ -1266,6 +1616,11 @@ the role, for the role scopes.
 .TP
 .B \-\-dry\-run
 print the plan and stop; changes nothing.
+.RE
+.RS
+.TP
+.BI "\-\-compatible " "LIST"
+the providers the pack works with (default: the catalog entry's, else asked).
 .RE
 .RE
 .SS Run a task
@@ -2144,6 +2499,43 @@ Prepare, verify and clean a local run that has no way to push.
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
 .TP
+.BI "run " "RUN"
+Run a task through a command runtime (a vendor CLI) in a prepared run; \-\-dry\-run prints what would run.
+.br
+Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. A read\-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.
+.RS
+.TP
+.BI "\-\-task " "FILE"
+the file with the task block (default RUN/task.md).
+.RE
+.RS
+.TP
+.BI "\-\-model " "MODEL"
+a tier or a model id the runtime accepts (default the balanced tier).
+.RE
+.RS
+.TP
+.BI "\-\-effort " "LEVEL"
+an effort level; dropped with a note when the runtime cannot map it.
+.RE
+.RS
+.TP
+.BI "\-\-timeout " "S"
+seconds before the process group is killed (default from the definition).
+.RE
+.RS
+.TP
+.B \-\-again
+run a second time in the same run.
+.RE
+.RS
+.TP
+.B \-\-dry\-run
+print the argv, the working directory and the prompt, and run nothing.
+.RE
+.RE
+.RS
+.TP
 .B prepare
 Make the clone and the wrapper for a local agent.
 .br
@@ -2933,9 +3325,9 @@ print the plan and stop; changes nothing.
 .RE
 .TP
 .B qargi migrate
-Bring an installation made with older names to the current ones.
+Copy the data of the earlier XDG directories to ~/.qargi.
 .PP
-home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. roles renames what was made with the role names dev and docs (now build and write) and the four fixed local agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved definitions; in every project's two memory stores the role folders and the role names in indexes, README and marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their prompts, rebuilt as refresh\-prompt does; and the old agent symlinks, replaced by members (qargi agent add). Without \-\-apply it prints the plan, with every cloud call, and a plan token. It is re\-runnable: what is renamed already is left out, and it stops at the first failure.
+home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. 
 .RS
 .TP
 .B home
@@ -2949,36 +3341,6 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
-.RS
-.TP
-.B roles
-Plan, then apply, the move to the ability names and to named members.
-.RS
-.TP
-.BI "\-\-member\-names " "LIST"
-ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester).
-.RE
-.RS
-.TP
-.BI "\-\-project " "PROJECT"
-the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider).
-.RE
-.RS
-.TP
-.B \-\-apply
-apply the plan the token names.
-.RE
-.RS
-.TP
-.BI "\-\-plan " "TOKEN"
-the plan token printed by the same command without \-\-approved.
-.RE
-.RS
-.TP
-.BI "\-\-asked " "REQUEST"
-the request, in your words, for this migration; needed when the plan changes cloud resources.
 .RE
 .RE
 .SS Other

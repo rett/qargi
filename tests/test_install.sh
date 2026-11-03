@@ -11,7 +11,7 @@ ROOT=$PWD; T=$(mktemp -d); fail=0
 trap 'rm -rf "$T"; rm -rf "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 RETIRED="qargi-build qargi-write qargi-review qargi-test"
-CURRENT="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-verify qargi-flow qargi-team qargi-session"
+CURRENT="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-providers qargi-verify qargi-flow qargi-team qargi-session"
 INSTALL="$ROOT/install.sh"
 S=$HOME/.claude/skills
 

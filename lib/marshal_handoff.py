@@ -10,7 +10,7 @@ this host), the feature(s) (tip, whether the whole-suite result applies to the t
 commits ahead of develop), the marshal record, the packs (check summary and the launch line), what to read first, and a fixed
 list of things a new session must not assume.
 
-The packs section is the project's provider's (models.provider of its answers, no default: none is exit 2): the skills directory,
+The packs section is the project's local runtime's (models.provider of its answers for the local surface, no default: none is exit 2): the skills directory,
 the render target of the check and the launch line come from its layout (lib/providers/NAME.json through lib/provider.py). A
 provider that lacks one of them is said so in the section ("provider NAME has no FACILITY: ..."); the rest of the note stands.
 
@@ -46,6 +46,7 @@ DO_NOT_ASSUME = (
 
 _MS = None
 _PV = None
+_RN = None
 
 
 def ms():
@@ -68,6 +69,16 @@ def pv():
         sys.modules["provider"] = _PV
         spec.loader.exec_module(_PV)
     return _PV
+
+
+def rn():
+    """lib/packs_render.py (where the render of a project for a runtime is), loaded by path."""
+    global _RN
+    if _RN is None:
+        spec = importlib.util.spec_from_file_location("packs_render", os.path.join(HERE, "packs_render.py"))
+        _RN = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_RN)
+    return _RN
 
 
 def clean(s):
@@ -216,7 +227,7 @@ def packs_facts(state, project, repo, qargi_bin, name):
     """The packs of the project as its provider (name) lays them out. A facility the provider lacks is recorded as the refusal
     text (unsupported, launch_why, check_why) and the rest is still described."""
     P = pv()
-    render = os.path.join(state, name, project)
+    render = rn().render_dir(state, project, name)
     p = {"provider": clean(name), "unsupported": None, "render_dir": clean(render), "render_exists": False, "skills_dir": "",
          "linked": False, "launch": None, "launch_why": "", "render_target": None, "check_why": "", "link_path": "",
          "check": {"exit": None, "first": [], "last": [], "omitted": 0}}
@@ -272,7 +283,7 @@ def collect(a, argv_name):
     except (OSError, ValueError):
         answers = {}
     present = os.path.isfile(answers_file)
-    prov = pv().project_provider(answers, a.project) if present else None       # no default: NoProvider ends the verb (exit 2)
+    prov = pv().provider_of(answers, "local", a.project) if present else None    # the render is the local surface's; no default: NoProvider ends the verb (exit 2)
     test_cmd = answers.get("test_command") or ""
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:

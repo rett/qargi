@@ -16,9 +16,11 @@ run python3 tests/test_tiers.py
 run bash tests/test_models.sh
 run bash tests/test_no_default_provider.sh
 run python3 tests/test_provider.py
+run python3 tests/test_render.py
 run python3 tests/test_provider_adapter.py
 run bash tests/test_provider_degrade.sh
-run bash tests/conformance.sh claude
+run bash tests/conformance.sh claude-code
+run bash tests/conformance.sh claude-platform
 run bash tests/test_conformance_selftest.sh
 run python3 tests/test_tierplan.py
 run bash tests/test_tier_hook.sh
@@ -50,17 +52,18 @@ run bash tests/test_changelog_section.sh
 run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run bash tests/test_release_publish.sh
-run python3 tests/test_migrate.py
 run python3 tests/test_home.py
 run bash tests/test_install.sh
 run python3 tests/test_migrate_home.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
+run bash tests/test_local_run.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
 run bash tests/test_packs_seed.sh
-run bash tests/test_packs_claude.sh
+run bash tests/test_packs_render.sh
 run bash tests/test_packs_link.sh
+run bash tests/test_linker.sh
 run bash tests/test_packs_audit.sh
 run bash tests/test_packs_claude_hostile.sh
 run bash tests/test_review.sh
@@ -81,6 +84,8 @@ run python3 tests/role_seed_sim.py build
 run python3 tests/role_seed_sim.py write
 run python3 tests/role_seed_sim.py review
 run python3 tests/role_seed_sim.py test
-run shellcheck -x -S warning lib/*.sh bin/qargi install.sh tests/*.sh
+run bash tests/test_open_providers.sh
+run bash tests/test_neutral.sh
+run shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 echo "total: $((SECONDS - t0))s ($([ $rc = 0 ] && echo passed || echo FAILED))"
 exit $rc

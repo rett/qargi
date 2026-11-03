@@ -1,0 +1,307 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qargi-provider-definition-2",
+  "title": "A qargi provider definition or model catalog, schema 2",
+  "description": "A definition describes ONE runtime on ONE surface (local: a command-line runtime; cloud: a hosted one). A catalog describes the models of a family, shared by every runtime of that family. An extension (a library pack only) adds capabilities and what backs them to ONE runtime on ONE surface: it never overrides anything the runtime or another enabled extension has, and what it provides counts only after `qargi provider check` of the extension (hash-bound to the extension and its runtime). Shipped ones live in lib/providers/NAME.json and lib/providers/catalogs/FAMILY.json; the user's live in the pack library, QARGI_CONF/packs/providers/NAME/definition.json. lib/provider.py validates a document against the node of $defs named by its kind (provider, catalog or extension) with the same stdlib subset as schema 1 (type, enum, const, pattern, required, properties, additionalProperties false, items, minItems, uniqueItems, $ref and the format date) and then checks what a schema cannot say: the name equals the file or directory name, a catalog reference names a catalog, every model matches the pattern, every tier resolves, the paths of the resources stay inside the checkout or the home. Sections whose consumers are built later (renderers, dispatch, barrier) are checked for their discriminator only; their other keys are not yet constrained. Schema 1 files still load: lib/provider.py upgrades them in memory.",
+  "kinds": {"provider": "#/$defs/provider", "catalog": "#/$defs/catalog", "extension": "#/$defs/extension"},
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
+    "date": {"type": ["string", "null"], "format": "date", "description": "YYYY-MM-DD, or null when not verified"},
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "kind", "provider", "family", "surface", "models"],
+      "properties": {
+        "schema": {"const": 2},
+        "kind": {"const": "provider"},
+        "provider": {"$ref": "#/$defs/name"},
+        "family": {"type": ["string", "null"], "pattern": "^[a-z][a-z0-9-]{0,39}$", "description": "the family whose catalog this runtime shares and whose name selects it when it is the only runtime of the family on a surface; null for none"},
+        "surface": {"enum": ["local", "cloud"]},
+        "description": {"type": "string"},
+        "models": {"$ref": "#/$defs/models"},
+        "capabilities": {
+          "description": "What this runtime can do. A cell is flat (one surface). Omitted means no. yes or partial counts only when verified: shipped, verified_on is set; library, a record bound to the definition's hash in the verification file.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "per_dispatch_model_override": {"$ref": "#/$defs/cell"},
+            "per_dispatch_effort_override": {"$ref": "#/$defs/cell"},
+            "fixed_tool_allowlist_per_agent": {"$ref": "#/$defs/cell"},
+            "read_only_barrier": {"$ref": "#/$defs/cell"},
+            "session_budget_ceiling": {"$ref": "#/$defs/cell"},
+            "memory_stores": {"$ref": "#/$defs/cell"},
+            "skills": {"$ref": "#/$defs/cell"},
+            "mcp": {"$ref": "#/$defs/cell"},
+            "agent_definitions": {"$ref": "#/$defs/cell"},
+            "skill_exclusion": {"$ref": "#/$defs/cell"},
+            "headless_dispatch": {"$ref": "#/$defs/cell"},
+            "resume": {"$ref": "#/$defs/cell"},
+            "cost_report": {"$ref": "#/$defs/cell"},
+            "memory_dir": {"$ref": "#/$defs/cell"}
+          }
+        },
+        "resources": {
+          "description": "Where the runtime keeps what qargi links or reads. A resource that is absent or null is unsupported: the verb that needs it refuses with exit 3. In schema 1 this was the layout object; the loader maps one to the other.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "skills": {"$ref": "#/$defs/res_skills"},
+            "agents": {"$ref": "#/$defs/res_agents"},
+            "instructions": {"$ref": "#/$defs/res_instructions"},
+            "mcp": {"$ref": "#/$defs/res_mcp"},
+            "settings": {"$ref": "#/$defs/res_settings"},
+            "memory": {"$ref": "#/$defs/res_memory"}
+          }
+        },
+        "agents": {
+          "description": "Agent concepts of the runtime, or null when it has none (members are then composed into the run prompt). qargi's own reserved names (roles, lead, bases) are added by the core.",
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "reserved_names": {"type": "array", "items": {"type": "string"}, "description": "names the runtime's agent concept already uses; a member may not take them"},
+            "tools": {"type": "object", "description": "neutral tool name to the runtime's name for it"},
+            "required_tools": {"type": "object", "description": "per member class, the neutral tools that must map"},
+            "limits": {"type": "object", "description": "length and character limits of names and descriptions"}
+          }
+        },
+        "renderers": {"type": ["object", "null"], "description": "how a neutral definition becomes native files (built later)"},
+        "dispatch": {
+          "type": ["object", "null"],
+          "properties": {"mode": {"enum": ["in-session", "command", "adapter"]}},
+          "description": "how a member is started: in the lead's own session, as a command line, or through the adapter (built later)"
+        },
+        "barrier": {
+          "type": ["object", "null"],
+          "properties": {"kind": {"enum": ["hook", "sandbox-args", "adapter", "none"]}},
+          "description": "how a read-only member is held (built later); absent or kind none: nothing holds it"
+        },
+        "session": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "launch": {"type": ["string", "null"], "description": "the command that starts an interactive session on a render; {render} is the render directory. A group in [...] is kept only when the file named by its last word exists"},
+            "render_target": {"type": ["string", "null"], "description": "transitional: the --target name the packs renderer answers to; absent or null: the runtime has no packs renderer of its own, and the verb that needs one is refused with exit 3"}
+          }
+        },
+        "adapter": {"type": ["string", "null"], "description": "an executable relative to the definition's directory (no .. and no absolute path); called as adapter VERB with a JSON request on stdin"},
+        "adapter_verbs": {"type": "array", "items": {"type": "string"}, "description": "the verbs the adapter serves; absent means every verb of the adapter contract"}
+      }
+    },
+    "extension": {
+      "description": "What a project adds to a runtime, enabled per project (models.extensions of its answers). extends is a runtime name or a family name; the extension applies on ONE surface: surface, or the only surface of the runtime it names (an extension that names a family says its surface). Enabled extensions are merged onto the runtime in name order; a key that the runtime or another enabled extension already has is a conflict and the composition is refused, nothing is ever overridden. provides must equal the capability names of adds.capabilities. requires must hold on the runtime alone, or the extension is ignored with its reason shown.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "kind", "extension", "extends", "provides", "adds"],
+      "properties": {
+        "schema": {"const": 2},
+        "kind": {"const": "extension"},
+        "extension": {"$ref": "#/$defs/name"},
+        "description": {"type": "string"},
+        "extends": {"$ref": "#/$defs/name"},
+        "surface": {"enum": ["local", "cloud"]},
+        "provides": {"type": "array", "items": {"type": "string"}},
+        "requires": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {"type": "array", "items": {"type": "string"}, "description": "capabilities the runtime must have verified (yes or partial) without this extension"},
+            "resources": {"type": "array", "items": {"enum": ["skills", "agents", "instructions", "mcp", "settings", "memory"]}, "description": "resources the runtime must have"},
+            "qargi": {"type": "string", "pattern": "^>=[0-9]+(\\.[0-9]+){0,2}$", "description": "the least qargi version, like >=0.2.0"}
+          }
+        },
+        "adds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {"$ref": "#/$defs/provider/properties/capabilities"},
+            "resources": {"$ref": "#/$defs/provider/properties/resources"},
+            "renderers": {"type": "object", "description": "renderer name to renderer; a name the runtime already has is a conflict"},
+            "dispatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {"variants": {"type": "object", "description": "variant name to a dispatch variant; the runtime must have a dispatch"}}
+            },
+            "barrier": {
+              "type": "object",
+              "properties": {"kind": {"enum": ["hook", "sandbox-args", "adapter", "none"]}},
+              "description": "only for a runtime whose barrier is absent or none"
+            },
+            "adapter_verbs": {"type": "object", "description": "adapter verb to an executable inside the pack; a verb the runtime's adapter serves, or another extension adds, is a conflict"}
+          }
+        }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "kind", "family", "version", "pattern", "tiers", "effort"],
+      "properties": {
+        "schema": {"const": 2},
+        "kind": {"const": "catalog"},
+        "family": {"$ref": "#/$defs/name"},
+        "description": {"type": "string"},
+        "version": {"type": "string", "format": "date", "description": "YYYY-MM-DD of the last change; a change makes every render that includes the catalog stale"},
+        "pattern": {"type": "string", "description": "a regular expression every model id must match"},
+        "tiers": {"$ref": "#/$defs/tiers"},
+        "effort": {"$ref": "#/$defs/effort"}
+      }
+    },
+    "models": {
+      "description": "Either {catalog, use} (the models of a family's catalog) or the inline form {pattern, tiers, effort}; not both.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {"$ref": "#/$defs/name"},
+        "use": {"enum": ["alias", "id"], "description": "alias: the tier's alias when it has one, else its id; id: always the id"},
+        "pattern": {"type": "string"},
+        "tiers": {"$ref": "#/$defs/tiers"},
+        "effort": {"$ref": "#/$defs/effort"}
+      }
+    },
+    "tiers": {
+      "description": "tier to model. * fills every tier not given, so a single-model runtime writes only *. Every tier must resolve.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "fast": {"$ref": "#/$defs/tier"},
+        "balanced": {"$ref": "#/$defs/tier"},
+        "deep": {"$ref": "#/$defs/tier"},
+        "frontier": {"$ref": "#/$defs/tier"},
+        "*": {"$ref": "#/$defs/tier"}
+      }
+    },
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "alias", "verified_on", "source"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "alias": {"type": ["string", "null"]},
+        "verified_on": {"$ref": "#/$defs/date"},
+        "source": {"type": "string"}
+      }
+    },
+    "effort": {
+      "description": "qargi's effort level to the runtime's own value; null (or a level that is null or absent) means no such control",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "low": {"type": ["string", "null"]}, "medium": {"type": ["string", "null"]}, "high": {"type": ["string", "null"]},
+        "xhigh": {"type": ["string", "null"]}, "max": {"type": ["string", "null"]}
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {"enum": ["yes", "partial", "no"]},
+        "verified_on": {"$ref": "#/$defs/date"},
+        "source": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project": {"enum": ["dir-symlink", "entry-symlinks", "copy", "none"]},
+        "user": {"enum": ["dir-symlink", "entry-symlinks", "copy", "none"]}
+      }
+    },
+    "exclusion": {
+      "description": "how the runtime's own configuration switches an item off (qargi only reads it). form selects which of the other keys apply; null: none",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["form"],
+      "properties": {
+        "form": {"enum": ["settings-key", "config-list", "deny-list", "none", "adapter"]},
+        "files": {"type": "array", "items": {"enum": ["user", "project", "project-local"]}},
+        "file": {"type": "string"},
+        "format": {"enum": ["json", "toml", "yaml"]},
+        "pointer": {"type": "string"},
+        "shape": {"enum": ["map"]},
+        "match": {"type": "object"},
+        "off": {"description": "the value that means off: a string for settings-key, an object for config-list"}
+      }
+    },
+    "res_skills": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "project_dir": {"type": "string"},
+        "user_dir": {"type": ["string", "null"]},
+        "items": {"enum": ["dir-per-item"]},
+        "entry": {"type": "string"},
+        "format": {"enum": ["skill-md"]},
+        "link": {"$ref": "#/$defs/link"},
+        "exclusion": {"$ref": "#/$defs/exclusion"}
+      }
+    },
+    "res_agents": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "project_dir": {"type": "string"},
+        "user_dir": {"type": ["string", "null"]},
+        "items": {"enum": ["file-per-item"]},
+        "ext": {"type": "string"},
+        "link": {"$ref": "#/$defs/link"},
+        "exclusion": {"$ref": "#/$defs/exclusion"}
+      }
+    },
+    "res_instructions": {
+      "description": "read only in schema 2",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "project_file": {"type": "array", "minItems": 1, "items": {"type": "string"}, "description": "file names in order of preference"},
+        "user_file": {"type": ["string", "null"]},
+        "items": {"enum": ["single-file"]}
+      }
+    },
+    "res_mcp": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {"type": "string"},
+        "format": {"enum": ["json", "toml"]},
+        "root_pointer": {"type": "string"},
+        "entry": {"type": "object"},
+        "permission_rule": {"type": ["string", "null"]}
+      }
+    },
+    "res_settings": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "description": "the settings files a session reads, lowest scope first; user paths start with ~/, the others are relative to the checkout",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["scope", "path"],
+            "properties": {
+              "scope": {"enum": ["user", "project", "project-local"]},
+              "path": {"type": "string"},
+              "format": {"enum": ["json", "toml", "yaml"]}
+            }
+          }
+        },
+        "allow_pointer": {"type": ["string", "null"]}
+      }
+    },
+    "res_memory": {
+      "description": "the runtime's own memory directory for a checkout. {checkout_key} in user_dir is replaced by the key the rule makes of the checkout's absolute path: nonalnum-dash replaces every character that is not a letter or digit by -; sha256-16 is the first 16 hex digits of the sha256 of the path; none is the empty string",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "user_dir": {"type": ["string", "null"]},
+        "checkout_key": {"enum": ["nonalnum-dash", "sha256-16", "none", null]},
+        "link": {"$ref": "#/$defs/link"}
+      }
+    }
+  }
+}

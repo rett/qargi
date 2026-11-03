@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Attach qargi to an existing repository without changing it.
 
-  attach.py detect DIR [--name N] [--methodology M] [--provider P]    print JSON: what was found, the draft answers, the gaps, the questions
+  attach.py detect DIR [--name N] [--methodology M] [--provider P | --provider-local L --provider-cloud C]
+                                                   print JSON: what was found, the draft answers, the gaps, the questions
+  attach.py check-provider [--provider P | --provider-local L --provider-cloud C]
+                                                   exit 1 and the reason when a provider named there cannot be used (nothing is written)
   attach.py adopt-plan PROJECT ANSWERS [--methodology M]   print JSON: the safe gaps `qargi project adopt` would close (reads only)
   attach.py adopt-apply PROJECT ANSWERS < PLAN          create what that plan lists (stdin is the plan adopt-plan printed)
 
 detect only reads DIR (files and `git` queries). The draft answers are what `qargi project init` would store; the gaps are what
 the chosen methodology has that the repository lacks (`qargi project adopt` closes the safe ones, as a branch to review); the
 questions are the facts it could not determine. There is no default provider: models.provider (and the roles' models, which are the provider's)
-is in the draft only when --provider names one; otherwise a question says so. Nothing is written by detect or adopt-plan, and nothing about the project goes
+is in the draft only when --provider (one name for both surfaces) or --provider-local / --provider-cloud (the object form, one runtime per
+surface) names one; otherwise a question says so, and a surface the object leaves out is a question too. Nothing is written by detect or adopt-plan, and nothing about the project goes
 into its repository.
 
 adopt-apply writes exactly two kinds of thing: local branches that did not exist (git branch, never -f), and one commit of
@@ -169,6 +173,40 @@ def changelog_info(d):
     return {}
 
 
+def provider_arg(prov=None, local=None, cloud=None):
+    """The models.provider answer the options name: None, a string (--provider) or {local, cloud} (--provider-local, --provider-cloud)."""
+    if prov and (local or cloud):
+        raise SystemExit("qargi: give --provider (one name for both surfaces) or --provider-local / --provider-cloud (one per surface), not both")
+    if prov:
+        return prov
+    got = {k: v for k, v in (("local", local), ("cloud", cloud)) if v}
+    return got or None
+
+
+def balanced_model(provider):
+    """The balanced model of the provider the options name, to default the roles' models to: a string is a provider with a descriptor, else a
+    family that resolves on some surface; an object is checked per surface (a name there is a runtime or a family) and gives a model only when
+    the runtimes it names agree on it. A name that cannot be used ends the verb (exit 1)."""
+    try:
+        if isinstance(provider, dict):
+            models = {PV.load(PV.resolve_runtime(n, sf))["tiers"]["balanced"] for sf, n in provider.items()}
+            return models.pop() if len(models) == 1 else None
+        try:
+            return PV.load(provider)["tiers"]["balanced"]
+        except PV.ProviderError as e:
+            models, err = set(), e
+            for sf in PV.SURFACES:
+                try:
+                    models.add(PV.load(PV.resolve_runtime(provider, sf))["tiers"]["balanced"])
+                except PV.ProviderError:
+                    pass
+            if not models:
+                raise err
+            return models.pop() if len(models) == 1 else None
+    except PV.ProviderError as e:
+        raise SystemExit("qargi: --provider: %s" % e)
+
+
 def detect(d, name=None, methodology="gitflow", provider=None):
     d = os.path.realpath(d)
     top = git(d, "rev-parse", "--show-toplevel")
@@ -206,13 +244,18 @@ def detect(d, name=None, methodology="gitflow", provider=None):
     # there is no default provider: the models are the named provider's, or the roles name none and a question says why
     default_model = None
     if provider:
-        try:
-            default_model = PV.load(provider)["tiers"]["balanced"]
-        except PV.ProviderError as e:
-            raise SystemExit("qargi: --provider: %s" % e)
+        default_model = balanced_model(provider)
+        if isinstance(provider, dict):
+            for sf in PV.SURFACES:
+                if sf not in provider:
+                    questions.append("models.provider.%s: no %s provider was named, so verbs on that surface refuse the project until one is set "
+                                     "(qargi project set %s models.provider.%s NAME)" % (sf, sf, pname, sf))
+            if default_model is None:
+                questions.append("roles' models: the runtimes named for the surfaces have different balanced models, so none is set; set them with "
+                                 "qargi project set %s roles.ROLE.model MODEL" % pname)
     else:
         questions.append("models.provider: no provider was named, so none is stored and the roles' models are not set; set them after the provider is chosen "
-                         "(qargi project attach --provider NAME, or qargi project set %s models.provider NAME)" % pname)
+                         "(qargi project attach --provider NAME, or --provider-local NAME --provider-cloud NAME, or qargi project set %s models.provider NAME)" % pname)
     roles = {}
     for r, cfg in (m.get("roles") or {}).items():
         base = cfg.get("base", "@dispatcher")
@@ -413,18 +456,32 @@ def main(argv):
             print("qargi: %s" % e, file=sys.stderr)
             sys.exit(2)
         return
+    if argv and argv[0] == "check-provider":
+        opts = {}
+        i = 1
+        while i < len(argv):
+            if argv[i] in ("--provider", "--provider-local", "--provider-cloud") and i + 1 < len(argv):
+                opts[argv[i]], i = argv[i + 1], i + 2
+            else:
+                raise SystemExit("usage: attach.py check-provider [--provider P | --provider-local L --provider-cloud C]")
+        prov = provider_arg(opts.get("--provider"), opts.get("--provider-local"), opts.get("--provider-cloud"))
+        if prov:
+            balanced_model(prov)
+        return
     if len(argv) < 2 or argv[0] != "detect":
-        raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M] [--provider P]")
-    d, name, meth, prov, i = argv[1], None, "gitflow", None, 2
+        raise SystemExit("usage: attach.py detect DIR [--name N] [--methodology M] [--provider P | --provider-local L --provider-cloud C]")
+    d, name, meth, i = argv[1], None, "gitflow", 2
+    opts = {}
     while i < len(argv):
         if argv[i] == "--name" and i + 1 < len(argv):
             name, i = argv[i + 1], i + 2
         elif argv[i] == "--methodology" and i + 1 < len(argv):
             meth, i = argv[i + 1], i + 2
-        elif argv[i] == "--provider" and i + 1 < len(argv):
-            prov, i = argv[i + 1], i + 2
+        elif argv[i] in ("--provider", "--provider-local", "--provider-cloud") and i + 1 < len(argv):
+            opts[argv[i]], i = argv[i + 1], i + 2
         else:
             raise SystemExit("qargi: unknown option %s" % argv[i])
+    prov = provider_arg(opts.get("--provider"), opts.get("--provider-local"), opts.get("--provider-cloud"))
     print(json.dumps(detect(d, name, meth, prov), indent=2, sort_keys=True))
 
 

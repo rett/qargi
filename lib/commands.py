@@ -10,8 +10,8 @@ TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 
 INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as "
-    "reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic "
-    "Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and "
+    "reviewable patches. An agent is a member on this machine (local, the default) or a "
+    "cloud agent (only when you ask for it in that request). Agents work in their own clone and "
     "never push. A team adds a lead that coordinates members for build, write and review on one task. "
     "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
 )
@@ -52,6 +52,7 @@ HOOK_REC = ("Reads the hook's JSON on stdin and appends one small line to the ru
 ASKED = opt("--asked", "the request, in your words, that names the cloud instance; recorded in the audit log", "REQUEST")
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
+EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
 TARGET = opt("--target", "claude-code renders for a local Claude Code session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
@@ -99,7 +100,9 @@ COMMANDS = {
                          opt("--param", "a methodology parameter as name=value (repeat), for example test_command", "NAME=VALUE"),
                          opt("--url", "the repository URL; with it the qargi answers are stored too", "URL"),
                          opt("--deployment", "a deployment option to record and explain (see qargi methodology deployment)", "ID"),
-                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"), PLAN, APPROVED],
+                         opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
+                         opt("--provider-local", "the runtime of the local surface (models.provider.local); use it with --provider-cloud instead of --provider", "NAME"),
+                         opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
                               "is created: say where it goes with git. The files mention no tool of yours."),
@@ -109,6 +112,8 @@ COMMANDS = {
                             opt("--methodology", "the methodology to compare with (default gitflow)", "NAME", "methodology"),
                             opt("--url", "the repository URL, when it has no origin remote", "URL"),
                             opt("--provider", "the provider the project's agents run on (models.provider, with its models); not stored when omitted (qargi provider list)", "NAME"),
+                         opt("--provider-local", "the runtime of the local surface (models.provider.local); use it with --provider-cloud instead of --provider", "NAME"),
+                         opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"),
                             PLAN, APPROVED, opt("--force", "replace the detected answers, keep the rest")],
                            desc=("Reads the repository (branches, tags, version and changelog files, test command, CI) and changes nothing in it. Prints the answers it "
                                  "would store, the gaps against the methodology and what it could not determine, and a plan token. With --plan and --approved it "
@@ -126,16 +131,22 @@ COMMANDS = {
                                 "are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
+                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
                         examples=["qargi project set acme roles.write.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it", [("FILE", "file")]),
+            "link": verb("Make this work tree load the project's skills, agents and memory from ~/.qargi", [("PROJECT", "project", True)],
+                         [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED],
+                         desc=("One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). "
+                               "A real directory in the way is moved to NAME.qargi-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. "
+                               "A member's guard refuses it.")),
+            "unlink": verb("Undo project link in this work tree and restore the backups", [("PROJECT", "project", True)], [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED]),
         },
     },
     "agent": {
         "summary": "Name the members: the local agents that do the work",
-        "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
+        "desc": ("A member is a local agent you name, rendered from the one member definition qargi ships, with the "
                  "abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role "
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
@@ -148,14 +159,14 @@ COMMANDS = {
                         [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
-                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it", "PROJECT", "project")],
-                        desc=("The definition is rendered by the provider of the project in effect: --project, else QARGI_PROJECT, else the project whose checkout you are in. "
-                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider)."),
-                        examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
-                                  "qargi agent add worker    # the write-class base: build, write and test"]),
+                         opt("--project", "the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project")],
+                        desc=("A member belongs to a project, and the definition is rendered by the provider of that project. "
+                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no --project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user-level directory."),
+                        examples=["qargi agent add forge --abilities build,test --project myproject", "qargi agent add scribe --abilities write --model opus --project myproject",
+                                  "qargi agent add worker --project myproject    # the write-class base: build, write and test"]),
             "list": verb("List the members, their abilities and definitions"),
-            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
-            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
+            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [PROJECT_OPT]),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [PROJECT_OPT],
                             desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
@@ -168,7 +179,7 @@ COMMANDS = {
                                 "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
-                        [opt("--project", "prefer that project's own members and read its profiles (default: the project of the current directory)", "PROJECT", "project"),
+                        [opt("--project", "the project whose members serve and whose profiles apply (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
                          opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
@@ -386,11 +397,11 @@ COMMANDS = {
                                 "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
                                 "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
                                 "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
-                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/claude/PROJECT, replacing the "
+                                "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), replacing the "
                                 "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
                                 "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
                                 "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
-                                "repository or into ~/.claude, and members cannot write under the state's claude/ directory.\n"
+                                "repository or into ~/.claude, and members cannot write under the state's render/ directory.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
                                 "front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist "
                                 "name outside letters, digits, _, . and -. Each plan stages into its own hidden directory and a lock serializes "
@@ -429,6 +440,9 @@ COMMANDS = {
                            desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
                                  "and approval as link; nothing else is deleted.")),
+            "migrate-render": verb("Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME", [], [PLAN, APPROVED],
+                                   desc=("Prints the move and a plan token; with --plan and --approved it moves the directory, re-points the checkout's skills link only "
+                                         "when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.")),
         },
     },
     "start": {
@@ -562,11 +576,11 @@ COMMANDS = {
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
                  "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
                  "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2)."),
-        "scripts": ["provider.py", "provider.sh"],
+        "scripts": ["provider.py", "provider.sh", "conformance/library.py"],
         "verbs": {
             "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
             "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
-                         [opt("--json", "machine-readable")]),
+                         [opt("--json", "machine-readable"), opt("--project", "show it as this project sees it, with its verified extensions composed in", "PROJECT", "project")]),
             "accept": verb("Record that you accept a provider surface that has no read-only barrier", [("NAME", "none")],
                            [opt("--surface", "the surface the acceptance covers", "SURFACE", ("local", "cloud")),
                             opt("--no-barrier", "accept running the review role without a read-only barrier on that surface"),
@@ -576,10 +590,37 @@ COMMANDS = {
                            desc="Without --plan and --approved it prints what would be recorded and a plan token. Applied, it writes models.accept_no_barrier.SURFACE "
                                 "(who, when, why) to the project's answers and the audit log. It is the only way a provider surface whose read-only barrier "
                                 "is not supported can serve the review role."),
-            "check": verb("Validate a descriptor and say what degrades", [("NAME", "none")],
+            "check": verb("Validate a definition (a library name or a directory) and say what degrades", [("NAME|DIR", "none")],
+                          [opt("--project", "check it as this project composes it with its enabled extensions", "PROJECT", "project")],
                           desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
+            "new": verb("Scaffold a provider, catalog or extension pack in the library", [("NAME", "none")],
+                        [opt("--kind", "provider, catalog or extension", "KIND", ("provider", "catalog", "extension")), opt("--from", "start from this provider's definition", "NAME"), PLAN, APPROVED],
+                        desc="Plan, token, approval, as for a skill. The pack is stored unsealed and counts for nothing until sealed."),
+            "import": verb("Import a provider pack from a directory, a JSON file or an https git URL, after a review", [("SOURCE", "file")],
+                           [opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED, EXEC],
+                           desc=("The review lists files, executables (with hash and interpreter), URLs, network commands and secret findings. Binaries, archives, symlinks and secrets are refused; "
+                                 "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
+            "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
+            "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
+            "enable": verb("Let a project use a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED, EXEC],
+                           desc="An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified."),
+            "disable": verb("Stop a project using a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED]),
+            "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
+                                [opt("--check", "check that the adapter and the verb exist and print nothing else")],
+                                desc="A verb the definition does not list exits 3."),
+            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
+            "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
+                           [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
+                            opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
+                            opt("--cleanup", "what was cleaned up afterwards", "TEXT"), opt("--note", "anything else worth keeping", "TEXT"), PLAN, APPROVED],
+                           desc="Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record."),
+            "migrate": verb("Print the schema 2 form of a schema 1 descriptor (read only)", [("NAME", "none")],
+                            [opt("--dry-run", "required for now: print the documents and write nothing"),
+                             opt("--as", "name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME", "SURFACES")],
+                            desc="One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. "
+                                 "Notes go to stderr. The written form (a plan and your approval) is not built yet, so without --dry-run it exits 2."),
         },
     },
     "noticed": {
@@ -606,6 +647,13 @@ COMMANDS = {
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
         "verbs": {
+            "run": verb("Run a task through a command runtime (a vendor CLI) in a prepared run; --dry-run prints what would run", [("RUN", "dir")],
+                        [opt("--task", "the file with the task block (default RUN/task.md)", "FILE", "file"), opt("--model", "a tier or a model id the runtime accepts (default the balanced tier)", "MODEL"),
+                         opt("--effort", "an effort level; dropped with a note when the runtime cannot map it", "LEVEL"), opt("--timeout", "seconds before the process group is killed (default from the definition)", "S"),
+                         opt("--again", "run a second time in the same run"), opt("--dry-run", "print the argv, the working directory and the prompt, and run nothing")],
+                        desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. "
+                              "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
+                              "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
@@ -776,7 +824,8 @@ COMMANDS = {
                             [opt("--scope", "user, user-role, project or project-role (default: ask)", "SCOPE", ("user", "user-role", "project", "project-role")),
                              opt("--project", "the project, for the project scopes", "PROJECT", "project"),
                              opt("--role", "the role, for the role scopes", "ROLE", ROLES),
-                             opt("--dry-run", "print the plan and stop; changes nothing")],
+                             opt("--dry-run", "print the plan and stop; changes nothing"),
+                             opt("--compatible", "the providers the pack works with (default: the catalog entry's, else asked)", "LIST")],
                             desc="Interactive: it asks at the terminal, and your answers are the recorded approvals.",
                             examples=["qargi discover install skill-pdf --project acme --role write"]),
         },
@@ -815,7 +864,7 @@ COMMANDS = {
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
     "migrate": {
-        "summary": "Bring an installation made with older names to the current ones",
+        "summary": "Copy the data of the earlier XDG directories to ~/.qargi",
         "desc": ("home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and "
                  "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
                  "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
@@ -824,24 +873,11 @@ COMMANDS = {
                  "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
                  "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
                  "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
-                 "roles renames what was made with the role names dev and docs (now build and write) and the four fixed local "
-                 "agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved "
-                 "definitions; in every project's two memory stores the role folders and the role names in indexes, README and "
-                 "marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their "
-                 "prompts, rebuilt as refresh-prompt does; and the old agent symlinks, replaced by members (qargi agent add). "
-                 "Without --apply it prints the plan, with every cloud call, and a plan token. It is re-runnable: what is renamed "
-                 "already is left out, and it stops at the first failure."),
+                 ),
         "scripts": ["migrate.py", "migrate_home.py"],
         "verbs": {
             "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
                          examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
-            "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
-                          [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
-                           opt("--project", "the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider)", "PROJECT", "project"),
-                           opt("--apply", "apply the plan the token names"), PLAN,
-                           opt("--asked", "the request, in your words, for this migration; needed when the plan changes cloud resources", "REQUEST")],
-                          examples=["qargi migrate roles", "qargi migrate roles --member-names build=forge,write=scribe",
-                                    'qargi migrate roles --apply --plan TOKEN --asked "migrate the roles of myproject"']),
         },
     },
     "lead": {
@@ -926,12 +962,13 @@ COMMANDS = {
 
 # skill and tool share one set of verbs
 PACK_VERBS = {
-    "new": verb("Create a pack from a template", [("NAME", "none")]),
+    "new": verb("Create a pack from a template", [("NAME", "none")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST")]),
     "import": verb("Import a pack from a directory, file or pinned git URL, after a review", [("SOURCE", "file")],
-                   [opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
+                   [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
     "list": verb("List the library, or what a project and role get", [("PROJECT", "project", True), ("ROLE", "role", True)]),
     "show": verb("Show a pack", [("NAME", "pack")]),
-    "seal": verb("Approve the current content of a pack (after you edited it)", [("NAME", "pack")], [PLAN, APPROVED]),
+    "seal": verb("Approve the current content of a pack (after you edited it)", [("NAME", "pack")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), PLAN, APPROVED],
+                 desc="A pack with no compatible_providers needs --compatible once; giving it again changes the declaration and the plan says so."),
     "link": verb("Attach a pack at a scope", [("NAME", "pack")],
                  [opt("--scope", "where it applies", "SCOPE", ("user", "user-role", "project", "project-role")),
                   opt("--project", "for the project scopes", "PROJECT", "project"), opt("--role", "for the role scopes", "ROLE", ROLES)]),
@@ -966,7 +1003,7 @@ TOPICS = {
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
         "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
-        "Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, "
+        "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
@@ -979,7 +1016,7 @@ TOPICS = {
         "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
         "qargi ships. The task block names the ability and carries its role text; there is no ability skill to load. qargi agent for ABILITY prints the member "
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's role text in its prompt.",
-        "Earlier installations (roles dev and docs, and the agents named qargi-<role> that served them) move with qargi migrate roles."]),
+        ]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "

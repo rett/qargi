@@ -9,10 +9,15 @@
 #                                         marshal handoff can serve the project; `project validate` reports it while it is empty)
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
-#                                         roles.write.effort high (VALUE is JSON, or a plain string)
+#                                         roles.write.effort high (VALUE is JSON, or a plain string). The provider has one runtime
+#                                         per surface: models.provider.local NAME / models.provider.cloud NAME set one (a single
+#                                         name already there is kept for the surface you do not set)
 #   project.sh new NAME [--methodology M] [--dir D] [--url U] [--deployment ID] [--param k=v] [--plan T --approved W]
-#                                         create a project directory with a git repository and the methodology's generic files
+#                       [--provider NAME | --provider-local NAME --provider-cloud NAME]
+#                                         create a project directory with a git repository and the methodology's generic files;
+#                                         --provider is one name for both surfaces, the other two name a runtime for each
 #   project.sh attach [DIR] [--name N] [--methodology M] [--url U] [--plan T --approved W] [--force]
+#                       [--provider NAME | --provider-local NAME --provider-cloud NAME]
 #                                         read an existing repository, show the answers and the gaps, store on approval
 #   project.sh adopt NAME [--methodology M] [--plan T --approved W]
 #                                         close the safe gaps of an attached repository: create the missing long-lived branches
@@ -20,6 +25,12 @@
 #                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
 #                                         branch or file, never pushes; refused (exit 2) when dirty, detached, empty, unattached
 #                                         or in a member run
+#   project.sh link|unlink NAME [--resource skills,agents,memory] [--plan T --approved W]
+#                                         link what the project uses, kept under ~/.qargi, into the checkout (skills, agents) and into the
+#                                         runtime's memory directory (memory), as the runtime's definition says (lib/project_link.py, on
+#                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
+#                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
+#                                         the same links and puts back what they replaced
 #   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
 #                                         change the exit status, so storing and the flows after it work as before)
 #
@@ -70,28 +81,48 @@ try:
     c = json.load(open(path))
 except Exception as e:
     print("not valid JSON: %s" % e); sys.exit(1)
-# the models and the model-id pattern are the project's provider's (models.provider). There is no default provider: with none named, or
-# one that has no descriptor, the provider-specific checks (the model-id pattern and the tier names) are skipped and a model id only has
-# to look like one; the `finding:` line for that is printed by no_provider after a successful validate.
+# the models and the model-id pattern are the project's provider's (models.provider: one name, or {local, cloud}). There is no default
+# provider: with none named, or none that has a descriptor, the provider-specific checks (the model-id pattern and the tier names) are
+# skipped and a model id only has to look like one; the `finding:` lines for that are printed by no_provider after a successful validate.
+# With a runtime per surface, a model id passes when the runtime of any surface named accepts it (a role's model may be a member's or an
+# instance's), and the keys and values of the object are checked here: a surface is local or cloud, its value a provider or family name.
 _m = c.get("models") if isinstance(c, dict) else None
 pname = _m.get("provider") if isinstance(_m, dict) else None
-D = None
+bad = []
+Ds = []
+def _runtime(name, surface):
+    try:
+        return provider.load(provider.resolve_runtime(name, surface))
+    except provider.ProviderError:
+        return None
 if isinstance(pname, str) and pname.strip():
     try:
-        D = provider.load(pname.strip())
-    except provider.ProviderError:
-        D = None
-if D:
-    model_ok = re.compile(D["model_pattern"])
-    aliases = [a for a in D["aliases"].values() if a]
-    tier_names = list(D["tiers"])
-    def like(tier): return "a model id like %s" % D["tiers"][tier]
+        Ds.append(provider.load(pname.strip()))
+    except provider.ProviderError:               # not a runtime: a family, which has a runtime on a surface
+        Ds.extend(d for d in (_runtime(pname.strip(), sf) for sf in provider.SURFACES) if d)
+elif isinstance(pname, dict):
+    for sf, nm in pname.items():
+        if sf not in provider.SURFACES:
+            bad.append("models.provider.%s: not a surface (%s)" % (sf, ", ".join(provider.SURFACES)))
+        elif not isinstance(nm, str) or not provider.NAME_RE.match(nm.strip()):
+            bad.append("models.provider.%s: a provider or family name (qargi provider list), as a string" % sf)
+        else:
+            d = _runtime(nm.strip(), sf)
+            if d: Ds.append(d)
+seen = set(); Ds = [d for d in Ds if not (d["provider"] in seen or seen.add(d["provider"]))]
+if Ds:
+    _pats = [re.compile(d["model_pattern"]) for d in Ds]
+    class _AnyOf:
+        def fullmatch(self, v): return any(p.fullmatch(v) for p in _pats)
+    model_ok = _AnyOf()
+    aliases = [a for a in dict.fromkeys(a for d in Ds for a in d["aliases"].values()) if a]
+    tier_names = list(Ds[0]["tiers"])
+    def like(tier): return "a model id like %s" % " or ".join(dict.fromkeys(d["tiers"][tier] for d in Ds))
 else:
     model_ok = re.compile(r"[a-z0-9][a-z0-9.-]*")
     aliases = []
     tier_names = list(provider.TIERS)
     def like(tier): return "a model id (lower-case letters, digits, . and -; the provider's own pattern is checked once models.provider names one)"
-bad = []
 def need(cond, msg):
     if not cond: bad.append(msg)
 need(c.get("schema") == 1, "schema must be 1")
@@ -255,20 +286,82 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
-# no_provider FILE [NAME]: prints the finding and returns 0 when the answers name no provider (models.provider missing, not a string or blank:
-# the same rule as provider.py project_provider), or name one that has no descriptor (lib/providers/NAME.json). Never an error: a project
-# without one is stored and used as before, but the verbs that need a provider (agent, provision, packs apply/check --target, packs
-# link/unlink, skill accept, marshal handoff, a session) refuse it with exit 2, and validate skips the provider's model checks.
-no_provider() {
-  local p
-  if jq -e '(if (.models | type) == "object" then .models.provider else null end) as $p | ($p | type) != "string" or ($p | test("^\\s*$"))' "$1" >/dev/null 2>&1; then
-    echo "finding: models.provider is not set and there is no default provider: qargi project set ${2:-$(jq -r '.project // "NAME"' "$1")} models.provider PROVIDER (qargi provider list)"
-    return 0
-  fi
-  p=$(jq -r '.models.provider | strings | gsub("^\\s+|\\s+$"; "")' "$1" 2>/dev/null) || return 1
-  case $p in schema|adapter-schema) ;; *) [ ! -f "$(dirname "$(readlink -f "$0")")/providers/$p.json" ] || return 1;; esac
-  [ -n "$p" ] || return 1
-  echo "finding: models.provider '$p' has no descriptor under lib/providers/ (qargi provider list): its model ids and tiers were not checked"
+# no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
+# object, or blank: the same rule as provider.py project_provider), or leave a surface without one (the object form), or name one that
+# has no definition, or a name that serves only one surface, or a single name resolved through its family (the notice of
+# provider.resolve_project: name a runtime for each surface). Never an error: a project without one is stored and used as before, but the
+# verbs that need a provider on a surface (agent, provision, packs apply/check --target, packs link/unlink, skill accept, marshal handoff, a
+# session) refuse it with exit 2, and validate skips the provider's model checks.
+no_provider() { # the script is an argument, not stdin: FILE may be /dev/stdin
+  local src
+  src=$(cat <<'EOF'
+import json, sys
+sys.path.insert(0, sys.argv[3])
+import provider as P
+try:
+    with open(sys.argv[1]) as f: ans = json.load(f)
+except (OSError, ValueError):
+    sys.exit(1)
+name = sys.argv[2] or (ans.get("project") if isinstance(ans, dict) else None) or "NAME"
+p = P._provider_answer(ans)
+out = []
+if p is None or (isinstance(p, dict) and not p):
+    out.append("finding: models.provider is not set and there is no default provider: qargi project set %s models.provider PROVIDER (qargi provider list)" % name)
+elif isinstance(p, dict):
+    for sf in P.SURFACES:
+        v = p.get(sf)
+        if not isinstance(v, str) or not v.strip():
+            out.append("finding: models.provider.%s is not set, so the verbs that run on the %s surface refuse this project: qargi project set %s models.provider.%s NAME (qargi provider list)" % (sf, sf, name, sf))
+            continue
+        try:
+            P.resolve_project(ans, sf, name)
+        except P.ProviderError as e:
+            out.append("finding: models.provider.%s '%s' cannot be used: %s" % (sf, v.strip(), e))
+else:
+    notices, refused, served = [], [], 0
+    for sf in P.SURFACES:
+        try:
+            notice = P.resolve_project(ans, sf, name)[1]
+            served += 1
+            if notice: notices.append(notice)
+        except P.NoProvider as e:
+            served += 1
+            refused.append(str(e))
+        except P.ProviderError:
+            pass
+    if not served:
+        out.append("finding: models.provider '%s' has no descriptor under lib/providers/ (qargi provider list): its model ids and tiers were not checked" % p)
+    else:
+        out.extend("finding: " + n for n in notices)
+        out.extend("finding: " + r for r in refused)
+print("\n".join(out))
+sys.exit(0 if out else 1)
+EOF
+  )
+  python3 -I -c "$src" "$1" "${2:-}" "$(dirname "$(readlink -f "$0")")"
+}
+
+# the keys no verb here stores: models.extensions and models.accept_no_barrier change what an agent may run on or accept a surface with no
+# read-only barrier, so they take a plan token and an approval (qargi provider enable|disable|accept, which store through lib/gated_answers.py).
+# Every route that writes a whole answers file (init, attach, new) checks them here: the keys of the file that differ from the stored ones
+# that add or change an entry (none stored: the keys the file has; an empty list or object counts as absent; dropping an entry is allowed), one per line
+gated_keys_changed() { # NEWFILE [STOREDFILE]
+  [ -f "${2:-}" ] || set -- "$1" /dev/null
+  jq -rn --slurpfile n "$1" --slurpfile s "$2" '
+    def norm: if . == null or . == [] or . == {} then null else . end;
+    def keys_of: if type == "object" and (.models | type) == "object" then .models else {} end;
+    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry
+    def narrower($a; $b; $k): ($a[$k] | norm) as $x | ($b[$k] | norm) as $y
+      | if $x == null then true elif $y == null then false
+        elif ($x | type) == "array" then (($x - $y) | length) == 0
+        elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
+        else $x == $y end;
+    ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
+    | ["extensions", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k'
+}
+gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
+  local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
+  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
 }
 
 case $verb in
@@ -294,6 +387,7 @@ case $verb in
     [ "$(jq -r .project "$ans")" = "$n" ] || die "the answers are for project '$(jq -r .project "$ans")', not '$n'"
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
     [ ! -e "$PROJ_DIR/$n.json" ] || [ -n "$force" ] || die "project $n is already initialised (--force to replace)"
+    gated_refuse "$ans" "$PROJ_DIR/$n.json" || exit 1
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     no_provider "$PROJ_DIR/$n.json" || true
@@ -301,9 +395,10 @@ case $verb in
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
     n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
-    meth=gitflow dir='' url='' dep='' force='' prov='' PLAN_ARG='' APPROVED='' PARAMS=()
+    meth=gitflow dir='' url='' dep='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED='' PARAMS=()
     while [ $# -gt 0 ]; do
       case $1 in --methodology) meth=$2; shift 2;; --dir) dir=$2; shift 2;; --url) url=$2; shift 2;; --deployment) dep=$2; shift 2;; --provider) prov=${2:-}; shift 2;;
+        --provider-local) provl=${2:-}; shift 2;; --provider-cloud) provc=${2:-}; shift 2;;
         --param) PARAMS+=(--param "$2"); shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
@@ -314,20 +409,25 @@ case $verb in
     if [ -e "$dir" ]; then [ -d "$dir" ] && [ -z "$(ls -A "$dir")" ] || die "$dir exists and is not an empty directory"; fi
     files=$(python3 -I "$lib/methodology.py" files "$meth" --param "project=$n" "${PARAMS[@]}") || exit 1
     if [ -n "$dep" ]; then python3 -I "$lib/methodology.py" deployment "$meth" "$dep" >/dev/null || exit 1; fi
-    [ -z "$prov" ] || python3 -I "$lib/provider.py" show "$prov" >/dev/null || exit 1   # --provider names a provider that has a descriptor, before anything is created
+    # the provider options name providers that can be used (--provider: one name for both surfaces; --provider-local, --provider-cloud: one per
+    # surface, each a runtime or a family), before anything is created
+    PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
+    [ "${#PROVARGS[@]}" = 0 ] || python3 -I "$lib/attach.py" check-provider "${PROVARGS[@]}" || exit 1
+    ptxt=${prov:-not chosen (none is stored; set one with qargi project set $n models.provider NAME, or models.provider.local / models.provider.cloud)}
+    [ -z "$provl$provc" ] || ptxt="local ${provl:-not chosen}, cloud ${provc:-not chosen}$([ -n "$provl" ] && [ -n "$provc" ] || echo " (a surface left out refuses its verbs until: qargi project set $n models.provider.SURFACE NAME)")"
     [ ! -e "$PROJ_DIR/$n.json" ] || die "project $n is already initialised (qargi project show $n)"
     long=$(python3 -I - "$lib" "$meth" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1]); import methodology as M
 print(" ".join(M.load(sys.argv[2])[2]["branches"]["long_lived"]))
 PY
     ) || exit 1
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$(jq -S -c . <<<"$files")" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$dir" "$meth" "$url" "$dep" "$prov" "$provl" "$provc" "$(jq -S -c . <<<"$files")" | plan_token)
     echo "new project $n with the $meth methodology at $dir"
     echo "  git repository with the branches: $long (the first is the initial one; work starts on the last)"
     echo "  files:"; jq -r '.[].dest | "    " + .' <<<"$files"
     if [ -n "$url" ]; then echo "  qargi answers stored for $url (outside the repository)"; else echo "  no --url: the answers are stored later, when the remote exists: qargi project attach $dir --url URL"; fi
     echo "  deployment: ${dep:-not chosen (see below)}"
-    echo "  provider: ${prov:-not chosen (none is stored; set one with qargi project set $n models.provider NAME)}"
+    echo "  provider: $ptxt"
     echo
     if [ -z "$APPROVED" ]; then
       python3 -I "$lib/methodology.py" deployment "$meth"
@@ -349,9 +449,10 @@ PY
     audit_log "project:new" "$n"
     echo "created $dir (on $last, $(git -C "$dir" rev-parse --short HEAD))"
     if [ -n "$url" ]; then
-      det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" ${prov:+--provider "$prov"}) || exit 1
+      det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}") || exit 1
       f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
+      gated_refuse "$f" || { rm -f "$f"; exit 1; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
       echo "project $n stored in $PROJ_DIR/$n.json"
       no_provider "$PROJ_DIR/$n.json" || true
@@ -361,13 +462,15 @@ PY
     echo "      a first release: qargi release start $(jq -r '.[] | select(.dest == "VERSION") | .content' <<<"$files" | tr -d '\n') (not built yet)";;
   attach)
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
-    dir=. name='' meth=gitflow url='' force='' prov='' PLAN_ARG='' APPROVED=''
+    dir=. name='' meth=gitflow url='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
       case $1 in --name) name=$2; shift 2;; --methodology) meth=$2; shift 2;; --url) url=$2; shift 2;; --force) force=1; shift;; --provider) prov=${2:-}; shift 2;;
+        --provider-local) provl=${2:-}; shift 2;; --provider-cloud) provc=${2:-}; shift 2;;
         --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
     done
     export PLAN_ARG   # need_plan reads it
-    det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth" ${prov:+--provider "$prov"}) || exit 1
+    PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
+    det=$(python3 -I "$(dirname "$0")/attach.py" detect "$dir" ${name:+--name "$name"} --methodology "$meth" "${PROVARGS[@]}") || exit 1
     [ -z "$url" ] || det=$(jq --arg u "$url" '.answers.repo.url = $u | .questions |= map(select(startswith("repo.url") | not))' <<<"$det")
     n=$(jq -r .answers.project <<<"$det")
     valid_project "$n" || die "the project name '$n' is not valid: --name (lower-case letters and digits)"
@@ -383,11 +486,29 @@ PY
         | (if $urlgiven != "" or $f.remote != "" then .repo.url = $d.repo.url else . end)
         | (if ($f.long_lived | length) > 0 then .repo.long_lived = $d.repo.long_lived else . end)
         | (if $d.test_command then .test_command = $d.test_command else . end)' "$sf")
-      # a stored project keeps its provider: --provider only fills in one that is not set, never replaces one (qargi project set does that)
-      if [ -n "$prov" ]; then
-        sp=$(jq -r '.models.provider // "" | strings | gsub("^\\s+|\\s+$"; "")' "$sf" 2>/dev/null) || sp=''
-        [ -z "$sp" ] || [ "$sp" = "$prov" ] || die "project $n is stored with the provider '$sp'; --provider does not replace it (qargi project set $n models.provider NAME)"
-        ans=$(jq -c --arg p "$prov" '.models = ((.models // {}) | if type == "object" then . else {} end) + {provider: $p}' <<<"$ans")
+      # a stored project keeps its provider: the provider options only fill in what is not set (a name, or a surface of the object), never replace
+      # one (qargi project set does that)
+      if [ "${#PROVARGS[@]}" != 0 ]; then
+        pm=$(jq -c --arg p "$prov" --arg l "$provl" --arg c "$provc" '
+          (try .models.provider catch null) as $s0
+          | ($s0 | if type == "string" then gsub("^\\s+|\\s+$"; "") else . end) as $s
+          | (if $p != "" then $p else ((if $l != "" then {local: $l} else {} end) + (if $c != "" then {cloud: $c} else {} end)) end) as $w
+          | if $s == null or $s == "" or $s == {} then {ok: $w}
+            elif ($s | type) == "string" and ($w | type) == "string" then (if $s == $w then {ok: $w} else {err: "str", stored: $s} end)
+            elif ($s | type) == "object" and ($w | type) == "object" then
+              (if [$w | to_entries[] | select((($s[.key] // "") | tostring) != "" and $s[.key] != .value)] | length > 0
+               then {err: "obj", stored: ($s | tojson)} else {ok: ($s + $w)} end)
+            elif ($s | type) == "object" then {err: "obj", stored: ($s | tojson)}
+            elif ($s | type) == "string" then {err: "strobj", stored: $s}
+            else {err: "other", stored: ($s | tojson)} end' "$sf" 2>/dev/null) || pm='{"err":"other","stored":"unreadable"}'
+        case $(jq -r '.err // "ok"' <<<"$pm") in
+          ok) ;;
+          str) die "project $n is stored with the provider '$(jq -r .stored <<<"$pm")'; --provider does not replace it (qargi project set $n models.provider NAME)";;
+          obj) die "project $n is stored with a provider per surface ($(jq -r .stored <<<"$pm")); the provider options do not replace one that is set (qargi project set $n models.provider.SURFACE NAME)";;
+          strobj) die "project $n is stored with the provider '$(jq -r .stored <<<"$pm")'; --provider-local and --provider-cloud do not replace it (qargi project set $n models.provider.SURFACE NAME)";;
+          *) die "project $n is stored with $(jq -r .stored <<<"$pm") as its provider, which the options given do not fit; they do not replace it (qargi project set $n models.provider NAME)";;
+        esac
+        ans=$(jq -c --argjson v "$(jq -c .ok <<<"$pm")" '.models = ((.models // {}) | if type == "object" then . else {} end) + {provider: $v}' <<<"$ans")
       fi
     fi
     tok=$(jq -S -c . <<<"$ans" | plan_token)
@@ -407,7 +528,7 @@ PY
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
     # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
     # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
-    plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" 2>/dev/null </dev/null) || pv=''
+    plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || pv=''
     while IFS= read -r sd; do
       [ -n "$sd" ] || continue
       rs=$(jq -r .found.path <<<"$det")/$sd
@@ -433,6 +554,7 @@ PY
     need_plan "$tok"
     f=$(mktemp); jq . <<<"$ans" > "$f"
     out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
+    gated_refuse "$f" "$sf" || { rm -f "$f"; exit 1; }
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
     mv "$f" "$sf"; chmod 600 "$sf"
     audit_log "project:attach" "$n"
@@ -490,12 +612,74 @@ PY
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
-    tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX"); jq --argjson v "$val" --arg p "$path" 'setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
+    # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
+    # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
+    # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a
+    # caller sets (an environment variable, an option) can reach from here
+    gated=''
+    case $path in
+      models.extensions|models.extensions.*) gated="qargi provider enable PROJECT EXTENSION (and disable)";;
+      models.accept_no_barrier|models.accept_no_barrier.*) gated="qargi provider accept NAME --surface S --no-barrier";;
+      models) jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$val" \
+                && gated="qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)";;
+    esac
+    [ -z "$gated" ] || die "$path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated"
+    # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
+    # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before
+    case $path in models.provider.local|models.provider.cloud)
+      sname=$(jq -r 'select(type == "string")' <<<"$val") || sname=''
+      [ -z "$sname" ] || python3 -I - "${path#models.provider.}" "$sname" "$(dirname "$(readlink -f "$0")")" <<'PY' || exit $?
+import sys
+sys.path.insert(0, sys.argv[3])
+import provider as P
+try:
+    P.resolve_runtime(sys.argv[2].strip(), sys.argv[1])
+except P.NotServed as e:
+    print("qargi: models.provider.%s: %s; nothing changed" % (sys.argv[1], e), file=sys.stderr)
+    sys.exit(2)
+except P.ProviderError:
+    pass
+PY
+    ;; esac
+    # models.provider.local|cloud sets one surface of the object form. When models.provider is still a single name (or blank), the object is made
+    # first: the surface being set takes the new name, the other keeps the name it had (the same name resolves per surface exactly as before, so
+    # nothing else changes) or stays unset when there was none
+    carry=''
+    case $path in models.provider.*) jq -e '(try .models.provider catch null) | type == "string" and test("\\S")' "$PROJ_DIR/$n.json" >/dev/null 2>&1 && carry=$(jq -r '.models.provider | gsub("^\\s+|\\s+$"; "")' "$PROJ_DIR/$n.json");; esac
+    tmp=$(mktemp "$PROJ_DIR/.set.XXXXXX")
+    jq --argjson v "$val" --arg p "$path" --arg carry "$carry" '
+      (if ($p | startswith("models.provider.")) and ((try .models.provider catch null) | type) == "string"
+       then .models.provider = (if $carry == "" then {} else {local: $carry, cloud: $carry} end) else . end)
+      | setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }
     chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
-    echo "$n: $path = $val$(set_note "$n" "$path" "$val")";;
+    echo "$n: $path = $val$(set_note "$n" "$path" "$val")"
+    [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
+    case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
+  link|unlink)
+    # the project's resources, linked from where qargi keeps them: the plan first (one token for all), the change only for that plan. A link
+    # changes what a session loads, so the token is always needed (an approved caller has not approved this plan) and a member never applies
+    n=${1:-}; shift || true; valid_project "$n" || die "$verb needs a project name (lower-case letters and digits)"
+    res='' PLAN_ARG='' APPROVED=''
+    while [ $# -gt 0 ]; do
+      case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
+        --plan) PLAN_ARG=${2:-}; shift 2;; --approved) APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+    done
+    export PLAN_ARG; unset QARGI_NESTED
+    [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
+    PLK=$(dirname "$(readlink -f "$0")")/project_link.py
+    LW=$(mktemp -d); trap 'rm -rf "$LW"' EXIT
+    python3 -I "$PLK" plan "$verb" "$n" "$res" "$LW/token" || exit $?
+    [ -s "$LW/token" ] || exit 0       # nothing to do (already linked): no token
+    tok=$(cat "$LW/token")
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
+    fi
+    [ -n "$tok" ] && need_plan "$tok"
+    audit_log "project:$verb" "$n ${res:-all} $tok"
+    python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
-  *) die "usage: project.sh template|init|new|attach|adopt|set|show|list|validate ...";;
+  *) die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
 esac

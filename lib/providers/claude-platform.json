@@ -1,0 +1,72 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "claude-platform",
+  "family": "claude",
+  "surface": "cloud",
+  "description": "Claude Platform, the hosted agent runtime: provisioned agents, environments and sessions; its adapter builds the session request",
+  "models": {
+    "catalog": "claude",
+    "use": "id"
+  },
+  "capabilities": {
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": "2026-11-01",
+      "source": "scratch session: agent_with_overrides model_config",
+      "note": "a session created with a model override ran that model; the session record shows it"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": "2026-11-01",
+      "source": "scratch session: agent_with_overrides model_config",
+      "note": "the session record shows the overridden effort; send a full model object, a plain model string resets effort to the default"
+    },
+    "fixed_tool_allowlist_per_agent": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "tool configs in the provisioned agent"
+    },
+    "read_only_barrier": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "cloud review agents have the edit tool off but shell on and no hook"
+    },
+    "session_budget_ceiling": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/session.sh check_budget",
+      "note": "a session is stopped at the project's budget"
+    },
+    "memory_stores": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "recipes and reference stores attached at provisioning"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "skills attached to the provisioned agent"
+    },
+    "mcp": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "MCP servers in the provisioned agent"
+    }
+  },
+  "resources": {},
+  "agents": null,
+  "dispatch": {
+    "mode": "adapter"
+  },
+  "barrier": {
+    "kind": "none"
+  },
+  "adapter": "adapter",
+  "adapter_verbs": ["resolve", "start-session"]
+}

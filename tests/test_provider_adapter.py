@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""The local adapter of the claude provider (lib/providers/claude/adapter) and the code that reaches it.
-Hermetic: every changed descriptor lives in a copy of the tool tree in a temporary directory, never in the checkout.
+"""The adapters of the claude runtimes: claude-code (local: resolve, dispatch-local, barrier-check) and claude-platform (cloud: resolve,
+start-session), the router that stands in for the schema 1 claude.json (lib/providers/claude/adapter), and the code that reaches them.
+Hermetic: every changed definition lives in a copy of the tool tree in a temporary directory, never in the checkout.
 Run: python3 tests/test_provider_adapter.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.realpath(os.path.join(HERE, ".."))
-ADAPTER = os.path.join(ROOT, "lib", "providers", "claude", "adapter")
+PROVIDERS = os.path.join(ROOT, "lib", "providers")
+CODE = os.path.join(PROVIDERS, "claude-code", "adapter")          # the local runtime
+PLATFORM = os.path.join(PROVIDERS, "claude-platform", "adapter")  # the cloud runtime
+ROUTER = os.path.join(PROVIDERS, "claude", "adapter")             # what claude.json names while that file stays
 TEMPLATE = os.path.join(ROOT, "agents", "member.md")
 TOOL = ("bin", "lib", "agents", "roles", "provision", "methodologies", "packs", "catalog", "canon", "skills", "VERSION")
 
-with open(os.path.join(ROOT, "lib", "providers", "claude.json")) as _f:
-    CLAUDE = json.load(_f)
+with open(os.path.join(PROVIDERS, "claude.json")) as _f:
+    CLAUDE = json.load(_f)                                       # schema 1: what agent.sh, session.sh, provision.sh and project.sh read
+with open(os.path.join(PROVIDERS, "catalogs", "claude.json")) as _f:
+    CATALOG = json.load(_f)                                      # schema 2: the models of both runtimes
 
 
 def run(adapter, verb, req, env=None, raw=None):
@@ -48,112 +54,210 @@ class Tree(unittest.TestCase):
                 shutil.copytree(src, os.path.join(self.tool, n), symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
             else:
                 shutil.copy2(src, self.tool)
+        self.code = os.path.join(self.tool, "lib", "providers", "claude-code", "adapter")
+        self.platform = os.path.join(self.tool, "lib", "providers", "claude-platform", "adapter")
         self.adapter = os.path.join(self.tool, "lib", "providers", "claude", "adapter")
 
     def descriptor(self, mutate, name="claude"):
+        """Change the schema 1 descriptor (a copy of claude.json under another name when name is given)."""
         d = json.loads(json.dumps(CLAUDE))
         mutate(d)
         with open(os.path.join(self.tool, "lib", "providers", name + ".json"), "w") as f:
             json.dump(d, f)
 
+    def catalog(self, mutate):
+        """Change the claude catalog, the models of both runtimes."""
+        self.change(os.path.join("catalogs", "claude.json"), mutate)
+
+    def definition(self, name, mutate):
+        """Change the schema 2 definition of a runtime."""
+        self.change(name + ".json", mutate)
+
+    def change(self, rel, mutate):
+        path = os.path.join(self.tool, "lib", "providers", rel)
+        with open(path) as f:
+            d = json.load(f)
+        mutate(d)
+        with open(path, "w") as f:
+            json.dump(d, f)
+
 
 class Resolve(Tree):
+    SURFACES = (("local", CODE, "code"), ("cloud", PLATFORM, "platform"))
+
     def test_every_tier_on_every_surface(self):
-        for surface in ("local", "cloud"):
-            for tier, row in CLAUDE["tier_detail"].items():
+        for surface, adapter, _ in self.SURFACES:
+            for tier, row in CATALOG["tiers"].items():
                 with self.subTest(surface=surface, tier=tier):
-                    rc, out = run(ADAPTER, "resolve", {"surface": surface, "tier": tier, "effort": "high", "profile": "build"})
+                    rc, out = run(adapter, "resolve", {"surface": surface, "tier": tier, "effort": "high", "profile": "build"})
                     self.assertEqual(rc, 0)
                     self.assertEqual(out, {"model": row["model"], "alias": row["alias"], "effort_native": "high", "notes": []})
 
     def test_the_effort_is_the_providers_own_value(self):
-        self.descriptor(lambda d: d["effort"].update(xhigh="extra"))
-        rc, out = run(self.adapter, "resolve", {"surface": "local", "tier": "deep", "effort": "xhigh"})
-        self.assertEqual((rc, out["effort_native"], out["notes"]), (0, "extra", []))
+        self.catalog(lambda c: c["effort"].update(xhigh="extra"))
+        for surface, _, attr in self.SURFACES:
+            rc, out = run(getattr(self, attr), "resolve", {"surface": surface, "tier": "deep", "effort": "xhigh"})
+            self.assertEqual((rc, out["effort_native"], out["notes"]), (0, "extra", []), surface)
 
     def test_an_effort_the_provider_has_no_control_for_is_null_with_a_note(self):
-        self.descriptor(lambda d: d["effort"].update(max=None))
-        rc, out = run(self.adapter, "resolve", {"surface": "local", "tier": "deep", "effort": "max", "profile": "p"})
-        self.assertEqual(rc, 0)
-        self.assertIsNone(out["effort_native"])
-        self.assertEqual(len(out["notes"]), 1)
-        self.assertIn("no effort control", out["notes"][0])
-        self.assertIn("max", out["notes"][0])
-        self.assertEqual(out["model"], "claude-opus-5-5")
+        self.catalog(lambda c: c["effort"].update(max=None))
+        for surface, _, attr in self.SURFACES:
+            with self.subTest(surface):
+                rc, out = run(getattr(self, attr), "resolve", {"surface": surface, "tier": "deep", "effort": "max", "profile": "p"})
+                self.assertEqual(rc, 0)
+                self.assertIsNone(out["effort_native"])
+                self.assertEqual(len(out["notes"]), 1)
+                self.assertIn("no effort control", out["notes"][0])
+                self.assertIn("max", out["notes"][0])
+                self.assertEqual(out["model"], "claude-opus-5-5")
+
+    def test_inline_models_in_a_definition_are_read_too(self):
+        def inline(d):
+            d["models"] = {"pattern": CATALOG["pattern"], "tiers": CATALOG["tiers"], "effort": dict(CATALOG["effort"], max=None)}
+        self.definition("claude-code", inline)
+        rc, out = run(self.code, "resolve", {"surface": "local", "tier": "deep", "effort": "max"})
+        self.assertEqual((rc, out["effort_native"], out["model"]), (0, None, "claude-opus-5-5"))
+        self.assertEqual(run(self.platform, "resolve", {"surface": "cloud", "tier": "deep", "effort": "max"})[1]["effort_native"], "max")
 
     def test_no_effort_asked_is_null_without_a_note(self):
-        for req in ({"surface": "local", "tier": "fast"}, {"surface": "local", "tier": "fast", "effort": None}, {"surface": "local", "tier": "fast", "effort": ""}):
-            rc, out = run(ADAPTER, "resolve", req)
-            self.assertEqual((rc, out["effort_native"], out["notes"]), (0, None, []))
+        for surface, adapter, _ in self.SURFACES:
+            for req in ({"surface": surface, "tier": "fast"}, {"surface": surface, "tier": "fast", "effort": None}, {"surface": surface, "tier": "fast", "effort": ""}):
+                rc, out = run(adapter, "resolve", req)
+                self.assertEqual((rc, out["effort_native"], out["notes"]), (0, None, []))
 
     def test_a_tier_with_no_alias_says_so(self):
-        def mutate(d):
-            d["tier_detail"]["fast"]["alias"] = None
-            d["aliases"]["fast"] = None
-        self.descriptor(mutate)
-        rc, out = run(self.adapter, "resolve", {"surface": "local", "tier": "fast"})
-        self.assertEqual(rc, 0)
-        self.assertIsNone(out["alias"])
-        self.assertTrue(any("no alias" in n for n in out["notes"]))
+        self.catalog(lambda c: c["tiers"]["fast"].update(alias=None))
+        for surface, _, attr in self.SURFACES:
+            rc, out = run(getattr(self, attr), "resolve", {"surface": surface, "tier": "fast"})
+            self.assertEqual(rc, 0)
+            self.assertIsNone(out["alias"])
+            self.assertTrue(any("no alias" in n for n in out["notes"]))
 
     def test_an_unknown_tier_is_a_bad_request(self):
-        rc, out = run(ADAPTER, "resolve", {"surface": "local", "tier": "ultra", "effort": "high"})
-        self.assertEqual(rc, 1)
-        self.assertIn("tier", out["error"])
+        for surface, adapter, _ in self.SURFACES:
+            rc, out = run(adapter, "resolve", {"surface": surface, "tier": "ultra", "effort": "high"})
+            self.assertEqual(rc, 1)
+            self.assertIn("tier", out["error"])
 
     def test_a_missing_tier_surface_or_a_bad_effort_is_a_bad_request(self):
-        for req in ({"surface": "local"}, {"tier": "fast"}, {"surface": "moon", "tier": "fast"}, {"surface": "local", "tier": "fast", "effort": "turbo"},
-                    {"surface": "local", "tier": 3}, {"surface": 1, "tier": "fast"}, {"surface": "local", "tier": "fast", "profile": 7}):
-            with self.subTest(req=req):
-                self.assertEqual(run(ADAPTER, "resolve", req)[0], 1)
+        for surface, adapter, _ in self.SURFACES:
+            for req in ({"surface": surface}, {"tier": "fast"}, {"surface": "moon", "tier": "fast"}, {"surface": surface, "tier": "fast", "effort": "turbo"},
+                        {"surface": surface, "tier": 3}, {"surface": 1, "tier": "fast"}, {"surface": surface, "tier": "fast", "profile": 7}):
+                with self.subTest(req=req):
+                    self.assertEqual(run(adapter, "resolve", req)[0], 1)
 
-    def test_a_surface_the_provider_does_not_list_is_unsupported(self):
-        def mutate(d):
-            d["surfaces"] = ["local"]
-            for cap in d["capabilities"].values():
-                cap.pop("cloud", None)
-        self.descriptor(mutate)
-        rc, out = run(self.adapter, "resolve", {"surface": "cloud", "tier": "fast"})
+    def test_a_runtime_serves_its_own_surface_and_the_other_is_unsupported(self):
+        rc, out = run(CODE, "resolve", {"surface": "cloud", "tier": "fast"})
         self.assertEqual(rc, 3)
-        self.assertIn("cloud", out["error"])
-        self.assertEqual(run(self.adapter, "resolve", {"surface": "local", "tier": "fast"})[0], 0)
+        self.assertIn("claude-code does not list the surface 'cloud'", out["error"])
+        rc, out = run(PLATFORM, "resolve", {"surface": "local", "tier": "fast"})
+        self.assertEqual(rc, 3)
+        self.assertIn("claude-platform does not list the surface 'local'", out["error"])
 
-    def test_a_descriptor_that_breaks_its_schema_is_a_bad_request(self):
-        self.descriptor(lambda d: d.update(extra=1))
-        self.assertEqual(run(self.adapter, "resolve", {"surface": "local", "tier": "fast"})[0], 1)
+    def test_a_definition_that_names_another_surface_is_not_served_there(self):
+        self.definition("claude-platform", lambda d: d.update(surface="local"))
+        self.assertEqual(run(self.platform, "resolve", {"surface": "cloud", "tier": "fast"})[0], 3)
+        self.assertEqual(run(self.platform, "resolve", {"surface": "local", "tier": "fast"})[0], 0)
+
+    def test_a_definition_that_breaks_its_schema_is_a_bad_request(self):
+        for name, attr, surface in (("claude-code", "code", "local"), ("claude-platform", "platform", "cloud")):
+            with self.subTest(name):
+                self.definition(name, lambda d: d.update(extra=1))
+                rc, out = run(getattr(self, attr), "resolve", {"surface": surface, "tier": "fast"})
+                self.assertEqual(rc, 1)
+                self.assertIn("breaks its schema", out["error"])
+
+    def test_a_catalog_that_is_missing_is_a_bad_request(self):
+        os.remove(os.path.join(self.tool, "lib", "providers", "catalogs", "claude.json"))
+        self.assertEqual(run(self.code, "resolve", {"surface": "local", "tier": "fast"})[0], 1)
+        self.assertEqual(run(self.platform, "resolve", {"surface": "cloud", "tier": "fast"})[0], 1)
+
+
+class Router(Tree):
+    """lib/providers/claude/adapter is what claude.json names while that file stays: it passes each request to the runtime that serves it."""
+
+    def test_each_verb_reaches_the_runtime_that_serves_it(self):
+        env = dict(os.environ)
+        for verb, req, want in (("resolve", {"surface": "local", "tier": "deep"}, run(CODE, "resolve", {"surface": "local", "tier": "deep"})),
+                                ("resolve", {"surface": "cloud", "tier": "deep"}, run(PLATFORM, "resolve", {"surface": "cloud", "tier": "deep"})),
+                                ("dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"},
+                                 run(CODE, "dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"})),
+                                ("start-session", fixture("worker.request"), run(PLATFORM, "start-session", fixture("worker.request"))),
+                                ("cost", {}, run(CODE, "cost", {}))):
+            with self.subTest(verb=verb, surface=req.get("surface")):
+                self.assertEqual(run(ROUTER, verb, req, env=env), want)
+
+    def test_a_refusal_keeps_its_exit_status_its_body_and_its_stderr(self):
+        req = fixture("refused/reviewer-no-acceptance.request")
+        direct = subprocess.run([PLATFORM, "start-session"], input=json.dumps(req), capture_output=True, text=True)
+        via = subprocess.run([ROUTER, "start-session"], input=json.dumps(req), capture_output=True, text=True)
+        self.assertEqual(direct.returncode, 2)
+        self.assertEqual((via.returncode, via.stdout, via.stderr), (direct.returncode, direct.stdout, direct.stderr))
+
+    def test_what_it_cannot_read_is_the_local_runtimes_bad_request(self):
+        for verb, raw in (("resolve", "not json"), ("barrier-check", "[]"), ("start-session", ""), ("frobnicate", "{}")):
+            with self.subTest(verb=verb):
+                self.assertEqual(run(ROUTER, verb, None, raw=raw)[0], 1)
+
+    def test_it_runs_isolated_from_any_directory(self):
+        env = dict(os.environ, PYTHONPATH=self.tmp)
+        with open(os.path.join(self.tmp, "json.py"), "w") as f:
+            f.write("raise SystemExit(99)\n")
+        r = subprocess.run([self.adapter, "resolve"], input='{"surface":"cloud","tier":"fast"}', capture_output=True, text=True, env=env, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["model"], "claude-haiku-5-5")
 
 
 class Protocol(Tree):
-    def test_not_built_verbs_are_unsupported_for_local(self):
+    def test_not_built_verbs_are_unsupported_for_their_surface(self):
         for verb in ("provision", "status", "collect", "stop", "cost"):
             with self.subTest(verb=verb):
-                rc, out = run(ADAPTER, verb, {})
-                self.assertEqual((rc, out), (3, {"error": "not implemented for local"}))
+                self.assertEqual(run(CODE, verb, {}), (3, {"error": "not implemented for local"}))
+                self.assertEqual(run(PLATFORM, verb, {}), (3, {"error": "not implemented for cloud"}))
+
+    def test_a_verb_of_the_other_surface_is_unsupported(self):
+        rc, out = run(CODE, "start-session", {})
+        self.assertEqual(rc, 3)
+        self.assertIn("start-session is a cloud verb", out["error"])
+        for verb in ("dispatch-local", "barrier-check"):
+            rc, out = run(PLATFORM, verb, {})
+            self.assertEqual(rc, 3)
+            self.assertIn("%s is a local verb" % verb, out["error"])
 
     def test_an_unknown_verb_or_none_is_a_bad_request(self):
-        self.assertEqual(run(ADAPTER, "frobnicate", {})[0], 1)
-        self.assertEqual(run(ADAPTER, None, {})[0], 1)
+        for adapter in (CODE, PLATFORM):
+            self.assertEqual(run(adapter, "frobnicate", {})[0], 1)
+            self.assertEqual(run(adapter, None, {})[0], 1)
 
     def test_a_request_that_is_not_a_json_object_is_a_bad_request(self):
-        for verb in ("resolve", "dispatch-local", "barrier-check"):
-            for raw in ("not json", "[]", "3", "", '"x"'):
-                with self.subTest(verb=verb, raw=raw):
-                    self.assertEqual(run(ADAPTER, verb, None, raw=raw)[0], 1)
+        for adapter, verbs in ((CODE, ("resolve", "dispatch-local", "barrier-check")), (PLATFORM, ("resolve", "start-session"))):
+            for verb in verbs:
+                for raw in ("not json", "[]", "3", "", '"x"'):
+                    with self.subTest(verb=verb, raw=raw):
+                        self.assertEqual(run(adapter, verb, None, raw=raw)[0], 1)
 
-    def test_the_adapter_is_executable_and_runs_isolated_from_any_directory(self):
-        self.assertTrue(os.access(ADAPTER, os.X_OK))
+    def test_the_adapters_are_executable_and_run_isolated_from_any_directory(self):
         env = dict(os.environ, PYTHONPATH=self.tmp)                      # a planted module is not imported
         with open(os.path.join(self.tmp, "json.py"), "w") as f:
             f.write("raise SystemExit(99)\n")
-        r = subprocess.run([self.adapter, "resolve"], input='{"surface":"local","tier":"fast"}', capture_output=True, text=True, env=env, cwd=self.tmp)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)["model"], "claude-haiku-5-5")
+        for adapter, surface in ((self.code, "local"), (self.platform, "cloud")):
+            self.assertTrue(os.access(adapter, os.X_OK))
+            r = subprocess.run([adapter, "resolve"], input='{"surface":"%s","tier":"fast"}' % surface, capture_output=True, text=True, env=env, cwd=self.tmp)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(json.loads(r.stdout)["model"], "claude-haiku-5-5")
+
+    def test_the_definitions_name_the_adapters_and_the_verbs_they_serve(self):
+        for name, verbs in (("claude-code", ["resolve", "dispatch-local", "barrier-check"]), ("claude-platform", ["resolve", "start-session"])):
+            with open(os.path.join(PROVIDERS, name + ".json")) as f:
+                d = json.load(f)
+            self.assertEqual((d["adapter"], d["adapter_verbs"]), ("adapter", verbs), name)
+            self.assertTrue(os.access(os.path.join(PROVIDERS, name, d["adapter"]), os.X_OK))
 
 
 class Dispatch(Tree):
     def test_the_definition_is_what_sed_rendered_for_a_worker(self):
         req = {"member": "forge", "abilities": ["build", "write", "test"], "class": "write", "model": "claude-sonnet-5-5", "effort": "high"}
-        rc, out = run(ADAPTER, "dispatch-local", req)
+        rc, out = run(CODE, "dispatch-local", req)
         self.assertEqual(rc, 0)
         self.assertEqual(out["definition"]["text"], sed_render("forge", ["build", "write", "test"], "claude-sonnet-5-5", "high", "write"))
         self.assertNotIn("--class", out["definition"]["text"])
@@ -161,7 +265,7 @@ class Dispatch(Tree):
 
     def test_the_definition_is_what_sed_rendered_for_a_reviewer(self):
         req = {"member": "judge", "abilities": ["review"], "class": "read-only", "model": "haiku", "effort": "low"}
-        rc, out = run(ADAPTER, "dispatch-local", req)
+        rc, out = run(CODE, "dispatch-local", req)
         self.assertEqual(rc, 0)
         self.assertEqual(out["definition"]["text"], sed_render("judge", ["review"], "haiku", "low", "read-only"))
         self.assertIn('command: "qargi __guard --class read-only"', out["definition"]["text"])
@@ -169,7 +273,7 @@ class Dispatch(Tree):
     def test_no_effort_drops_the_effort_line_as_sed_did(self):
         for effort in (None, ""):
             req = {"member": "judge", "abilities": ["review", "audit"], "class": "read-only", "model": "opus", "effort": effort}
-            rc, out = run(ADAPTER, "dispatch-local", req)
+            rc, out = run(CODE, "dispatch-local", req)
             self.assertEqual(rc, 0)
             self.assertEqual(out["definition"]["text"], sed_render("judge", ["review", "audit"], "opus", "", "read-only"))
             self.assertNotIn("effort:", out["definition"]["text"])
@@ -177,23 +281,23 @@ class Dispatch(Tree):
     def test_the_path_is_in_the_agents_directory(self):
         env = dict(os.environ, HOME="/h/user")
         req = {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"}
-        self.assertEqual(run(ADAPTER, "dispatch-local", req, env=env)[1]["definition"]["path"], "/h/user/.claude/agents/forge.md")
+        self.assertEqual(run(CODE, "dispatch-local", req, env=env)[1]["definition"]["path"], "/h/user/.claude/agents/forge.md")
         req["project_dir"] = "/work/repo"
-        self.assertEqual(run(ADAPTER, "dispatch-local", req, env=env)[1]["definition"]["path"], "/work/repo/.claude/agents/forge.md")
+        self.assertEqual(run(CODE, "dispatch-local", req, env=env)[1]["definition"]["path"], "/work/repo/.claude/agents/forge.md")
 
     def test_spawn_names_the_agent_type_the_model_alias_and_the_native_effort(self):
         base = {"member": "forge", "abilities": ["build"], "class": "write", "effort": "xhigh"}
         for model, alias in (("sonnet", "sonnet"), ("claude-opus-5-5", "opus"), ("claude-odd-9", None)):
-            rc, out = run(ADAPTER, "dispatch-local", dict(base, model=model))
+            rc, out = run(CODE, "dispatch-local", dict(base, model=model))
             self.assertEqual((rc, out["spawn"]), (0, {"agent_type": "forge", "model_alias": alias, "effort": "xhigh"}), model)
-        self.assertIsNone(run(ADAPTER, "dispatch-local", dict(base, model="sonnet", effort=None))[1]["spawn"]["effort"])
+        self.assertIsNone(run(CODE, "dispatch-local", dict(base, model="sonnet", effort=None))[1]["spawn"]["effort"])
 
     def test_a_bad_request_is_exit_1(self):
         ok = {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"}
         for label, patch in (("name", {"member": "Forge"}), ("no name", {"member": None}), ("abilities", {"abilities": []}), ("ability", {"abilities": ["a b"]}),
                              ("class", {"class": "root"}), ("model", {"model": "a/b"}), ("effort", {"effort": "turbo"}), ("project_dir", {"project_dir": 3})):
             with self.subTest(label):
-                self.assertEqual(run(ADAPTER, "dispatch-local", dict(ok, **patch))[0], 1)
+                self.assertEqual(run(CODE, "dispatch-local", dict(ok, **patch))[0], 1)
 
 
 class Barrier(unittest.TestCase):
@@ -211,7 +315,7 @@ class Barrier(unittest.TestCase):
         self.clone, self.out = os.path.join(self.run, "clone"), os.path.join(self.run, "out")
 
     def check(self, cls, tool, cwd=None, surface="local", **call):
-        return run(ADAPTER, "barrier-check", {"surface": surface, "class": cls, "tool_call": dict({"tool": tool, "cwd": cwd or self.clone}, **call)})
+        return run(CODE, "barrier-check", {"surface": surface, "class": cls, "tool_call": dict({"tool": tool, "cwd": cwd or self.clone}, **call)})
 
     def test_a_read_only_member_may_not_edit_outside_the_out_directory(self):
         rc, out = self.check("read-only", "Edit", path=os.path.join(self.clone, "src", "a.go"))
@@ -253,6 +357,9 @@ class Barrier(unittest.TestCase):
         rc, out = self.check("read-only", "Bash", surface="cloud", command="ls")
         self.assertEqual(rc, 3)
         self.assertIn("error", out)
+        rc, out = run(PLATFORM, "barrier-check", {"surface": "cloud", "class": "read-only", "tool_call": {"tool": "Bash", "command": "ls", "cwd": self.clone}})
+        self.assertEqual(rc, 3)
+        self.assertIn("error", out)
 
     def test_a_bad_request_is_exit_1(self):
         good = {"surface": "local", "class": "write", "tool_call": {"tool": "Bash", "command": "ls", "cwd": self.t}}
@@ -260,13 +367,13 @@ class Barrier(unittest.TestCase):
                              ("no tool", {"tool_call": {"command": "ls"}}), ("neither command nor path", {"tool_call": {"tool": "Bash", "cwd": self.t}}),
                              ("command type", {"tool_call": {"tool": "Bash", "command": 3}})):
             with self.subTest(label):
-                self.assertEqual(run(ADAPTER, "barrier-check", dict(good, **patch))[0], 1)
-        self.assertEqual(run(ADAPTER, "barrier-check", good)[0], 0)
+                self.assertEqual(run(CODE, "barrier-check", dict(good, **patch))[0], 1)
+        self.assertEqual(run(CODE, "barrier-check", good)[0], 0)
 
 
 class AgentAdd(Tree):
     """qargi agent add reaches the definition through the adapter the descriptor of the project's provider names. There is no default
-    provider: alpha, the project in effect (QARGI_PROJECT) for the user-level members, names claude unless a test says otherwise."""
+    provider: alpha, the project every member belongs to, names claude unless a test says otherwise."""
 
     def setUp(self):
         super().setUp()
@@ -294,27 +401,31 @@ class AgentAdd(Tree):
         self.project("plain")
         rc, out = self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")
         self.assertNotEqual(rc, 0)
-        self.assertIn("provider 'plain' has no local adapter", out)
+        self.assertIn("provider 'plain' has no member renderer", out)
         self.assertFalse(os.path.exists(os.path.join(self.repo, ".claude", "agents", "forge.md")))
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         if os.path.exists(conf):
             with open(conf) as f:
                 self.assertNotIn("forge", json.load(f))
 
-    def test_the_definition_the_adapter_returns_is_the_file_written(self):
+    def test_the_file_written_says_what_the_adapters_template_says(self):
+        """The member file is made from the renderers.agent data of claude-code, no longer by the adapter's dispatch-local; the template
+        (agents/member.md) stays for that verb. Both say the same: the same lines once the quotes the strict emitter leaves off are set aside."""
+        def plain(text):
+            return re.sub(r'(?m)^( *(?:- )?[A-Za-z]+: )"(.*)"$', r"\1\2", text)
         self.project()
         rc, out = self.qargi("agent", "add", "forge", "--abilities", "build,test", "--project", "alpha")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
-            self.assertEqual(f.read(), sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write"))
-        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review")
+            self.assertEqual(plain(f.read()), plain(sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write")))
+        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review", "--project", "alpha")
         self.assertEqual(rc, 0, out)
-        with open(os.path.join(self.env["HOME"], ".claude", "agents", "judge.md")) as f:
-            self.assertEqual(f.read(), sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only"))
+        with open(os.path.join(self.repo, ".claude", "agents", "judge.md")) as f:
+            self.assertEqual(plain(f.read()), plain(sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only")))
 
     def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")[0], 0)
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         with open(conf) as f:
             m = json.load(f)
@@ -323,23 +434,23 @@ class AgentAdd(Tree):
             json.dump(m, f)
         rc, out = self.qargi("agent", "refresh", "forge")
         self.assertEqual(rc, 0, out)
-        with open(os.path.join(self.env["HOME"], ".claude", "agents", "forge.md")) as f:
+        with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
             self.assertIn("\nmodel: sonnet\n", f.read())
 
     def test_the_reserved_names_come_from_the_descriptor(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "plan")[0], 1)
+        self.assertEqual(self.qargi("agent", "add", "plan", "--project", "alpha")[0], 1)
         self.descriptor(lambda d: d["local"].update(reserved_names=["plan", "mine"]))
-        rc, out = self.qargi("agent", "add", "mine")
+        rc, out = self.qargi("agent", "add", "mine", "--project", "alpha")
         self.assertNotEqual(rc, 0)
         self.assertIn("built-in", out)
-        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build")
+        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build", "--project", "alpha")
         self.assertEqual(rc, 0, out)
 
     def test_a_pinned_model_is_one_that_matches_the_model_pattern(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5")[0], 0)
-        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5", "--project", "alpha")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus", "--project", "alpha")[0], 0)
         rc, out = self.qargi("agent", "models", "--json")
         self.assertEqual(rc, 0, out)
         pinned = {m["name"]: m["pinned"] for m in json.loads(out)["members"]}
@@ -499,11 +610,11 @@ class Derived(Tree):
         with open(os.path.join(self.env["QARGI_CONF"], "projects", "zed.json"), "w") as f:
             json.dump(a, f)
         rc, out = self.qargi("provision", "plan", "--project", "zed", "--role", "build")
-        self.assertEqual(rc, 1)
-        self.assertIn("models.provider 'nope' has no descriptor", out)
+        self.assertEqual(rc, 2)                                           # a name that is no runtime or family is a refusal (exit 2), not a failure
+        self.assertIn("no runtime or family 'nope' for the cloud surface", out)
 
-FIXTURES = os.path.join(HERE, "providers", "claude", "start-session")
-sys.path.insert(0, os.path.join(HERE, "providers", "lib"))
+FIXTURES = os.path.join(HERE, "providers", "claude-platform", "start-session")
+sys.path.insert(0, os.path.join(HERE, "..", "lib", "conformance"))
 import validate  # noqa: E402
 
 with open(os.path.join(ROOT, "lib", "providers", "adapter-schema.json")) as _f:
@@ -533,7 +644,7 @@ class StartSession(Tree):
         return {k: v for k, v in r.items() if v is not None}
 
     def call(self, req, adapter=None, env=None):
-        r = subprocess.run([adapter or ADAPTER, "start-session"], input=json.dumps(req), capture_output=True, text=True, env=env)
+        r = subprocess.run([adapter or PLATFORM, "start-session"], input=json.dumps(req), capture_output=True, text=True, env=env)
         lines = r.stdout.strip().splitlines()
         self.assertEqual(len(lines), 1, (r.stdout, r.stderr))
         return r.returncode, json.loads(lines[0]), r.stderr
@@ -557,19 +668,19 @@ class StartSession(Tree):
                 self.assertTrue(m["id"].startswith("claude-"))
 
     def test_an_alias_becomes_the_id_of_its_tier(self):
-        for tier, row in CLAUDE["tier_detail"].items():
+        for tier, row in CATALOG["tiers"].items():
             with self.subTest(tier=tier):
                 rc, out, _ = self.call(self.req(model=row["alias"]))
                 self.assertEqual((rc, out["agent"]["model"]["id"]), (0, row["model"]))
 
     def test_the_effort_comes_from_the_effort_map_of_the_adapter(self):
-        self.descriptor(lambda d: d["effort"].update(xhigh="extra"))
-        rc, out, _ = self.call(self.req(effort="xhigh"), adapter=self.adapter)
+        self.catalog(lambda c: c["effort"].update(xhigh="extra"))
+        rc, out, _ = self.call(self.req(effort="xhigh"), adapter=self.platform)
         self.assertEqual((rc, out["agent"]["model"]["effort"]), (0, "extra"))
 
     def test_an_effort_with_no_control_is_refused_not_dropped(self):
-        self.descriptor(lambda d: d["effort"].update(max=None))
-        rc, out, err = self.call(self.req(effort="max"), adapter=self.adapter)
+        self.catalog(lambda c: c["effort"].update(max=None))
+        rc, out, err = self.call(self.req(effort="max"), adapter=self.platform)
         self.assertEqual(rc, 2)
         self.assertIn("max", out["error"])
         self.assertIn("max", err)
@@ -633,7 +744,7 @@ class StartSession(Tree):
     def test_the_reviewer_fixture_without_the_acceptance_is_refused_with_the_command(self):
         rc, out, err = self.call(fixture("refused/reviewer-no-acceptance.request"))
         self.assertEqual(rc, 2)
-        self.assertIn("provider accept claude --surface cloud --no-barrier", out["error"])
+        self.assertIn("provider accept claude-platform --surface cloud --no-barrier", out["error"])
         self.assertEqual(err, "qargi: " + out["error"] + "\n")
 
     def test_an_unknown_role_fails_closed_as_read_only(self):
@@ -654,9 +765,10 @@ class StartSession(Tree):
 
     def test_a_verified_barrier_on_cloud_needs_no_acceptance(self):
         def mutate(d):
-            d["capabilities"]["read_only_barrier"]["cloud"] = {"value": "yes", "verified_on": "2026-10-31", "source": "test", "note": "a changed copy"}
-        self.descriptor(mutate)
-        rc, out, _ = self.call(self.req(role="reviewer", profile="review"), adapter=self.adapter)
+            d["capabilities"]["read_only_barrier"] = {"value": "yes", "verified_on": "2026-10-31", "source": "test", "note": "a changed copy"}
+            d["barrier"] = {"kind": "adapter"}                                   # a claimed barrier needs one behind it, or the adapter refuses the definition
+        self.definition("claude-platform", mutate)
+        rc, out, _ = self.call(self.req(role="reviewer", profile="review"), adapter=self.platform)
         self.assertEqual(rc, 0, out)
 
     def test_it_makes_no_transport_call(self):
@@ -676,12 +788,8 @@ class StartSession(Tree):
 
     def test_the_local_surface_and_an_unlisted_cloud_are_unsupported(self):
         self.assertEqual(self.call(self.req(surface="local"))[0], 3)
-        def mutate(d):
-            d["surfaces"] = ["local"]
-            for cap in d["capabilities"].values():
-                cap.pop("cloud", None)
-        self.descriptor(mutate)
-        self.assertEqual(self.call(self.req(), adapter=self.adapter)[0], 3)
+        self.definition("claude-platform", lambda d: d.update(surface="local"))
+        self.assertEqual(self.call(self.req(), adapter=self.platform)[0], 3)
 
     def test_a_bad_request_is_exit_1(self):
         bad = {"no surface": {"surface": None}, "moon": {"surface": "moon"}, "no role": {"role": None}, "role type": {"role": 3},
@@ -696,7 +804,7 @@ class StartSession(Tree):
             with self.subTest(label):
                 self.assertEqual(self.call(self.req(**patch))[0], 1)
         for raw in ("not json", "[]", ""):
-            r = subprocess.run([ADAPTER, "start-session"], input=raw, capture_output=True, text=True)
+            r = subprocess.run([PLATFORM, "start-session"], input=raw, capture_output=True, text=True)
             self.assertEqual(r.returncode, 1)
 
 

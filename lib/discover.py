@@ -5,7 +5,7 @@
   discover.py search QUERY [--kind K] [--role R] [--online]
   discover.py recommend [PROJECT] [--role R] [--online]
   discover.py show ID
-  discover.py install ID [--scope S] [--project P] [--role R] [--dry-run]
+  discover.py install ID [--scope S] [--project P] [--role R] [--compatible LIST] [--dry-run]
 
 A tool is a skill, an MCP server, a package for the sandbox or a built-in tool of the agent. The catalog
 (catalog/tools.json, reviewed with the repository) is searched first, then the local library, then, with
@@ -13,11 +13,16 @@ A tool is a skill, an MCP server, a package for the sandbox or a built-in tool o
 an MCP server goes through `qargi skill|tool import` (the review, then your approval of exactly that content),
 is linked at the scope you choose, and may be applied to existing cloud agents (`qargi packs apply`, again with
 its plan shown first). Nothing found online is installed on trust.
+
+Every pack declares the providers that can use it (compatible_providers: runtime names, family names, or "any"). A catalog entry may
+say so (its compatible_providers); install takes it from there, from --compatible LIST, or asks. recommend leaves out, with a note, an
+entry whose declaration the project's provider is not on, and install refuses it for a project it does not fit.
 """
 import datetime, getpass, glob, json, os, re, subprocess, sys, tempfile, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402  where the data lives
+import packs_compat as C  # noqa: E402  whether a project's provider can use a pack
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -265,12 +270,26 @@ def run_q(args, extra_env=None):
     return r.returncode, (r.stdout + r.stderr)
 
 
+def compat_note(e, project):
+    """None when the entry may be used with the project's provider (it declares no list, or the list names it or says any), else the note
+    that says why it is left out."""
+    declared = e.get("compatible_providers")
+    if declared is None:
+        return None
+    try:
+        ok, why = C.evaluate(declared, jload(os.path.join(CONF, "projects", project + ".json"), None), project, ["local", "cloud"])
+    except ValueError as ex:
+        return "%s declares an invalid compatible_providers: %s" % (e["id"], ex)
+    return None if ok else "%s: %s" % (e["id"], why)
+
+
 def already_has(e, project, role):
     answers = project_answers(project)
     if e["kind"] in ("skill", "mcp"):
         name = (e.get("install") or {}).get("name") or e["name"]
         rc, out = run_q(["skill" if e["kind"] == "skill" else "tool", "effective", project, role])
-        return rc == 0 and name in out.split()
+        # "skipped KIND NAME: why" lines name packs the project's provider cannot use: the role does not have those
+        return rc == 0 and name in "\n".join(l for l in out.splitlines() if not l.startswith("skipped ")).split()
     if e["kind"] == "package":
         have = set((answers.get("roles", {}).get(role) or {}).get("apt") or [])
         return all(p in have for p in (e.get("install") or {}).get("packages", []))
@@ -353,13 +372,17 @@ def cmd_recommend(args):
     cat = load_catalog()
     shown = 0
     for r in roles:
-        rows = []
+        rows, skipped = [], []
         for e in cat:
             lv = e.get("roles", {}).get(r)
             if not lv:
                 continue
             if e.get("stack") and not set(e["stack"]) & set(stack):
                 continue   # fits other repositories than this one
+            why = compat_note(e, project)
+            if why:
+                skipped.append(why)   # the project's provider cannot use it: said, not offered
+                continue
             s = LEVELS.get(lv, 1) * 10 + 3 * len(set(e.get("stack", [])) & set(stack))
             rows.append((s, lv, e, already_has(e, project, r)))
         rows.sort(key=lambda x: (-x[0], x[2]["id"]))
@@ -367,6 +390,8 @@ def cmd_recommend(args):
         for s, lv, e, have in rows:
             print("  %-18s %s" % (lv + (" (have)" if have else ""), show_row(e)))
             shown += 1
+        for why in skipped:
+            print("  skipped %s" % why)
         if not rows:
             print("  nothing to add")
     if shown:
@@ -386,6 +411,8 @@ def cmd_show(args):
         print("  roles: " + ", ".join("%s=%s" % kv for kv in sorted(e["roles"].items())))
     if e.get("stack"):
         print("  fits: " + ", ".join(e["stack"]))
+    if e.get("compatible_providers") is not None:
+        print("  compatible_providers: " + json.dumps(e["compatible_providers"]))
     print("  risk: %s%s" % (e.get("risk", "?"), (" - " + e["risk_note"]) if e.get("risk_note") else ""))
     for k, v in sorted((e.get("install") or {}).items()):
         print("  install.%s: %s" % (k, json.dumps(v) if not isinstance(v, str) else v))
@@ -433,12 +460,29 @@ def step_import(kind, source_args, name):
     return rc == 0
 
 
+def pick_compat(e, opts, asking=True):
+    """The compatible_providers the pack is stored with, as the text --compatible takes: --compatible LIST, else the catalog entry's own,
+    else the person is asked (there is no default: a pack that does not say which providers can use it is not stored). With asking
+    False a missing one is None."""
+    given = opts.get("compatible")
+    if given is None and e.get("compatible_providers") is not None:
+        given = ",".join(e["compatible_providers"]) if isinstance(e["compatible_providers"], list) else json.dumps(e["compatible_providers"])
+    if given is None and not asking:
+        return None
+    if given is None:
+        given = ask("\nWhich providers can use this pack? Runtime or family names separated by commas, or any")
+    bad = C.problem([x.strip() for x in given.split(",")])
+    if bad:
+        die("compatible_providers: " + bad)
+    return given
+
+
 def cmd_install(args):
     ident, opts, dry = None, {}, False
     i = 0
     while i < len(args):
         a = args[i]
-        if a in (F("scope"), F("project"), F("role")): opts[a[2:]] = args[i + 1]; i += 2
+        if a in (F("scope"), F("project"), F("role"), F("compatible")): opts[a[2:]] = args[i + 1]; i += 2
         elif a == F("dry-run"): dry = True; i += 1
         elif a.startswith("-"): die("unknown option %s (qargi help discover install)" % a)
         elif ident is None: ident = a; i += 1
@@ -464,6 +508,10 @@ def cmd_install(args):
         return 0
     if not interactive():
         die("install is interactive: run it in a terminal (from Claude Code: ! qargi discover install %s), or use --dry-run" % ident)
+    if opts.get("project") and e["kind"] in ("skill", "mcp"):
+        why = compat_note(e, opts["project"])
+        if why:
+            die("not installed for project %s: %s" % (opts["project"], why))
     if not confirm("\nContinue?"):
         print("Nothing changed.")
         return 1
@@ -485,7 +533,7 @@ def cmd_install(args):
                 print("\nqargi does not know which tools this server exposes, and a tool pack must list them, each with a policy.")
                 print("Wrote a draft: %s" % out)
                 print("Edit it (the server's tool names; write-like tools stay always_ask; credentials are vault ids, never secrets), then:")
-                print("  qargi tool import %s" % out)
+                print("  qargi tool import %s --compatible %s" % (out, pick_compat(e, opts, asking=False) or "LIST"))
                 print("  qargi tool link %s --scope S [--project P] [--role R]" % name)
                 if inst.get("needs_secret"):
                     print("It needs a credential: create a vault credential for it first (qargi help credential).")
@@ -495,7 +543,8 @@ def cmd_install(args):
             tmp.close()
             src = [tmp.name, F("name"), name]
         try:
-            if not step_import(packkind, src, name):
+            compat = pick_compat(e, opts)
+            if not step_import(packkind, src + [F("compatible"), compat], name):
                 return 1
         finally:
             if tmp:
@@ -532,7 +581,7 @@ def cmd_install(args):
         tool = inst["tool"]
         files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"))
         if not files:
-            die("no member serves that ability yet: qargi agent add NAME first")
+            die("no member serves that ability yet: qargi agent add NAME --project P first")
         todo = [f for f in files if tool not in (tools_line(f) or [tool])]
         if not todo:
             print("Every local agent in scope has %s already. Nothing changed." % tool)
