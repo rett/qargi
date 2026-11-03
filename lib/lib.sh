@@ -29,6 +29,10 @@ for f in "$REG" "$TRK"; do
   [ -f "$f" ] || { echo '{}' > "$f"; chmod 600 "$f"; }
 done
 [ -f "$MEMBERS_FILE" ] || { echo '{"schema":2,"projects":{}}' > "$MEMBERS_FILE"; chmod 600 "$MEMBERS_FILE"; }
+members_shape_ok() { # -> 0 when agents.json is in the current shape: {} or {"schema": 2, "projects": {P: {NAME: record}}} (qargi agent and qargi upgrade ask)
+  jq -e 'type == "object" and (length == 0 or (.schema == 2 and ((keys - ["schema", "projects"]) | length) == 0 and (.projects | type) == "object"
+    and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1
+}
 
 # Naming convention (see README): <project>-<component>[-<role>]. Project and role
 # are single lower-case tokens (no dashes) so a name parses unambiguously; the
