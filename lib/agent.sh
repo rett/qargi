@@ -30,8 +30,11 @@ AGENT_PY=$(cat <<'PYEOF'
 # The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
 #   pdesc PROV                                        the provider as the loader shows it: tiers, aliases, effort, model_pattern, local.reserved_names, adapter
 #   names                                             the providers that have a definition, one per line
-#   render PROV NAME ABILITIES CLASS MODEL EFFORT     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
-#                                                     (a provider with no renderers.agent, a schema 1 descriptor, has its adapter render: verb dispatch-local)
+#   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
+#                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
+#                                                     (a provider with no renderers.agent, a schema 1 descriptor, has its adapter render: verb dispatch-local).
+#                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
+#                                                     renderer and agents resource, and the extensions in the inputs hash); without, the runtime's own
 #   states MEMBERS_FILE ROLE_CLASSES_JSON             {member: [MISSING | STALE | DRIFT ...]} against what the runtime would render today
 import hashlib
 import json
@@ -51,15 +54,18 @@ class Fail(Exception):
     pass
 
 
-def render_runtime(prov):
+def render_runtime(prov, project=None):
     """The runtime whose definition renders the members of PROV: PROV itself when its definition carries renderers.agent. A schema 1
     descriptor (the shipped claude.json) carries none; its members are rendered by the one local runtime whose family is its name.
-    None when there is no such runtime: the descriptor is then a schema 1 one with nothing but its adapter (render_legacy)."""
+    None when there is no such runtime: the descriptor is then a schema 1 one with nothing but its adapter (render_legacy). With a
+    project the definition is the composed one: a renderer an enabled extension adds counts, and a conflict or a changed extension
+    of the project is raised (ProviderError), not hidden."""
     def has(n):
         try:
-            return bool(((P.definition(n, "local").get("renderers") or {}).get("agent")))
+            P.definition(n, "local")                    # a runtime that does not load is no candidate (whatever it is)
         except P.ProviderError:
             return False
+        return bool(((P.composed(n, "local", project).get("renderers") or {}).get("agent")))
     if has(prov):
         return prov
     found = [n for n in P.names() if n != prov and has(n) and P.definition(n, "local").get("family") == prov]
@@ -107,11 +113,12 @@ def render_legacy(prov, name, abilities, cls, model, effort):
             "agents": {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir"), "link": ag.get("link")}}
 
 
-def render_member(prov, name, abilities, cls, model, effort):
-    rt = render_runtime(prov)
+def render_member(prov, name, abilities, cls, model, effort, project=None):
+    rt = render_runtime(prov, project)
     if rt is None:
         return render_legacy(prov, name, abilities, cls, model, effort)
-    doc = P.definition(rt, "local")
+    comp = P.compose(rt, "local", project) if project else None
+    doc = comp["definition"] if comp else P.definition(rt, "local")
     spec = doc["renderers"]["agent"]
     if spec.get("engine", "map") != "map":
         raise Fail("the member renderer of %s is a '%s' renderer; only the map engine renders members for now" % (rt, spec.get("engine")))
@@ -137,7 +144,10 @@ def render_member(prov, name, abilities, cls, model, effort):
             "barrier": {"class": cls, "guard_command": guard_command(rt, cls)},
             "body": body.replace("{skills_dir}", (res.get("skills") or {}).get("project_dir") or "skills")}
     try:
-        out = R.render_map(inst, spec, resolver=resolve, extra={"runtime": rt, "definition": P.definition_hash(rt)})
+        extra = {"runtime": rt, "definition": P.definition_hash(rt)}
+        if comp and comp["extensions"]:                  # a changed extension makes the render STALE; a project with none keeps the hash it always had
+            extra["extensions"] = {x: P.extension_hash(x, rt, "local") for x in comp["extensions"]}
+        out = R.render_map(inst, spec, resolver=resolve, extra=extra)
     except R.RenderError as e:
         raise Fail("the member cannot be rendered for %s: %s" % (rt, e))
     out["runtime"] = rt
@@ -162,7 +172,7 @@ def states(members_file, rc):
         try:
             if not (isinstance(r, dict) and r.get("inputs_hash")) or not rec.get("provider"):
                 raise Fail("no render is recorded")
-            now = render_member(rec["provider"], name, ab, cls, rec.get("model") or "", rec.get("effort") or "")
+            now = render_member(rec["provider"], name, ab, cls, rec.get("model") or "", rec.get("effort") or "", rec.get("project"))
             if now["inputs_hash"] != r["inputs_hash"]:
                 raise Fail("the inputs changed")
         except (Fail, P.ProviderError):
@@ -178,8 +188,8 @@ def main(argv):
             print(json.dumps(P.load(a[0])))
         elif verb == "names" and not a:
             print("\n".join(P.names()))
-        elif verb == "render" and len(a) == 6:
-            print(json.dumps(render_member(a[0], a[1], [x for x in a[2].split(",") if x], a[3], a[4], a[5])))
+        elif verb == "render" and len(a) in (6, 7):
+            print(json.dumps(render_member(a[0], a[1], [x for x in a[2].split(",") if x], a[3], a[4], a[5], (a[6] if len(a) == 7 else "") or None)))
         elif verb == "states" and len(a) == 2:
             print(json.dumps(states(a[0], json.loads(a[1]))))
         else:
@@ -316,11 +326,8 @@ tier_model() { # provider tier -> the provider's model id
   pdesc "$1" | jq -r --arg t "$2" '.tiers[$t]'
 }
 
-adapter_for() { # provider -> the path of its adapter; dies when the definition names none
-  local a; a=$(pdesc "$1" | jq -r '.adapter // empty')
-  [ -n "$a" ] || die "the provider '$1' has no adapter (its definition names none)"
-  [ -x "$root/$a" ] || die "the adapter of the provider '$1' is missing or not executable: $root/$a"
-  echo "$root/$a"
+adapter_run() { # provider surface verb < request -> the adapter's answer on stdout, its exit status; lib/provider.py finds it (a library pack's only as a sealed private copy)
+  python3 -I "$root/lib/provider.py" adapter-run "$@"
 }
 
 default_for() { # project ability field provider -> the project's answer for it, else the table's value (a tier is resolved through the project's provider)
@@ -338,10 +345,10 @@ member_class() { # abilities-csv -> the guard class of a member: read-only when 
   echo "$cls"
 }
 
-render_member() { # name abilities-csv model effort-or-empty provider -> prints {runtime, path, content, sha256, inputs_hash, notes, agents} (the runtime's renderers.agent)
-  local e=$4
+render_member() { # name abilities-csv model effort-or-empty provider [project] -> prints {runtime, path, content, sha256, inputs_hash, notes, agents} (the runtime's renderers.agent,
+  local e=$4                                       # as composed with the extensions of the member's project, when it has one)
   ! no_effort "$5" || e=''
-  apy render "$5" "$1" "$2" "$(member_class "$2")" "$3" "$e"
+  apy render "$5" "$1" "$2" "$(member_class "$2")" "$3" "$e" "${6:-}"
 }
 
 member_record() { # rendered-json -> what the member's record keeps of it: the path, the hash of the bytes and the hash of the inputs
@@ -385,7 +392,7 @@ add() {
   fi
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
   case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
-  r=$(render_member "$n" "$list" "$MODEL" "$EFFORT" "$prov") || exit 1
+  r=$(render_member "$n" "$list" "$MODEL" "$EFFORT" "$prov" "$PROJ") || exit 1
   dir=$(agents_dir "$PROJ" "$r") || exit 1; file=$dir/$(jq -r .path <<<"$r")
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
   write_member "$r" "$file"
@@ -559,7 +566,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
   # a provider that cannot set the model per dispatch runs the member's own model and no other
-  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" local per_dispatch_model_override 2>/dev/null) || ov=no
+  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" local per_dispatch_model_override ${proj:+--project "$proj"} 2>/dev/null) || ov=no
   if [ "$ov" = no ]; then
     mem=$(jq -r .out.member <<<"$res"); mm=$(jq -r --arg m "$mem" '.[$m].model // ""' "$MEMBERS_FILE")
     want=$(jq -r '.out.model // .out.model_id // ""' <<<"$res")
@@ -587,7 +594,7 @@ cloud_inst() { # name -> the registry record when the name is a registered cloud
 }
 
 resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFORT PROFILE (or --json), or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls row model alias effort req out rc adapter ovm=no ove=yes
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls row model alias effort req out rc ovm=no ove=yes
   local inst='' legacy=true brec='' rec rm n why='' ov alt
   [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" cloud) || exit $?
@@ -605,19 +612,19 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   # the model id and the effort come from the provider's adapter (the profile's tier, on the cloud surface); a model with no tier is used as it is
   model=$(jq -r '.out.model_id // empty' <<<"$res"); alias=$(jq -r '.out.model // empty' <<<"$res"); effort=$(jq -r '.out.effort // empty' <<<"$res")
   if [ -n "$(jq -r '.out.tier // empty' <<<"$res")" ] && [ -n "$model" ]; then
-    adapter=$(adapter_for "$prov") || exit 1
+    adapter_run "$prov" cloud resolve --check || exit $?
     req=$(jq -nc --arg t "$(jq -r .out.tier <<<"$res")" --arg e "$effort" --arg p "$prof" '{surface: "cloud", tier: $t, effort: (if $e == "" then null else $e end), profile: $p}')
-    out=$("$adapter" resolve <<<"$req") && rc=0 || rc=$?
+    out=$(adapter_run "$prov" cloud resolve <<<"$req") && rc=0 || rc=$?
     [ "$rc" = 0 ] || die "the adapter of the provider '$prov' could not resolve the $prof profile on the cloud surface (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)"
     model=$(jq -r .model <<<"$out"); effort=$(jq -r '.effort_native // empty' <<<"$out")
   fi
   [ -n "$model" ] || die "the $prof profile resolves to no model on the $prov provider"
   # the base instance takes the model and the effort of the session as overrides: only when the provider is verified to honour them
   row=build; [ "$cls" != read-only ] || row=review
-  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_model_override 2>/dev/null) || ov=no
+  ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_model_override --project "$proj" 2>/dev/null) || ov=no
   [ "$ov" = yes ] && ovm=yes
   if [ -n "$effort" ]; then
-    ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_effort_override 2>/dev/null) || ov=no
+    ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_effort_override --project "$proj" 2>/dev/null) || ov=no
     [ "$ov" = yes ] || ove=no
   fi
   [ "$ovm" = yes ] || why=per_dispatch_model_override
@@ -673,7 +680,7 @@ case $verb in
     jq -e --arg n "$new" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already"
     f=$(jq -r .file <<<"$rec"); ab=$(jq -r '.abilities | join(",")' <<<"$rec")
     # the file carries the name, so the member is rendered again under the new one, into the directory of the old file
-    r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
+    r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
     oldrel=$(jq -r '.render.path // ""' <<<"$rec"); base=$(dirname "$f")
     [ -z "$oldrel" ] || [ "${f%/"$oldrel"}" = "$f" ] || base=${f%/"$oldrel"}
     # a project's member whose runtime links the project's agents belongs in the member render, wherever the old file was
@@ -695,7 +702,7 @@ case $verb in
     need_place "agent refresh" "$mproj"
     prov=$(provider_for "$(project_in_effect "$mproj")" local) || exit $?
     r=$(render_member "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
-      "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
+      "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
     # a project's member whose runtime links the project's agents belongs in the member render: a file written to the checkout by an earlier version is moved there
     # (the old file is removed only while it is what qargi wrote)
     if [ -n "$mproj" ] && [ "$(link_mode "$r")" != none ]; then
