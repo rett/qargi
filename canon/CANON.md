@@ -55,7 +55,7 @@ is listed in `canon/layout.json` under `ordered_folders`.
 
 ## What version 2 requires
 
-**Structure** (unchanged from version 1): `/CANON.md`, `/README.md`, `/_template.md`,
+**Structure**: `/CANON.md`, `/README.md`, `/_template.md`,
 `shared/INDEX.md`, one `roles/<role>/INDEX.md` per configured role, nothing outside
 `shared/`, `roles/` and `_conflicts/`, no folder for a role the project does not use.
 
@@ -152,8 +152,8 @@ reconciler yet; the layout manifest is where that will read from.
 ## Reconciling
 
 `qargi canon plan` reads a store, determines the canon version it conforms
-to (a store without `/CANON.md` is recognised by its layout: `legacy`), and
-prints every step needed to reach the current version. `apply` runs the same
+to (an empty store is `empty` and is set up from the seed; one that this qargi does not
+read is `unknown`), and prints every step needed to reach the current version. `apply` runs the same
 plan with approval. Rules the reconciler always follows:
 
 1. Never lose content. A rename keeps the memory's identity and history; where
@@ -163,8 +163,8 @@ plan with approval. Rules the reconciler always follows:
 3. The `/CANON.md` marker is written last, so an interrupted run is visibly
    unfinished and is resumed by running it again.
 4. Content that cannot be classified is left where it is and reported.
-5. Migrations are ordered functions (version N to N+1) and chain: a store at an
-   older version reaches the current one by running each step in turn.
+5. Only the current version is a target: a store at the current version is kept
+   current (indexes, the marker's roles); an empty one is set up.
 
 ## Changing the canon
 
@@ -177,24 +177,16 @@ plan with approval. Rules the reconciler always follows:
 4. Every project then sees `canon check` report the older stores and offers the
    migration.
 
-## Earlier layouts
+## Older stores
 
-The reconciler recognises these states older than version 2 and migrates them in one
-plan: `legacy` (the layouts before the canon: `sandbox/` and `repos/` at the root of a
-memory store, folders at the root of a reference store), `draft` (a `/CANON.md` marker
-left by an earlier draft of this spec, numbered 0) and
-`1` (the structure-only version).
-
-The migration from version 1 to 2 only adds: it inserts the header lines a note lacks
-(`Kind` from its folder, `Applies to` from its repository or the project, `Sources` from
-its `Verified:` line, or a marker that the origin was not recorded) and never edits a
-body, placing each in the canonical order after the fields already there. It renames the
-`Load when` header to `Load`, replaces the root README and the template with the version 2
-text (one that differs from the seed of the version it came from is first copied to
-`/_conflicts/<date>/`, in every chain), and writes the marker last. A marker newer than
-this qargi knows is reported and left alone, never downgraded. A note without a
-`Check:` or `Verified:` where its kind needs one is reported by `canon check`, not
-invented.
+This qargi reads canon 2 and sets up an empty store; it keeps no migration from an
+older state. A store with no `/CANON.md` that is not empty (the layouts before the
+canon, a half-moved store), one whose marker names an earlier version, and one whose
+marker is newer than this qargi knows are all `unknown`: `canon check` fails it,
+`canon plan` says so and plans nothing, and `canon apply` changes nothing. To bring
+such a store in, move its notes into the layout by hand or merge them with `canon
+import`. A note without a `Check:` or `Verified:` where its kind needs one is
+reported by `canon check`, not invented.
 
 ## Importing a foreign store
 

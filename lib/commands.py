@@ -769,7 +769,7 @@ COMMANDS = {
     "canon": {
         "summary": "Bring a project's two memory stores to the standard layout and keep them there",
         "desc": ("The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an "
-                 "index with a Load column). plan and apply move a store from any older version without losing a note."),
+                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed."),
         "scripts": ["canon.sh"],
         "verbs": {
             "check": verb("Report conformance and the version of each store", [("PROJECT", "project")], [KIND]),

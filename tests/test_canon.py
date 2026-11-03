@@ -88,37 +88,26 @@ class Canon(unittest.TestCase):
             m = C.parse_marker(by["/CANON.md"])
             self.assertEqual((m["canon"], m["kind"], m["project"], m["roles"]), (str(C.LATEST), kind, "demo", "build write"))
 
-    def test_legacy_memory(self):
-        files = {"/README.md": "# old\n\n| Path | Purpose | Load when |\n|---|---|---|\n| sandbox/a.md | a | always |\n| repos/demo/INDEX.md | d | x |\n",
-                 "/_template.md": "t", "/sandbox/a.md": "# a\n" + GOOD,
-                 "/repos/demo/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| setup/s.md | s | x |\n",
-                 "/repos/demo/setup/s.md": "# s\n" + GOOD.replace("sandbox", "setup")}
-        p, after = self.assertConverges("memory", files)
-        self.assertIn("/shared/sandbox/a.md", after)
-        self.assertIn("sandbox/a.md", after["/shared/INDEX.md"])  # index rows were carried over
-
-    def test_legacy_reference_numbers_become_names(self):
-        files = {"/README.md": "# idx\n01-rules/rules.md\n", "/01-rules/rules.md": "# R\n\nsee 02-workflow/w.md\n", "/02-workflow/w.md": "# W\n\nw\n"}
-        p, after = self.assertConverges("reference", files)
-        self.assertIn("/roles/build/rules/rules.md", after)
-        self.assertTrue(after["/roles/build/rules/rules.md"].endswith("\nsee workflow/w.md\n"))
-
-    def test_draft_marker_is_migrated(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: reference\nproject: demo\nroles: build write\n",
-                 "/README.md": "r", "/shared/INDEX.md": "s", "/roles/build/INDEX.md": "d", "/roles/write/INDEX.md": "d",
-                 "/roles/build/01-rules/rules.md": "# R\n\nx 01-rules y\n"}
-        p, after = self.assertConverges("reference", files)
-        self.assertTrue(after["/roles/build/rules/rules.md"].endswith("\nx rules y\n"))
-        self.assertIn("canon: 2", after["/CANON.md"])
-
-    def test_interrupted_migration_resumes(self):
-        # moves done, nothing else: no marker, no shared index
-        files = {"/README.md": "old readme", "/_template.md": "t", "/shared/sandbox/a.md": "# a\n" + GOOD}
-        self.assertEqual(plan("memory", files)["from_version"], "legacy")
-        self.assertConverges("memory", files)
-
     def test_unknown_layout_is_reported(self):
         self.assertEqual(plan("memory", {"/stuff/x.md": "x"})["from_version"], "unknown")
+
+    def test_layouts_older_than_canon_2_are_not_migrated(self):
+        """The chains from the layouts before the canon, the draft marker and canon 1 are gone: such a store is
+        reported as unknown and nothing is planned (a hand-made layout is the owner's to move or import)."""
+        old = {"before the canon, memory": ("memory", {"/README.md": "# old\n", "/sandbox/a.md": "# a\n", "/repos/demo/INDEX.md": "x"}),
+               "before the canon, reference": ("reference", {"/README.md": "# idx\n", "/01-rules/rules.md": "# R\n"}),
+               "a half-moved store": ("memory", {"/README.md": "r", "/_template.md": "t", "/shared/sandbox/a.md": "# a\n"}),
+               "only index files": ("memory", {"/README.md": "r", "/_template.md": "t"}),
+               "draft marker": ("memory", {"/CANON.md": "# Canon\n\ncanon: 0\nkind: memory\nproject: demo\nroles: build\n", "/README.md": "r"}),
+               "canon 1": ("memory", {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build\n", "/README.md": "r"})}
+        for what, (kind, files) in old.items():
+            p = plan(kind, files, roles="build")
+            self.assertEqual((p["from_version"], p["ops"]), ("unknown", []), what)
+            self.assertTrue(p["notes"], what)
+            r = run("check", kind, files, roles="build")
+            self.assertEqual(r.returncode, 1, what)
+            self.assertIn("store is unknown", r.stdout, what)
+        self.assertIn("older than the 2", plan("memory", old["canon 1"][1], roles="build")["why"])
 
     def test_role_added_after_the_fact(self):
         _, after = self.assertConverges("memory", {}, roles="build")
@@ -137,12 +126,6 @@ class Canon(unittest.TestCase):
         p = plan("memory", after, roles="build")
         self.assertTrue(any("write" in n for n in p["notes"]))
         self.assertFalse(any(o["op"] == "move" for o in p["ops"]))
-
-    def test_conflict_goes_to_conflicts_not_overwritten(self):
-        files = {"/README.md": "r", "/sandbox/a.md": "new", "/shared/sandbox/a.md": "existing"}
-        p = plan("memory", files)
-        moves = [o for o in p["ops"] if o["op"] == "move"]
-        self.assertTrue(moves and moves[0]["to"].startswith("/_conflicts/"), moves)
 
     def test_note_rules_catch_incomplete_notes_and_secrets(self):
         _, after = self.assertConverges("memory", {})
@@ -203,36 +186,6 @@ class Canon(unittest.TestCase):
         r = run("check", "reference", after)
         self.assertNotIn("no Kind", r.stdout)
 
-    def test_v1_store_gains_headers_and_keeps_bodies(self):
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n",
-              "/README.md": "custom readme\n", "/_template.md": slurp(os.path.join(SEED, "v1", "_template.md")),
-              "/shared/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| repos/demo/INDEX.md | d | x |\n",
-              "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x",
-              "/shared/repos/demo/INDEX.md": "| Path | Purpose | Load when |\n|---|---|---|\n| pitfalls/a.md | a | x |\n",
-              "/shared/repos/demo/pitfalls/a.md": "# a\n\nKind: pitfall\nApplies to: demo\n\nFact: f\n\nCheck: true\nVerified: %s by run7 on linux\n" % datetime.date.today().isoformat(),
-              "/roles/write/project/history.md": "# History\n\nlines\n"}
-        p, after = self.assertConverges("memory", v1)
-        self.assertEqual(p["from_version"], 1)
-        a = after["/shared/repos/demo/pitfalls/a.md"]
-        self.assertIn("Sources: run7, %s" % datetime.date.today().isoformat(), a)
-        self.assertIn("Fact: f\n", a)
-        h = after["/roles/write/project/history.md"]
-        self.assertTrue(h.startswith("# History\n\nKind: history\nApplies to: demo\nSources: carried over"), h)
-        self.assertTrue(h.endswith("\nlines\n"))
-        self.assertIn("| Load |", after["/shared/INDEX.md"])
-        self.assertIn("canon: 2", after["/CANON.md"])
-        self.assertEqual(after["/_conflicts/%s/README.md" % TODAY], "custom readme\n")   # a customised README is kept
-        self.assertIn("Kind: setup | gate", after["/_template.md"])
-
-    def test_unedited_v1_readme_is_replaced_without_conflict(self):
-        text = slurp(os.path.join(SEED, "v1", "README.memory.md")).replace("{{PROJECT}}", "demo")
-        text = text.replace("{{ROLES}}", C.role_lines(["build", "write"]))
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n", "/README.md": text,
-              "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
-        p, after = self.assertConverges("memory", v1)
-        self.assertFalse([k for k in after if k.startswith("/_conflicts/")])
-        self.assertIn("Sources", after["/README.md"])
-
     def test_vocabulary_matches_layout_json(self):
         lay = json.loads(slurp(os.path.join(HERE, "..", "canon", "layout.json")))
         self.assertEqual(lay["version"], C.LATEST)
@@ -255,28 +208,11 @@ class Canon(unittest.TestCase):
         self.assertTrue(c.startswith("# b\n\nKind: sandbox\nApplies to: any\nSources:"), c)
         self.assertTrue(c.endswith(body.split("\n\n", 1)[1]))
 
-    def test_customised_readme_survives_the_draft_chain(self):
-        files = {"/CANON.md": "# Canon\n\ncanon: 0\nkind: memory\nproject: demo\nroles: build write\n", "/README.md": "my custom readme\n",
-                 "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
-        p, after = self.assertConverges("memory", files)
-        self.assertEqual(after["/_conflicts/%s/README.md" % TODAY], "my custom readme\n")
-
-    def test_customised_template_is_kept_in_conflicts(self):
-        v1 = {"/CANON.md": "# Canon\n\ncanon: 1\nkind: memory\nproject: demo\nroles: build write\n", "/_template.md": "mine\n", "/README.md": "r",
-              "/shared/INDEX.md": "x", "/roles/build/INDEX.md": "x", "/roles/write/INDEX.md": "x"}
-        p, after = self.assertConverges("memory", v1)
-        self.assertEqual(after["/_conflicts/%s/_template.md" % TODAY], "mine\n")
-        self.assertIn("Sources:", after["/_template.md"])
-
     def test_a_newer_marker_is_not_downgraded(self):
         files = {"/CANON.md": "# Canon\n\ncanon: 5\nkind: memory\nproject: demo\nroles: build\n", "/README.md": "r"}
         p = plan("memory", files, roles="build")
         self.assertEqual(p["from_version"], "unknown")
         self.assertEqual(p["ops"], [])
-
-    def test_index_edit_is_anchored_to_the_header_row(self):
-        t = "| Path | Purpose | Load when |\n|---|---|---|\n| a.md | Path map of demo | Load when touching demo |\n"
-        self.assertEqual(C.fix_index(t), "| Path | Purpose | Load |\n|---|---|---|\n| a.md | Path map of demo | Load when touching demo |\n")
 
     def test_role_readme_is_a_note_and_repo_rules_are_rules(self):
         self.assertTrue(C.is_note("/roles/write/maintainer/README.md"))
