@@ -403,7 +403,6 @@ Each verb prints its plan and a plan token and changes nothing until you run it 
 `qargi export` writes one archive of what you select, and `qargi import` restores it, on this machine or another:
 
 - **config**: project answers, the instance registry, profiles, the skill and tool library.
-  An archive made with the earlier role names (`dev`, `docs`) is imported under the current ones.
 - **definitions**: the cloud agents, deployments and environment as they are now, read from the cloud with secret values removed. Import restores them as files; rebuild with `qargi provision`.
 - **memories**: every note of the memory and reference stores. Import writes them to the stores named in the project's answers.
 - **state**: the session tracker and the audit log (the audit log is only ever appended to).
