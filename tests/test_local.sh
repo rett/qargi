@@ -46,6 +46,20 @@ echo '{}' > "$C2/out/p--manifest.json"; touch "$TM2/leftover"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "$T"); C3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 ./bin/qargi local clean "$C3" --discard >/dev/null 2>&1 && [ ! -e "$C3" ] && ok "--discard cleans a run that produced no manifest" || no "discard"
 ./bin/qargi local clean "$T" >/dev/null 2>&1 && no "clean accepted a directory that is not a run" || ok "clean refuses a directory that prepare did not make"
+# clean never drops finished work that is not merged: a run whose clone holds commits needs them applied and merged first
+out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c4 --scratch "$T"); C4=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G4=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL4=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
+echo y > "$CL4/g"; $G4 -C "$CL4" add g && $G4 -C "$CL4" commit -q -m work; echo '{}' > "$C4/out/manifest.json"
+./bin/qargi local verify "$C4" >/dev/null 2>&1
+./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed a run with commits that were never applied" || ok "clean refuses a run whose commits were never applied"
+[ -d "$C4" ] && ok "and the finished work stays" || no "unapplied work was removed"
+TREE=$(git -C "$T/r2" rev-parse 'main^{tree}'); AT=$(git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit-tree -p main -m work "$TREE")
+git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' "$AT" > "$C4/applied"
+./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed an applied but unmerged run" || ok "clean refuses a run applied to agent/c4 but not merged into another branch"
+git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
+./bin/qargi local clean "$C4" >/dev/null 2>&1 && [ ! -e "$C4" ] && ok "clean removes it once the applied tip is on another branch" || no "clean after merge"
+out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c5 --scratch "$T"); C5=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G5=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL5=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
+echo z > "$CL5/h"; $G5 -C "$CL5" add h && $G5 -C "$CL5" commit -q -m work; echo '{}' > "$C5/out/manifest.json"; ./bin/qargi local verify "$C5" >/dev/null 2>&1
+err=$(./bin/qargi local clean "$C5" --discard 2>&1) && [ ! -e "$C5" ] && grep -q 'dropped 1 unmerged commit' <<<"$err" && ok "--discard drops it on purpose and says how many commits" || no "discard: $err"
 # lead-side moves: strict until a verify has passed, then fast-forwards and new branches are accepted
 LC="git -c user.name=t -c user.email=t@example.net"
 git init -q -b main "$T/r3" && $LC -C "$T/r3" commit -q --allow-empty -m one && git -C "$T/r3" branch develop && git -C "$T/r3" checkout -q develop

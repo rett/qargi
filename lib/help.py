@@ -2,10 +2,11 @@
 """qargi help, the manual page and the completion candidates, all from lib/commands.py.
 
   help.py show [ARGS...]      qargi help, qargi help COMMAND [VERB], qargi help TOPIC, qargi COMMAND --help
-  help.py man                 the manual page (roff) on stdout
+  help.py man [--keep-date F] the manual page (roff) on stdout; its .TH date is the one in F (default man/qargi.1, else the
+                              copy committed at HEAD, as `> man/qargi.1` empties the file before this runs), empty when none
   help.py complete WORDS...   completion candidates for the last word (qargi __complete, used by the bash completion)
 """
-import glob, json, os, shutil, subprocess, sys, textwrap
+import glob, json, os, re, shutil, subprocess, sys, textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -194,10 +195,36 @@ def esc(s):
     return ("\\&" + s) if s.startswith((".", "'")) else s
 
 
-def man():
+def th_date(text):
+    """The date field of the first .TH line of a manual page, or None when the text has no .TH line with that field."""
+    for line in text.split("\n"):
+        if line.startswith(".TH "):
+            tok = re.findall(r'"[^"]*"|\S+', line)
+            return tok[3].strip('"') if len(tok) > 3 else None
+    return None
+
+
+def kept_date(path=None):
+    """The date `qargi release start` set in the manual page, so that regenerating the page does not undo it. From PATH, else
+    man/qargi.1 of the repository; the shell redirection in `help.py man > man/qargi.1` has emptied that file by the time it is
+    read, so a file with no .TH line is read again from HEAD. Empty when there is no page."""
+    sources = [lambda: open(path or os.path.join(ROOT, "man", "qargi.1"), encoding="utf-8").read()]
+    if not path:
+        sources.append(lambda: subprocess.run(["git", "-C", ROOT, "show", "HEAD:man/qargi.1"], capture_output=True, text=True, check=True).stdout)
+    for read in sources:
+        try:
+            d = th_date(read())
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if d is not None:
+            return d
+    return ""
+
+
+def man(date_from=None):
     o = []
     w = o.append
-    w('.TH QARGI 1 "" "qargi %s"' % version())
+    w('.TH QARGI 1 "%s" "qargi %s"' % (kept_date(date_from), version()))
     w(".SH NAME")
     w("qargi \\- " + esc(C.TAGLINE.rstrip(".")))
     w(".SH SYNOPSIS")
@@ -665,6 +692,13 @@ def main(argv):
     if argv[0] == "show":
         return show(argv[1:])
     if argv[0] == "man":
+        rest = argv[1:]
+        if rest and rest[0] == "--keep-date" and len(rest) == 2:
+            sys.stdout.write(man(rest[1]))
+            return 0
+        if rest:
+            print("usage: help.py man [--keep-date FILE]", file=sys.stderr)
+            return 2
         sys.stdout.write(man())
         return 0
     if argv[0] == "complete":

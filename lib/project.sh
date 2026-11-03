@@ -52,6 +52,25 @@
 PROJ_DIR=$DA_CONF/projects
 verb=${1:-}; shift || true
 
+set_note() { # project path json-value -> what `set` adds to its line: the provision note, for the answers a provision reads
+  # `deployment` is the methodology's deployment option (github-release, none): nothing is provisioned from it, so the note would mislead;
+  # a value that is no option of the project's methodology is taken to name a cloud deployment and keeps the note
+  local n=$1 path=$2 val=$3 meth
+  if [ "$path" = deployment ]; then
+    meth=$(jq -r '.methodology // "gitflow"' "$PROJ_DIR/$n.json")
+    python3 -I - "$(dirname "$0")" "$meth" "$val" <<'PY' && return 0
+import json, sys
+sys.path.insert(0, sys.argv[1]); import methodology as M
+try:
+    ids = [o.get("id") for o in (M.load(sys.argv[2])[2].get("deployment") or {}).get("options", [])]
+except SystemExit:
+    ids = []
+sys.exit(0 if json.loads(sys.argv[3]) in ids else 1)
+PY
+  fi
+  printf " (applies to the next provision; use 'instances budget' for a live deployment)"
+}
+
 validate() { # file -> prints problems, exit 1 if any
   python3 -I - "$1" "$DA_ROLES" "$(dirname "$(readlink -f "$0")")" "$QARGI_TOOL" "$DA_CONF" <<'EOF'
 import json, os, re, sys
@@ -628,7 +647,7 @@ PY
       | setpath($p | split("."); $v)' "$PROJ_DIR/$n.json" > "$tmp"
     out=$(validate "$tmp") || { echo "$out" >&2; rm -f "$tmp"; die "that would make the project invalid; nothing changed"; }
     chmod 600 "$tmp"; mv "$tmp" "$PROJ_DIR/$n.json"
-    echo "$n: $path = $val (applies to the next provision; use 'instances budget' for a live deployment)"
+    echo "$n: $path = $val$(set_note "$n" "$path" "$val")"
     [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
     case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
   link|unlink)

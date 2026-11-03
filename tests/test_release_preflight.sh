@@ -3,6 +3,7 @@
 # before anything changes; the first commit sets the .TH date and version. Run: tests/test_release_preflight.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+SRC=$PWD
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
@@ -45,4 +46,17 @@ refuses "a changelog without an Unreleased section refuses" "no '## \[Unreleased
 
 mk plain; seal
 $REL start 0.2.0 >/dev/null 2>&1 && ok "a project with neither man page nor changelog is not checked" || no "plain: $($REL start 0.2.0 2>&1)"
+# the generated manual page keeps the date `release start` set: regenerating it after the start must not empty the date again
+mk regen; cp -r "$SRC/lib" "$R/lib"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
+(cd "$R" && python3 lib/help.py man > man/qargi.1)
+[ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "" "qargi 0.1.0"' ] && ok "a first generation (no page yet) writes an empty date" || no "first generation: $(head -1 "$R/man/qargi.1")"
+seal
+$REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1 || no "regen start: $($REL start 0.2.0 2>&1)"
+git -C "$R" checkout -q release/0.2.0
+(cd "$R" && python3 lib/help.py man > man/qargi.1)
+[ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "2026-03-04" "qargi 0.2.0"' ] && git -C "$R" diff --quiet && ok "regenerating the page after release start keeps its date (python3 lib/help.py man > man/qargi.1)" || no "regenerated: $(head -1 "$R/man/qargi.1")"
+printf '.TH QARGI 1 "2031-05-06" "qargi 0.2.0"\n' > "$T/dated.1"
+(cd "$R" && python3 lib/help.py man --keep-date "$T/dated.1" > "$T/kept.1")
+[ "$(sed -n 1p "$T/kept.1")" = '.TH QARGI 1 "2031-05-06" "qargi 0.2.0"' ] && ok "--keep-date reads the date from the named file" || no "--keep-date: $(sed -n 1p "$T/kept.1")"
+
 rm -rf "$T"; exit $fail
