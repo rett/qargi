@@ -59,6 +59,8 @@ grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the bui
 # the detached start is the cloud addendum's, and a cloud member's prompt holds one no-push rule and one background-command rule
 grep -qE "run_in_background|Monitor|Bash tool" contract/*.md && no "the contract names a runtime's tools" || ok "the contract does not name a runtime's tools (Bash tool, run_in_background, Monitor)"
 grep -qF "run_in_background" lib/providers/claude-code/local-run.md && grep -qF "nohup" lib/providers/claude-platform/cloud-run.md && ok "each runtime's addendum carries its own way to start a long command" || no "an addendum lost its recipe"
+grep -qiw "push" provision/templates/cloud-preamble.md lib/providers/claude-platform/cloud-run.md && no "the preamble or the cloud addendum repeats the contract's no-push rule" || ok "the contract alone says never to push (the preamble and the cloud addendum do not repeat it)"
+grep -qi "detached" provision/templates/cloud-preamble.md && no "the preamble repeats the detached-start recipe" || ok "the cloud addendum alone owns the detached-start recipe"
 for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' "profile's rules for examples"; do
   grep -qF -- "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
 done
