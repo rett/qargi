@@ -114,8 +114,8 @@ out=$("$DA" agent add mf --project fk 2>&1); rc=$?
 out=$("$DA" agent models --project cl --json 2>&1); { [ "$(jq -r .provider <<<"$out")" = claude ] && jq -e '.profiles[] | select(.name == "build") | .model_id == "claude-sonnet-5-5"' <<<"$out" >/dev/null; } && ok "agent models: claude" || no "models claude: $out"
 out=$("$DA" agent models --project fk --json 2>&1); { [ "$(jq -r .provider <<<"$out")" = fakeprov ] && jq -e '.profiles[] | select(.name == "build") | .model_id == "fake-m-1"' <<<"$out" >/dev/null; } && ok "agent models: the fake provider" || no "models fake: $out"
 noclaude "agent models --project fk names no claude" "$(jq -c 'del(.members)' <<<"$out")"
-out=$("$DA" agent for build --project fk --json 2>&1); { jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ! grep -qi claude <<<"$out"; } && ok "agent for: the fake provider's model, no claude" || no "for fake: $out"
-out=$("$DA" agent for build --project cl --json 2>&1); jq -e '.model_id == "claude-sonnet-5-5"' <<<"$out" >/dev/null && ok "agent for: claude's model" || no "for claude: $out"
+"$DA" agent add worker --project fk >/dev/null 2>&1; out=$("$DA" agent for build --project fk --json 2>&1); { jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ! grep -qi claude <<<"$out"; } && ok "agent for: the fake provider's model, no claude" || no "for fake: $out"
+"$DA" agent add worker --project cl >/dev/null 2>&1; out=$("$DA" agent for build --project cl --json 2>&1); jq -e '.model_id == "claude-sonnet-5-5"' <<<"$out" >/dev/null && ok "agent for: claude's model" || no "for claude: $out"
 # refresh and rename: a member needs its project's provider; the provider is looked up again at refresh
 out=$("$DA" agent refresh mc 2>&1); rc=$?; { [ "$rc" = 0 ] && grep -q 'current' <<<"$out"; } && ok "agent refresh: claude" || no "refresh claude: rc=$rc $out"
 out=$("$DA" agent refresh mf 2>&1); rc=$?; { [ "$rc" = 0 ] && grep -q 'current' <<<"$out"; } && ok "agent refresh: the fake provider" || no "refresh fake: rc=$rc $out"
@@ -265,13 +265,13 @@ out=$( . "$TOOL/lib/lib.sh"; DA_CONF=$T/c; project_provider oc local 2>&1 ); ref
 "$DA" agent add mob --project ob >/dev/null 2>&1
 [ "$(jq -r '.projects.ob.mob.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ob: a member takes the local runtime's balanced model" || no "ob member model: $(jq -c .projects.ob.mob "$T/c/agents.json")"
 out=$("$DA" agent models --project ob --json 2>&1); [ "$(jq -r .provider <<<"$out" 2>/dev/null)" = fakeprov ] && ok "ob: agent models shows the local runtime" || no "ob models: $out"
-out=$("$DA" agent for build --project ob --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ob: agent for resolves on the local runtime" || no "ob for: $out"
+"$DA" agent add worker --project ob >/dev/null 2>&1; out=$("$DA" agent for build --project ob --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ob: agent for resolves on the local runtime" || no "ob for: $out"
 out=$("$DA" provision plan --project ob --role build 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q 'claude-sonnet-5-5' <<<"$(mdl ob)" && ! grep -q 'fake-m-1' <<<"$(mdl ob)"; } && ok "ob: provision plan takes the cloud runtime's balanced model" || no "ob provision: rc=$rc [$(mdl ob)] $(head -3 <<<"$out")"
 jq '. + {"ob-worker": .["np-worker"], "ol-worker": .["np-worker"], "ol-review": .["np-review"], "oc-worker": .["np-worker"], "oc-review": .["np-review"]}' "$T/c/instances.json" > "$T/i.tmp" && mv "$T/i.tmp" "$T/c/instances.json"
 # only local named: members work, everything on the cloud surface is refused with the surface and the command
 "$DA" agent add mol --project ol >/dev/null 2>&1; [ "$(jq -r '.projects.ol.mol.model // "none"' "$T/c/agents.json")" = fake-m-1 ] && ok "ol: a member works on the local runtime" || no "ol member: $(jq -c .projects.ol.mol "$T/c/agents.json")"
-out=$("$DA" agent for build --project ol --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ol: agent for (local) works" || no "ol for: $out"
+"$DA" agent add worker --project ol >/dev/null 2>&1; out=$("$DA" agent for build --project ol --json 2>&1); jq -e '.model_id == "fake-m-1"' <<<"$out" >/dev/null && ok "ol: agent for (local) works" || no "ol for: $out"
 out=$("$DA" provision plan --project ol --role build 2>&1); refuses_s "ol: provision plan needs the cloud runtime and says so" "$?" "$out" ol cloud
 out=$("$DA" agent for build --project ol --surface cloud 2>&1); refuses_s "ol: agent for --surface cloud is refused" "$?" "$out" ol cloud
 out=$("$DA" start ol-review --asked "start" 2>&1); refuses_s "ol: start of a read-only instance is refused" "$?" "$out" ol cloud
