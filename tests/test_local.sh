@@ -10,7 +10,7 @@ git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@examp
 git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote.git" && git -C "$T/r" push -q origin main
 # a read-only role (or a profile) is looked up through the repository's project, and its models.provider (there is no default provider)
 mkdir -p "$T/c/projects"
-jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
+jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
@@ -167,7 +167,7 @@ out=$(mk4 w4); rcw=$?
   && ok "no provider: one note line, the render check skipped, prepare still succeeds" || no "no provider: $rcw $(cat "$T/err")"
 out=$(mk4 w4b); [ "$(wc -l < "$T/err")" = 1 ] && ok "(and only one line)" || no "lines: $(cat "$T/err")"
 # the render is the local surface's: an object that names only a cloud runtime has no local provider, and the note names the surface
-jq '.models = {provider: {cloud: "claude"}}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+jq '.models = {provider: {cloud: "claude-platform"}}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 out=$(mk4 w4c); rcw=$?
 [ "$(cat "$T/err")" = "note: project alpha has no local provider (qargi project set alpha models.provider.local NAME); the render check was skipped" ] && [ $rcw = 0 ] \
   && ok "only a cloud provider: the note names the local surface and the command, the check is skipped" || no "cloud-only provider: $rcw $(cat "$T/err")"

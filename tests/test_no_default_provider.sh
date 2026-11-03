@@ -188,11 +188,17 @@ jq -e 'has("models") | not' "$T/c/projects/att.json" >/dev/null && jq -e '[.role
 "$DA" project set att models.provider fakeprov >/dev/null 2>&1; "$DA" project validate att >/dev/null 2>&1 && ok "and a provider can be changed" || no "change provider"
 rm -f "$T/c/projects/att.json"
 
+out=$("$DA" project attach "$T/att" --name att --provider-local claude-code --provider-cloud claude-platform 2>&1); rc=$?
+{ [ "$rc" = 0 ] && ! grep -q '^finding:' <<<"$out" && grep -q '"local": "claude-code"' <<<"$out" && grep -q '"cloud": "claude-platform"' <<<"$out"; } && ok "attach with claude's two runtimes: the plan shows them and there is no finding" || no "attach claude plan: rc=$rc $out"
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+"$DA" project attach "$T/att" --name att --provider-local claude-code --provider-cloud claude-platform --plan "$tok" --approved "go" >/dev/null 2>&1
+{ jq -e '.models.provider == {"local":"claude-code","cloud":"claude-platform"}' "$T/c/projects/att.json" >/dev/null && jq -e '[.roles[].model] | all(. == "claude-sonnet-5-5")' "$T/c/projects/att.json" >/dev/null; } && ok "and it stores models.provider and claude's models" || no "stored claude: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
+rm -f "$T/c/projects/att.json"
 out=$("$DA" project attach "$T/att" --name att --provider claude 2>&1); rc=$?
-{ [ "$rc" = 0 ] && ! grep -q '^finding:' <<<"$out" && grep -q '"provider": "claude"' <<<"$out"; } && ok "attach --provider claude: the plan shows it and there is no finding" || no "attach claude plan: rc=$rc $out"
+{ [ "$rc" = 0 ] && grep -q "^finding: models.provider is the single name 'claude'; on the local surface it resolves to claude-code" <<<"$out" && grep -q '"provider": "claude"' <<<"$out"; } && ok "attach --provider claude: claude is the family of both runtimes, so the plan says it resolves through the family" || no "attach family plan: rc=$rc $out"
 tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
 "$DA" project attach "$T/att" --name att --provider claude --plan "$tok" --approved "go" >/dev/null 2>&1
-{ [ "$(jq -r .models.provider "$T/c/projects/att.json")" = claude ] && jq -e '[.roles[].model] | all(. == "claude-sonnet-5-5")' "$T/c/projects/att.json" >/dev/null; } && ok "attach --provider claude stores models.provider and claude's models" || no "stored claude: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
+{ [ "$(jq -r .models.provider "$T/c/projects/att.json")" = claude ] && jq -e '[.roles[].model] | all(. == "claude-sonnet-5-5")' "$T/c/projects/att.json" >/dev/null; } && ok "attach --provider claude stores the family name and claude's models" || no "stored claude family: $(jq -c '[.models, .roles]' "$T/c/projects/att.json")"
 rm -f "$T/c/projects/att.json"
 out=$("$DA" project attach "$T/att" --name att --provider fakeprov 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
 "$DA" project attach "$T/att" --name att --provider fakeprov --plan "$tok" --approved "go" >/dev/null 2>&1

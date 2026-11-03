@@ -1535,7 +1535,7 @@ class ProviderHook(unittest.TestCase):
         self.refused_before_judging(["--provider", "nobarrier"], "nobarrier", "hook")
         self.define("sandboxed", barrier={"kind": "sandbox-args"})
         self.refused_before_judging(["--provider", "sandboxed"], "sandboxed", "sandbox-args")
-        self.refused_before_judging(["--provider", "claude"], "claude", "hook")                       # shipped, schema 1: no hook data
+        self.refused_before_judging(["--provider", "claude-platform"], "claude-platform", "hook")    # shipped, a barrier of kind none: no hook data
         bad_hooks = (({k: v for k, v in FAKEMD_HOOK.items() if k != "tool_pointer"}, "tool_pointer"),
                      ({**FAKEMD_HOOK, "input": "argv"}, "input"),
                      ({**FAKEMD_HOOK, "command_pointer": "cmd"}, "command_pointer"),
@@ -1757,11 +1757,11 @@ class RuntimeRender(unittest.TestCase):
 
 class ProviderVerbs(unittest.TestCase):
     """The provider definitions are the user's: a member is refused every verb that changes them (new, import, seal, remove, rename,
-    enable, disable, attest, migrate and accept, and any verb that is added) and keeps the ones that only read."""
+    enable, disable, attest and accept, and any verb that is added) and keeps the ones that only read."""
     setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
     call = Skills.call
     LIFECYCLE = ("new fakecli", "import ./fakecli", "seal fakecli", "remove fakecli", "rename fakecli other", "enable fakecli --project p", "disable fakecli",
-                 "attest fakecli read_only_barrier --asked x", "migrate claude --dry-run", "migrate claude --as local=a,cloud=b", "unseal fakecli", "invented x",
+                 "attest fakecli read_only_barrier --asked x", "unseal fakecli", "invented x",
                  "new mine --kind extension --from claude-code", "import ./fakecli --name x --ref main --path sub", "import ./fakecli --plan 0123456789ab --approved go --approve-exec adapter,renderers/agent",
                  "seal fakecli --plan 0123456789ab --approved go --approve-exec adapter", "remove fakecli --plan 0123456789ab --approved go",
                  "enable p addon --plan 0123456789ab --approved go --approve-exec verbs/resume", "disable p addon --plan 0123456789ab --approved go",
@@ -1789,7 +1789,7 @@ class ProviderVerbs(unittest.TestCase):
         for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider effective claude local skills",
                   "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
                   "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
-                  "echo qargi provider seal x", "grep -n 'provider migrate' lib/provider.py", "cat provider.sh"):
+                  "echo qargi provider seal x", "grep -n 'provider attest' lib/provider.py", "cat provider.sh"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 

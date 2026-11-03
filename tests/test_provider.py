@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Provider descriptors: lib/provider.py (load, validate, cap, effective) against lib/providers/schema.json.
-Hermetic: every changed descriptor is a copy in a temporary directory, never the user's data.
+"""Provider definitions: lib/provider.py (definition, validate2, cap, effective, require_barrier, layout, the verbs) against
+lib/providers/schema-2.json. The shipped claude-code, claude-platform and the claude catalog are the real examples; every changed
+definition is a copy in a temporary directory, never the user's data.
 Run: python3 tests/test_provider.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import copy, hashlib, json, os, shutil, stat, subprocess, sys, tempfile, unittest
@@ -13,271 +14,206 @@ BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import provider as P  # noqa: E402
 
-with open(os.path.join(LIB, "providers", "claude.json")) as _f:
-    CLAUDE = json.load(_f)
+
+def shipped(rel):
+    with open(os.path.join(LIB, "providers", rel)) as f:
+        return json.load(f)
+
+
+CODE = shipped("claude-code.json")                # the local runtime
+PLATFORM = shipped("claude-platform.json")        # the cloud runtime
+CATALOG = shipped("catalogs/claude.json")         # the models of both
 
 
 def descriptor():
-    return copy.deepcopy(CLAUDE)
+    """A copy of the shipped claude-code definition."""
+    return copy.deepcopy(CODE)
 
 
-def fails(d, name="claude"):
-    return [m for lvl, m in P.validate(d, name) if lvl == "fail"]
+def fails(d, name=None):
+    return [m for lvl, m in P.validate2(d, name or d.get("provider") or d.get("family")) if lvl == "fail"]
 
 
-def warns(d, name="claude"):
-    return [m for lvl, m in P.validate(d, name) if lvl == "warn"]
+def warns(d, name=None):
+    return [m for lvl, m in P.validate2(d, name or d.get("provider") or d.get("family")) if lvl == "warn"]
+
+
+def verified(d):
+    """The definition d with every capability claim verified."""
+    d = copy.deepcopy(d)
+    for c in d["capabilities"].values():
+        c["verified_on"] = "2026-10-31"
+    return d
 
 
 class Tree(unittest.TestCase):
-    """A temporary providers directory beside a copy of provider.py's descriptors."""
+    """A temporary providers directory beside a copy of provider.py's schema."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="prov.")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = os.path.join(self.tmp, "providers")
         os.makedirs(self.root)
-        for sch in ("schema.json", "schema-2.json"):
-            shutil.copy(os.path.join(LIB, "providers", sch), self.root)
+        shutil.copy(os.path.join(LIB, "providers", "schema-2.json"), self.root)
 
     def put(self, name, d):
         with open(os.path.join(self.root, name + ".json"), "w") as f:
             json.dump(d, f)
 
+    def put_claude(self, adapters=False):
+        """The shipped claude-code, claude-platform and the claude catalog (and their adapter directories) in root."""
+        self.put("claude-code", CODE)
+        self.put("claude-platform", PLATFORM)
+        os.makedirs(os.path.join(self.root, "catalogs"), exist_ok=True)
+        with open(os.path.join(self.root, "catalogs", "claude.json"), "w") as f:
+            json.dump(CATALOG, f)
+        for n in ("claude-code", "claude-platform") if adapters else ():
+            shutil.copytree(os.path.join(LIB, "providers", n), os.path.join(self.root, n), ignore=shutil.ignore_patterns("__pycache__"))
 
-class Valid(unittest.TestCase):
-    def test_the_shipped_claude_descriptor_has_no_failure(self):
-        self.assertEqual(fails(descriptor()), [])
 
-    def test_the_shipped_claude_descriptor_warns_for_every_unverified_date(self):
-        d = descriptor()
-        nulls = [t for t, v in d["tier_detail"].items() if v["verified_on"] is None]
-        for cap in d["capabilities"].values():
-            nulls += [s for s, c in cap.items() if c["verified_on"] is None]
-        self.assertEqual(len(warns(d)), len(nulls))
-        self.assertGreaterEqual(len(nulls), 4)
+class Shipped(Tree):
+    def test_the_shipped_definitions_and_the_catalog_have_no_failure(self):
+        for d, name in ((CODE, "claude-code"), (PLATFORM, "claude-platform"), (CATALOG, "claude")):
+            self.assertEqual(fails(d, name), [], name)
 
-    def test_a_fully_verified_descriptor_is_clean(self):
-        d = descriptor()
-        for t in d["tier_detail"].values():
-            t["verified_on"] = "2026-10-31"
-        for cap in d["capabilities"].values():
-            for c in cap.values():
-                c["verified_on"] = "2026-10-31"
-        self.assertEqual(P.validate(d, "claude"), [])
+    def test_the_shipped_runtimes_warn_for_every_claim_that_is_not_verified(self):
+        total = 0
+        for d, name in ((CODE, "claude-code"), (PLATFORM, "claude-platform")):
+            nulls = ["capabilities.%s.verified_on" % c for c, cl in d["capabilities"].items() if cl["value"] in ("yes", "partial") and cl["verified_on"] is None]
+            self.assertEqual(sorted(m.split(":")[0] for m in warns(d, name)), sorted(nulls), name)
+            total += len(nulls)
+        self.assertGreaterEqual(total, 2)
 
-    def test_tiers_and_aliases_stay_plain_maps_that_older_code_reads(self):
-        self.assertEqual(CLAUDE["tiers"], {"fast": "claude-haiku-5-5", "balanced": "claude-sonnet-5-5", "deep": "claude-opus-5-5", "frontier": "claude-fable-5-1"})
-        self.assertEqual(CLAUDE["aliases"], {"fast": "haiku", "balanced": "sonnet", "deep": "opus", "frontier": "fable"})
-        self.assertEqual({t: v["model"] for t, v in CLAUDE["tier_detail"].items()}, CLAUDE["tiers"])
+    def test_a_fully_verified_runtime_is_clean(self):
+        self.assertEqual(P.validate2(verified(CODE), "claude-code"), [])
+        self.assertEqual(P.validate2(verified(PLATFORM), "claude-platform"), [])
+
+    def test_the_catalog_keeps_the_ids_and_the_aliases_both_runtimes_pass(self):
+        self.assertEqual({t: v["model"] for t, v in CATALOG["tiers"].items()},
+                         {"fast": "claude-haiku-5-5", "balanced": "claude-sonnet-5-5", "deep": "claude-opus-5-5", "frontier": "claude-fable-5-1"})
+        self.assertEqual({t: v["alias"] for t, v in CATALOG["tiers"].items()}, {"fast": "haiku", "balanced": "sonnet", "deep": "opus", "frontier": "fable"})
+        self.assertEqual((CODE["family"], CODE["models"]), ("claude", {"catalog": "claude", "use": "alias"}))
+        self.assertEqual((PLATFORM["family"], PLATFORM["models"]), ("claude", {"catalog": "claude", "use": "id"}))
 
     def test_reserved_names_are_the_agent_types_the_claude_runtime_brings_itself(self):
-        self.assertEqual(sorted(CLAUDE["local"]["reserved_names"]),
+        self.assertEqual(sorted(CODE["agents"]["reserved_names"]),
                          sorted("general-purpose explore plan statusline-setup claude-code-guide claude output-style-setup".split()))
 
 
 class Violations(unittest.TestCase):
-    def one(self, d, needle, name="claude"):
+    def one(self, d, needle, name="claude-code"):
         f = fails(d, name)
         self.assertTrue(any(needle in m for m in f), "%r not in %r" % (needle, f))
         return f
 
-    def test_an_additional_property_at_the_top(self):
-        d = descriptor()
-        d["extra"] = 1
-        self.one(d, "extra: additional property is not allowed")
-
     def test_an_additional_property_deep_inside(self):
         d = descriptor()
-        d["capabilities"]["mcp"]["local"]["colour"] = "red"
-        self.one(d, "capabilities.mcp.local.colour: additional property is not allowed")
+        d["capabilities"]["mcp"]["colour"] = "red"
+        self.one(d, "capabilities.mcp.colour: additional property is not allowed")
 
-    def test_a_bad_provider_name(self):
-        d = descriptor()
-        d["provider"] = "Claude_X"
-        self.one(d, "provider: 'Claude_X' does not match")
-
-    def test_a_name_that_differs_from_the_file(self):
-        d = descriptor()
-        d["provider"] = "other"
-        self.one(d, "provider 'other' differs from the file name 'claude'")
-
-    def test_a_missing_tier(self):
-        d = descriptor()
-        del d["tier_detail"]["deep"]
-        self.one(d, "tier_detail: missing tier 'deep'")
-
-    def test_a_bad_date(self):
-        d = descriptor()
-        d["tier_detail"]["fast"]["verified_on"] = "31/10/2026"
-        self.one(d, "tier_detail.fast.verified_on: '31/10/2026' is not a date")
-        d["tier_detail"]["fast"]["verified_on"] = "2026-02-30"
-        self.one(d, "tier_detail.fast.verified_on: '2026-02-30' is not a date")
-
-    def test_a_bad_capability_value(self):
-        d = descriptor()
-        d["capabilities"]["skills"]["local"]["value"] = "maybe"
-        self.one(d, "capabilities.skills.local.value: 'maybe' is not one of yes, partial, no")
-
-    def test_a_capability_for_a_surface_the_provider_does_not_list(self):
-        d = descriptor()
-        d["surfaces"] = ["local"]
-        self.one(d, "capabilities.skills.cloud: the provider does not list the surface 'cloud'")
-
-    def test_an_unknown_capability(self):
-        d = descriptor()
-        d["capabilities"]["teleport"] = d["capabilities"]["mcp"]
-        self.one(d, "capabilities.teleport: unknown capability")
-
-    def test_a_model_that_does_not_match_the_pattern(self):
-        d = descriptor()
-        d["tier_detail"]["fast"]["model"] = "gpt-9"
-        d["tiers"]["fast"] = "gpt-9"
-        f = self.one(d, "tier_detail.fast.model: 'gpt-9' does not match model_pattern")
-        self.assertEqual(len(f), 1)
-
-    def test_a_model_pattern_that_is_not_a_regular_expression(self):
-        d = descriptor()
-        d["model_pattern"] = "(["
-        self.one(d, "model_pattern: not a regular expression")
-
-    def test_tiers_that_disagree_with_tier_detail(self):
-        d = descriptor()
-        d["tiers"]["balanced"] = "claude-sonnet-4-4"
-        self.one(d, "tiers.balanced: 'claude-sonnet-4-4' differs from tier_detail.balanced.model 'claude-sonnet-5-5'")
-
-    def test_aliases_that_disagree_with_tier_detail(self):
-        d = descriptor()
-        d["aliases"]["deep"] = "big"
-        self.one(d, "aliases.deep: 'big' differs from tier_detail.deep.alias 'opus'")
-
-    def test_no_surface_at_all(self):
-        d = descriptor()
-        d["surfaces"] = []
-        self.one(d, "surfaces: needs at least 1 item")
-
-    def test_an_unknown_surface(self):
-        d = descriptor()
-        d["surfaces"] = ["local", "moon"]
-        self.one(d, "surfaces[1]: 'moon' is not one of local, cloud")
+    def test_a_bad_date_in_a_catalog_tier(self):
+        c = copy.deepcopy(CATALOG)
+        c["tiers"]["fast"]["verified_on"] = "31/10/2026"
+        self.one(c, "tiers.fast.verified_on: '31/10/2026' is not a date", "claude")
+        c["tiers"]["fast"]["verified_on"] = "2026-02-30"
+        self.one(c, "tiers.fast.verified_on: '2026-02-30' is not a date", "claude")
 
     def test_wrong_type(self):
         d = descriptor()
         d["adapter"] = 3
         self.one(d, "adapter: 3 is not of type string, null")
 
-    def test_an_adapter_outside_the_providers_directory(self):
-        for ad in ("/usr/bin/adapter", "lib/providers/../guard.py", "bin/qargi", "adapter"):
+    def test_a_schema_version_other_than_2(self):
+        for version, text in ((3, "schema: 3 is not the supported version 2"), (1, "schema: 1 is not the supported version 2")):
             d = descriptor()
-            d["adapter"] = ad
-            self.one(d, "adapter: '%s' is not a path under lib/providers/" % ad)
+            d["schema"] = version
+            self.one(d, text)
 
-    def test_the_adapter_may_be_null_or_a_path_under_lib_providers(self):
-        d = descriptor()
-        self.assertEqual(d["adapter"], "lib/providers/claude/adapter")
-        self.assertEqual(fails(d), [])
-        d["adapter"] = None
-        self.assertEqual(fails(d), [])
-
-    def test_a_missing_required_key(self):
-        d = descriptor()
-        del d["effort"]
-        self.one(d, "missing required property 'effort'")
-
-    def test_a_schema_version_other_than_1_or_2(self):
-        d = descriptor()
-        d["schema"] = 3
-        self.one(d, "schema: 3 is not the supported version 1")
-
-    def test_a_missing_capability_cell_for_a_listed_surface_warns(self):
-        d = descriptor()
-        del d["capabilities"]["mcp"]["cloud"]
-        self.assertEqual(fails(d), [])
-        self.assertTrue(any("capabilities.mcp.cloud: no entry for the listed surface; it counts as not supported" in m for m in warns(d)))
-
-    def test_every_violation_is_reported_not_only_the_first(self):
-        d = descriptor()
-        d["extra"] = 1
-        d["tiers"]["fast"] = "x"
-        self.assertGreaterEqual(len(fails(d)), 2)
+    def test_a_document_that_is_not_an_object_is_a_failure_not_a_crash(self):
+        self.assertEqual(P.validate2([], "x"), [("fail", "the document is not a JSON object")])
+        self.assertEqual(P.validate2(None, "x"), [("fail", "the document is not a JSON object")])
 
 
 class Cap(Tree):
-    def test_load_reads_a_descriptor_by_name(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.load("claude", self.root)["provider"], "claude")
+    def setUp(self):
+        super().setUp()
+        self.put_claude()
 
-    def test_load_of_an_unknown_name_raises(self):
-        for n in ("nope", "../claude", "schema", "Claude", ""):
+    def test_definition_reads_a_runtime_by_name(self):
+        self.assertEqual(P.definition("claude-code", root=self.root)["provider"], "claude-code")
+        self.assertEqual(P.definition("claude-platform", root=self.root)["surface"], "cloud")
+
+    def test_definition_of_an_unknown_name_raises(self):
+        for n in ("nope", "../claude-code", "schema-2", "adapter-schema", "Claude-Code", "claude", ""):
             with self.assertRaises(P.ProviderError, msg=n):
-                P.load(n, self.root)
+                P.definition(n, root=self.root)
 
-    def test_load_of_broken_json_raises(self):
+    def test_definition_of_broken_json_raises(self):
         with open(os.path.join(self.root, "bad.json"), "w") as f:
             f.write("{")
         with self.assertRaises(P.ProviderError):
-            P.load("bad", self.root)
+            P.definition("bad", root=self.root)
+
+    def test_a_definition_that_is_not_schema_2_is_not_read(self):
+        self.put("old", dict(CODE, provider="old", schema=1))
+        with self.assertRaises(P.ProviderError) as cm:
+            P.definition("old", root=self.root)
+        self.assertIn("is not a definition of schema 2", str(cm.exception))
+        self.assertTrue(any("schema: 1 is not the supported version 2" in m for lvl, m in P.findings_of("old", root=self.root)[2]))
 
     def test_a_verified_yes_is_yes(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.cap("claude", "local", "per_dispatch_model_override", self.root), "yes")
-        self.assertEqual(P.effective("claude", "local", "per_dispatch_model_override", self.root), "yes")
+        self.assertEqual(P.cap("claude-code", "local", "per_dispatch_model_override", self.root), "yes")
+        self.assertEqual(P.effective("claude-code", "local", "per_dispatch_model_override", self.root), "yes")
 
     def test_a_verified_partial_is_partial(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.cap("claude", "local", "read_only_barrier", self.root), "partial")
-        self.assertEqual(P.effective("claude", "local", "read_only_barrier", self.root), "partial")
+        self.assertEqual(P.cap("claude-code", "local", "read_only_barrier", self.root), "partial")
+        self.assertEqual(P.effective("claude-code", "local", "read_only_barrier", self.root), "partial")
 
     def test_an_unverified_yes_counts_as_no(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.cap("claude", "local", "per_dispatch_effort_override", self.root), "unverified")
-        self.assertEqual(P.effective("claude", "local", "per_dispatch_effort_override", self.root), "no")
+        self.assertEqual(P.cap("claude-code", "local", "per_dispatch_effort_override", self.root), "unverified")
+        self.assertEqual(P.effective("claude-code", "local", "per_dispatch_effort_override", self.root), "no")
 
     def test_an_unverified_partial_counts_as_no(self):
         d = descriptor()
-        d["capabilities"]["read_only_barrier"]["local"]["verified_on"] = None
-        self.put("claude", d)
-        self.assertEqual(P.cap("claude", "local", "read_only_barrier", self.root), "unverified")
-        self.assertEqual(P.effective("claude", "local", "read_only_barrier", self.root), "no")
+        d["capabilities"]["read_only_barrier"]["verified_on"] = None
+        self.put("claude-code", d)
+        self.assertEqual(P.cap("claude-code", "local", "read_only_barrier", self.root), "unverified")
+        self.assertEqual(P.effective("claude-code", "local", "read_only_barrier", self.root), "no")
 
     def test_a_no_is_no_even_without_a_date(self):
-        d = descriptor()
-        d["capabilities"]["read_only_barrier"]["cloud"]["verified_on"] = None
-        self.put("claude", d)
-        self.assertEqual(P.cap("claude", "cloud", "read_only_barrier", self.root), "no")
-        self.assertEqual(P.effective("claude", "cloud", "read_only_barrier", self.root), "no")
+        d = copy.deepcopy(PLATFORM)
+        d["capabilities"]["read_only_barrier"]["verified_on"] = None
+        self.put("claude-platform", d)
+        self.assertEqual(P.cap("claude-platform", "cloud", "read_only_barrier", self.root), "no")
+        self.assertEqual(P.effective("claude-platform", "cloud", "read_only_barrier", self.root), "no")
 
-    def test_a_surface_the_provider_does_not_list_is_no(self):
-        d = descriptor()
-        d["surfaces"] = ["local"]
-        del d["capabilities"]["skills"]["cloud"]
-        self.put("claude", d)
-        self.assertEqual(P.effective("claude", "cloud", "skills", self.root), "no")
+    def test_a_surface_the_runtime_does_not_serve_is_no(self):
+        self.assertEqual(P.effective("claude-code", "cloud", "skills", self.root), "no")
+        self.assertEqual(P.effective("claude-platform", "local", "skills", self.root), "no")
 
     def test_an_unknown_capability_or_surface_is_an_error(self):
-        self.put("claude", CLAUDE)
         with self.assertRaises(P.ProviderError):
-            P.cap("claude", "local", "teleport", self.root)
+            P.cap("claude-code", "local", "teleport", self.root)
         with self.assertRaises(P.ProviderError):
-            P.cap("claude", "moon", "skills", self.root)
+            P.cap("claude-code", "moon", "skills", self.root)
 
     def test_the_default_root_is_beside_provider_py(self):
-        self.assertEqual(P.cap("claude", "local", "skills"), "yes")
+        self.assertEqual(P.cap("claude-code", "local", "skills"), "yes")
 
 
 class Barrier(Tree):
-    """require_barrier: a read-only role on a surface, from the descriptor and the project's recorded acceptance."""
+    """require_barrier: a read-only role on a surface, from the definition and the project's recorded acceptance."""
 
     def setUp(self):
         super().setUp()
         self.conf = os.path.join(self.tmp, "conf")
         os.makedirs(os.path.join(self.conf, "projects"))
-        self.put("claude", CLAUDE)
-        d = descriptor()
-        d["provider"] = "bare"
-        for s in ("local", "cloud"):
-            d["capabilities"]["read_only_barrier"][s] = {"value": "no", "verified_on": "2026-10-31", "note": "nothing stops a write"}
-        self.put("bare", d)
+        self.put_claude()
+        for name, base, surface in (("bare-local", CODE, "local"), ("bare-cloud", PLATFORM, "cloud")):
+            d = copy.deepcopy(base)
+            d.update(provider=name, family=None)
+            d["capabilities"]["read_only_barrier"] = {"value": "no", "verified_on": "2026-10-31", "note": "nothing stops a write"}
+            self.put(name, d)
 
     def answers(self, project, models):
         with open(os.path.join(self.conf, "projects", project + ".json"), "w") as f:
@@ -289,22 +225,22 @@ class Barrier(Tree):
     ACC = {"by": "me", "at": "2026-10-31T12:00:00Z", "reason": "because I said so"}
 
     def test_a_partial_barrier_passes_with_its_note(self):
-        state, text = self.rb("claude", "local")
+        state, text = self.rb("claude-code", "local")
         self.assertEqual(state, "partial")
         self.assertIn("PreToolUse hook", text)
 
     def test_no_barrier_is_refused_with_the_command(self):
-        state, text = self.rb("claude", "cloud", "alpha")
+        state, text = self.rb("claude-platform", "cloud", "alpha")
         self.assertEqual(state, "refused")
-        self.assertIn("qargi provider accept claude --surface cloud --no-barrier --project alpha --asked", text)
+        self.assertIn("qargi provider accept claude-platform --surface cloud --no-barrier --project alpha --asked", text)
 
     def test_the_command_names_a_placeholder_without_a_project(self):
-        self.assertIn("--project PROJECT", self.rb("bare", "local")[1])
+        self.assertIn("--project PROJECT", self.rb("bare-local", "local")[1])
 
     def test_an_unverified_partial_counts_as_no(self):
         d = descriptor()
         d["provider"] = "unver"
-        d["capabilities"]["read_only_barrier"]["local"] = {"value": "partial", "verified_on": None, "note": "maybe"}
+        d["capabilities"]["read_only_barrier"] = {"value": "partial", "verified_on": None, "note": "maybe"}
         self.put("unver", d)
         state, text = self.rb("unver", "local")
         self.assertEqual(state, "refused")
@@ -312,10 +248,10 @@ class Barrier(Tree):
 
     def test_a_recorded_acceptance_allows_it_for_that_surface_only(self):
         self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
-        self.assertEqual(self.rb("claude", "cloud", "alpha")[0], "accepted")
-        self.assertEqual(self.rb("bare", "cloud", "alpha")[0], "accepted")
-        self.assertEqual(self.rb("bare", "local", "alpha")[0], "refused")
-        self.assertEqual(self.rb("claude", "cloud", "beta")[0], "refused")
+        self.assertEqual(self.rb("claude-platform", "cloud", "alpha")[0], "accepted")
+        self.assertEqual(self.rb("bare-cloud", "cloud", "alpha")[0], "accepted")
+        self.assertEqual(self.rb("bare-local", "local", "alpha")[0], "refused")
+        self.assertEqual(self.rb("claude-platform", "cloud", "beta")[0], "refused")
 
     def test_a_malformed_acceptance_is_none(self):
         for rec in ({"by": "me"}, "yes", {**self.ACC, "extra": 1}, {**self.ACC, "reason": ""}):
@@ -327,9 +263,9 @@ class Barrier(Tree):
     def test_a_verified_yes_passes_silently(self):
         d = descriptor()
         d["provider"] = "solid"
-        d["capabilities"]["read_only_barrier"]["cloud"] = {"value": "yes", "verified_on": "2026-10-31", "note": "enforced"}
+        d["capabilities"]["read_only_barrier"] = {"value": "yes", "verified_on": "2026-10-31", "note": "enforced"}
         self.put("solid", d)
-        self.assertEqual(self.rb("solid", "cloud"), ("yes", ""))
+        self.assertEqual(self.rb("solid", "local"), ("yes", ""))
 
     def test_an_unknown_provider_raises(self):
         with self.assertRaises(P.ProviderError):
@@ -342,19 +278,19 @@ class Barrier(Tree):
         def rb(*a):
             r = subprocess.run([sys.executable, "-I", os.path.join(LIB, "provider.py"), "require-barrier"] + list(a), capture_output=True, text=True, env=env)
             return r.returncode, r.stderr
-        rc, err = rb("claude", "cloud", "--project", "alpha")
+        rc, err = rb("claude-platform", "cloud", "--project", "alpha")
         self.assertEqual(rc, 2)
-        self.assertIn("qargi provider accept claude --surface cloud --no-barrier --project alpha", err)
-        rc, err = rb("claude", "local")
+        self.assertIn("qargi provider accept claude-platform --surface cloud --no-barrier --project alpha", err)
+        rc, err = rb("claude-code", "local")
         self.assertEqual((rc, "partial read-only barrier" in err), (0, True))
         self.answers("alpha", {"accept_no_barrier": {"cloud": self.ACC}})
-        self.assertEqual(rb("claude", "cloud", "--project", "alpha"), (0, ""))
+        self.assertEqual(rb("claude-platform", "cloud", "--project", "alpha"), (0, ""))
         self.assertEqual(rb("nope", "cloud")[0], 1)
-        self.assertEqual(rb("claude", "moon")[0], 1)
+        self.assertEqual(rb("claude-code", "moon")[0], 1)
 
 
 class CliBase(Tree):
-    """The verbs, run from a copy of provider.py with its own providers/ (so a changed descriptor never touches lib/)."""
+    """The verbs, run from a copy of provider.py with its own providers/ (so a changed definition never touches lib/)."""
 
     def setUp(self):
         super().setUp()
@@ -363,16 +299,17 @@ class CliBase(Tree):
         shutil.copy(os.path.join(LIB, "provider.py"), self.copy)
         os.rename(self.root, os.path.join(self.copy, "providers"))
         self.root = os.path.join(self.copy, "providers")
-        shutil.copytree(os.path.join(LIB, "providers", "claude"), os.path.join(self.root, "claude"), ignore=shutil.ignore_patterns("__pycache__"))
-        self.put("claude", CLAUDE)
+        self.put_claude(adapters=True)
 
     def run_cli(self, *args):
         r = subprocess.run([sys.executable, "-I", os.path.join(self.copy, "provider.py")] + list(args), capture_output=True, text=True)
         return r.returncode, r.stdout, r.stderr
 
-    def other(self, mutate, name="other"):
-        d = descriptor()
-        d["provider"] = name
+    def other(self, mutate, name="other", base=CODE):
+        """A copy of a shipped definition under another name, in no family and with no adapter (its directory is not copied)."""
+        d = copy.deepcopy(base)
+        d.update(provider=name, family=None, adapter=None)
+        del d["adapter_verbs"]
         mutate(d)
         self.put(name, d)
 
@@ -383,52 +320,48 @@ class Cli(CliBase):
         rc, out, _ = self.run_cli("list")
         self.assertEqual(rc, 0)
         lines = out.strip().splitlines()
-        self.assertEqual(len(lines), 1)
-        n = len(warns(CLAUDE))
-        self.assertEqual(lines[0].split(), ["claude", "local,cloud", "%d" % n, "warnings"])
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0].split(), ["claude-code", "local", "%d" % len(warns(CODE, "claude-code")), "warnings"])
+        self.assertEqual(lines[1].split(), ["claude-platform", "cloud", "clean"])
 
-    def test_list_says_clean_for_a_clean_descriptor_and_counts_failures(self):
-        def verify(d):
-            for t in d["tier_detail"].values():
-                t["verified_on"] = "2026-10-31"
-            for cap in d["capabilities"].values():
-                for c in cap.values():
-                    c["verified_on"] = "2026-10-31"
-        self.other(verify, "tidy")
-        self.other(lambda d: d.update(extra=1, surfaces=["local"]), "broken")
+    def test_list_says_clean_for_a_clean_definition_and_counts_failures(self):
+        self.other(lambda d: d.update(verified(d)), "tidy")
+        self.other(lambda d: d.update(extra=1), "broken")
         rc, out, _ = self.run_cli("list")
         rows = {ln.split()[0]: ln.split()[1:] for ln in out.strip().splitlines()}
         self.assertEqual(rc, 0)
-        self.assertEqual(list(rows), ["broken", "claude", "tidy"])
-        self.assertEqual(rows["tidy"], ["local,cloud", "clean"])
+        self.assertEqual(list(rows), ["broken", "claude-code", "claude-platform", "tidy"])
+        self.assertEqual(rows["tidy"], ["local", "clean"])
         self.assertEqual(rows["broken"][0], "local")
-        self.assertEqual(rows["broken"][-1], "failures")
+        self.assertEqual(rows["broken"][-1], "failure")
 
-    def test_list_does_not_show_schema_json(self):
+    def test_list_does_not_show_the_schema_files(self):
         self.assertNotIn("schema", self.run_cli("list")[1])
 
     def test_list_with_an_argument_is_a_usage_error(self):
         self.assertEqual(self.run_cli("list", "x")[0], 2)
 
-    def test_show_prints_tiers_effort_and_the_matrix(self):
-        rc, out, _ = self.run_cli("show", "claude")
+    def test_show_prints_tiers_effort_and_the_capabilities(self):
+        rc, out, _ = self.run_cli("show", "claude-code")
         self.assertEqual(rc, 0)
         self.assertRegex(out, r"fast\s+claude-haiku-5-5\s+alias haiku\s+verified: no")
         self.assertRegex(out, r"frontier\s+claude-fable-5-1\s+alias fable")
         self.assertRegex(out, r"xhigh\s+xhigh")
-        self.assertIn("per_dispatch_model_override", out)
-        self.assertRegex(out, r"local\s+yes\s+verified 2026-10-31\s+Agent tool model parameter overrides the definition")
-        self.assertRegex(out, r"cloud\s+yes\s+verified 2026-11-01\s+a session created with a model override")
-        self.assertRegex(out, r"read_only_barrier\s*\n\s+local\s+partial")
-        self.assertRegex(out, r"cloud\s+no\s+verified 2026-10-31")
-
-    def test_show_json_is_the_descriptor(self):
-        rc, out, _ = self.run_cli("show", "claude", "--json")
+        self.assertRegex(out, r"per_dispatch_model_override\s+yes\s+verified 2026-10-31\s+Agent tool model parameter overrides the definition")
+        self.assertRegex(out, r"read_only_barrier\s+partial\s+verified 2026-10-31")
+        rc, out, _ = self.run_cli("show", "claude-platform")
         self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(out), CLAUDE)
+        self.assertRegex(out, r"per_dispatch_model_override\s+yes\s+verified 2026-11-01\s+a session created with a model override")
+        self.assertRegex(out, r"read_only_barrier\s+no\s+-\s+cloud review agents")
+
+    def test_show_json_is_the_definition(self):
+        for name, d in (("claude-code", CODE), ("claude-platform", PLATFORM)):
+            rc, out, _ = self.run_cli("show", name, "--json")
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out), d)
 
     def test_show_an_unknown_name_exits_1(self):
-        for a in (["show", "nope"], ["check", "nope"], ["show", "../claude"], ["check", "schema"]):
+        for a in (["show", "nope"], ["check", "nope"], ["show", "../claude-code"], ["check", "schema-2"], ["show", "claude"]):
             rc, out, err = self.run_cli(*a)
             self.assertEqual(rc, 1, a)
             self.assertIn("unknown provider", err)
@@ -440,78 +373,60 @@ class Cli(CliBase):
         self.assertEqual(self.run_cli()[0], 2)
         self.assertEqual(self.run_cli("nonsense")[0], 2)
 
-    def test_check_of_a_valid_descriptor_exits_0_and_warns(self):
-        rc, out, _ = self.run_cli("check", "claude")
+    def test_check_of_a_valid_definition_exits_0_and_warns(self):
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertEqual(rc, 0)
-        self.assertEqual(out.count("warn: "), len(warns(CLAUDE)))
+        self.assertEqual(out.count("warn: "), len(warns(CODE, "claude-code")))
         self.assertIn("0 failures", out)
-        self.assertIn("warn: tier_detail.fast.verified_on: not verified", out)
+        self.assertIn("warn: capabilities.mcp.verified_on: not verified", out)
 
-    def test_check_says_what_degrades_on_each_surface(self):
-        out = self.run_cli("check", "claude")[1]
+    def test_check_says_what_degrades_on_the_surface(self):
+        out = self.run_cli("check", "claude-code")[1]
         self.assertRegex(out, r"local: per_dispatch_effort_override\s+unverified \(counts as no\)")
-        self.assertNotRegex(out, r"cloud: per_dispatch_model_override")
         self.assertRegex(out, r"local: session_budget_ceiling\s+no")
-        self.assertRegex(out, r"cloud: read_only_barrier\s+no")
         self.assertNotRegex(out, r"local: per_dispatch_model_override")
         self.assertNotRegex(out, r"local: read_only_barrier")
-
-    def test_a_cloud_read_only_barrier_of_no_means_review_cannot_be_served_there(self):
-        out = self.run_cli("check", "claude")[1]
-        self.assertIn("the review role cannot be served on cloud", out)
-        self.assertNotIn("cannot be served on local", out)
-
-    def test_an_unverified_read_only_barrier_cannot_serve_review_either(self):
-        def mutate(d):
-            d["capabilities"]["read_only_barrier"]["cloud"].update(value="yes", verified_on=None)
-        self.other(mutate)
-        out = self.run_cli("check", "other")[1]
-        self.assertRegex(out, r"cloud: read_only_barrier\s+unverified \(counts as no\)")
-        self.assertIn("the review role cannot be served on cloud", out)
-
-    def test_a_verified_read_only_barrier_on_both_surfaces_serves_review(self):
-        def mutate(d):
-            d["capabilities"]["read_only_barrier"]["cloud"].update(value="yes")
-        self.other(mutate)
-        out = self.run_cli("check", "other")[1]
-        self.assertNotIn("cannot be served", out)
-
-    def test_both_surfaces_without_a_barrier_print_both_lines(self):
-        def mutate(d):
-            d["capabilities"]["read_only_barrier"]["local"].update(value="no")
-        self.other(mutate)
-        out = self.run_cli("check", "other")[1]
-        self.assertIn("the review role cannot be served on local", out)
-        self.assertIn("the review role cannot be served on cloud", out)
-
-    def test_a_provider_that_lists_only_local_is_not_judged_on_cloud(self):
-        def mutate(d):
-            d["surfaces"] = ["local"]
-            for cap in d["capabilities"].values():
-                cap.pop("cloud", None)
-        self.other(mutate)
-        rc, out, _ = self.run_cli("check", "other")
-        self.assertEqual(rc, 0)
         self.assertNotIn("cloud", out)
 
+    def test_a_cloud_read_only_barrier_of_no_means_review_cannot_be_served_there(self):
+        out = self.run_cli("check", "claude-platform")[1]
+        self.assertRegex(out, r"cloud: read_only_barrier\s+no")
+        self.assertNotRegex(out, r"cloud: per_dispatch_model_override")
+        self.assertIn("the review role cannot be served on cloud", out)
+        self.assertNotIn("cannot be served on local", self.run_cli("check", "claude-code")[1])
+
+    def test_an_unverified_read_only_barrier_cannot_serve_review_either(self):
+        self.other(lambda d: d["capabilities"]["read_only_barrier"].update(value="yes", verified_on=None))
+        out = self.run_cli("check", "other")[1]
+        self.assertRegex(out, r"local: read_only_barrier\s+unverified \(counts as no\)")
+        self.assertIn("the review role cannot be served on local", out)
+
+    def test_a_verified_read_only_barrier_serves_review(self):
+        self.other(lambda d: d["capabilities"]["read_only_barrier"].update(value="yes"))
+        self.assertNotIn("cannot be served", self.run_cli("check", "other")[1])
+
+    def test_a_barrier_of_no_on_local_prints_the_line(self):
+        self.other(lambda d: d["capabilities"]["read_only_barrier"].update(value="no"))
+        self.assertIn("the review role cannot be served on local", self.run_cli("check", "other")[1])
+
     def test_check_reports_that_the_adapter_exists_and_is_executable(self):
-        rc, out, _ = self.run_cli("check", "claude")
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertEqual(rc, 0)
-        self.assertIn("adapter: lib/providers/claude/adapter (exists, executable)", out)
+        self.assertIn("adapter: adapter (exists, executable)", out)
 
     def test_check_fails_for_an_adapter_that_is_missing_or_not_executable(self):
-        adapter = os.path.join(self.root, "claude", "adapter")
+        adapter = os.path.join(self.root, "claude-code", "adapter")
         os.chmod(adapter, 0o644)
-        rc, out, _ = self.run_cli("check", "claude")
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertEqual(rc, 1)
-        self.assertIn("fail: adapter: lib/providers/claude/adapter is not executable", out)
+        self.assertIn("fail: adapter: adapter is not executable", out)
         os.remove(adapter)
-        rc, out, _ = self.run_cli("check", "claude")
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertEqual(rc, 1)
-        self.assertIn("fail: adapter: lib/providers/claude/adapter does not exist", out)
+        self.assertIn("fail: adapter: adapter does not exist", out)
 
     def test_check_says_so_for_a_provider_with_no_adapter(self):
-        self.other(lambda d: d.update(adapter=None))
+        self.other(lambda d: None)
         rc, out, _ = self.run_cli("check", "other")
         self.assertEqual(rc, 0)
         self.assertIn("adapter: none", out)
@@ -520,14 +435,13 @@ class Cli(CliBase):
         cases = {
             "additional": lambda d: d.update(extra=1),
             "name": lambda d: d.update(provider="elsewhere"),
-            "tier": lambda d: d["tier_detail"].pop("deep"),
-            "capability": lambda d: d["capabilities"].update(teleport={}),
-            "pattern": lambda d: d.update(model_pattern="^zzz"),
-            "tiers": lambda d: d["tiers"].update(fast="claude-other"),
+            "capability": lambda d: d["capabilities"].update(teleport=d["capabilities"]["mcp"]),
+            "catalog": lambda d: d["models"].update(catalog="gone"),
+            "schema": lambda d: d.update(schema=1),
         }
         for label, mutate in cases.items():
             with self.subTest(label):
-                self.other(mutate, "other")
+                self.other(mutate)
                 rc, out, _ = self.run_cli("check", "other")
                 self.assertEqual(rc, 1)
                 self.assertRegex(out, r"fail: ")
@@ -549,112 +463,90 @@ class Cli(CliBase):
             return r.returncode, r.stdout, r.stderr
         rc, out, _ = q("list")
         self.assertEqual(rc, 0)
-        self.assertRegex(out, r"^claude\s+local,cloud\s+\d+ warnings")
-        rc, out, _ = q("show", "claude")
+        self.assertRegex(out, r"^claude-code\s+local\s+\d+ warnings")
+        self.assertRegex(out, r"claude-platform\s+cloud\s+clean")
+        rc, out, _ = q("show", "claude-code")
         self.assertEqual(rc, 0)
         self.assertIn("claude-haiku-5-5", out)
-        rc, out, _ = q("check", "claude")
+        rc, out, _ = q("check", "claude-platform")
         self.assertEqual(rc, 0)
         self.assertIn("the review role cannot be served on cloud", out)
         self.assertEqual(q("check", "nope")[0], 1)
-        self.assertEqual(json.loads(q("show", "claude", "--json")[1]), CLAUDE)
+        self.assertEqual(json.loads(q("show", "claude-code", "--json")[1]), CODE)
 
 
 class Layout(Tree):
-    """The optional layout object: where a provider keeps skills, agents, settings and memory, and how a session is launched."""
+    """Where a runtime keeps skills, agents, settings and memory, and how a session is launched: read from its resources and session."""
 
-    def with_layout(self, **over):
+    def setUp(self):
+        super().setUp()
+        self.put_claude()
+
+    def without(self, *path):
+        """The claude-code definition with the key at path removed."""
         d = descriptor()
-        d.setdefault("layout", {}).update(over)
+        node = d
+        for k in path[:-1]:
+            node = node[k]
+        del node[path[-1]]
         return d
 
-    def test_the_shipped_claude_layout_is_valid_and_complete(self):
-        lay = descriptor()["layout"]
-        self.assertEqual(fails(descriptor()), [])
+    def test_the_shipped_claude_code_layout_is_complete(self):
+        lay = P.layout("claude-code", root=self.root, home="/h")
         self.assertEqual(lay["project_skills_dir"], ".claude/skills")
-        self.assertEqual(lay["user_skills_dir"], "~/.claude/skills")
+        self.assertEqual(lay["user_skills_dir"], "/h/.claude/skills")
         self.assertEqual([s["scope"] for s in lay["settings_files"]], ["user", "project", "project-local"])
         self.assertEqual(lay["exclusion"], {"file_key": "skillOverrides", "off_value": "off"})
         self.assertEqual(lay["checkout_key"], "nonalnum-dash")
         self.assertEqual(lay["render_target"], "claude-code")
         self.assertIn("{render}", lay["session_launch"])
 
-    def test_a_descriptor_without_a_layout_is_valid(self):
+    def test_a_runtime_without_resources_or_session_has_every_field_null(self):
         d = descriptor()
-        del d["layout"]
-        self.assertEqual(fails(d), [])
-
-    def test_unknown_layout_keys_are_rejected(self):
-        self.assertTrue(any("layout.hooks_dir" in m for m in fails(self.with_layout(hooks_dir=".x"))))
-        d = self.with_layout()
-        d["layout"]["settings_files"].append({"scope": "user", "path": "~/x", "extra": 1})
-        self.assertTrue(any("layout.settings_files[3].extra" in m for m in fails(d)))
-        self.assertTrue(any("layout.exclusion.mode" in m for m in fails(self.with_layout(exclusion={"file_key": "k", "off_value": "off", "mode": 1}))))
-
-    def test_layout_field_types_and_rules_are_checked(self):
-        self.assertTrue(fails(self.with_layout(project_skills_dir=3)))
-        self.assertTrue(fails(self.with_layout(settings_files=[{"scope": "world", "path": "x"}])))
-        self.assertTrue(fails(self.with_layout(checkout_key="rot13")))
-        self.assertTrue(any("project_skills_dir" in m for m in fails(self.with_layout(project_skills_dir="/abs/skills"))))
-        self.assertTrue(any("project_skills_dir" in m for m in fails(self.with_layout(project_skills_dir="../up"))))
-        self.assertTrue(any("user_skills_dir" in m for m in fails(self.with_layout(user_skills_dir="relative/skills"))))
-        self.assertTrue(any("session_launch" in m for m in fails(self.with_layout(session_launch="agent run"))))
-        self.assertTrue(any("memory_dir" in m for m in fails(self.with_layout(memory_dir="~/m/{checkout_key}", checkout_key=None))))
-        self.assertTrue(any("exclusion" in m for m in fails(self.with_layout(settings_files=None))))
-
-    def test_null_fields_are_valid(self):
-        nulls = {k: None for k in P.LAYOUT_FIELDS}
-        self.assertEqual(fails(self.with_layout(**nulls)), [])
+        d.update(provider="bare", resources={})
+        del d["session"]
+        self.put("bare", d)
+        lay = P.layout("bare", root=self.root)
+        self.assertEqual(set(lay), set(P.LAYOUT_FIELDS))
+        self.assertTrue(all(v is None for v in lay.values()))
 
     def test_the_accessor_expands_the_home_and_leaves_project_paths_relative(self):
-        self.put("claude", CLAUDE)
-        lay = P.layout("claude", root=self.root, home="/h/me")
+        lay = P.layout("claude-code", root=self.root, home="/h/me")
         self.assertEqual(lay["user_skills_dir"], "/h/me/.claude/skills")
         self.assertEqual(lay["user_agents_dir"], "/h/me/.claude/agents")
         self.assertEqual(lay["project_skills_dir"], ".claude/skills")
         self.assertEqual([s["path"] for s in lay["settings_files"]], ["/h/me/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"])
         self.assertEqual(lay["memory_dir"], "/h/me/.claude/projects/{checkout_key}/memory")
-        self.assertEqual(CLAUDE["layout"]["user_skills_dir"], "~/.claude/skills")        # the descriptor itself is not changed
+        self.assertEqual(CODE["resources"]["skills"]["user_dir"], "~/.claude/skills")        # the definition itself is not changed
 
     def test_the_accessor_defaults_the_home_to_the_environment(self):
-        self.put("claude", CLAUDE)
         old = os.environ.get("HOME")
         os.environ["HOME"] = "/env/home"
         try:
-            self.assertEqual(P.layout("claude", root=self.root)["user_skills_dir"], "/env/home/.claude/skills")
+            self.assertEqual(P.layout("claude-code", root=self.root)["user_skills_dir"], "/env/home/.claude/skills")
         finally:
             os.environ["HOME"] = old
 
-    def test_a_provider_without_a_layout_has_every_field_null(self):
-        d = descriptor()
-        del d["layout"]
-        self.put("bare", dict(d, provider="bare"))
-        lay = P.layout("bare", root=self.root)
-        self.assertEqual(set(lay), set(P.LAYOUT_FIELDS))
-        self.assertTrue(all(v is None for v in lay.values()))
-
     def test_require_returns_a_value_and_refuses_a_null_field_with_the_degrade_text(self):
-        d = self.with_layout(project_skills_dir=None)
-        self.put("claude", d)
-        self.assertEqual(P.require("claude", "user_skills_dir", "x", root=self.root, home="/h"), "/h/.claude/skills")
+        self.put("claude-code", self.without("resources", "skills", "project_dir"))
+        self.assertEqual(P.require("claude-code", "user_skills_dir", "x", root=self.root, home="/h"), "/h/.claude/skills")
         with self.assertRaises(P.Unsupported) as cm:
-            P.require("claude", "project_skills_dir", "link the checkout's skills directory to the render", root=self.root)
-        self.assertEqual(str(cm.exception), "provider claude has no project skills directory: link the checkout's skills directory to the render")
+            P.require("claude-code", "project_skills_dir", "link the checkout's skills directory to the render", root=self.root)
+        self.assertEqual(str(cm.exception), "provider claude-code has no project skills directory: link the checkout's skills directory to the render")
         self.assertIsInstance(cm.exception, P.ProviderError)
 
     def test_require_skills_wants_a_verified_skills_capability(self):
+        P.require_skills("claude-code", "audit", root=self.root)
         d = descriptor()
-        self.put("claude", d)
-        P.require_skills("claude", "audit", root=self.root)
-        d["capabilities"]["skills"]["local"]["verified_on"] = None
-        self.put("claude", d)
+        d["capabilities"]["skills"]["verified_on"] = None
+        self.put("claude-code", d)
         with self.assertRaises(P.Unsupported) as cm:
-            P.require_skills("claude", "audit the skills a session loads", root=self.root)
-        self.assertEqual(str(cm.exception), "provider claude has no skills support on the local surface: audit the skills a session loads")
-        d["capabilities"]["skills"]["local"].update(value="no", verified_on="2026-10-31")
-        self.put("claude", d)
+            P.require_skills("claude-code", "audit the skills a session loads", root=self.root)
+        self.assertEqual(str(cm.exception), "provider claude-code has no skills support on the local surface: audit the skills a session loads")
+        d["capabilities"]["skills"].update(value="no", verified_on="2026-10-31")
+        self.put("claude-code", d)
         with self.assertRaises(P.Unsupported):
-            P.require_skills("claude", "x", root=self.root)
+            P.require_skills("claude-code", "x", root=self.root)
 
     def test_checkout_key_replaces_every_non_alphanumeric(self):
         self.assertEqual(P.checkout_key("nonalnum-dash", "/home/me/My Proj.x/a_b"), "-home-me-My-Proj-x-a-b")
@@ -662,25 +554,23 @@ class Layout(Tree):
             P.checkout_key("rot13", "/x")
 
     def test_memory_dir_is_the_template_with_the_key_filled_in(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.memory_dir("claude", "/home/me/p.q", root=self.root, home="/h"), "/h/.claude/projects/-home-me-p-q/memory")
-        self.put("claude", self.with_layout(memory_dir=None))
+        self.assertEqual(P.memory_dir("claude-code", "/home/me/p.q", root=self.root, home="/h"), "/h/.claude/projects/-home-me-p-q/memory")
+        self.put("claude-code", self.without("resources", "memory"))
         with self.assertRaises(P.Unsupported):
-            P.memory_dir("claude", "/x", root=self.root)
+            P.memory_dir("claude-code", "/x", root=self.root)
 
     def test_the_launch_line_keeps_an_optional_group_only_when_its_file_exists(self):
         render = os.path.join(self.tmp, "render")
         os.makedirs(render)
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.launch_line("claude", render, root=self.root), "claude --add-dir %s" % render)
+        self.assertEqual(P.launch_line("claude-code", render, root=self.root), "claude --add-dir %s" % render)
         for f in ("mcp.json", "settings.json"):
             with open(os.path.join(render, f), "w") as fh:
                 fh.write("{}")
-        self.assertEqual(P.launch_line("claude", render, root=self.root),
+        self.assertEqual(P.launch_line("claude-code", render, root=self.root),
                          "claude --add-dir %s --mcp-config %s/mcp.json --settings %s/settings.json" % (render, render, render))
-        self.put("claude", self.with_layout(session_launch=None))
+        self.put("claude-code", self.without("session", "launch"))
         with self.assertRaises(P.Unsupported):
-            P.launch_line("claude", render, root=self.root)
+            P.launch_line("claude-code", render, root=self.root)
 
     def test_project_provider_is_models_provider_and_has_no_default(self):
         self.assertEqual(P.project_provider({"models": {"provider": "other"}}, "p"), "other")
@@ -692,31 +582,31 @@ class Layout(Tree):
             self.assertIsInstance(cm.exception, P.ProviderError)
 
 
-class LayoutCli(Cli):
+class LayoutCli(CliBase):
     def test_layout_prints_json_or_one_field(self):
-        rc, out, _ = self.run_cli("layout", "claude", "--home", "/h")
+        rc, out, _ = self.run_cli("layout", "claude-code", "--home", "/h")
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["user_skills_dir"], "/h/.claude/skills")
-        rc, out, _ = self.run_cli("layout", "claude", "project_skills_dir")
+        rc, out, _ = self.run_cli("layout", "claude-code", "project_skills_dir")
         self.assertEqual((rc, out), (0, ".claude/skills\n"))
-        rc, out, _ = self.run_cli("layout", "claude", "exclusion")
+        rc, out, _ = self.run_cli("layout", "claude-code", "exclusion")
         self.assertEqual(json.loads(out), {"file_key": "skillOverrides", "off_value": "off"})
 
     def test_a_null_field_exits_3_with_the_degrade_text(self):
         d = descriptor()
-        d["layout"]["project_skills_dir"] = None
-        self.put("claude", d)
-        rc, out, err = self.run_cli("layout", "claude", "project_skills_dir", "--would", "link the skills")
+        del d["resources"]["skills"]["project_dir"]
+        self.put("claude-code", d)
+        rc, out, err = self.run_cli("layout", "claude-code", "project_skills_dir", "--would", "link the skills")
         self.assertEqual((rc, out), (3, ""))
-        self.assertEqual(err, "qargi: provider claude has no project skills directory: link the skills\n")
+        self.assertEqual(err, "qargi: provider claude-code has no project skills directory: link the skills\n")
 
     def test_check_lists_a_missing_layout_facility_among_the_degrades(self):
-        rc, out, _ = self.run_cli("check", "claude")
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertNotIn("layout:", out)
         d = descriptor()
-        d["layout"]["session_launch"] = None
-        self.put("claude", d)
-        rc, out, _ = self.run_cli("check", "claude")
+        del d["session"]["launch"]
+        self.put("claude-code", d)
+        rc, out, _ = self.run_cli("check", "claude-code")
         self.assertEqual(rc, 0)
         self.assertRegex(out, r"layout: session_launch\s+no \(")
 
@@ -734,22 +624,22 @@ class LayoutCli(Cli):
         self.assertEqual(self.run_cli("layout", "nope")[0], 1)
 
     def test_an_unknown_field_or_provider_is_not_exit_3(self):
-        self.assertEqual(self.run_cli("layout", "claude", "nope")[0], 2)
+        self.assertEqual(self.run_cli("layout", "claude-code", "nope")[0], 2)
         self.assertEqual(self.run_cli("layout", "nope")[0], 1)
 
     def test_require_skills_and_launch(self):
-        self.assertEqual(self.run_cli("require-skills", "claude")[0], 0)
-        rc, out, _ = self.run_cli("launch", "claude", self.tmp)
+        self.assertEqual(self.run_cli("require-skills", "claude-code")[0], 0)
+        rc, out, _ = self.run_cli("launch", "claude-code", self.tmp)
         self.assertEqual((rc, out), (0, "claude --add-dir %s\n" % self.tmp))
         d = descriptor()
-        d["capabilities"]["skills"]["local"]["value"] = "no"
-        self.put("claude", d)
-        rc, _, err = self.run_cli("require-skills", "claude", "--would", "audit")
+        d["capabilities"]["skills"]["value"] = "no"
+        self.put("claude-code", d)
+        rc, _, err = self.run_cli("require-skills", "claude-code", "--would", "audit")
         self.assertEqual(rc, 3)
-        self.assertIn("provider claude has no skills support on the local surface: audit", err)
+        self.assertIn("provider claude-code has no skills support on the local surface: audit", err)
 
 
-# ---- schema 2 ---------------------------------------------------------------------------------------------------------
+# ---- the schema: runtimes, catalogs, the loader --------------------------------------------------------------------------
 
 def tier(model, alias=None, verified_on=None):
     return {"model": model, "alias": alias, "verified_on": verified_on, "source": "test"}
@@ -780,7 +670,7 @@ def cell(value="yes", verified_on="2026-11-02", note="n"):
 
 
 class Schema2(unittest.TestCase):
-    """validate() of a schema 2 document: the node of schema-2.json for its kind, and the rules a schema cannot say."""
+    """validate2() of a document: the node of schema-2.json for its kind, and the rules a schema cannot say."""
 
     def one(self, d, needle, name=None):
         f = fails(d, name or d.get("provider") or d.get("family"))
@@ -788,10 +678,10 @@ class Schema2(unittest.TestCase):
         return f
 
     def test_the_smallest_runtime_is_valid_and_clean(self):
-        self.assertEqual(P.validate(runtime(), "mylocal"), [])
+        self.assertEqual(P.validate2(runtime(), "mylocal"), [])
 
     def test_a_catalog_is_valid_and_a_runtime_may_reference_it(self):
-        self.assertEqual(P.validate(catalog(), "fam"), [])
+        self.assertEqual(P.validate2(catalog(), "fam"), [])
         d = runtime("fam-cli", family="fam", models={"catalog": "fam", "use": "alias"})
         self.assertEqual(fails(d, "fam-cli"), [])
 
@@ -902,12 +792,6 @@ class Schema2(unittest.TestCase):
     def test_every_violation_is_reported_not_only_the_first(self):
         self.assertGreaterEqual(len(fails(runtime(extra=1, surface="x", family="Bad"), "mylocal")), 3)
 
-    def test_a_schema_1_document_is_still_validated_as_schema_1(self):
-        self.assertEqual(fails(descriptor()), [])
-        d = descriptor()
-        d["models"] = {}
-        self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
-
 
 class BarrierClaim(Tree):
     """A runtime that claims read_only_barrier but has no barrier (kind none, no read-only arguments in its dispatch) is a fail-open: a read-only
@@ -1016,55 +900,33 @@ class V2Tree(Tree):
 
 
 class Loader(V2Tree):
-    """The loader: shipped files and the pack library, schema 1 upgraded in memory, catalogs, the legacy view."""
+    """The loader: shipped files and the pack library, catalogs, summary."""
 
-    def test_the_shipped_claude_descriptor_loads_exactly_as_before(self):
-        self.assertEqual(P.load("claude"), CLAUDE)
-        self.assertIn("claude", P.names())
-        self.assertEqual(P.cap("claude", "local", "skills"), "yes")
-        self.assertEqual(P.origin("claude"), "shipped")
+    def test_the_shipped_runtimes_load_by_name(self):
+        self.assertEqual(P.definition("claude-code"), CODE)
+        self.assertEqual(P.definition("claude-platform"), PLATFORM)
+        self.assertEqual(P.surfaces_of("claude-code"), ["local"])
+        self.assertEqual(P.surfaces_of("claude-platform"), ["cloud"])
+        self.assertTrue({"claude-code", "claude-platform"} <= set(P.names()))
+        self.assertNotIn("claude", P.names())                                   # the family is not a runtime
+        self.assertEqual(P.cap("claude-code", "local", "skills"), "yes")
+        self.assertEqual(P.origin("claude-code"), "shipped")
 
-    def test_schema_1_is_upgraded_in_memory_one_definition_per_surface(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual(P.surfaces_of("claude", **self.kw()), ["local", "cloud"])
-        loc = P.definition("claude", "local", **self.kw())
-        cld = P.definition("claude", "cloud", **self.kw())
-        self.assertEqual((loc["schema"], loc["kind"], loc["provider"], loc["surface"], loc["family"]), (2, "provider", "claude", "local", None))
-        self.assertEqual(cld["surface"], "cloud")
-        self.assertEqual(loc["models"]["pattern"], CLAUDE["model_pattern"])
-        self.assertEqual(loc["models"]["tiers"], CLAUDE["tier_detail"])
-        self.assertEqual(loc["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["local"])
-        self.assertEqual(cld["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["cloud"])
-        self.assertEqual(loc["agents"]["reserved_names"], CLAUDE["local"]["reserved_names"])
-        self.assertIsNone(cld["agents"])
-        self.assertEqual(loc["adapter"], "adapter")
+    def test_a_runtime_serves_one_surface_and_a_surface_it_does_not_serve_is_named(self):
+        self.put("fakecli", runtime("fakecli"))
+        self.assertEqual(P.definition("fakecli", **self.kw())["surface"], "local")
+        self.assertEqual(P.definition("fakecli", "local", **self.kw())["surface"], "local")
         with self.assertRaises(P.ProviderError) as cm:
-            P.definition("claude", **self.kw())
-        self.assertIn("serves local, cloud; name the surface", str(cm.exception))
-        with open(os.path.join(self.root, "claude.json")) as f:      # the file itself is untouched
-            self.assertEqual(json.load(f), CLAUDE)
+            P.definition("fakecli", "cloud", **self.kw())
+        self.assertIn("the provider fakecli does not list the surface cloud", str(cm.exception))
 
-    def test_the_layout_of_schema_1_is_mapped_to_resources(self):
-        self.put("claude", CLAUDE)
-        res = P.definition("claude", "local", **self.kw())["resources"]
-        self.assertEqual(res["skills"]["project_dir"], ".claude/skills")
-        self.assertEqual(res["skills"]["user_dir"], "~/.claude/skills")
-        self.assertEqual(res["skills"]["exclusion"], {"form": "settings-key", "files": ["user", "project", "project-local"], "pointer": "/skillOverrides",
-                                                      "shape": "map", "off": "off"})
-        self.assertEqual(res["agents"]["project_dir"], ".claude/agents")
-        self.assertEqual([f["scope"] for f in res["settings"]["files"]], ["user", "project", "project-local"])
-        self.assertEqual(res["memory"], {"user_dir": "~/.claude/projects/{checkout_key}/memory", "checkout_key": "nonalnum-dash", "link": {"user": "dir-symlink"}})
-        self.assertEqual(P.definition("claude", "cloud", **self.kw())["resources"], {})
-        self.assertEqual(fails(P.definition("claude", "local", **self.kw()), "claude"), [])      # and the result is a valid schema 2 document
-
-    def test_the_layout_accessor_answers_from_the_resources_for_both_schemas(self):
-        self.put("claude", CLAUDE)
-        want = dict(CLAUDE["layout"])
-        lay = P.layout("claude", home="/h", **self.kw())
-        self.assertEqual(lay["project_skills_dir"], want["project_skills_dir"])
-        self.assertEqual(lay["exclusion"], want["exclusion"])
+    def test_the_layout_accessor_answers_from_the_resources(self):
+        self.put("claude-code", CODE)
+        lay = P.layout("claude-code", home="/h", **self.kw())
+        self.assertEqual(lay["project_skills_dir"], ".claude/skills")
+        self.assertEqual(lay["exclusion"], {"file_key": "skillOverrides", "off_value": "off"})
         self.assertEqual(lay["render_target"], "claude-code")
-        self.assertEqual(lay["session_launch"], want["session_launch"])
+        self.assertEqual(lay["session_launch"], CODE["session"]["launch"])
         self.assertEqual(lay["settings_files"][0], {"scope": "user", "path": "/h/.claude/settings.json"})
         res = {"skills": {"project_dir": ".fake/skills", "user_dir": "~/.fake/skills", "items": "dir-per-item", "entry": "SKILL.md"},
                "settings": {"files": [{"scope": "user", "path": "~/.fake/s.json", "format": "json"}]},
@@ -1084,16 +946,16 @@ class Loader(V2Tree):
             P.require("fakecli", "project_agents_dir", "write the agent", **self.kw())
         self.assertEqual(str(cm.exception), "provider fakecli has no project agents directory: write the agent")
 
-    def test_a_v2_fixture_loads_and_reads_like_a_v1_one_through_load(self):
+    def test_a_fixture_is_read_through_summary_definition_and_models_of(self):
         self.put("fakecli", runtime("fakecli", capabilities={"skills": cell()}))
         self.assertEqual(P.names(**self.kw()), ["fakecli"])
-        d = P.load("fakecli", **self.kw())
+        d = P.summary("fakecli", **self.kw())
         self.assertEqual((d["provider"], d["surfaces"], d["model_pattern"]), ("fakecli", ["local"], "^.+$"))
         self.assertEqual(d["tiers"], {t: "my-model" for t in P.TIERS})
         self.assertEqual(d["aliases"], {t: None for t in P.TIERS})
         self.assertEqual(d["effort"], {e: None for e in ("low", "medium", "high", "xhigh", "max")})
-        self.assertEqual(d["capabilities"]["skills"], {"local": cell()})
-        self.assertEqual(d["local"], {"reserved_names": []})
+        self.assertEqual(P.definition("fakecli", **self.kw())["capabilities"]["skills"], cell())
+        self.assertEqual(d["reserved_names"], [])
         self.assertEqual(P.cap("fakecli", "local", "skills", **self.kw()), "yes")
         self.assertEqual(P.cap("fakecli", "cloud", "skills", **self.kw()), "no")
         self.assertEqual(P.definition("fakecli", **self.kw())["provider"], "fakecli")
@@ -1110,7 +972,7 @@ class Loader(V2Tree):
         self.assertEqual([P.model_for(m, t) for t in P.TIERS], ["small", "mid", "big", "fam-top"])       # alias when the tier has one, else the id
         mh = P.models_of("fam-hosted", **self.kw())
         self.assertEqual([P.model_for(mh, t) for t in P.TIERS], ["fam-small", "fam-mid", "fam-big", "fam-top"])
-        d = P.load("fam-cli", **self.kw())
+        d = P.summary("fam-cli", **self.kw())
         self.assertEqual((d["tiers"]["fast"], d["aliases"]["fast"], d["model_pattern"]), ("fam-small", "small", "^fam-[a-z0-9.-]+$"))
 
     def test_summary_is_what_a_reader_needs_of_a_runtime_on_one_surface(self):
@@ -1161,9 +1023,9 @@ class Loader(V2Tree):
         self.assertEqual(P.names(**self.kw()), ["fakecli", "libcli"])            # a catalog is not a runtime
         self.assertEqual((P.origin("libcli", **self.kw()), P.origin("fakecli", **self.kw())), ("library", "shipped"))
         self.assertEqual(P.models_of("libcli", **self.kw())["tiers"]["fast"]["model"], "fam-small")
-        self.assertEqual(P.load("libcli", **self.kw())["provider"], "libcli")
+        self.assertEqual(P.definition("libcli", **self.kw())["provider"], "libcli")
         with self.assertRaises(P.ProviderError) as cm:
-            P.load("nope", **self.kw())
+            P.definition("nope", **self.kw())
         self.assertIn("available: fakecli, libcli", str(cm.exception))
 
     def test_a_broken_library_definition_breaks_only_itself(self):
@@ -1173,12 +1035,12 @@ class Loader(V2Tree):
             f.write("{")
         hand_seal(os.path.join(self.library, "broken"))
         self.put_lib("named", runtime("other-name"))
-        self.put_lib("old", descriptor())
+        self.put_lib("old", dict(descriptor(), provider="old", schema=1))
         self.assertEqual(P.names(**self.kw()), ["broken", "fakecli", "named", "old"])
-        self.assertEqual(P.load("fakecli", **self.kw())["provider"], "fakecli")
-        for n, needle in (("broken", "not readable JSON"), ("named", "declares provider 'other-name'"), ("old", "library definitions are schema 2")):
+        self.assertEqual(P.definition("fakecli", **self.kw())["provider"], "fakecli")
+        for n, needle in (("broken", "not readable JSON"), ("named", "declares provider 'other-name'"), ("old", "is not a definition of schema 2")):
             with self.assertRaises(P.ProviderError, msg=n) as cm:
-                P.load(n, **self.kw())
+                P.definition(n, **self.kw())
             self.assertIn(needle, str(cm.exception))
 
     def test_the_same_name_in_the_shipped_directory_and_the_library_is_refused(self):
@@ -1186,7 +1048,7 @@ class Loader(V2Tree):
         self.put_lib("dupe", runtime("dupe"))
         self.put("fine", runtime("fine"))
         with self.assertRaises(P.Clash) as cm:
-            P.load("dupe", **self.kw())
+            P.definition("dupe", **self.kw())
         self.assertEqual(str(cm.exception), "'dupe' is defined twice (shipped and library); qargi provider remove dupe, or rename it")
         self.assertIsInstance(cm.exception, P.ProviderError)
         for f in (P.definition, P.surfaces_of, P.models_of):
@@ -1194,7 +1056,7 @@ class Loader(V2Tree):
                 f("dupe", **self.kw())
         with self.assertRaises(P.Clash):
             P.effective("dupe", "local", "skills", **self.kw())
-        self.assertEqual(P.load("fine", **self.kw())["provider"], "fine")        # a clash refuses what needs the name, nothing else
+        self.assertEqual(P.definition("fine", **self.kw())["provider"], "fine")        # a clash refuses what needs the name, nothing else
         self.assertEqual(P.names(**self.kw()), ["dupe", "fine"])
 
     def test_a_catalog_in_both_places_or_a_library_name_taken_by_a_shipped_catalog_is_refused(self):
@@ -1206,7 +1068,7 @@ class Loader(V2Tree):
         self.put_catalog("taken")
         self.put_lib("taken", runtime("taken"))
         with self.assertRaises(P.Clash):
-            P.load("taken", **self.kw())
+            P.definition("taken", **self.kw())
 
     def test_an_explicit_root_without_a_library_sees_no_library(self):
         self.put_lib("libcli", runtime("libcli"))
@@ -1411,9 +1273,15 @@ class Family(V2Tree):
         with self.assertRaises(P.Clash):
             self.res("dupe", "local")
 
-    def test_a_schema_1_provider_is_a_runtime_of_its_own_name_on_each_surface_it_lists(self):
-        self.put("claude", CLAUDE)
-        self.assertEqual((self.res("claude", "local"), self.res("claude", "cloud")), ("claude", "claude"))
+    def test_the_shipped_family_claude_has_one_runtime_on_each_surface(self):
+        self.put("claude-code", CODE)
+        self.put("claude-platform", PLATFORM)
+        self.assertEqual((self.res("claude", "local"), self.res("claude", "cloud")), ("claude-code", "claude-platform"))
+        self.assertEqual((self.res("claude-code", "local"), self.res("claude-platform", "cloud")), ("claude-code", "claude-platform"))
+        self.put("claude-other", runtime("claude-other", family="claude"))
+        with self.assertRaises(P.Ambiguous):                            # a second local runtime of the family: the bare name no longer picks one
+            self.res("claude", "local")
+        self.assertEqual(self.res("claude", "cloud"), "claude-platform")
 
 
 class PerSurface(V2Tree):
@@ -1424,7 +1292,8 @@ class PerSurface(V2Tree):
         self.put("fam-cli", runtime("fam-cli", family="fam"))
         self.put("fam-hosted", runtime("fam-hosted", family="fam", surface="cloud"))
         self.put("solo", runtime("solo"))
-        self.put("claude", CLAUDE)
+        self.put("claude-code", CODE)
+        self.put("claude-platform", PLATFORM)
 
     def of(self, provider, surface, project="p"):
         return P.provider_of({"models": {"provider": provider}}, surface, project, **self.kw())
@@ -1438,16 +1307,17 @@ class PerSurface(V2Tree):
         self.assertEqual(self.of("solo", "local"), "solo")
         self.assertEqual(self.of(" fam ", "local"), "fam-cli")
         self.assertEqual(self.of("fam", "cloud"), "fam-hosted")
-        self.assertEqual(self.of("claude", "local"), "claude")
-        self.assertEqual(self.of("claude", "cloud"), "claude")
+        self.assertEqual(self.of("claude", "local"), "claude-code")
+        self.assertEqual(self.of("claude", "cloud"), "claude-platform")
 
     def test_a_string_that_resolves_through_its_family_comes_with_a_notice(self):
         models = {"models": {"provider": "fam"}}
         self.assertEqual(P.resolve_project(models, "local", "p", **self.kw()),
                          ("fam-cli", "models.provider is the single name 'fam'; on the local surface it resolves to fam-cli through the family. "
                                      "Name a runtime for each surface: qargi project set p models.provider.local fam-cli"))
-        for provider in ("solo", "claude"):
-            self.assertIsNone(P.resolve_project({"models": {"provider": provider}}, "local", "p", **self.kw())[1])
+        self.assertIn("resolves to claude-code through the family", P.resolve_project({"models": {"provider": "claude"}}, "local", "p", **self.kw())[1])
+        self.assertIsNone(P.resolve_project({"models": {"provider": "solo"}}, "local", "p", **self.kw())[1])
+        self.assertIsNone(P.resolve_project({"models": {"provider": "claude-code"}}, "local", "p", **self.kw())[1])
         self.assertIsNone(P.resolve_project({"models": {"provider": {"local": "fam"}}}, "local", "p", **self.kw())[1])
 
     def test_a_string_naming_a_runtime_of_the_other_surface_leaves_that_surface_unset(self):
@@ -1505,7 +1375,7 @@ class PerSurfaceCli(CliBase):
         return self.run_cli("of", project, "--conf", self.conf, *extra)
 
     def test_of_with_a_surface_resolves_and_prints_the_runtime(self):
-        self.assertEqual(self.of("str", "--surface", "cloud")[:2], (0, "claude\n"))
+        self.assertEqual(self.of("str", "--surface", "cloud")[:2], (0, "claude-platform\n"))
         self.assertEqual(self.of("obj", "--surface", "local")[:2], (0, "fam-cli\n"))
         rc, out, err = self.run_cli("of", "--surface", "local", "fam", "--conf", self.conf)
         self.assertEqual((rc, out), (0, "fam-cli\n"))
@@ -1542,7 +1412,7 @@ class V2Cli(CliBase):
         self.conf = os.path.join(self.tmp, "conf")
         self.state = os.path.join(self.tmp, "state")
         self.library = os.path.join(self.conf, "packs", "providers")
-        os.makedirs(os.path.join(self.root, "catalogs"))
+        os.makedirs(os.path.join(self.root, "catalogs"), exist_ok=True)
         os.makedirs(self.library)
 
     def run_cli(self, *args):
@@ -1571,7 +1441,7 @@ class V2Cli(CliBase):
         self.put("lost", runtime("lost", models={"catalog": "gone", "use": "id"}))
         rc, out, _ = self.run_cli("list")
         rows = {ln.split()[0]: ln.split()[1:] for ln in out.strip().splitlines()}
-        self.assertEqual((rc, list(rows)), (0, ["broken2", "claude", "fakecli", "libcli", "lost"]))
+        self.assertEqual((rc, list(rows)), (0, ["broken2", "claude-code", "claude-platform", "fakecli", "libcli", "lost"]))
         self.assertEqual(rows["fakecli"], ["local", "clean"])
         self.assertEqual(rows["libcli"], ["cloud", "clean", "(library)"])
         self.assertEqual(rows["broken2"][-1], "failure")
@@ -1616,7 +1486,6 @@ class V2Cli(CliBase):
         self.assertEqual(rc, 0)
         self.assertIn("fakecli: 0 failures, 0 warnings", out)
         self.assertIn("adapter: none (what needs one is refused)", out)
-        self.assertNotIn("note: schema 1", out)
         self.assertIn("the review role cannot be served on local", out)
         self.assertRegex(out, r"local: skills\s+no")
         self.assertRegex(out, r"layout: project_skills_dir\s+no \(the verb that needs it is refused with exit 3\)")
@@ -1668,11 +1537,6 @@ class V2Cli(CliBase):
         self.assertNotRegex(out, r"local: skills")
         self.assertNotIn("cannot be served", out)
 
-    def test_check_of_a_schema_1_descriptor_notes_that_schema_2_exists(self):
-        rc, out, _ = self.run_cli("check", "claude")
-        self.assertEqual(rc, 0)
-        self.assertIn("note: schema 1 is the earlier format; qargi provider migrate claude --dry-run shows the schema 2 form", out)
-
     def test_effective_of_a_definition_and_of_the_other_surface(self):
         self.put("fakecli", runtime("fakecli", capabilities={"skills": cell()}))
         self.assertEqual(self.run_cli("effective", "fakecli", "local", "skills")[:2], (0, "yes\n"))
@@ -1693,162 +1557,13 @@ class V2Cli(CliBase):
         self.assertEqual(self.run_cli("require-barrier", "fakecli", "local")[0], 2)
 
 
-class Migrate(V2Tree):
-    """migrate(): a schema 1 descriptor as schema 2 documents (a pure function); `provider migrate NAME --dry-run` prints them."""
-
-    def one_surface(self, surface="local"):
-        d = descriptor()
-        d["surfaces"] = [surface]
-        for row in d["capabilities"].values():
-            for other in [x for x in P.SURFACES if x != surface]:
-                row.pop(other, None)
-        d["adapter"] = None
-        if surface != "local":
-            d.pop("layout")
-        return d
-
-    def test_a_single_surface_descriptor_becomes_one_runtime_with_inline_models(self):
-        docs, notes = P.migrate(self.one_surface(), today="2026-11-02")
-        self.assertEqual(len(docs), 1)
-        d = docs[0]
-        self.assertEqual((d["schema"], d["kind"], d["provider"], d["family"], d["surface"]), (2, "provider", "claude", None, "local"))
-        self.assertEqual(d["models"], {"pattern": CLAUDE["model_pattern"], "tiers": CLAUDE["tier_detail"], "effort": CLAUDE["effort"]})
-        self.assertEqual(d["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["local"])
-        self.assertEqual(d["resources"]["skills"]["project_dir"], ".claude/skills")
-        self.assertEqual(d["agents"], {"reserved_names": CLAUDE["local"]["reserved_names"]})
-        self.assertEqual(d["session"], {"launch": CLAUDE["layout"]["session_launch"], "render_target": "claude-code"})
-        self.assertIn("migrated from schema 1", d["description"])
-        self.assertEqual(fails(d, "claude"), [])
-        self.assertEqual(notes, [])
-
-    def test_a_cloud_only_descriptor_has_no_local_resources(self):
-        docs, _ = P.migrate(self.one_surface("cloud"))
-        self.assertEqual((docs[0]["surface"], docs[0]["resources"], docs[0]["agents"]), ("cloud", {}, None))
-        self.assertEqual(fails(docs[0], "claude"), [])
-
-    def test_a_descriptor_for_two_surfaces_is_split_into_a_catalog_and_two_runtimes(self):
-        docs, notes = P.migrate(CLAUDE, today="2026-11-02")
-        cat, loc, cld = docs
-        self.assertEqual((cat["kind"], cat["family"], cat["version"]), ("catalog", "claude", "2026-11-02"))
-        self.assertEqual((cat["pattern"], cat["tiers"], cat["effort"]), (CLAUDE["model_pattern"], CLAUDE["tier_detail"], CLAUDE["effort"]))
-        self.assertEqual((loc["provider"], loc["surface"], loc["family"], loc["models"]), ("claude-local", "local", "claude", {"catalog": "claude", "use": "alias"}))
-        self.assertEqual((cld["provider"], cld["surface"], cld["family"], cld["models"]), ("claude-cloud", "cloud", "claude", {"catalog": "claude", "use": "id"}))
-        self.assertEqual(cld["capabilities"]["skills"], CLAUDE["capabilities"]["skills"]["cloud"])
-        self.assertEqual((cld["resources"], cld["agents"]), ({}, None))
-        self.assertEqual((loc["adapter"], cld["adapter"]), ("adapter", "adapter"))
-        self.assertTrue(any("adapter serves both surfaces" in n for n in notes))
-        for doc, name in zip(docs, ("claude", "claude-local", "claude-cloud")):
-            self.assertEqual(fails(doc, name), [], name)
-
-    def test_names_and_the_catalog_version(self):
-        d = descriptor()
-        d["tier_detail"]["deep"]["verified_on"] = "2026-10-30"
-        d["tier_detail"]["fast"]["verified_on"] = "2026-10-12"
-        docs, _ = P.migrate(d, names={"local": "claude-code", "cloud": "claude-platform"}, today="2026-11-02")
-        self.assertEqual([x.get("provider") or x["family"] for x in docs], ["claude", "claude-code", "claude-platform"])
-        self.assertEqual(docs[0]["version"], "2026-10-30")                    # the latest date a tier was verified, else the day of the conversion
-        with self.assertRaises(P.ProviderError):
-            P.migrate(d, names={"local": "Bad_Name"})
-
-    def test_the_migrated_definitions_mean_what_the_descriptor_meant(self):
-        docs, _ = P.migrate(CLAUDE, today="2026-11-02")
-        cat, loc, cld = docs
-        self.put_catalog(cat["family"], cat)
-        self.put("claude-local", loc)
-        self.put("claude-cloud", cld)
-        self.put("claude", dict(CLAUDE, provider="claude"))
-        kw = self.kw(state=self.state)
-        for surface, new in (("local", "claude-local"), ("cloud", "claude-cloud")):
-            for c in P.capabilities():
-                self.assertEqual(P.effective(new, surface, c, **kw), P.effective("claude", surface, c, **kw), (surface, c))
-            m = P.models_of(new, **self.kw())
-            self.assertEqual({t: m["tiers"][t]["model"] for t in P.TIERS}, CLAUDE["tiers"])
-            self.assertEqual(m["effort"], CLAUDE["effort"])
-        lay = P.layout("claude-local", home="/h", **self.kw())
-        self.assertEqual(lay, P.layout("claude", home="/h", **self.kw()))
-        self.assertEqual(P.resolve_runtime("claude", "local", **self.kw()), "claude")
-
-    def test_an_adapter_outside_the_descriptors_directory_is_dropped_with_a_note(self):
-        d = self.one_surface()
-        d["adapter"] = "lib/providers/other/adapter"
-        docs, notes = P.migrate(d)
-        self.assertIsNone(docs[0]["adapter"])
-        self.assertTrue(any("lib/providers/other/adapter" in n and "outside" in n for n in notes))
-
-    def test_a_descriptor_that_breaks_schema_1_or_is_schema_2_is_refused(self):
-        d = descriptor()
-        d["extra"] = 1
-        with self.assertRaises(P.ProviderError) as cm:
-            P.migrate(d)
-        self.assertIn("breaks schema 1", str(cm.exception))
-        with self.assertRaises(P.ProviderError) as cm:
-            P.migrate(runtime())
-        self.assertIn("is already schema 2", str(cm.exception))
-
-    def test_migrate_does_not_change_its_input(self):
-        d = descriptor()
-        P.migrate(d)
-        self.assertEqual(d, CLAUDE)
-
-
-class MigrateCli(CliBase):
-    def listing(self):
-        return sorted(os.path.join(dp, f) for dp, _, fs in os.walk(self.copy) for f in fs if "__pycache__" not in dp)
-
-    def test_dry_run_prints_the_documents_and_writes_nothing(self):
-        before = self.listing()
-        rc, out, err = self.run_cli("migrate", "claude", "--dry-run")
-        self.assertEqual(rc, 0)
-        docs = json.loads(out)
-        self.assertEqual([(d["kind"], d.get("provider") or d["family"]) for d in docs], [("catalog", "claude"), ("provider", "claude-local"), ("provider", "claude-cloud")])
-        self.assertIn("qargi: note: the adapter serves both surfaces", err)
-        self.assertEqual(self.listing(), before)
-
-    def test_as_names_the_two_runtimes(self):
-        rc, out, _ = self.run_cli("migrate", "claude", "--dry-run", "--as", "local=claude-code,cloud=claude-platform")
-        self.assertEqual(rc, 0)
-        self.assertEqual([d.get("provider") for d in json.loads(out)], [None, "claude-code", "claude-platform"])
-        self.assertEqual(self.run_cli("migrate", "claude", "--dry-run", "--as", "local=x")[0], 2)
-
-    def test_one_document_is_printed_as_an_object(self):
-        d = descriptor()
-        d["provider"] = "solo"
-        d["surfaces"] = ["cloud"]
-        for row in d["capabilities"].values():
-            row.pop("local", None)
-        d.pop("layout")
-        d["adapter"] = None
-        self.put("solo", d)
-        rc, out, _ = self.run_cli("migrate", "solo", "--dry-run")
-        self.assertEqual(rc, 0)
-        self.assertEqual((json.loads(out)["provider"], json.loads(out)["surface"]), ("solo", "cloud"))
-
-    def test_without_dry_run_the_write_is_not_built_and_changes_nothing(self):
-        before = self.listing()
-        rc, out, err = self.run_cli("migrate", "claude")
-        self.assertEqual((rc, out), (2, ""))
-        self.assertIn("migrate writes through a plan and your approval, which is not built yet; use --dry-run", err)
-        self.assertEqual(self.listing(), before)
-
-    def test_unknown_and_schema_2_and_usage(self):
-        self.assertEqual(self.run_cli("migrate", "nope", "--dry-run")[0], 1)
-        self.put("two", runtime("two"))
-        rc, _, err = self.run_cli("migrate", "two", "--dry-run")
-        self.assertEqual(rc, 1)
-        self.assertIn("provider 'two' is already schema 2", err)
-        self.assertEqual(self.run_cli("migrate")[0], 2)
-        self.assertEqual(self.run_cli("migrate", "claude", "extra", "--dry-run")[0], 2)
-
-
 class ShippedClaude(unittest.TestCase):
-    """The shipped split of claude: catalogs/claude.json and the two runtimes claude-code (local) and claude-platform (cloud). Until the
-    consumers that read the schema 1 claude.json directly have moved to the loader, that file stays, and these tests hold the two
-    forms to one table: a change to one that is not made to the other fails here."""
+    """The shipped split of claude: catalogs/claude.json and the two runtimes claude-code (local) and claude-platform (cloud)."""
 
     RUNTIMES = (("claude-code", "local", "alias"), ("claude-platform", "cloud", "id"))
 
     def test_the_catalog_and_the_runtimes_have_no_failure(self):
-        self.assertEqual([m for lvl, m in P.validate(P.catalog("claude"), "claude") if lvl == "fail"], [])
+        self.assertEqual([m for lvl, m in P.validate2(P.catalog("claude"), "claude") if lvl == "fail"], [])
         for name, surface, _ in self.RUNTIMES:
             with self.subTest(name):
                 _, raw, findings = P.findings_of(name)
@@ -1856,30 +1571,19 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual((raw["family"], raw["surface"], raw["models"]["catalog"]), ("claude", surface, "claude"))
                 self.assertEqual(P.surfaces_of(name), [surface])
 
-    def test_the_catalog_is_the_models_table_of_claude_json(self):
+    def test_each_runtime_passes_the_alias_or_the_id_of_the_one_table(self):
         cat = P.catalog("claude")
-        self.assertEqual((cat["pattern"], cat["tiers"], cat["effort"]), (CLAUDE["model_pattern"], CLAUDE["tier_detail"], CLAUDE["effort"]))
-        self.assertEqual(CLAUDE["tiers"], {t: r["model"] for t, r in cat["tiers"].items()})
-        self.assertEqual(CLAUDE["aliases"], {t: r["alias"] for t, r in cat["tiers"].items()})
-
-    def test_each_runtime_says_what_claude_json_says_of_its_surface(self):
         for name, surface, use in self.RUNTIMES:
             with self.subTest(name):
-                doc = P.definition(name)
-                self.assertEqual(doc["capabilities"], {c: row[surface] for c, row in CLAUDE["capabilities"].items()})
                 m = P.models_of(name)
                 self.assertEqual(m["use"], use)
-                self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: CLAUDE["aliases"][t] if use == "alias" else CLAUDE["tiers"][t] for t in P.TIERS})
-                for c in P.capabilities():
-                    self.assertEqual(P.effective(name, surface, c), P.effective("claude", surface, c), c)
-                view = P.load(name)                                     # the schema 1 view older readers get
-                self.assertEqual((view["surfaces"], view["tiers"], view["aliases"], view["effort"], view["model_pattern"]),
-                                 ([surface], CLAUDE["tiers"], CLAUDE["aliases"], CLAUDE["effort"], CLAUDE["model_pattern"]))
+                self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
+                self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
 
     def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
-        self.assertEqual(P.layout("claude-code", home="/h"), P.layout("claude", home="/h"))
-        self.assertEqual(P.load("claude-code")["local"], CLAUDE["local"])
-        self.assertEqual(P.launch_line("claude-code", "/r"), P.launch_line("claude", "/r"))
+        self.assertEqual(P.layout("claude-code", home="/h")["user_skills_dir"], "/h/.claude/skills")
+        self.assertEqual(P.summary("claude-code")["reserved_names"], CODE["agents"]["reserved_names"])
+        self.assertEqual(P.launch_line("claude-code", "/r"), "claude --add-dir /r")
         self.assertEqual(P.definition("claude-code")["session"]["render_target"], "claude-code")
 
     def test_claude_platform_has_no_local_resources(self):
@@ -1894,24 +1598,18 @@ class ShippedClaude(unittest.TestCase):
         with self.assertRaises(P.ProviderError):
             P.definition("claude-platform", "local")
 
-    def test_without_the_schema_1_file_the_string_claude_resolves_per_surface_with_the_family_notice(self):
-        tmp = tempfile.mkdtemp(prefix="shipped.")
-        self.addCleanup(shutil.rmtree, tmp, True)
-        root = os.path.join(tmp, "providers")
-        shutil.copytree(os.path.join(LIB, "providers"), root, ignore=shutil.ignore_patterns("__pycache__"))
-        os.remove(os.path.join(root, "claude.json"))
+    def test_the_string_claude_is_the_family_and_resolves_per_surface_with_the_family_notice(self):
         answers = {"models": {"provider": "claude"}}
         for name, surface, _ in self.RUNTIMES:
             with self.subTest(surface):
-                runtime, notice = P.resolve_project(answers, surface, "alpha", root=root)
+                runtime, notice = P.resolve_project(answers, surface, "alpha")
                 self.assertEqual(runtime, name)
                 self.assertIn("through the family", notice)
                 self.assertIn("qargi project set alpha models.provider.%s %s" % (surface, name), notice)
-        self.assertEqual(P.resolve_runtime("claude-code", "local", root=root), "claude-code")
-        self.assertEqual(P.provider_of({"models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}}, "cloud", root=root), "claude-platform")
+        self.assertEqual(P.resolve_runtime("claude-code", "local"), "claude-code")
+        self.assertEqual(P.provider_of({"models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}}, "cloud"), "claude-platform")
         with self.assertRaises(P.NoProvider):                            # the cloud runtime does not serve the local surface
-            P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha", root=root)
-
+            P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha")
 
 
 class SealedPacks(V2Tree):
@@ -1972,7 +1670,7 @@ class SealedPacks(V2Tree):
             f.write("added after the seal")
         self.assertEqual(self.sstate("changedp"), "drift")
         with self.assertRaises(P.Drift):
-            P.load("changedp", **self.kw())
+            P.definition("changedp", **self.kw())
         d = self.pack("handp")
         os.remove(os.path.join(d, ".pack.json"))
         self.assertEqual(self.sstate("handp"), "unrecorded")
@@ -1982,7 +1680,7 @@ class SealedPacks(V2Tree):
         self.assertIn("qargi provider seal handp", str(cm.exception))
         self.assertIn("qargi provider import", str(cm.exception))
         with self.assertRaises(P.Drift):
-            P.load("handp", **self.kw())
+            P.definition("handp", **self.kw())
         with self.assertRaises(P.Drift):
             P.definition_hash("handp", **self.kw())
         with self.assertRaises(P.Drift):
@@ -3593,7 +3291,7 @@ class ProjectConsumers(ExtensionBase):
 
     def test_a_shipped_adapter_is_found_by_the_loader_and_checked(self):
         self.assertEqual(self.run_p("adapter-run", "claude-platform", "cloud", "start-session", "--check")[0], 0)
-        self.assertEqual(self.run_p("adapter-run", "claude", "cloud", "resolve", "--check")[0], 0)           # schema 1 compatibility file
+        self.assertEqual(self.run_p("adapter-run", "claude", "cloud", "resolve", "--check")[0], 1)           # the family is not a runtime
         self.assertEqual(self.run_p("adapter-run", "claude-platform", "cloud", "dispatch-local", "--check")[0], 3)
         rc, out, err = self.run_p("adapter-run", "claude-platform", "cloud", "resolve", data=json.dumps({"surface": "cloud", "tier": "balanced", "effort": None, "profile": "build"}))
         self.assertEqual(rc, 0, err)
@@ -3602,7 +3300,7 @@ class ProjectConsumers(ExtensionBase):
     def test_model_prints_the_id_of_a_tier_for_a_surface(self):
         rc, out, _ = self.run_p("model", "claude-platform", "cloud", "balanced")
         self.assertEqual((rc, out.strip()), (0, "claude-sonnet-5-5"))
-        self.assertEqual(self.run_p("model", "claude", "cloud", "balanced")[1].strip(), "claude-sonnet-5-5")
+        self.assertEqual(self.run_p("model", "claude", "cloud", "balanced")[0], 1)           # the family is not a runtime
         self.assertEqual(self.run_p("model", "plaincli", "local", "deep")[1].strip(), "my-model")
         self.assertEqual(self.run_p("model", "plaincli", "cloud", "deep")[0], 1)
         self.assertEqual(self.run_p("model", "plaincli", "local", "huge")[0], 2)
@@ -3641,25 +3339,16 @@ class ExtensionSchema(unittest.TestCase):
         self.assertEqual(P.validate2(old, "addon"), [])
 
 
-class Migrate(LibraryBase):
-    def test_the_write_form_stays_not_built_and_says_why(self):
-        rc, out, err = self.q("migrate", "claude")
-        self.assertEqual((rc, out), (2, ""))
-        self.assertIn("not built yet; use --dry-run", err)
-        self.assertIn("its definitions are schema 2 already", err)
-
-
 class JsonEscapedControls(LibraryBase):
     """N4: a control, escape or bidi character written as a JSON escape (\\u001b) is plain ASCII in the file but a control character in the parsed
-    string. The rule applies to the parsed document of every kind (provider, catalog, extension, schema 1), keys too, and everything provider.py and
+    string. The rule applies to the parsed document of every kind (provider, catalog, extension), keys too, and everything provider.py and
     local_run.py print goes through the visible-escape helper."""
     BAD = "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]"
 
     def docs(self):
         ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "provides": ["resume"],
                "adds": {"capabilities": {"resume": cell("yes")}, "adapter_verbs": {"resume": "verbs/resume"}}}
-        v1 = descriptor()
-        return {"provider": runtime("mylocal"), "catalog": catalog("fam"), "extension": ext, "schema 1": v1}
+        return {"provider": runtime("mylocal"), "catalog": catalog("fam"), "extension": ext, "shipped runtime": descriptor()}
 
     def test_every_kind_refuses_a_control_character_in_a_value_and_in_a_key_and_the_message_carries_none(self):
         for kind, d in self.docs().items():
@@ -3671,11 +3360,11 @@ class JsonEscapedControls(LibraryBase):
                         x["description"] = "plain\x1b[1A\x1b[2Kruntime"
                     else:
                         x["notes\x1b[8m"] = "x"
-                    got = [m for lvl, m in P.validate(x, name) if lvl == "fail"]
+                    got = [m for lvl, m in P.validate2(x, name) if lvl == "fail"]
                     self.assertTrue(any("control or bidi character (U+001B)" in m for m in got), got)
                     for m in got:
                         self.assertNotRegex(m, self.BAD, "a failure never carries the character")
-            self.assertEqual([m for lvl, m in P.validate(d, name) if lvl == "fail"], [], kind)
+            self.assertEqual([m for lvl, m in P.validate2(d, name) if lvl == "fail"], [], kind)
 
     def test_a_bidi_character_a_newline_and_a_lone_surrogate_are_refused_too(self):
         for what, text in (("bidi", "a \u202e b"), ("newline", "a\n== forged line"), ("delete", "a\x7fb"), ("c1", "a\u009bb"), ("surrogate", "a\ud800b")):
@@ -3725,7 +3414,7 @@ class JsonEscapedControls(LibraryBase):
         code = ("import sys, json; sys.path.insert(0, %r); import provider as P\n"
                 "d = json.loads(sys.stdin.read())\n"
                 "print(P._review() is None)\n"
-                "print([m for lvl, m in P.validate(d, 'mylocal') if lvl == 'fail'])\n"
+                "print([m for lvl, m in P.validate2(d, 'mylocal') if lvl == 'fail'])\n"
                 "print(repr(P.vis('a\\x1b[2Kb\\u202e\\tc')))\n") % alone
         r = subprocess.run([sys.executable, "-I", "-c", code], input=json.dumps(runtime("mylocal", description="plain\x1b[1Aruntime")),
                            capture_output=True, text=True, cwd=self.tmp)

@@ -10,7 +10,7 @@ export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
 mkdir -p "$HOME" "$T/c/projects"
 # there is no default provider: the provider is a project's models.provider, and a member belongs to a project. pbase is the project in effect
 git init -q "$T/repop"
-jq -n --arg p "$T/repop" '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+jq -n --arg p "$T/repop" '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
 export QARGI_PROJECT=pbase
 A=$T/repop/.claude/agents
 
@@ -31,7 +31,7 @@ jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.family == "claude" and (
   and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/catalogs/claude.json" >/dev/null \
   && ok "the claude catalog maps every tier the table uses to an id and to an alias" || no "catalog file"
 jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t].model != null and $c.tiers[$t].alias != null)' "$PROV/catalogs/claude.json" >/dev/null && ok "every profile's tier has both a model and an alias" || no "tier coverage"
-[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\nclaude.json\nschema-2.json\nschema.json')" ] && ok "claude (schema 1) and its split, claude-code and claude-platform, are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
+[ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\nschema-2.json')" ] && ok "claude-code and claude-platform are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
 $DA agent add b1 --project pbase --abilities build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"
@@ -57,7 +57,7 @@ git init -q "$T/repo"
 jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-opus-5-5",effort:"xhigh"},
          review:{base:"main",push:{mode:"none"},model:"claude-haiku-5-5",effort:"low"}},
-  lead:{model:"claude-opus-5-5",effort:"high"},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+  lead:{model:"claude-opus-5-5",effort:"high"},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 PA=$T/repo/.claude/agents
 $DA agent add pb --abilities build --project alpha >/dev/null 2>&1 && grep -q '^model: claude-opus-5-5$' "$PA/pb.md" && grep -q '^effort: xhigh$' "$PA/pb.md" && ok "add --project: the project's answers win" || no "project override: $(head -5 "$PA/pb.md")"
 $DA agent add pt --abilities test --project alpha >/dev/null 2>&1 && grep -q '^model: claude-sonnet-5-5$' "$PA/pt.md" && grep -q '^effort: low$' "$PA/pt.md" && ok "a role the project does not answer uses the table" || no "project fallback"
@@ -75,7 +75,7 @@ $DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: so
 $DA agent add rs --project pbase --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1
 out=$($DA agent models 2>&1)
 grep -E '^ *review ' <<<"$out" | grep -q 'deep -> opus -> claude-opus-5-5/high' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> sonnet -> claude-sonnet-5-5/high' && ok "models: tier, alias, id and effort per profile" || no "tier text: $out"
-grep -q 'provider: claude' <<<"$out" && ok "models: the active provider" || no "provider line"
+grep -q 'provider: claude-code' <<<"$out" && ok "models: the active provider" || no "provider line"
 grep -E '^ *(worker|reviewer) ' <<<"$out" | grep -q 'write' && grep -E '^ *reviewer ' <<<"$out" | grep -q 'read-only' && ok "models: the bases come first, with their class" || no "bases text: $out"
 [ "$(grep -n -E '^bases' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" ] && [ "$(grep -n -E '^profiles' <<<"$out" | cut -d: -f1)" -lt "$(grep -n -E '^members' <<<"$out" | cut -d: -f1)" ] && ok "models: bases, profiles, then members" || no "section order"
 grep -q 'offer frontier (claude-fable-5-1) for a hard task: only when asked' <<<"$out" && ok "models: the escalate line" || no "escalate line"
@@ -107,7 +107,7 @@ $DA agent add res2 --project pbase --abilities review --model claude-fable-5-1 -
 
 # problems are flagged rows, never an error
 W=$T/w; mkdir -p "$W/home" "$W/c/projects"; git init -q "$W/repow"
-jq -n --arg p "$W/repow" '{schema:1,project:"wbase",repo:{url:"https://github.com/example/wbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$W/c/projects/wbase.json"
+jq -n --arg p "$W/repow" '{schema:1,project:"wbase",repo:{url:"https://github.com/example/wbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$W/c/projects/wbase.json"
 wd() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" "$@"; }
 wm() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" agent models "$@"; }
 out=$(wm 2>&1); rc=$?
@@ -129,7 +129,7 @@ out=$(wm 2>&1); rc=$?
 wd agent add deepthought --project wbase --abilities review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --project wbase --abilities review --model fable >/dev/null 2>&1; wd agent add researcher --project wbase --abilities review --model fable >/dev/null 2>&1
 out=$(wm 2>&1)
 { grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"
-jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},models:{provider:"claude"},memory:{},budget_cents:500,
+jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500,
   profiles:{ghost:{base:"nosuch"}, clash:{base:"worker",abilities:["review"]}, tiny:{base:"reviewer",tier:"ultra"}, odd:{base:"worker",model:"claude-odd-9"}}}' > "$W/c/projects/beta.json"
 out=$(wm --project beta 2>&1); rc=$?
 { [ $rc = 0 ] && grep -E '^ *ghost ' <<<"$out" | grep -q 'refused' && grep -E '^ *clash ' <<<"$out" | grep -q 'refused'; } && ok "models: a project profile with an unknown base or a class conflict is refused (exit 0)" || no "refused: rc=$rc $out"
@@ -147,9 +147,9 @@ e=$($DA agent add pq --abilities build --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude, claude-code' <<<"$e" && [ ! -e "$PA/pq.md" ]; } && ok "an unknown models.provider is an error listing the providers (add)" || no "unknown provider add: $e"
 e=$($DA agent models --project alpha 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'nope' <<<"$e" && grep -q 'available: claude, claude-code' <<<"$e"; } && ok "an unknown models.provider is an error listing the providers (models)" || no "unknown provider models: $e"
-jq '.models.provider = "schema"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
+jq '.models.provider = "schema-2"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 e=$($DA agent models --project alpha 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "no runtime or family 'schema'" <<<"$e" && grep -q 'available: claude, claude-code' <<<"$e"; } && ok "schema.json is not a provider (the file that describes them)" || no "schema as provider: $e"
+{ [ $rc != 0 ] && grep -q "no runtime or family 'schema-2'" <<<"$e" && grep -q 'available: claude, claude-code' <<<"$e"; } && ok "schema-2.json is not a provider (the file that describes them)" || no "schema as provider: $e"
 jq '.models.provider = "Bad Name"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accepted" || ok "a provider that is not a lower-case token is an error"
 $DA project template alpha | jq -e '.roles | all(.[]; .model == null) and (.build.effort == "high") and (.write.effort == "medium")' >/dev/null && ok "project template names no model (a role takes its provider's tier once one is set)" || no "template models"

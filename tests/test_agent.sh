@@ -11,7 +11,7 @@ mkdir -p "$HOME" "$T/c/projects"
 # there is no default provider: the provider is a project's models.provider, and a member belongs to a project (no user-level members).
 # pbase is the project most members below belong to and the one in effect (QARGI_PROJECT)
 git init -q "$T/repop"
-jq -n --arg p "$T/repop" '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+jq -n --arg p "$T/repop" '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
 export QARGI_PROJECT=pbase
 A=$T/repop/.claude/agents
 fm() { $DA agent for "$@" --json 2>/dev/null | jq -r .member; }   # the member name only
@@ -46,7 +46,7 @@ norm() { sed -E 's/^( *(- )?[A-Za-z]+: )"(.*)"$/\1\3/'; }
 old=$(jq -nc '{member:"forge",abilities:["build","test"],class:"write",model:"claude-sonnet-5-5",effort:"high"}' | "$PWD/lib/providers/claude-code/adapter" dispatch-local | jq -j .definition.text)
 cmp -s <(norm <<<"$old") <(norm < "$A/forge.md") && ok "and it says what the file of the earlier form said (only the quoting of values differs)" || no "old vs new: $(diff <(norm <<<"$old") <(norm < "$A/forge.md") | head -5)"
 h=$(sha256sum < "$A/forge.md" | cut -d' ' -f1)
-jq -e --arg h "$h" --arg f "$A/forge.md" '.projects.pbase.forge | .provider == "claude" and .surface == "local" and .file == $f and .render.path == "forge.md" and .render.hash == $h and (.render.inputs_hash | test("^[0-9a-f]{64}$"))' "$T/c/agents.json" >/dev/null \
+jq -e --arg h "$h" --arg f "$A/forge.md" '.projects.pbase.forge | .provider == "claude-code" and .surface == "local" and .file == $f and .render.path == "forge.md" and .render.hash == $h and (.render.inputs_hash | test("^[0-9a-f]{64}$"))' "$T/c/agents.json" >/dev/null \
   && ok "the record keeps the runtime, the surface, the path, the hash of the file and the hash of what it was made from" || no "record: $(jq -c .projects.pbase.forge "$T/c/agents.json")"
 $DA agent list | grep -q "forge .*forge.md$" && ok "list shows no state for a current member" || no "list current: $($DA agent list | head -2)"
 grep -q '^name: forge$' "$A/forge.md" && grep -q 'build, test' "$A/forge.md" && grep -q '^model: claude-sonnet-5-5$' "$A/forge.md" && grep -q '^effort: high$' "$A/forge.md" && ok "it carries the name, abilities and model" || no "rendered: $(head -5 "$A/forge.md")"
@@ -71,7 +71,7 @@ $DA agent remove judge >/dev/null 2>&1
 # a project's own member comes first inside its repository
 git init -q "$T/repo"
 jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/alpha",path:$p,long_lived:["main"]},
-  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high"}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+  roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high"}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 $DA agent add smith --abilities build --project alpha >/dev/null 2>&1 && [ -f "$T/repo/.claude/agents/smith.md" ] && ok "--project puts it in the repository" || no "project add"
 grep -qx '/.claude/agents/smith.md' "$T/repo/.git/info/exclude" && [ -z "$(git -C "$T/repo" status --porcelain)" ] && ok "and hides it from git" || no "exclude"
 $DA agent add worker --project alpha >/dev/null 2>&1
@@ -100,7 +100,7 @@ $DA agent list | grep drifty | grep -q 'DRIFT\|STALE' && no "still flagged after
 jq 'del(.projects.pbase.drifty.render) | del(.projects.pbase.drifty.provider)' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 $DA agent list | grep -q "drifty .*drifty.md (STALE)$" && ok "list: a member with no render on record (made before) is STALE" || no "list stale: $($DA agent list | grep drifty)"
 $DA agent models --json | jq -e '.members[] | select(.name == "drifty") | .state == ["STALE"] and (.flags | any(startswith("STALE") and contains("agent refresh drifty")))' >/dev/null && ok "models: STALE with the fix in the flag" || no "models stale"
-out=$($DA agent refresh drifty 2>&1); grep -q 'is current' <<<"$out" && jq -e '.projects.pbase.drifty.render.hash != null and .projects.pbase.drifty.provider == "claude"' "$T/c/agents.json" >/dev/null && ! $DA agent list | grep drifty | grep -q 'STALE' && ok "refresh of an identical file only records the render" || no "refresh stale: $out"
+out=$($DA agent refresh drifty 2>&1); grep -q 'is current' <<<"$out" && jq -e '.projects.pbase.drifty.render.hash != null and .projects.pbase.drifty.provider == "claude-code"' "$T/c/agents.json" >/dev/null && ! $DA agent list | grep drifty | grep -q 'STALE' && ok "refresh of an identical file only records the render" || no "refresh stale: $out"
 jq '.projects.pbase.drifty.render.inputs_hash = "0000000000000000000000000000000000000000000000000000000000000000"' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
 $DA agent list | grep -q "drifty .*(STALE)$" && ok "an inputs hash that is not today's is STALE" || no "stale hash"
 $DA agent remove drifty >/dev/null 2>&1
@@ -177,7 +177,7 @@ jq '.provider = "badcat" | .models = {catalog: "nocat", use: "id"}' "$LIB/defini
 python3 -I tests/handseal.py "$LIB3"
 jq '.models.provider = "badcat"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
 out=$($DA agent add nope3 --abilities build --project tomlp 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
+{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
 
 # where a member's file goes: a member belongs to a project, and its file goes where the runtime links the project's agents; there are no user-level members
 for m in $($DA agent list | awk '{print $2}'); do $DA agent remove "$m" >/dev/null 2>&1; done
@@ -315,7 +315,7 @@ jq -n --arg p "$T/repo" '{schema:1,project:"alpha",repo:{url:"https://github.com
   roles:{build:{base:"main",push:{mode:"none"},model:"claude-haiku-5-5",effort:"low"}},
   profiles:{wrong:{base:"worker",abilities:["review"]}, nobase:{base:"nosuch"}, pm:{base:"worker",model:"claude-opus-5-5"},
     odd:{base:"worker",model:"claude-odd-9"}, scout:{base:"reviewer",tier:"fast",effort:"medium",purpose:"looks around"},
-    auditor:{effort:"high"}, junk:7, bad:{base:[],tier:3}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
+    auditor:{effort:"high"}, junk:7, bad:{base:[],tier:3}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/alpha.json"
 # the members of alpha: `agent for` resolves the members of the project asked for, and of no other
 for m in smith worker reviewer mix; do $DA agent remove "$m" >/dev/null 2>&1; done; $DA agent add worker --project alpha >/dev/null 2>&1; $DA agent add reviewer --project alpha >/dev/null 2>&1
 e=$($DA agent for build --profile wrong --project alpha 2>&1); rc=$?
