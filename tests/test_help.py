@@ -161,6 +161,14 @@ class Render(unittest.TestCase):
         stale = sorted(v for v in self.GUARD_TOPIC_EXEMPT if v in words or v not in refused)
         self.assertFalse(stale, "stale exemptions: %s" % stale)
 
+    def test_the_man_page_holds_the_approvals_and_guard_topics_as_man_writes_them(self):
+        page, shipped = H.man(), slurp(os.path.join(ROOT, "man", "qargi.1"))
+        self.assertEqual(shipped, page)
+        for t in ("approvals", "guard"):                 # the page says "See APPROVALS", and the guard is what the approvals topic points at
+            self.assertIn("\n.SH %s\n" % t.upper(), shipped)
+            for para in C.TOPICS[t][1]:
+                self.assertIn(H.esc(para), shipped, "the %s topic is not in man/qargi.1 as man() writes it" % t)
+
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
         for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
