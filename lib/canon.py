@@ -56,9 +56,16 @@ def parse_marker(text):
     return d
 
 
-def detect(kind, mems):
-    """-> (state, why). state is LATEST (conforms), "empty" (no memories: set up from the seed) or "unknown"
-    (a marker this qargi does not read, or no marker). Layouts older than canon 2 are not migrated."""
+def setup_paths(roles):
+    """The files `init` creates, in the order it creates them (the marker follows)."""
+    return ["/shared/INDEX.md"] + ["/roles/%s/INDEX.md" % r for r in roles] + ["/_template.md", "/README.md"]
+
+
+def detect(kind, mems, roles=None):
+    """-> (state, why). state is LATEST (conforms), "empty" (no memories, or only the first files of a set-up that was
+    interrupted before it wrote the marker: it is set up from the seed) or "unknown" (a marker this qargi does not read,
+    or no marker). Layouts older than canon 2 are not migrated. Without `roles` a store with no marker is empty only
+    when it holds no memories."""
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
         try:
@@ -72,6 +79,9 @@ def detect(kind, mems):
         return "unknown", "canon version %d is older than the %d this qargi reads, and it no longer migrates it" % (n, LATEST)
     if not mems:
         return "empty", "empty store: it is set up from the seed"
+    order = setup_paths(roles) if roles else []
+    if sorted(mems) == sorted(order[:len(mems)]):
+        return "empty", "an interrupted set-up (no marker yet): it is finished from the seed"
     return "unknown", "no marker and no known layout"
 
 
@@ -183,15 +193,15 @@ def role_lines(roles):
 
 
 def init(kind, mems, project, roles, seed, today):
-    """An empty store: the seed's README, template, shared index and one index per role. The marker follows (make_plan)."""
+    """An empty store: the seed's README, template, shared index and one index per role. The marker follows (make_plan).
+    A file already there is left as it is: a set-up that was interrupted is finished, not redone."""
     subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
-    ops = [{"op": "create", "path": "/shared/INDEX.md", "content": seed_text(seed, "INDEX.shared.%s.md" % kind, subs)}]
+    text = {"/shared/INDEX.md": lambda: seed_text(seed, "INDEX.shared.%s.md" % kind, subs),
+            "/_template.md": lambda: slurp("%s/_template.%s.md" % (seed, kind)),
+            "/README.md": lambda: seed_text(seed, "README.%s.md" % kind, subs)}
     for r in roles:
-        ops.append({"op": "create", "path": "/roles/%s/INDEX.md" % r,
-                    "content": seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))})
-    ops.append({"op": "create", "path": "/_template.md", "content": slurp("%s/_template.%s.md" % (seed, kind))})
-    ops.append({"op": "create", "path": "/README.md", "content": seed_text(seed, "README.%s.md" % kind, subs)})
-    return ops, []
+        text["/roles/%s/INDEX.md" % r] = lambda r=r: seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))
+    return [{"op": "create", "path": p, "content": text[p]()} for p in setup_paths(roles) if p not in mems], []
 
 
 NUM = re.compile(r"^\d\d-")
@@ -266,7 +276,7 @@ def maintain(kind, mems, project, roles, seed, today):
 
 def make_plan(kind, mems, project, roles, seed, today):
     """The steps from a store's memories to the current canon: {from_version, to_version, why, ops, notes}."""
-    state, why = detect(kind, mems)
+    state, why = detect(kind, mems, roles)
     out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
     if state == "unknown":
         out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
@@ -377,7 +387,7 @@ def notes_check(kind, mems, roles, F, W):
 def cmd_check(a):
     mems = load(a.store)
     roles = a.roles.split(",")
-    ver, why = detect(a.kind, mems)
+    ver, why = detect(a.kind, mems, roles)
     fails, warns = [], []
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
