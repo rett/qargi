@@ -287,6 +287,7 @@ WRAP
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
     echo "BASE_SHA=$BSHA"
+    echo "CONTRACT=$(cd "$(prompt_root)/contract" && pwd -P)"
     # the memory context packet: the tier summary and the always rows, for a repository that belongs to a stored project.
     # It never changes prepare's result: a failure or a timeout prints nothing.
     PPROJ=$(project_of "$REPO" "$URL")

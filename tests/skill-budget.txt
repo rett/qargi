@@ -1,7 +1,7 @@
 # Word ceilings of the texts a member or lead loads (see tests/test_skill_budget.sh). PATH MAX_WORDS, sorted.
 # Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
-agents/member.body.md 180
-agents/member.md 245
+agents/member.body.md 178
+agents/member.md 243
 contract/contract.md 1106
 contract/output-format.md 276
 packs/skills/gitflow-member/SKILL.md 267
