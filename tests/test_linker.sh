@@ -412,6 +412,67 @@ ap unlink "$(ptok unlink)" >/dev/null 2>&1; [ ! -e "$T/wt/$DEST.qargi-copy.json"
 # a member run never applies
 tok=$(ptok link); spec
 out=$(cd "$T/run/out" && python3 -I "$T/drv.py" "$ROOT/lib" apply link "$T/spec.json" "$tok" 2>&1) && no "applied in a member run" || { grep -q "is not available in a member run" <<<"$out" && [ ! -e "$R/.rt3" ] && ok "copy: a member run never applies" || no "copy member run: $out"; }
+
+# --- scope user: a link that lives outside every checkout (a runtime's memory directory in the home directory); root is the directory the
+# destination is relative to, and nothing is asked of git there: no work tree, no tracked files, no exclude hint
+cat > "$T/udrv.py" <<'EOF'
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import linker
+phase, verb, specfile = sys.argv[2:5]
+spec = json.load(open(specfile))
+lk = linker.Link("memory", "alpha", spec.get("checkout", ""), spec["dest"], spec["source"], spec["mode"], spec["state"], {"place": "the home directory"},
+                 root=spec["root"], source_root=spec.get("source_root"))
+if phase == "plan":
+    tf = specfile + ".token"
+    if os.path.exists(tf):
+        os.unlink(tf)
+    linker.cmd_plan(verb, lk, tf)
+    if os.path.exists(tf):
+        print("plan token: " + open(tf).read())
+else:
+    linker.cmd_apply(verb, lk, sys.argv[5])
+EOF
+UH=$T/uhome; UM=$T/umem/alpha; mkdir -p "$UH" "$UM"; echo n > "$UM/n.md"; UD=.fake/projects/k/memory
+uspec() { jq -n --arg root "$UH" --arg dest "$UD" --arg src "${1:-$UM}" --arg st "$STATE" --arg sr "$T/umem" --arg m "${2:-dir-symlink}" \
+            '{root:$root,dest:$dest,source:$src,mode:$m,state:$st,source_root:$sr}' > "$T/uspec.json"; }
+udrv() { uspec "${USRC:-}" "${UMODE:-}"; python3 -I "$T/udrv.py" "$ROOT/lib" "$@"; }
+uplan() { udrv plan "$1" "$T/uspec.json" 2>&1; }
+ugo() { local tok; tok=$(uplan "$1" | tok_of); [ -n "$tok" ] && udrv apply "$1" "$T/uspec.json" "$tok" 2>&1; }
+UL=$UH/$UD
+before=$(snap "$UM"); out=$(uplan link); tok=$(tok_of <<<"$out")
+{ [ -n "$tok" ] && grep -q "^link plan for alpha: the home directory $UH loads " <<<"$out" && grep -q "link:   $UL" <<<"$out" && ! grep -q "git does not ignore\|tracked" <<<"$out" && [ ! -e "$UH/.fake" ]; } \
+  && ok "user scope: the plan names the home directory, prints a token, writes nothing and has no exclude hint" || no "user plan: $out"
+out=$(ugo link)
+{ [ -L "$UL" ] && [ "$(readlink "$UL")" = "$UM" ] && [ -f "$UL/n.md" ] && ! grep -q "git does not ignore" <<<"$out" && [ "$before" = "$(snap "$UM")" ]; } \
+  && ok "user scope: the link is made (the missing parents too), in a directory that is not a git work tree, and the source is untouched" || no "user apply: $out"
+out=$(uplan link); { grep -q "^already linked: $UL" <<<"$out" && [ -z "$(tok_of <<<"$out")" ]; } && ok "user scope: linking again says already linked" || no "user again: $out"
+ugo unlink >/dev/null; [ ! -e "$UL" ] && [ ! -L "$UL" ] && [ -d "$UH/.fake/projects/k" ] && [ -f "$UM/n.md" ] && ok "user scope: unlink removes the link only" || no "user unlink"
+# a real directory is moved to the backup beside it, whole, and unlink puts it back
+mkdir -p "$UL"; echo mine > "$UL/MEMORY.md"
+out=$(uplan link); grep -q "apply moves the directory to $UL.qargi-backup" <<<"$out" && ok "user scope: the plan says a real directory is moved to a backup" || no "user backup plan: $out"
+ugo link >/dev/null; { [ -L "$UL" ] && [ "$(cat "$UL.qargi-backup/MEMORY.md")" = mine ]; } && ok "user scope: the real directory is in the backup" || no "user backup"
+ugo unlink >/dev/null; { [ -d "$UL" ] && [ ! -L "$UL" ] && [ "$(cat "$UL/MEMORY.md")" = mine ] && [ ! -e "$UL.qargi-backup" ]; } && ok "user scope: unlink restores it" || no "user restore"
+rm -rf "$UL"
+# refusals: a link that is not ours, a symbolic link above it, a source outside source_root, a source reached through a link, tracked files do not matter here
+ln -s "$T/elsewhere" "$UL"; out=$(uplan link); rc=$?
+grep -q "is a symbolic link to $T/elsewhere, not to " <<<"$out" && [ "$(readlink "$UL")" = "$T/elsewhere" ] && ok "user scope: a foreign link is refused" || no "user foreign: $out"
+rm -f "$UL"; mv "$UH/.fake" "$T/moved-fake"; ln -s "$T/moved-fake" "$UH/.fake"
+out=$(uplan link); grep -q "$UH/.fake is a symbolic link; refusing" <<<"$out" && ok "user scope: a symbolic link in the parents is refused" || no "user parent link: $out"
+rm -f "$UH/.fake"; mv "$T/moved-fake" "$UH/.fake"
+mkdir -p "$T/outside"; out=$(USRC=$T/outside uplan link); grep -q "is not below the state directory $T/umem; refusing" <<<"$out" && ok "user scope: a source outside source_root is refused" || no "user source root: $out"
+ln -s "$UM" "$T/umem/viaLink"; out=$(USRC=$T/umem/viaLink uplan link); grep -q "viaLink is a symbolic link; refusing" <<<"$out" && ok "user scope: a source reached through a symbolic link is refused" || no "user source link: $out"
+rm -f "$T/umem/viaLink"
+out=$(USRC=$T/umem/missing uplan link); grep -q "does not exist" <<<"$out" && ok "user scope: a missing source is refused" || no "user missing source: $out"
+# entry-symlinks in user scope
+UMODE=entry-symlinks; mkdir -p "$UL"; echo mine > "$UL/own.md"
+out=$(ugo link); { [ -L "$UL/n.md" ] && [ -f "$UL/own.md" ] && [ ! -L "$UL/own.md" ]; } && ok "user scope, entry-symlinks: beside the user's own entries" || no "user entries: $out"
+ugo unlink >/dev/null; { [ ! -e "$UL/n.md" ] && [ -f "$UL/own.md" ]; } && ok "user scope, entry-symlinks: unlink removes ours only" || no "user entries unlink"
+UMODE=
+# a member run never applies
+tok=$(uplan link | tok_of); uspec
+out=$(cd "$T/run/out" && python3 -I "$T/udrv.py" "$ROOT/lib" apply link "$T/uspec.json" "$tok" 2>&1) && no "applied in a member run (user scope)" || { grep -q "is not available in a member run" <<<"$out" && [ ! -L "$UL" ] && ok "user scope: a member run never applies" || no "user member run: $out"; }
+
 M=dir-symlink
 
 rm -rf "$T"

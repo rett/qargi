@@ -210,6 +210,30 @@ class Skills(unittest.TestCase):
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("the lead changes the marshal; report it in your task output", r.stderr)
 
+    def test_refuses_project_link_and_unlink_to_a_member(self):
+        """qargi project link|unlink makes the checkout and the runtime's memory directory load skills, agents and memory: a person's call, with a plan
+        token. Refused as the verb, through the shell script and through the helper script it calls (any use of project_link.py is the verb)."""
+        for v in ("link", "unlink"):
+            for tail in ("p", "p --resource memory", "p --resource skills,agents --plan 0123456789ab --approved go"):
+                for form in ("qargi project %s %s", "/opt/q/bin/qargi project %s %s", "sudo qargi project %s %s", "cd src && qargi project %s %s",
+                             "bash -c 'qargi project %s %s'", "eval 'qargi project %s %s'", "echo $(qargi project %s %s)", "timeout 5 qargi project %s %s",
+                             "env FOO=1 qargi project %s %s", "./lib/project.sh %s %s", "bash lib/project.sh %s %s"):
+                    c = form % (v, tail)
+                    r = self.bash(c)
+                    self.assertEqual(r.returncode, 2, c)
+                    self.assertIn("qargi project %s changes what the checkout and the runtime's memory directory load" % v, r.stderr, c)
+                    self.assertIn("qargi guard:", r.stderr)
+            for c in ("python3 -I lib/project_link.py apply %s p memory 0123456789ab" % v, "python3 -I lib/project_link.py plan %s p '' t" % v,
+                      "./lib/project_link.py apply %s p skills,agents x" % v, "bash -c 'python3 lib/project_link.py apply %s p \"\" x'" % v,
+                      "cd lib && python3 -I project_link.py apply %s p memory x" % v, "/opt/q/lib/project_link.py plan %s p memory t" % v):
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project %s changes what the checkout" % v, r.stderr, c)
+        for c in ("qargi project show p", "qargi project list", "qargi project validate p", "bash lib/project.sh show p", "cat lib/project_link.py",
+                  "grep -n members lib/project_link.py", "qargi project set p budget_cents 500"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
                      "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",
