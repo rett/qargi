@@ -15,7 +15,7 @@ Every command takes \fB\-\-help\fR. A command that changes shared resources prin
 .SH CONCEPTS
 Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
 .PP
-Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
+Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-roles build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
 Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
@@ -365,8 +365,8 @@ Create a member under a name you choose.
 A member belongs to a project, and the definition is rendered by the provider of that project. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no \-\-project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user\-level directory.
 .RS
 .TP
-.BI "\-\-abilities " "LIST"
-comma\-separated abilities it serves (default build,write,review,test).
+.BI "\-\-roles " "LIST"
+comma\-separated roles it serves (default build,write,review,test).
 .RE
 .RS
 .TP
