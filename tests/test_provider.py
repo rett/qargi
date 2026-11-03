@@ -2218,15 +2218,18 @@ class Policy(LibraryBase):
         self.assertNotRegex(out, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
         self.assertNotIn("\x1b", out)
 
-    def test_a_definition_string_with_an_escape_is_printed_escaped_by_the_plan_the_approver_reads(self):
-        d = fake_runtime(capabilities={"skills": {"value": "yes", "note": "plain\x1b[2K\x1b[1Aforged \u202e gnirts"}})      # JSON text: no raw control in the file
+    def test_a_definition_string_with_an_escape_is_refused_by_the_plan_the_approver_reads(self):
+        # the escape is a JSON escape: the file is plain ASCII, the string it decodes to is not (A4 / N4: the policy applies to the parsed document)
+        d = fake_runtime(capabilities={"skills": {"value": "yes", "note": "plain\x1b[2K\x1b[1Aforged \u202e gnirts"}})
         src = self.source(doc=d)
         with open(os.path.join(src, "definition.json")) as f:
             self.assertNotRegex(f.read(), "[\x00-\x08\x0b-\x1f\x7f]")
         rc, out, err = self.q("import", src)
-        self.assertEqual(rc, 0, (out, err))
-        self.assertNotRegex(out, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
-        self.assertIn("plain\\x1b[2K\\x1b[1Aforged \\u202e gnirts", out)
+        self.assertNotEqual(rc, 0, (out, err))
+        self.assertNotRegex(out + err, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+        self.assertIn("capabilities.skills.note: the value has a control or bidi character (U+001B)", out + err)
+        self.assertNotIn("plan token", out)
+        self.assertFalse(os.path.exists(os.path.join(self.lib, "fakecli")))
 
     def test_a_secret_is_refused_and_its_value_is_not_printed(self):
         secret = "ghp_" + "A1b2C3d4" * 4
@@ -3540,6 +3543,109 @@ class Migrate(LibraryBase):
         self.assertEqual((rc, out), (2, ""))
         self.assertIn("not built yet; use --dry-run", err)
         self.assertIn("its definitions are schema 2 already", err)
+
+
+class JsonEscapedControls(LibraryBase):
+    """N4: a control, escape or bidi character written as a JSON escape (\\u001b) is plain ASCII in the file but a control character in the parsed
+    string. The rule applies to the parsed document of every kind (provider, catalog, extension, schema 1), keys too, and everything provider.py and
+    local_run.py print goes through the visible-escape helper."""
+    BAD = "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]"
+
+    def docs(self):
+        ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "provides": ["resume"],
+               "adds": {"capabilities": {"resume": cell("yes")}, "adapter_verbs": {"resume": "verbs/resume"}}}
+        v1 = descriptor()
+        return {"provider": runtime("mylocal"), "catalog": catalog("fam"), "extension": ext, "schema 1": v1}
+
+    def test_every_kind_refuses_a_control_character_in_a_value_and_in_a_key_and_the_message_carries_none(self):
+        for kind, d in self.docs().items():
+            name = d.get("provider") or d.get("family") or d.get("extension")
+            for where in ("description", "key"):
+                with self.subTest(kind=kind, where=where):
+                    x = copy.deepcopy(d)
+                    if where == "description":
+                        x["description"] = "plain\x1b[1A\x1b[2Kruntime"
+                    else:
+                        x["notes\x1b[8m"] = "x"
+                    got = [m for lvl, m in P.validate(x, name) if lvl == "fail"]
+                    self.assertTrue(any("control or bidi character (U+001B)" in m for m in got), got)
+                    for m in got:
+                        self.assertNotRegex(m, self.BAD, "a failure never carries the character")
+            self.assertEqual([m for lvl, m in P.validate(d, name) if lvl == "fail"], [], kind)
+
+    def test_a_bidi_character_a_newline_and_a_lone_surrogate_are_refused_too(self):
+        for what, text in (("bidi", "a \u202e b"), ("newline", "a\n== forged line"), ("delete", "a\x7fb"), ("c1", "a\u009bb"), ("surrogate", "a\ud800b")):
+            with self.subTest(what):
+                d = runtime("mylocal", description=text)
+                got = [m for lvl, m in P.validate2(d, "mylocal") if lvl == "fail"]
+                self.assertTrue(any("control or bidi character" in m for m in got), got)
+                self.assertEqual(P.validate2(runtime("mylocal", description="caf\u00e9 \u2014 \u65e5\u672c"), "mylocal"), [])
+
+    def test_argv_and_nested_strings_are_checked_with_their_path(self):
+        d = runtime("mylocal")
+        d["dispatch"]["argv"] = ["plain\x1b[8mbin", "run"]
+        got = [m for lvl, m in P.validate2(d, "mylocal") if lvl == "fail"]
+        self.assertTrue(any(m.startswith("dispatch.argv[0]: the value has a control or bidi character (U+001B)") for m in got), got)
+
+    def test_import_of_a_pack_with_a_json_escaped_control_is_refused_and_nothing_is_stored(self):
+        d = fake_runtime(description="plain\x1b[1A\x1b[2Kruntime")
+        d["dispatch"]["argv"] = ["plain\x1b[8mbin", "run"]
+        src = self.source(doc=d)
+        rc, out, err = self.q("import", src)
+        self.assertNotEqual(rc, 0, (out, err))
+        self.assertNotRegex(out + err, "[\x00-\x09\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+        self.assertIn("description: the value has a control or bidi character", out + err)
+        self.assertIn("dispatch.argv[0]: the value has a control or bidi character", out + err)
+        self.assertFalse(os.path.exists(os.path.join(self.lib, "fakecli")))
+
+    def test_a_stored_pack_edited_to_hold_a_json_escaped_control_is_refused_at_seal_and_shown_escaped(self):
+        self.import_pack(self.source())
+        path = os.path.join(self.lib, "fakecli", "definition.json")
+        with open(path) as f:
+            doc = json.load(f)
+        doc["description"] = "plain\x1b[1A\x1b[2Kruntime"
+        with open(path, "w") as f:
+            json.dump(doc, f)                              # \u001b in the file: plain ASCII
+        rc, out, err = self.q("seal", "fakecli")
+        self.assertNotEqual(rc, 0, (out, err))
+        self.assertNotIn("plan token", out)
+        self.assertIn("description: the value has a control or bidi character (U+001B)", out + err)
+        for verb in (("check", "fakecli"), ("show", "fakecli"), ("list",)):
+            rc, out, err = self.q(*verb)
+            self.assertNotRegex(out + err, "[\x00-\x09\x0b-\x1f\x7f-\x9f]", verb)
+
+    def test_provider_py_alone_without_conformance_beside_it_refuses_and_escapes_too(self):
+        alone = os.path.join(self.tmp, "alone")
+        os.makedirs(alone)
+        shutil.copy(os.path.join(LIB, "provider.py"), alone)
+        code = ("import sys, json; sys.path.insert(0, %r); import provider as P\n"
+                "d = json.loads(sys.stdin.read())\n"
+                "print(P._review() is None)\n"
+                "print([m for lvl, m in P.validate(d, 'mylocal') if lvl == 'fail'])\n"
+                "print(repr(P.vis('a\\x1b[2Kb\\u202e\\tc')))\n") % alone
+        r = subprocess.run([sys.executable, "-I", "-c", code], input=json.dumps(runtime("mylocal", description="plain\x1b[1Aruntime")),
+                           capture_output=True, text=True, cwd=self.tmp)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "True")
+        self.assertIn("description: the value has a control or bidi character", lines[1])
+        self.assertNotIn("\x1b", lines[1])
+        self.assertEqual(lines[2], repr("a\\x1b[2Kb\\u202e\tc"))
+
+    def test_provider_py_and_local_run_print_what_a_definition_holds_through_vis(self):
+        import io
+        import contextlib
+        sys.path.insert(0, os.path.join(LIB))
+        import local_run as L
+        for mod in (P, L):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                mod.print("COMMAND=plain\x1b[8mbin", "\u202e", 3)
+            self.assertEqual(buf.getvalue(), "COMMAND=plain\\x1b[8mbin \\u202e 3\n", mod.__name__)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                mod.print("qargi: a\x1b[2Kb", file=sys.stderr)
+            self.assertEqual(err.getvalue(), "qargi: a\\x1b[2Kb\n", mod.__name__)
 
 
 class Review(unittest.TestCase):
