@@ -65,7 +65,10 @@ depends on it.
 ## Changes
 
 Every user-visible change adds a line under `## [Unreleased]` in
-`CHANGELOG.md` in the same commit. Shell scripts must pass
+`CHANGELOG.md`, in the same commit as the change: one logical change per
+commit, with its tests and docs. A change that spans three or more top-level
+directories is split into commits that each build: code and tests, then docs
+and changelog. Shell scripts must pass
 `shellcheck -S warning`. Commit messages state what changed and why; no
 private hostnames, addresses, usernames, home paths or credentials appear in
 the repository or its history.
