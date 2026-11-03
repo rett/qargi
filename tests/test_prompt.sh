@@ -54,7 +54,7 @@ grep -qF "OUT is /mnt/session/outputs" <<<"$RB" && ok "the addendum states the c
 grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "a neutral text names the hosted output directory" || ok "the contract, the preamble and the role seeds do not name the hosted output directory"
 # outside the cloud runtime's definition the hosted output directory is still named by the three files below (the brief of a cloud member, the
 # collection of a cloud session's outputs, the dispatch skill); this list can only shrink: when one is moved to the runtime's definition, remove it here
-hosted=$(grep -rl "mnt/session" lib skills provision contract roles agents packs bin 2>/dev/null | grep -v '^lib/providers/' | sort | tr '\n' ' ')
+hosted=$(grep -rl "mnt/session" bin lib agents contract packs roles skills provision 2>/dev/null | grep -v '^lib/providers/' | sort | tr '\n' ' ')
 [ "$hosted" = "lib/collect.sh lib/team.sh skills/qargi-task/SKILL.md " ] && ok "only lib/collect.sh, lib/team.sh and the qargi-task skill name the hosted output directory outside the runtime's definition" || no "the hosted output directory is named in: $hosted"
 grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
 grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
