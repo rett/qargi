@@ -894,13 +894,15 @@ def _resource_problems(res):
     return bad
 
 
-EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "provides", "requires", "adds")
+EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "surface", "provides", "requires", "adds")
+EXTENSION_ADDS = ("capabilities", "resources", "renderers", "dispatch", "barrier", "adapter_verbs")
+RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory")
 
 
 def validate_extension(d, name=None):
-    """The findings for an extension pack (schema 2, kind extension): what it needs to be stored and listed. Composing it into a runtime
-    (conflicts, provenance, what it provides) is the extension work's; this checks the shape the review shows. The name it carries is
-    `extension`."""
+    """The findings for an extension pack (schema 2, kind extension): the node of schema-2.json, then the rules a schema cannot state
+    (the name equals the directory name, provides equals the capabilities that adds names, every path stays inside the pack or the
+    checkout). The name it carries is `extension`. A message worded by a rule below replaces the schema's own for the same field."""
     out = []
     for k in d:
         if k not in EXTENSION_KEYS:
@@ -934,8 +936,20 @@ def validate_extension(d, name=None):
         verbs = adds.get("adapter_verbs")
         if verbs is not None and not (isinstance(verbs, dict) and all(isinstance(v, str) and _inside(v) for v in verbs.values())):
             out.append(("fail", "adds.adapter_verbs: {VERB: a path inside the pack}"))
-    if d.get("requires") is not None and not isinstance(d["requires"], dict):
+        if isinstance(adds.get("resources"), dict):
+            out += [("fail", "adds." + m) for m in _resource_problems(adds["resources"])]
+    rq = d.get("requires")
+    if rq is not None and not isinstance(rq, dict):
         out.append(("fail", "requires: an object"))
+    elif isinstance(rq, dict) and isinstance(rq.get("capabilities"), list):
+        out += [("fail", "requires.capabilities: unknown capability '%s'" % c) for c in rq["capabilities"] if isinstance(c, str) and c not in caps]
+    have = [m for _, m in out]
+    sch = schema2()
+    raw = []
+    _check(d, {"$ref": sch["kinds"]["extension"]}, sch, "", raw)
+    for path, text in raw:
+        if not any(m.startswith(path) for m in have if path):
+            out.append(("fail", _msg(path, text)))
     return out
 
 
