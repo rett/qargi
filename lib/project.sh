@@ -6,7 +6,8 @@
 #
 #   project.sh template NAME              print an answers file with defaults (models.provider is there as an empty string: there is no
 #                                         default provider, so set it to a provider's name before the pack verbs, skill accept and
-#                                         marshal handoff can serve the project; `project validate` reports it while it is empty)
+#                                         marshal handoff can serve the project; `project validate` reports it while it is empty; a role's model
+#                                         is null: it takes its provider's tier once one is set)
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string). The provider has one runtime
