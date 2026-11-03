@@ -298,6 +298,7 @@ rt() { jq -n --arg n "$1" --arg s "$2" '{schema:2, kind:"provider", provider:$n,
   dispatch:{mode:"command", argv:[$n, "run", "--model", "{model}"], prompt:{via:"stdin"}, cwd:"{clone}", output:{format:"text"}},
   agents:null, resources:{}, barrier:{kind:"none"}}'; }
 rt fam-cli local > "$LIB/fam-cli/definition.json"; rt fam-hosted cloud > "$LIB/fam-hosted/definition.json"
+python3 -I "$SRC/tests/handseal.py" "$LIB/fam-cli" "$LIB/fam-hosted"        # a library pack counts only once sealed
 storeo fm '"fam"'
 jq -e '.models.provider == "fam"' "$T/c/projects/fm.json" >/dev/null && ok "fm is stored with the family name (a string)" || no "fm not stored: $(jq -c .models "$T/c/projects/fm.json" 2>&1)"
 out=$(python3 -I "$TOOL/lib/provider.py" of fm --conf "$T/c" --surface local 2>"$T/err"); rc=$?
