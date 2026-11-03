@@ -97,7 +97,7 @@ Usage: provider.py list
                                          extensions; the project is P, else the one in effect), or the topic names when none is given; exit 1
                                          when the runtime has no such topic or no notes, 2 when the project has no local runtime or the
                                          runtime is refused (a library pack not sealed or changed since, an unreadable definition)
-       provider.py skills-dirs [NAME]   the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
+       provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
                                          name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
@@ -980,7 +980,7 @@ def validate2(d, name=None):
     out += [("fail", m) for m in _models_problems(d.get("models"))]
     out += [("fail", m) for m in _resource_problems(d.get("resources"))]
     out += [("fail", m) for m in _notes_problems(d.get("notes"))]
-    disp =d.get("dispatch")
+    disp = d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     notes = d.get("notes")
