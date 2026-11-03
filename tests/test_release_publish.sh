@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# `qargi release status|verify` flag a tag with no GitHub release and a tagged commit without the release workflow.
-# gh is a stub (QARGI_GH); GitHub is never contacted.
+# `qargi release status|verify` flag a tag with no GitHub release and a tagged commit without the release workflow, and
+# `qargi release publish TAG` creates the GitHub release behind a plan token. gh is a stub (QARGI_GH); GitHub is never contacted.
 # Run: tests/test_release_publish.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -63,5 +63,22 @@ jq -n --arg p "$R2" '{schema:1, project:"norigin", methodology:"gitflow", repo:{
 mode missing; out=$(QARGI_PROJECT=norigin $REL status 0.1.0 2>&1); rc=$?
 [ $rc = 0 ] && [ ! -s "$T/gh.log" ] && ok "a repository without origin is not asked about GitHub" || no "no origin: rc=$rc $out $(cat "$T/gh.log")"
 
+# --- publish
+tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
+mode missing; out=$($REL publish 0.1.0 2>&1); rc=$?; t=$(tok <<<"$out")
+c=$(git -C "$R" rev-parse --short "0.1.0^{commit}")
+[ $rc = 0 ] && [ -n "$t" ] && grep -q "$c" <<<"$out" && grep -q -- "- first thing" <<<"$out" && grep -q 'release create 0.1.0 --verify-tag --title "relpub 0.1.0" --notes-file' <<<"$out" && ok "the plan shows the tag, its commit, the notes and the command" || no "plan: rc=$rc $out"
+! grep -q "release create" "$T/gh.log" && ok "planning creates nothing" || no "plan created: $(cat "$T/gh.log")"
+$REL publish 0.1.0 --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || { ! grep -q "release create" "$T/gh.log" && ok "a wrong plan token refuses" || no "wrong token created"; }
+$REL publish 0.1.0 --plan "$t" --approved "go ahead" > "$T/o" 2>&1; rc=$?
+grep -q "release create 0.1.0 --verify-tag --title relpub 0.1.0 --notes-file" "$T/gh.log" && [ "$(cat "$T/notes.copy")" = "$(printf '### Added\n- first thing')" ] && [ $rc = 0 ] && grep -q "releases/tag/0.1.0" "$T/o" && ok "applied: gh release create runs with the changelog section as notes" || no "apply: rc=$rc $(cat "$T/o") $(cat "$T/gh.log")"
+grep -q '"verb":"release:publish"' "$T/s/audit.log" && grep -q '"approved":"go ahead"' "$T/s/audit.log" && ok "the apply is audited" || no "audit: $(cat "$T/s/audit.log" 2>/dev/null)"
+mode found; out=$($REL publish 0.1.0 2>&1) && no "published over an existing release" || { grep -q "already has a GitHub release" <<<"$out" && ! grep -q "plan token" <<<"$out" && ok "refuses when the release exists" || no "exists: $out"; }
+mode missing; out=$($REL publish 0.9.0 2>&1) && no "published a missing tag" || { grep -q "no tag 0.9.0" <<<"$out" && ok "refuses when the tag is missing" || no "no tag: $out"; }
+out=$($REL publish 0.3.0 2>&1) && no "published an empty section" || { grep -q "no changelog section for 0.3.0" <<<"$out" && ! grep -q "plan token" <<<"$out" && ok "refuses when the changelog section is empty" || no "empty: $out"; }
+out=$(QARGI_GH=$T/nogh $REL publish 0.1.0 2>&1); t2=$(tok <<<"$out")
+grep -q "^note: gh is not installed" <<<"$out" && [ -n "$t2" ] && ok "the plan is shown without gh, with a note" || no "plan no gh: $out"
+QARGI_GH=$T/nogh $REL publish 0.1.0 --plan "$t2" --approved go >/dev/null 2>&1 && no "applied without gh" || ok "applying without gh refuses"
+mode unauth; out=$($REL publish 0.1.0 --plan "$t" --approved go 2>&1) && no "applied unauthenticated" || ok "applying with an unauthenticated gh refuses"
 shellcheck -x -S warning tests/test_release_publish.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"; exit $fail
