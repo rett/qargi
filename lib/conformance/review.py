@@ -30,7 +30,8 @@ An executable is a file with an executable mode, a shebang line, a script suffix
 adapter verbs). The review lists each with its sha256, interpreter and first lines; the person approves them by name.
 
 The review dict: files [{path, size, sha256, exec, text}], executables [{path, sha256, why, interpreter, head}], fail [msg], warn [msg],
-urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text], bytes, count."""
+urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text],
+env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning), bytes, count."""
 import hashlib
 import os
 import re
@@ -58,6 +59,7 @@ WRITES = re.compile(r">>?\s*(?!/dev/(null|stderr|stdout|fd/))(/|~|\$HOME|\$\{HOM
                     r"\bopen\([^)]*[\"'][wax]b?\+?[\"']|\.write_text\(|\.write_bytes\(|shutil\.(rmtree|move|copy)|os\.(remove|unlink|rmdir|rename|makedirs)\(")
 SECRET_ENV = re.compile(r"(environ\s*(\[|\.get\s*\()|getenv\s*\()\s*[\"'][A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z0-9_]*[\"']|"
                         r"\$\{?[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_]*\}?")
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL")
 BLOB = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}|\b[0-9a-fA-F]{128,}\b")
 
 
@@ -243,9 +245,16 @@ def _argv_text(definition):
     return out
 
 
+def _env_pass(definition):
+    """The variable names dispatch.env_pass lists (the caller's environment that the runtime's command receives), as written."""
+    disp = definition.get("dispatch") if isinstance(definition, dict) and isinstance(definition.get("dispatch"), dict) else {}
+    v = disp.get("env_pass")
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
 def scan(root, definition=None):
     r = {"files": [], "executables": [], "fail": [], "warn": [], "urls": [], "network": [], "flags": [], "secrets": [], "needs_on_path": [],
-         "argv": [], "bytes": 0, "count": 0}
+         "argv": [], "env_pass": [], "bytes": 0, "count": 0}
     files = _files(root)
     named = _named(definition)
     norm = {}
@@ -320,6 +329,11 @@ def scan(root, definition=None):
     r["urls"] = sorted(set(r["urls"]))[:15]
     r["needs_on_path"] = needs_on_path(definition)
     r["argv"] = _argv_text(definition)
+    r["env_pass"] = _env_pass(definition)
+    for n in r["env_pass"]:
+        if SECRET_NAME.search(n.upper()):
+            r["warn"].append("dispatch.env_pass hands %s to the command: the name looks like a credential, and it reaches everything that command does; approve it only if the "
+                             "command needs it" % n)
     return r
 
 
@@ -372,6 +386,8 @@ def lines(review, title):
         out.append("needs on PATH (installed by you, not part of the pack): %s" % ", ".join(review["needs_on_path"]))
     for a in review["argv"]:
         out.append("runs: %s" % a)
+    if review.get("env_pass"):
+        out.append("environment handed to the command (env_pass): %s" % ", ".join(review["env_pass"]))
     if review["urls"]:
         out.append("URLs mentioned:")
         out.extend("  " + u for u in review["urls"])

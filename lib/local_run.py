@@ -19,7 +19,9 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        passes the text ({prompt_arg}, at most 120000 bytes). The prompt is the neutral member body (agents/member.body.md) and
                        the task block, with what qargi recorded about the run (class, paths); the runtime has no agent files to carry it.
   dispatch.cwd         "{clone}" (default) or a directory inside it.
-  dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused.
+  dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused,
+                       and so is what would hand on the user's own home, search path, code loaders, ssh agent or forge credentials
+                       (provider.env_pass_problem).
   dispatch.timeout_s   the bound (default 1800, at most 86400); --timeout replaces it.
   dispatch.exit        {"0": "ok", "*": "failed"}: the exit status -> outcome ok|failed|refused|transport.
 Placeholders (the closed set): member, model, effort_native, prompt_file, prompt_arg, clone, run_dir, out_dir, project (and the short names
@@ -221,6 +223,9 @@ def env_names(disp, runtime):
     for n in ep:
         if n.startswith(("GIT_", "QARGI_")) or n in ("GIT", "TMPDIR"):
             fail("dispatch.env_pass of %s names %s: the run's git wrapper and temporary directory are not replaced by the runtime" % (runtime, n))
+        why = P.env_pass_problem(n)
+        if why:
+            fail("dispatch.env_pass of %s names %s: it is never handed on (%s)" % (runtime, n, why))
     return ep
 
 

@@ -2686,6 +2686,28 @@ class Cases(LibraryBase):
         self.assertEqual(P.effective("badcode", "local", "read_only_barrier"), "no")
         self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "badcode", "verified.json")))
 
+    def test_the_harness_runs_the_adapter_with_a_scrubbed_environment_not_the_callers(self):
+        seen = os.path.join(self.tmp, "adapter-env")
+        spy = "#!/bin/sh\nenv > %s\necho '{}'\n" % seen
+        self.import_pack(self.adapter_pack("spycode", spy), exec_names="adapter,conformance/stub")
+        self.env.update(SECRET_TOKEN="leak-1", GH_TOKEN="leak-2", GITHUB_TOKEN="leak-3", SSH_AUTH_SOCK="/tmp/leak-4", OPENAI_API_KEY="leak-5", AWS_SECRET_ACCESS_KEY="leak-6",
+                        LD_PRELOAD="/tmp/leak-7.so", PYTHONPATH="/tmp/leak-8")
+        self.q("check", "spycode")
+        self.assertTrue(os.path.exists(seen), "the adapter did not run")
+        text = fread(seen)
+        self.assertFalse("leak-" in text, "the adapter saw a variable of the caller")          # (not assertNotIn: it would print the whole environment)
+        for name in ("SECRET_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "LD_PRELOAD", "PYTHONPATH"):
+            self.assertNotRegex(text, r"(?m)^%s=" % name)
+        self.assertNotIn("HOME=%s\n" % self.home, text)                           # not the caller's home either
+
+    def test_pack_env_is_small_and_fixed(self):
+        env = P.pack_env("/tmp/h", "/tmp/t")
+        self.assertEqual(sorted(env), ["HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ"])
+        self.assertEqual((env["HOME"], env["TMPDIR"]), ("/tmp/h", "/tmp/t"))
+        self.assertTrue(all(p.startswith("/") for p in env["PATH"].split(os.pathsep)))
+        with mock.patch.dict(os.environ, {"PATH": "rel/bin::/usr/bin:./x"}):
+            self.assertEqual(P.pack_env("/h", "/t")["PATH"], "/usr/bin")
+
     def test_without_a_conformance_stub_the_adapter_is_not_run(self):
         src = self.adapter_pack("nostub")
         shutil.rmtree(os.path.join(src, "conformance"))
@@ -2693,6 +2715,54 @@ class Cases(LibraryBase):
         out = self.check("nostub")
         self.assertIn("skip barrier-adapter: the pack has no conformance/stub", out)
         self.assertIn("could not run", out)
+
+
+class EnvPass(LibraryBase):
+    """dispatch.env_pass: the variables of the caller's environment a runtime's command receives. A few are never handed on, and the
+    review shows the list."""
+
+    DENIED = ("HOME", "PATH", "SHELL", "USER", "TMPDIR", "IFS", "BASH_ENV", "ENV", "SHELLOPTS", "PROMPT_COMMAND", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+              "PYTHONPATH", "PYTHONSTARTUP", "PERL5LIB", "RUBYOPT", "NODE_OPTIONS", "SSH_AUTH_SOCK", "SSH_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+              "GITHUB_PAT", "GITLAB_TOKEN", "GIT_DIR", "GIT_SSH_COMMAND", "QARGI_HOME", "XDG_CONFIG_HOME", "GNUPGHOME", "EDITOR")
+    ALLOWED = ("OPENAI_API_KEY", "FAKECLI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "ANTHROPIC_API_KEY", "FAKE_MODE", "HTTPS_PROXY", "LANG")
+
+    def test_the_names_that_must_not_reach_a_member_or_a_pack_are_refused(self):
+        for n in self.DENIED:
+            with self.subTest(n):
+                self.assertIsInstance(P.env_pass_problem(n), str, n)
+        for n in self.ALLOWED:
+            with self.subTest(n):
+                self.assertIsNone(P.env_pass_problem(n), n)
+
+    def test_a_definition_that_hands_on_such_a_name_fails_its_check_and_cannot_be_imported(self):
+        for names, bad in ((["FAKE_KEY", "HOME"], "HOME"), (["GH_TOKEN"], "GH_TOKEN"), (["LD_PRELOAD"], "LD_PRELOAD"), (["SSH_AUTH_SOCK"], "SSH_AUTH_SOCK")):
+            with self.subTest(names):
+                shutil.rmtree(os.path.join(self.src, "fakecli"), True)
+                d = fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "env_pass": names, "output": {"format": "text"}})
+                self.assertTrue(any(("dispatch.env_pass" in m and bad in m) for lvl, m in P.validate2(d, "fakecli") if lvl == "fail"), P.validate2(d, "fakecli"))
+                rc, out, err = self.q("import", self.source(doc=d))
+                self.assertEqual(rc, 1, (out, err))
+                self.assertIn("FAIL: dispatch.env_pass: %s" % bad, out)
+                self.assertFalse(self.stored("fakecli"))
+
+    def test_the_review_shows_what_is_handed_on_and_marks_the_names_that_look_like_credentials(self):
+        d = fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "env_pass": ["FAKECLI_API_KEY", "FAKE_MODE", "HTTPS_PROXY"],
+                                   "output": {"format": "text"}})
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("environment handed to the command (env_pass): FAKECLI_API_KEY, FAKE_MODE, HTTPS_PROXY", out)
+        self.assertRegex(out, r"warn: dispatch.env_pass hands FAKECLI_API_KEY to the command: the name looks like a credential")
+        self.assertNotIn("FAKE_MODE to the command", out)
+
+    def test_review_scan_lists_env_pass_even_for_a_name_the_definition_check_refuses(self):
+        from conformance import review as R
+        d = os.path.join(self.tmp, "t")
+        os.makedirs(d)
+        fwrite(os.path.join(d, "definition.json"), "{}")
+        rv = R.scan(d, {"dispatch": {"env_pass": ["HOME", "GH_TOKEN", "OK_NAME"]}})
+        self.assertEqual(rv["env_pass"], ["HOME", "GH_TOKEN", "OK_NAME"])
+        self.assertIn("environment handed to the command (env_pass): HOME, GH_TOKEN, OK_NAME", "\n".join(R.lines(rv, "x")))
+        self.assertEqual(R.scan(d, {})["env_pass"], [])
 
 
 class Attest(LibraryBase):
