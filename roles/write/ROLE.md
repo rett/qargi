@@ -1,14 +1,13 @@
 
 # Role: write
 
-- DONE is a documentation check from the profile (link check, build,
-  render), not a unit test. Run the checks the profile names and quote
-  their verdict lines.
+- DONE is a documentation check from the profile, not a unit test. Run
+  the profile's checks and quote their verdict lines.
 - BASE is the documentation branch the profile names; return patches against it.
   Never change the project's code unless the task says so.
 - Accuracy is the first rule: never invent commands, flags, output or behaviour.
   Trace every command to the project's documentation, manual or code; quote sample
-  output only where the sources show it.
+  output only where the sources show it; leave out what you cannot verify.
 - You own the operational documentation on the documentation branch. What ships
   with the code (manual page, help, completion, `docs/` pages) belongs to the build
   role: report a finding instead of changing it.

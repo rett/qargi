@@ -207,6 +207,12 @@ case $verb in
     else
       PROFILE=$ABILITY
     fi
+    # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
+    # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
+    ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
+    if [ -n "$CPJ" ] && CPROV=$(project_provider "$CPJ" local 2>/dev/null </dev/null); then
+      ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+    fi
     LEAD=''
     case $BASE in
       feature/?*)
@@ -225,7 +231,10 @@ case $verb in
         fi;;
     esac
     RUN=$(mktemp -d "$SCR/qargi.XXXXXX")
-    mkdir -p "$RUN/out" "$RUN/home"
+    mkdir -p "$RUN/out" "$RUN/home" "$RUN/contract"
+    # the member reads the contract from the run: the core's files, then the runtime's addenda as one more file (CONTRACT below)
+    cp "$(prompt_root)/contract/"*.md "$RUN/contract/" || die "could not copy the contract"
+    [ -z "$ADDENDA" ] || printf '%s\n' "$ADDENDA" > "$RUN/contract/runtime-addenda.md"
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
     # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
     SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
@@ -287,7 +296,7 @@ WRAP
     echo "TMP=$TMPD"
     echo "GIT=$RUN/git"
     echo "BASE_SHA=$BSHA"
-    echo "CONTRACT=$(cd "$(prompt_root)/contract" && pwd -P)"
+    echo "CONTRACT=$RUN/contract"
     # the memory context packet: the tier summary and the always rows, for a repository that belongs to a stored project.
     # It never changes prepare's result: a failure or a timeout prints nothing.
     PPROJ=$(project_of "$REPO" "$URL")

@@ -5,8 +5,8 @@ description: Habits for a member changing qargi itself: quoting, commit messages
 # Working on qargi
 
 - Internal flags in Python scripts are single-quoted.
-- The guard hook refuses Bash text that contains a refused verb. Write commit messages with the Write tool and commit with `-F FILE`.
-- A foreground `sleep` is blocked: use `run_in_background`.
+- The guard refuses shell text that contains a refused verb. Write each commit message with your runtime's file-writing tool and commit with `-F FILE`.
+- A foreground `sleep` is blocked: use your runtime's background facility.
 - Backtick text inside a double-quoted `echo` is executed.
 - Never use bare `git stash`: use a WIP commit.
 - Write every new test fail-first.

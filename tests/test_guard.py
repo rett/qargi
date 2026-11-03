@@ -87,6 +87,17 @@ class Review(unittest.TestCase):
             self.assertEqual(r.returncode, 2, (tool, inp, r.stderr))
             self.assertIn("review", r.stderr)
 
+    def test_a_review_refusal_names_out_as_the_place_to_write_not_run_dir(self):
+        self.ability("review")
+        for tool, inp in self.writes():
+            r = self.call(tool, inp)
+            self.assertEqual(r.returncode, 2, (tool, inp))
+            self.assertNotIn("RUN_DIR", r.stderr, (tool, inp, r.stderr))
+        r = self.call("Write", {"file_path": os.path.join(self.t, "elsewhere.txt")})
+        self.assertIn("report and the manifest in OUT", r.stderr)
+        r = self.call("Bash", {"command": "echo x > src/a.go"})
+        self.assertIn("writes its report to OUT", r.stderr)
+
     def test_review_may_read_and_write_its_report(self):
         self.ability("review")
         for tool, inp in self.reads():
