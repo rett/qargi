@@ -54,6 +54,12 @@ printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
 out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only" && ok "a report with a Findings section passes as a review run" || no "report run: $out"
 printf '# Review\n\nlooks fine\n' > "$T/rep/report.md"
 $DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a report without a Findings section is refused" || no "report without findings"
+# in a team run every file in OUT starts with the member's prefix: review--report.md is the report
+rm -f "$T/rep/report.md"; printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/review--report.md"
+out=$($DA review check "$T/rep" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "report-only.*review--report.md" && ok "a report with an OUT_PREFIX (review--report.md) passes as a review run" || no "prefixed report: $out"
+printf '# Review\n\nlooks fine\n' > "$T/rep/review--report.md"
+$DA review check "$T/rep" >/dev/null 2>&1; [ $? = 1 ] && ok "a prefixed report without a Findings section is refused" || no "prefixed report without findings"
+rm -f "$T/rep/review--report.md"
 # --- qargi review apply: a collected, checked run becomes a task branch of the real repository
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm QARGI_PROJECT=app
 mkdir -p "$HOME" "$T/c/projects" "$T/shm" "$T/scr"

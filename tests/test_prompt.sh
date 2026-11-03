@@ -52,9 +52,22 @@ grep -qF "# In a cloud run" <<<"$RL" && no "the lead got the cloud-only part" ||
 grep -qF "OUT is /mnt/session/outputs" <<<"$RB" && ok "the addendum states the cloud output directory" || no "no output directory in the addendum"
 # the neutral texts hold no hosted directory and no rule that conflicts with the contract (outputs go to OUT, memory notes are proposed)
 grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "a neutral text names the hosted output directory" || ok "the contract, the preamble and the role seeds do not name the hosted output directory"
+# outside the cloud runtime's definition the hosted output directory is still named by the three files below (the brief of a cloud member, the
+# collection of a cloud session's outputs, the dispatch skill); this list can only shrink: when one is moved to the runtime's definition, remove it here
+hosted=$(grep -rl "mnt/session" bin lib agents contract packs roles skills provision 2>/dev/null | grep -v '^lib/providers/' | sort | tr '\n' ' ')
+[ "$hosted" = "lib/collect.sh lib/team.sh skills/qargi-task/SKILL.md " ] && ok "only lib/collect.sh, lib/team.sh and the qargi-task skill name the hosted output directory outside the runtime's definition" || no "the hosted output directory is named in: $hosted"
 grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
 grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
 grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the build prompt does not name RUN_DIR"
+# the contract is neutral about the runtime's tools and says each rule once: the Bash tool, run_in_background and Monitor are the claude-code addendum's,
+# the detached start is the cloud addendum's, and a cloud member's prompt holds one no-push rule and one background-command rule
+grep -qE "run_in_background|Monitor|Bash tool" contract/*.md && no "the contract names a runtime's tools" || ok "the contract does not name a runtime's tools (Bash tool, run_in_background, Monitor)"
+grep -qF "run_in_background" lib/providers/claude-code/local-run.md && grep -qF "nohup" lib/providers/claude-platform/cloud-run.md && ok "each runtime's addendum carries its own way to start a long command" || no "an addendum lost its recipe"
+grep -qiw "push" provision/templates/cloud-preamble.md lib/providers/claude-platform/cloud-run.md && no "the preamble or the cloud addendum repeats the contract's no-push rule" || ok "the contract alone says never to push (the preamble and the cloud addendum do not repeat it)"
+grep -qi "detached" provision/templates/cloud-preamble.md && no "the preamble repeats the detached-start recipe" || ok "the cloud addendum alone owns the detached-start recipe"
+for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' "profile's rules for examples"; do
+  grep -qF -- "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
+done
 # no project, a project without a cloud runtime, one whose runtime does not resolve, an unknown one: no addendum, and no default runtime
 mkproj nocloud '{"local":"claude-code"}'; mkproj ghost '{"cloud":"nosuchrt"}'
 for pr in "" nocloud ghost nosuchproj; do
@@ -125,4 +138,18 @@ $DA instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now di
 jq 'del(.["alpha-build"].prompt)' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
 bash -c ". '$PWD/lib/lib.sh'; prompt_record alpha-build; prompt_record alpha-ghost"
 jq -e '.["alpha-build"].prompt.sha != null and .["alpha-build"].prompt.at != null and (has("alpha-ghost") | not)' "$T/c/instances.json" >/dev/null && ok "prompt_record stores the hashes and does not create an entry" || no "prompt_record: $(cat "$T/c/instances.json")"
+
+# an addendum that cannot be read fails the prompt: refresh-prompt makes no cloud call and prints no plan, and the stamp is not a hash of what was left
+chmod 644 "$T/copy/lib/providers/claude-platform/cloud-run.md"; cp "$T/addendum.orig" "$T/copy/lib/providers/claude-platform/cloud-run.md"
+jq '.["alpha-build"].prompt = {sha: "0000000000000000", skill: "0000000000000000"}' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
+chmod 000 "$T/copy/lib/providers/claude-platform/cloud-run.md"
+n1=$(wc -l < "$FAKE/ant.log")
+out=$($DC instances refresh-prompt alpha-build --asked "t" 2>&1); rc=$?
+n2=$(wc -l < "$FAKE/ant.log")
+[ $rc != 0 ] && [ "$n1" = "$n2" ] && ! grep -q "plan token" <<<"$out" && grep -q "could not render the system prompt" <<<"$out" && ok "refresh-prompt with an unreadable addendum stops before any cloud call and plans nothing" || no "unreadable addendum: rc=$rc ant calls $n1/$n2 $out"
+out=$($DC instances show alpha-build 2>&1 | grep "PROMPT")
+grep -q "PROMPT: unknown" <<<"$out" && ok "the prompt state with an unreadable addendum is unknown, not stale" || no "show unreadable: $out"
+st=$(bash -c ". '$T/copy/lib/lib.sh'; prompt_stamp build alpha" 2>/dev/null); rc=$?
+[ $rc != 0 ] && [ -z "$st" ] && ok "prompt_stamp prints nothing and fails when the prompt cannot be rendered" || no "stamp: rc=$rc '$st'"
+chmod 644 "$T/copy/lib/providers/claude-platform/cloud-run.md"
 rm -rf "$T"; exit $fail

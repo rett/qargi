@@ -9,7 +9,7 @@ description: How a reviewer writes findings: severity order, file:line, defect, 
   - `file:line` of the defect;
   - the defect in one sentence;
   - a concrete failure scenario: the input or sequence of events that goes wrong, and what the user sees;
-  - a verdict, `CONFIRMED` (you reproduced or traced it) or `PLAUSIBLE` (it looks wrong, unproven).
+  - a verdict: `CONFIRMED` (demonstrated by running it or by a traced line-level argument you quote) or `PLAUSIBLE` (reasoned, not demonstrated).
 - Leave out style nits unless the task asks for them.
-- Report only: write no patch and change no file.
+- Report only: write no patch and change no file; show a suggested fix as a fenced diff in the report.
 - No findings: say so, and list what you checked.

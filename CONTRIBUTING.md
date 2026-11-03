@@ -87,9 +87,10 @@ from the `/qargi-providers` skill.
      or `"agents": null` for a runtime with no agent files.
    - **link**: where its skills, agents, MCP file, settings and memory live (`resources`) and
      whether each is linked as a directory, one link per entry, or copied.
-   - **contract addenda** (`resources.contract_addenda`): a cloud runtime's rules about its own
+   - **contract addenda** (`resources.contract_addenda`): a runtime's rules about its own
      surface, as plain text files in the definition's directory (at most 16 KB each). A cloud
-     agent's prompt carries them after the member contract, so the contract never names the
+     agent's prompt carries them after the member contract, and `local prepare` copies those
+     of the local runtime into the run's contract directory, so the contract never names a
      runtime. The provider check fails on a file that is missing, is not text or leaves the
      directory; an extension cannot add them.
    - **dispatch** and **barrier**: the command to run (an argv array, never a shell string), how

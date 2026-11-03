@@ -110,6 +110,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1851,12 +1852,18 @@ def adapter_problem(d, directory):
 
 
 ADDENDUM_MAX = 16384
-_ADDENDUM_BAD = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+# a character no contract text may hold: a control (but tab and newline), any format character (Cf: tags U+E0000-E007F, zero-width, bidi, the
+# byte order mark, the soft hyphen), a private-use, surrogate or unassigned code point, and the line and paragraph separators
+_ADDENDUM_BAD_CATEGORIES = frozenset(("Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"))
+
+
+def _addendum_has_bad_character(text):
+    return any(unicodedata.category(ch) in _ADDENDUM_BAD_CATEGORIES for ch in text if ch not in "\t\n")
 
 
 def _read_addendum(directory, rel):
     """The text of the contract addendum rel in directory, or ProviderError saying why not: it must be a file that stays inside the directory
-    (a link that points out of it is refused), UTF-8 text with no control or bidi character but tab and newline, and at most ADDENDUM_MAX bytes."""
+    (a link that points out of it is refused), UTF-8 text with no control, format (tag, zero-width, bidi, byte order mark), private-use or unassigned character but tab and newline, and at most ADDENDUM_MAX bytes."""
     path = os.path.join(directory, rel)
     if not os.path.lexists(path):
         raise ProviderError("contract_addenda: %s does not exist" % rel)
@@ -1876,8 +1883,8 @@ def _read_addendum(directory, rel):
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = None
-    if text is None or _ADDENDUM_BAD.search(text):
-        raise ProviderError("contract_addenda: %s is not text (UTF-8 with no control or bidi characters)" % rel)
+    if text is None or _addendum_has_bad_character(text):
+        raise ProviderError("contract_addenda: %s is not text (UTF-8 with no control, format, private-use or unassigned characters)" % rel)
     return text
 
 

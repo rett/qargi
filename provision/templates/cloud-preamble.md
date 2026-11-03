@@ -7,10 +7,7 @@ Cloud session specifics (this is the cloud backend of /qargi-task):
 - Your role is {{ROLE}}. Memory stores are under /mnt/memory. Read each store's
   README.md and follow it. Write to a store only as the task block's MEMORY packet
   says; otherwise propose new verified notes in your report and the lead files them.
-- Run checks as a non-root user when the repository's tests require it. Start
-  long commands detached and poll their log in later calls.
+- Run checks as a non-root user when the repository's tests require it.
 - The coordinator downloads OUT after you go idle and runs any private-name
   scrub itself, because private patterns are not available here.
-- You have no standing permission to push: never run git push, even if the
-  access provided to you would allow it.
 
