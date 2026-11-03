@@ -86,6 +86,7 @@ run python3 tests/role_seed_sim.py test
 run bash tests/test_open_providers.sh
 run bash tests/test_neutral.sh
 run bash tests/test_skill_budget.sh
+run bash tests/test_tool_copy.sh
 run shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 echo "total: $((SECONDS - t0))s ($([ $rc = 0 ] && echo passed || echo FAILED))"
 exit $rc

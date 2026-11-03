@@ -31,8 +31,12 @@ esac
 EOS
 chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
 DA=$PWD/bin/qargi
+# the stored answers of a project: its cloud runtime supplies the cloud-only part of the prompt
+mkdir -p "$T/c/projects"
+mkproj() { jq -n --arg p "$1" --argjson v "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{},budget_cents:500}' > "$T/c/projects/$1.json"; }
+mkproj alpha '{"local":"claude-code","cloud":"claude-platform"}'
 # a scratch copy of the tool whose skill and preamble can be edited
-mkdir "$T/copy"; cp -r bin lib roles skills provision contract "$T/copy/"; DC=$T/copy/bin/qargi
+copy_tool "$PWD" "$T/copy"; DC=$T/copy/bin/qargi
 
 render() { bash -c ". '$1/lib/lib.sh'; agent_prompt build alpha"; }
 render "$PWD" > "$FAKE/system"; echo 1 > "$FAKE/aver"
@@ -42,6 +46,21 @@ for k in "You are a qargi agent" "# Output files" "# In a cloud run" "# Role: bu
   grep -qF "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
 done
 grep -qF "# In a cloud run" <<<"$RL" && no "the lead got the cloud-only part" || ok "the lead's prompt has no cloud-only part"
+# the cloud-only part is the addendum of the project's cloud runtime, after the output format; the core's contract directory has none
+[ ! -e contract/cloud-run.md ] && [ -f lib/providers/claude-platform/cloud-run.md ] && ok "cloud-run.md is a resource of the claude-platform definition, not of contract/" || no "cloud-run.md is in the wrong place"
+[ "$(grep -nE -e '^# (Output files|In a cloud run|Role: build)' <<<"$RB" | cut -d: -f2- | sed 's/ (.*//' | paste -sd,)" = "# Output files,# In a cloud run,# Role: build" ] && ok "the addendum follows the contract and the output format" || no "order: $(grep -n '^# ' <<<"$RB" | head)"
+grep -qF "OUT is /mnt/session/outputs" <<<"$RB" && ok "the addendum states the cloud output directory" || no "no output directory in the addendum"
+# the neutral texts hold no hosted directory and no rule that conflicts with the contract (outputs go to OUT, memory notes are proposed)
+grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "a neutral text names the hosted output directory" || ok "the contract, the preamble and the role seeds do not name the hosted output directory"
+grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
+grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
+grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the build prompt does not name RUN_DIR"
+# no project, a project without a cloud runtime, one whose runtime does not resolve, an unknown one: no addendum, and no default runtime
+mkproj nocloud '{"local":"claude-code"}'; mkproj ghost '{"cloud":"nosuchrt"}'
+for pr in "" nocloud ghost nosuchproj; do
+  out=$(bash -c ". '$PWD/lib/lib.sh'; agent_prompt build $pr" 2>/dev/null)
+  grep -qF "# Output files" <<<"$out" && ! grep -qF "# In a cloud run" <<<"$out" && ok "project '${pr:-none}': the contract without the cloud-only part" || no "project '${pr:-none}': $(grep -c 'cloud run' <<<"$out")"
+done
 grep -q "RUN_DIR" contract/contract.md contract/output-format.md && no "the contract names RUN_DIR" || ok "the contract and the output format do not name RUN_DIR as a place"
 # an old registry entry (no prompt hash) and a local one
 jq -n '{"alpha-build":{location:"cloud",deployment_id:"depl_B",environment_id:"env_1",agent:{id:"agent_B",version_pinned:1,model:"claude-sonnet-5-5",effort:"high"}},
@@ -69,6 +88,11 @@ $DA instances list 2>&1 | grep -q STALE && no "current prompt marked STALE" || o
 echo "A new rule added to the build skill." >> "$T/copy/roles/build/ROLE.md"
 $DC instances list 2>&1 | grep "alpha-build" | grep -q "prompt STALE" && ok "list marks the instance STALE" || no "list stale: $($DC instances list 2>&1)"
 $DC instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now differs.*(skill)" && ok "show says STALE and that the skill changed" || no "show stale skill: $($DC instances show alpha-build 2>&1 | tail -4)"
+# the cloud runtime's addendum is part of the contract hash: a change to it is the skill part
+cp "$T/copy/lib/providers/claude-platform/cloud-run.md" "$T/addendum.orig"
+echo "An added rule of the cloud runtime." >> "$T/copy/lib/providers/claude-platform/cloud-run.md"
+$DC instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now differs.*(skill)" && ok "a changed addendum is reported as the skill" || no "show stale addendum: $($DC instances show alpha-build 2>&1 | tail -4)"
+cp "$T/addendum.orig" "$T/copy/lib/providers/claude-platform/cloud-run.md"
 # only the preamble changes: stale prompt, not skill
 cp "$T/copy/roles/build/ROLE.md" "$T/skill.mod"; cp roles/build/ROLE.md "$T/copy/roles/build/ROLE.md"
 echo "extra preamble line" >> "$T/copy/provision/templates/cloud-preamble.md"

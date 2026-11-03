@@ -328,7 +328,7 @@ chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/render" "$R" "$HOME")" ] && o
 # A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills and ~/.agent/skills, reads three settings files
 # of its own and hides a skill with {"skills_off": {NAME: "hidden"}}; nouser has no user skills directory and no way to hide a skill.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
+copy_tool "$ROOT" "$TOOL"
 FX=$TOOL/bin/qargi
 # shellcheck source=fakeprov.sh
 . "$ROOT/tests/fakeprov.sh"

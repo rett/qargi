@@ -84,7 +84,7 @@ ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_
 `qargi role prompt ROLE`, inlined; a cloud agent has it in its system prompt), TASK, DONE (executable check; if the user
 gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
 the dispatching session's branch; explicit if that is master or develop), base
-SHA, SCOPE (hard limit, optional), RUN_DIR, CLONE, TMP (local runs: the `TMP` that `prepare` printed).
+SHA, SCOPE (hard limit, optional), OUT (cloud: `/mnt/session/outputs`), CLONE, TMP (local runs: `prepare`'s).
 
 ## Profiles (kept outside the repository)
 

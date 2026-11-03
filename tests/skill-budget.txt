@@ -2,14 +2,14 @@
 # Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
 agents/member.body.md 118
 agents/member.md 183
-contract/cloud-run.md 71
 contract/contract.md 678
 contract/output-format.md 276
+lib/providers/claude-platform/cloud-run.md 64
 packs/skills/gitflow-member/SKILL.md 267
 packs/skills/keep-a-changelog/SKILL.md 274
 packs/skills/shellcheck-gate/SKILL.md 335
 provision/templates/base-system.md 89
-provision/templates/cloud-preamble.md 183
+provision/templates/cloud-preamble.md 172
 roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
@@ -22,7 +22,7 @@ skills/qargi-project/SKILL.md 1189
 skills/qargi-providers/SKILL.md 1957
 skills/qargi-provision/SKILL.md 418
 skills/qargi-session/SKILL.md 973
-skills/qargi-task/SKILL.md 2464
+skills/qargi-task/SKILL.md 2462
 skills/qargi-team/SKILL.md 936
 skills/qargi-verify/SKILL.md 585
 packs/skills/review-findings/SKILL.md 119

@@ -17,7 +17,7 @@ trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 # the tool, copied: the fake providers live in the copy only
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
+copy_tool "$SRC" "$TOOL"
 DA=$TOOL/bin/qargi
 # nobarrier: no read-only barrier on either surface, no effort control. nomodel: claude, but the model cannot be set per dispatch on local.
 # Each is a family of two runtimes (NAME-local, NAME-cloud) built from the shipped claude-code and claude-platform (tests/fakeprov.sh).

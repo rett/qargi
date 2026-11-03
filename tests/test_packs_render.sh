@@ -158,7 +158,7 @@ out=$($DA packs check --target claude-code gamma 2>&1); rc=$?
 # runtime's definition. fakert is a definition in a copy of the tool with its own names for all of them (a schema 2 file made from
 # claude-code's); it has no agent hooks, no adapter and a launch line of its own.
 ROOT=$PWD; TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
+copy_tool "$ROOT" "$TOOL"
 FX=$TOOL/bin/qargi
 mkfake() { # name jq-filter: a runtime made from claude-code's definition
   jq --arg n "$1" '.provider = $n | .family = null | .adapter = null | .adapter_verbs = [] | .resources.skills.project_dir = ".fk/skills" | .resources.skills.user_dir = "~/.fk/skills"

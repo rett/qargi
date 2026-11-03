@@ -372,8 +372,8 @@ def _dirty_line(c, packet=False):
 def _head(c):
     prj, role = c["project"], c["role"]
     lines = ["qargi resources of project %s for the %s role (this session leads: it dispatches worker agents with /qargi-task and teams with /qargi-team; "
-             "on a git-flow project /qargi-flow is its process). Memory tiers, highest first (a note lives in one tier; agents write only under "
-             "roles/<role>/, shared/ by promotion):" % (prj, role)]
+             "on a git-flow project /qargi-flow is its process). Memory tiers, highest first (a note lives in one tier; members propose notes in "
+             "their reports and the lead files them, shared/ by promotion):" % (prj, role)]
     lines += row_lines(c)
     w = _dirty_line(c)
     if w:
