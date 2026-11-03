@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
-"""Claude Code adapter for qargi packs: render a project's enabled skills and tools into a state directory
-that `claude --add-dir DIR` loads, with a manifest and a drift check.
+"""The packs renderer: render a project's enabled skills and tools into a state directory that the project's local runtime loads
+(`claude --add-dir DIR` for Claude Code), with a manifest and a drift check.
+
+Nothing here names a runtime. What the render looks like comes from the runtime's definition (lib/providers/NAME.json, read through
+lib/provider.py): the skills go under resources.skills.project_dir; the tool packs become MCP server entries in the file
+resources.mcp.file, built from resources.mcp.entry under resources.mcp.root_pointer, with a permission rule per tool from
+resources.mcp.permission_rule; those rules go into a settings file (renderers.packs.settings.file) at resources.settings.allow_pointer
+and the ask_pointer and deny_pointer of renderers.packs.settings; renderers.packs.label is how the runtime is called in the plan, and
+session.render_target is the --target name. A runtime whose definition has no usable mcp resource gets its skills only: its tool packs
+are left out of the render and said so, like a pack the runtime cannot use. A tool pack is always an https URL with an explicit allowlist
+(the shell's review), so the only MCP server form the renderer makes is the URL one.
 
 Called by packs.sh, which gathers the facts only the shell knows (links, review, hashes) into an inputs file:
-  {project, state, home, checkout, packs:[{kind,name,path,sha256,approved,review_ok,exists,compatible_providers,roles[]}],
+  {project, provider, state, home, checkout, packs:[{kind,name,path,sha256,approved,review_ok,exists,compatible_providers,roles[]}],
    skipped:[{kind,name,why,roles[]}]}
-packs is what the project's provider can use; skipped are the enabled packs it cannot (their declaration, compatible_providers, does
-not match), left out of the render and said in the plan and the check.
+provider is the runtime of the project's local surface. packs is what that runtime can use; skipped are the enabled packs it cannot
+(their declaration, compatible_providers, does not match), left out of the render and said in the plan and the check.
 
-  packs_render.py prep   INPUTS             validate the output root, create claude/ (the caller then takes the lock)
+  packs_render.py prep   INPUTS             validate the output root, create it (the caller then takes the lock)
   packs_render.py plan   INPUTS TOKENFILE   stage the tree (a private directory), print the plan, write the plan
                                             token and TOKENFILE.stage; nothing is replaced
   packs_render.py swap   INPUTS STAGEFILE TOKEN   install the staged tree if it is the one the token was made for
   packs_render.py check  INPUTS             read only; exit 1 on any finding
 
-Layout under <state>/claude/<project>/: .claude/skills/<name>/..., mcp.json, settings.json, MANIFEST.json.
+Layout under <state>/<provider>/<project>/: <skills dir>/<name>/..., the mcp file, the settings file, MANIFEST.json (for Claude
+Code: .claude/skills/<name>/..., mcp.json, settings.json, MANIFEST.json).
 """
 import ctypes
 import hashlib
@@ -27,6 +37,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 PROV_RE = re.compile(r'^[a-z][a-z0-9-]*$')
 TOOL_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
@@ -45,6 +56,97 @@ def sha(data):
 def load(path):
     with open(path) as f:
         return json.load(f)
+
+
+def provider_module():
+    """lib/provider.py (python -I does not put this directory on sys.path)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import provider
+    return provider
+
+
+WOULD = "render the project's packs for a local session"
+POINTER_KEYS = ("allow_pointer", "ask_pointer", "deny_pointer")
+
+
+def pointer_parts(ptr):
+    """The keys of a JSON pointer into nested objects (/a/b), or None when it is not one."""
+    if not isinstance(ptr, str) or not ptr.startswith("/") or ptr == "/":
+        return None
+    parts = [x.replace("~1", "/").replace("~0", "~") for x in ptr[1:].split("/")]
+    return None if any(x == "" for x in parts) else parts
+
+
+def put(doc, ptr, value):
+    """Set value in doc at the pointer, making the objects on the way; TypeError when something on the way is not an object."""
+    parts = pointer_parts(ptr)
+    for k in parts[:-1]:
+        doc = doc.setdefault(k, {})
+        if not isinstance(doc, dict):
+            raise TypeError("%s runs through a value that is not an object" % ptr)
+    if parts[-1] in doc:
+        raise TypeError("%s is set twice" % ptr)
+    doc[parts[-1]] = value
+
+
+def plain_file(name, skills_dir):
+    """True when name is a relative file name inside the render that cannot collide with the manifest or the skills."""
+    if not isinstance(name, str) or not name or os.path.isabs(name) or any(x in ("", ".", "..") for x in name.split("/")):
+        return False
+    return name != "MANIFEST.json" and name != skills_dir and not name.startswith(skills_dir.rstrip("/") + "/")
+
+
+def target_of(inp):
+    """What the runtime's definition says about its render: the skills directory (relative to a render and to a checkout), the user
+    skills directory as the definition writes it, the --target name, the label, and the MCP and settings forms or None for a form the
+    definition does not give. Raises provider.Unsupported when the runtime has no project skills directory, ProviderError for a
+    definition that breaks its layout rules."""
+    P = provider_module()
+    rt = inp["provider"]
+    home = inp.get("home") or os.path.expanduser("~")
+    skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home)
+    lay = P.layout(rt, home=home)
+    surfaces = P.surfaces_of(rt)
+    d = P.definition(rt, "local" if "local" in surfaces else surfaces[0])
+    res = d.get("resources") if isinstance(d.get("resources"), dict) else {}
+    user_dir = (res.get("skills") or {}).get("user_dir")
+    packs = (d.get("renderers") or {}).get("packs") if isinstance(d.get("renderers"), dict) else None
+    packs = packs if isinstance(packs, dict) else {}
+    label = packs.get("label") if isinstance(packs.get("label"), str) and packs["label"] else rt
+    tg = {"runtime": rt, "label": label, "target": lay["render_target"], "skills_dir": skills_dir,
+          "user_dir": user_dir if isinstance(user_dir, str) else None, "mcp": None, "settings": None}
+    mcp = res.get("mcp") if isinstance(res.get("mcp"), dict) else {}
+    if (mcp.get("format", "json") == "json" and plain_file(mcp.get("file"), skills_dir) and pointer_parts(mcp.get("root_pointer"))
+            and isinstance(mcp.get("entry"), dict)):
+        rule = mcp.get("permission_rule")
+        tg["mcp"] = {"file": mcp["file"], "root": mcp["root_pointer"], "entry": mcp["entry"], "rule": rule if isinstance(rule, str) else None}
+        st = packs.get("settings") if isinstance(packs.get("settings"), dict) else {}
+        allow = (res.get("settings") or {}).get("allow_pointer") if isinstance(res.get("settings"), dict) else None
+        ptrs = {"allow_pointer": allow, "ask_pointer": st.get("ask_pointer"), "deny_pointer": st.get("deny_pointer")}
+        if plain_file(st.get("file"), skills_dir) and st["file"] != mcp["file"] and pointer_parts(ptrs["allow_pointer"]) and pointer_parts(ptrs["ask_pointer"]):
+            try:   # the pointers must fit in one document
+                probe = {}
+                for k in POINTER_KEYS:
+                    if pointer_parts(ptrs[k]):
+                        put(probe, ptrs[k], [])
+                put({}, tg["mcp"]["root"], {})
+                tg["settings"] = dict(ptrs, file=st["file"])
+            except TypeError:
+                pass
+    return tg
+
+
+def prepare(inp):
+    """Read the runtime's definition into inp["target"], and move the tool packs the runtime has no way to render to skipped."""
+    tg = target_of(inp)
+    inp["target"] = tg
+    if tg["mcp"] is None:
+        why = "provider %s has no usable mcp resource in its definition, so it cannot be given MCP servers" % tg["runtime"]
+        tools = [p for p in inp["packs"] if p["kind"] == "tool"]
+        inp["packs"] = [p for p in inp["packs"] if p["kind"] != "tool"]
+        inp["skipped"] = list(inp.get("skipped") or []) + [{"kind": "tool", "name": p["name"], "why": why, "roles": p["roles"]} for p in tools]
+    return tg
 
 
 def roots(inp):
@@ -142,7 +244,7 @@ def scan(root):
     return out, modes, perms
 
 
-def lib_hashes(p):
+def lib_hashes(p, tg):
     """{rendered relpath: sha256} of what a skill pack's library directory should render to."""
     out = {}
     src = p["path"]
@@ -152,7 +254,7 @@ def lib_hashes(p):
             if os.path.islink(f) or (n == SKIP and d == src):
                 continue
             with open(f, "rb") as fh:
-                out[os.path.join(".claude", "skills", p["name"], os.path.relpath(f, src))] = sha(fh.read())
+                out[os.path.join(tg["skills_dir"], p["name"], os.path.relpath(f, src))] = sha(fh.read())
     return out
 
 
@@ -202,39 +304,65 @@ def check_front_matter(name, data):
         die("skill %s: SKILL.md says name: %s, which differs from the pack name; refusing" % (name, names[0]))
 
 
-def tool_parts(p):
-    """(server entry, allow rules, ask rules) of one tool pack; refuses tool names that are not plain names."""
+def fill(tpl, values):
+    """tpl with every {name} that values has replaced, in one pass (a value is never read for placeholders again), through lists and
+    objects."""
+    if isinstance(tpl, str):
+        return re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)] if m.group(1) in values else m.group(0), tpl)
+    if isinstance(tpl, list):
+        return [fill(x, values) for x in tpl]
+    if isinstance(tpl, dict):
+        return {k: fill(v, values) for k, v in tpl.items()}
+    return tpl
+
+
+def tool_parts(p, tg):
+    """(server entry, allow rules, ask rules, needs credentials) of one tool pack; refuses tool names that are not plain names."""
+    mcp = tg["mcp"]
     t = load(p["path"])
+    if not isinstance(t["url"], str):
+        raise TypeError("url is not a string")
     allow, ask = [], []
     for tool, pol in sorted((t.get("tools") or {}).items()):
         if not isinstance(tool, str) or not TOOL_RE.match(tool):
             die("tool %s: tool name %r is not a plain name (letters, digits, _ . -, 1-64 characters); a rule with a "
                 "wildcard or quote would defeat the allowlist; refusing" % (p["name"], tool))
-        rule = "mcp__%s__%s" % (p["name"], tool)
-        if pol == "always_allow":
+        rule = fill(mcp["rule"], {"server": p["name"], "tool": tool}) if mcp["rule"] else None
+        if rule and pol == "always_allow":
             allow.append(rule)
-        elif pol == "always_ask":
+        elif rule and pol == "always_ask":
             ask.append(rule)
-    return {"type": "http", "url": t["url"]}, allow, ask, bool(t.get("vault_ids"))
+    return fill(mcp["entry"], {"url": t["url"], "name": p["name"]}), allow, ask, bool(t.get("vault_ids"))
 
 
-def shared_files(servers, allow, ask):
-    """{name: bytes} of mcp.json and settings.json for the tool packs, or {} when there are none."""
+def shared_files(servers, allow, ask, tg):
+    """{name: bytes} of the MCP file and the settings file for the tool packs, or {} when there are none. A runtime that gave no
+    settings form gets the servers without a permission list (its own default policy then applies to every tool)."""
     if not servers:
         return {}
-    return {name: (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode()
-            for name, obj in (("mcp.json", {"mcpServers": servers}),
-                              ("settings.json", {"permissions": {"allow": allow, "ask": ask, "deny": []}}))}
+    docs = {}
+    mcp = {}
+    put(mcp, tg["mcp"]["root"], servers)
+    docs[tg["mcp"]["file"]] = mcp
+    if tg["settings"]:
+        st, doc = tg["settings"], {}
+        put(doc, st["allow_pointer"], allow)
+        put(doc, st["ask_pointer"], ask)
+        if pointer_parts(st["deny_pointer"]):
+            put(doc, st["deny_pointer"], [])
+        docs[st["file"]] = doc
+    return {name: (json.dumps(obj, indent=2, sort_keys=True) + "\n").encode() for name, obj in docs.items()}
 
 
 def render(inp, out):
     """Write the tree into out; returns the manifest's pack list and the tool details."""
-    mkdirs(os.path.join(out, ".claude", "skills"), os.path.dirname(out))
+    tg = inp["target"]
+    mkdirs(os.path.join(out, tg["skills_dir"]), os.path.dirname(out))
     packs, servers, allow, ask, creds = [], {}, [], [], []
     for p in sorted(inp["packs"], key=lambda x: (x["kind"], x["name"])):
         entry = {"kind": p["kind"], "name": p["name"], "sha256": p["sha256"], "roles": sorted(p["roles"]), "files": {}, "modes": {}}
         if p["kind"] == "skill":
-            src, dst = p["path"], os.path.join(out, ".claude", "skills", p["name"])
+            src, dst = p["path"], os.path.join(out, tg["skills_dir"], p["name"])
             for d, dirs, files in os.walk(src):
                 dirs.sort()
                 for n in dirs:
@@ -260,12 +388,12 @@ def render(inp, out):
                     with open(target, "wb") as fh:
                         fh.write(data)
                     os.chmod(target, mode)
-                    key = os.path.join(".claude", "skills", p["name"], rel)
+                    key = os.path.join(tg["skills_dir"], p["name"], rel)
                     entry["files"][key] = sha(data)
                     entry["modes"][key] = "%o" % mode
         else:
             try:
-                server, a, k, cred = tool_parts(p)
+                server, a, k, cred = tool_parts(p, tg)
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
                 die("tool %s: cannot be read as a tool pack (%s); refusing" % (p["name"], e))
             servers[p["name"]] = server
@@ -275,7 +403,8 @@ def render(inp, out):
                 creds.append(p["name"])
         packs.append(entry)
     shared = {}
-    for name, data in shared_files(servers, allow, ask).items():
+    for name, data in shared_files(servers, allow, ask, tg).items():
+        mkdirs(os.path.dirname(os.path.join(out, name)), out)
         with open(os.path.join(out, name), "wb") as fh:
             fh.write(data)
         os.chmod(os.path.join(out, name), 0o644)
@@ -284,10 +413,13 @@ def render(inp, out):
 
 
 def shadows(inp, packs):
-    homes = [("~/.claude/skills", os.path.join(inp["home"], ".claude", "skills"))]
+    tg = inp["target"]
+    homes = []
+    if tg["user_dir"] and inp.get("home"):
+        homes.append((tg["user_dir"], os.path.join(inp["home"], tg["user_dir"][2:]) if tg["user_dir"].startswith("~/") else tg["user_dir"]))
     if inp.get("checkout") and os.path.isabs(inp["checkout"]):
-        homes.append(("the project checkout's .claude/skills", os.path.join(inp["checkout"], ".claude", "skills")))
-    render = os.path.realpath(os.path.join(inp["state"], inp["provider"], inp["project"], ".claude", "skills")) if inp.get("state") and inp.get("project") and inp.get("provider") else None
+        homes.append(("the project checkout's " + tg["skills_dir"], os.path.join(inp["checkout"], tg["skills_dir"])))
+    render = os.path.realpath(os.path.join(inp["state"], inp["provider"], inp["project"], tg["skills_dir"])) if inp.get("state") and inp.get("project") and inp.get("provider") else None
     homes = [(lb, d) for lb, d in homes if render is None or os.path.realpath(d) != render]   # the checkout's skills directory linked to the render (packs link) is the render, not a competitor
     out = []
     for p in packs:
@@ -391,8 +523,9 @@ def report(inp, live, manifest, old, creds):
     packs, shared = manifest["packs"], manifest["files"]
     oldp = {(p["kind"], p["name"]): p for p in (old or {}).get("packs", [])}
     newp = {(p["kind"], p["name"]): p for p in packs}
-    print("claude-code target for %s -> %s" % (inp["project"], live))
-    print("  role scoping is advisory: Claude Code cannot enforce per-role skills; the set is the union over the project's roles")
+    tg = inp["target"]
+    print("%s target for %s -> %s" % (tg["target"], inp["project"], live))
+    print("  role scoping is advisory: %s cannot enforce per-role skills; the set is the union over the project's roles" % tg["label"])
     if not old:
         print("  no earlier render")
     changes = 0
@@ -415,11 +548,13 @@ def report(inp, live, manifest, old, creds):
             print("  removed  %s %s  (was sha256 %s)" % (k[0], k[1], oldp[k]["sha256"]))
     if not changes:
         print("  no change in packs" if old else "  no packs enabled")
+    files = [tg["mcp"]["file"]] + ([tg["settings"]["file"]] if tg["settings"] else []) if tg["mcp"] else []
     if old and old.get("files") != shared:
-        print("  tool files (mcp.json, settings.json) differ from the last render")
+        print("  tool files (%s) differ from the last render" % ", ".join(files))
     for k in sorted(newp):
         if k[0] == "tool":
-            print("  tool entry: mcp__%s__*  (see mcp.json and settings.json)" % k[1])
+            rule = fill(tg["mcp"]["rule"], {"server": k[1], "tool": "*"}) if tg["mcp"]["rule"] else k[1]
+            print("  tool entry: %s  (see %s)" % (rule, " and ".join(files)))
     if creds:
         print("  needs credentials you configure yourself (vault_ids cannot authenticate locally): " + ", ".join(creds))
     for w in shadows(inp, packs):
@@ -481,7 +616,7 @@ def cmd_check(inp):
     findings = []
     mpath = os.path.join(live, "MANIFEST.json")
     if not os.path.isfile(mpath):
-        print("FAIL manifest missing: %s (run: qargi packs apply --target claude-code %s)" % (mpath, inp["project"]))
+        print("FAIL manifest missing: %s (run: qargi packs apply --target %s %s)" % (mpath, inp["target"]["target"], inp["project"]))
         sys.exit(1)
     try:
         m = load(mpath)
@@ -530,7 +665,7 @@ def cmd_check(inp):
     for k, p in sorted(cur.items()):
         if k[0] == "skill" and p["exists"] and p["review_ok"]:
             try:
-                for rel, h in sorted(lib_hashes(p).items()):
+                for rel, h in sorted(lib_hashes(p, inp["target"]).items()):
                     if rel in have and have[rel] != h:
                         findings.append("rendered: file differs from the library copy: " + rel)
             except OSError as e:
@@ -540,10 +675,10 @@ def cmd_check(inp):
         try:
             servers, allow, ask = {}, [], []
             for p in tools:
-                servers[p["name"]], a, kk, _ = tool_parts(p)
+                servers[p["name"]], a, kk, _ = tool_parts(p, inp["target"])
                 allow += a
                 ask += kk
-            for name, data in shared_files(servers, sorted(allow), sorted(ask)).items():
+            for name, data in shared_files(servers, sorted(allow), sorted(ask), inp["target"]).items():
                 if name in have and have[name] != sha(data):
                     findings.append("rendered: file differs from the library copy: " + name)
         except (SystemExit, OSError, ValueError, KeyError, TypeError):
@@ -568,14 +703,15 @@ def skipped_note(inp):
 
 
 def link_note(inp, live):
-    """One note line when the checkout exists and its .claude/skills is not linked to the render (qargi packs link). Never a finding."""
+    """One note line when the checkout exists and its skills directory is not linked to the render (qargi packs link). Never a finding."""
     co = inp.get("checkout") or ""
     if not co or not os.path.isabs(co) or not os.path.isdir(co):
         return
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    provider_module()
     from packs_link import linked
-    if not linked(os.path.join(co, ".claude", "skills"), os.path.join(live, ".claude", "skills")):
-        print("note: repo .claude/skills is not linked to the render (qargi packs link %s)" % inp["project"])
+    sk = inp["target"]["skills_dir"]
+    if not linked(os.path.join(co, sk), os.path.join(live, sk)):
+        print("note: repo %s is not linked to the render (qargi packs link %s)" % (sk, inp["project"]))
 
 
 def main():
@@ -584,6 +720,7 @@ def main():
     try:
         inp = load(sys.argv[2])
         verb = sys.argv[1]
+        prepare(inp)
         if verb == "prep":
             cmd_prep(inp)
         elif verb == "plan" and len(sys.argv) > 3:
@@ -594,6 +731,11 @@ def main():
             cmd_check(inp)
         else:
             die("unknown verb or missing argument: " + verb)
+    except provider_module().Unsupported as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        sys.exit(3)
+    except provider_module().ProviderError as e:
+        die(str(e))
     except OSError as e:
         die("%s: %s" % (e.filename or "file system error", e.strerror or e))
 

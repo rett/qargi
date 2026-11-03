@@ -12,9 +12,9 @@ DA=./bin/qargi
 proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]},
          write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:[]}},
-  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:"claude-code"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha
-D=$T/s/claude/alpha
+D=$T/s/claude-code/alpha
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
@@ -34,7 +34,7 @@ $DA skill link s-write --scope project-role --project alpha --role write >/dev/n
 # --- plan changes nothing; apply needs the token
 out=$(apply); tok=$(tok_of <<<"$out")
 [ -n "$tok" ] && [ ! -e "$D" ] && grep -q "added .*skill s-all" <<<"$out" && grep -q "advisory" <<<"$out" && ok "the plan lists the packs and says role scoping is advisory, and writes nothing" || no "plan: $out"
-[ ! -e "$T/s/claude/.alpha.new" ] && ok "a plan leaves no staging directory" || no "staging left behind"
+[ ! -e "$T/s/claude-code/.alpha.new" ] && ok "a plan leaves no staging directory" || no "staging left behind"
 apply --approved x >/dev/null 2>&1 && no "applied without the plan token" || ok "apply refuses without the plan token"
 apply --plan 000000000000 --approved x >/dev/null 2>&1 && no "applied with a wrong token" || ok "apply refuses a wrong token"
 [ ! -e "$D" ] && ok "apply without approval changes nothing" || no "apply without approval wrote $D"
@@ -52,7 +52,7 @@ check >/dev/null && ok "check passes on a fresh render" || no "check on fresh re
 
 # --- idempotent re-apply, atomic swap
 gen=$(jq -r .generated "$D/MANIFEST.json"); sleep 1
-out=$(go); grep -q "no change in packs" <<<"$(apply)" && [ "$(jq -r .generated "$D/MANIFEST.json")" = "$gen" ] && [ ! -e "$T/s/claude/.alpha.new" ] && [ "$(find "$T/s/claude" -mindepth 1 -maxdepth 1 | wc -l)" = 1 ] && ok "re-apply is idempotent and leaves no sibling directory" || no "re-apply: $out"
+out=$(go); grep -q "no change in packs" <<<"$(apply)" && [ "$(jq -r .generated "$D/MANIFEST.json")" = "$gen" ] && [ ! -e "$T/s/claude-code/.alpha.new" ] && [ "$(find "$T/s/claude-code" -mindepth 1 -maxdepth 1 | wc -l)" = 1 ] && ok "re-apply is idempotent and leaves no sibling directory" || no "re-apply: $out"
 
 # --- packs_off respected, enablement drift, removal
 $DA skill disable alpha write s-write >/dev/null
@@ -110,10 +110,10 @@ cmp -s "$D/.claude/skills/s-build/SKILL.md" "$T/c/packs/skills/s-build/SKILL.md"
 sed -i '$d' "$T/c/packs/skills/s-build/SKILL.md"
 
 # --- the output root stays under the state directory
-mkdir -p "$T/elsewhere"; rm -rf "$T/s/claude"; ln -s "$T/elsewhere" "$T/s/claude"
+mkdir -p "$T/elsewhere"; rm -rf "$T/s/claude-code"; ln -s "$T/elsewhere" "$T/s/claude-code"
 apply >/dev/null 2>&1 && no "rendered through a symlinked output root" || ok "an output root that resolves outside the state directory is refused"
 [ -z "$(ls -A "$T/elsewhere")" ] && ok "nothing was written outside the state directory" || no "wrote outside"
-rm "$T/s/claude"
+rm "$T/s/claude-code"
 $DA packs apply --target nope alpha >/dev/null 2>&1 && no "unknown target accepted" || ok "an unknown target is refused"
 $DA packs check alpha >/dev/null 2>&1 && no "check without a target" || ok "check needs a target"
 
@@ -121,23 +121,23 @@ $DA packs check alpha >/dev/null 2>&1 && no "check without a target" || ok "chec
 mkp() { $DA skill new "$1" --compatible "$2" >/dev/null; sed -i "s/^description: .*/description: Use for $1./" "$T/c/packs/skills/$1/SKILL.md"; seal "$1"; $DA skill link "$1" --scope project --project alpha >/dev/null; }
 mkp s-other elsewhere; mkp s-rt claude; mkp s-mix "elsewhere,claude"
 out=$(apply)
-grep -q "skipped skill s-other: not compatible with claude (it declares elsewhere)" <<<"$out" && ok "the plan says which pack was skipped and why" || no "skip line in the plan: $out"
+grep -q "skipped skill s-other: not compatible with claude-code (it declares elsewhere)" <<<"$out" && ok "the plan says which pack was skipped and why" || no "skip line in the plan: $out"
 grep -q "added .*skill s-rt" <<<"$out" && grep -q "added .*skill s-mix" <<<"$out" && ! grep -q "added .*skill s-other" <<<"$out" && ok "a pack that names the project's runtime is rendered, one that does not is not" || no "plan packs: $out"
 go >/dev/null
 [ -f "$D/.claude/skills/s-rt/SKILL.md" ] && [ -f "$D/.claude/skills/s-mix/SKILL.md" ] && [ ! -e "$D/.claude/skills/s-other" ] && ! jq -e '[.packs[].name]|index("s-other")' "$D/MANIFEST.json" >/dev/null && ok "the skipped pack is not in the render or its manifest" || no "render has s-other"
 out=$(check 2>&1); rc=$?
-[ "$rc" = 0 ] && grep -q "^note: skipped skill s-other: not compatible with claude" <<<"$out" && ok "check passes and notes the skip (a skip is not a finding)" || no "check (rc=$rc): $out"
-$DA skill effective alpha build | grep -q "^skipped skill s-other: not compatible with claude" && ok "effective shows the skipped pack" || no "effective: $($DA skill effective alpha build)"
+[ "$rc" = 0 ] && grep -q "^note: skipped skill s-other: not compatible with claude-code" <<<"$out" && ok "check passes and notes the skip (a skip is not a finding)" || no "check (rc=$rc): $out"
+$DA skill effective alpha build | grep -q "^skipped skill s-other: not compatible with claude-code" && ok "effective shows the skipped pack" || no "effective: $($DA skill effective alpha build)"
 # the pack's declaration changes: the render is then stale and says so
 jq '.compatible_providers = ["claude"]' "$T/c/packs/skills/s-other/.pack.json" > "$T/rec.tmp" && cp "$T/rec.tmp" "$T/c/packs/skills/s-other/.pack.json"
 out=$(check 2>&1) && no "check passed after a declaration was edited by hand" || { grep -q "skill:s-other: library drift\|skill s-other" <<<"$out" && ok "a declaration edited by hand is drift, not a quiet skip or a quiet render" || no "edited declaration: $out"; }
 jq '.compatible_providers = ["elsewhere"]' "$T/c/packs/skills/s-other/.pack.json" > "$T/rec.tmp" && cp "$T/rec.tmp" "$T/c/packs/skills/s-other/.pack.json"
 check >/dev/null 2>&1 && ok "put back, check passes" || no "check after putting the declaration back"
 $DA skill unlink s-other --scope project --project alpha >/dev/null; $DA skill unlink s-rt --scope project --project alpha >/dev/null; $DA skill unlink s-mix --scope project --project alpha >/dev/null; go >/dev/null
-rm -rf "$T/s/claude"   # the next case needs no render of alpha
+rm -rf "$T/s/claude-code"   # the next case needs no render of alpha
 
 # --- the cloud path does not take the new route
-$DA packs apply nobody --asked x --target managed-agents >/dev/null 2>&1; [ ! -e "$T/s/claude/alpha" ] && ok "managed-agents still means the cloud path" || no "cloud route"
+$DA packs apply nobody --asked x --target managed-agents >/dev/null 2>&1; [ ! -e "$T/s/claude-code/alpha" ] && ok "managed-agents still means the cloud path" || no "cloud route"
 # --- a project that names a runtime per surface (models.provider is an object): the render is the local surface's, and the cloud
 # runtime is not asked about (the verbs used to refuse an object that names two different runtimes)
 proj gamma; jq '.models.provider = {local: "claude-code", cloud: "claude-platform"}' "$T/c/projects/gamma.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/gamma.json"
@@ -150,4 +150,45 @@ out=$($DA packs check --target claude-code gamma 2>&1); rc=$?
 jq '.models.provider = {cloud: "claude-platform"}' "$T/c/projects/gamma.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/gamma.json"
 out=$($DA packs check --target claude-code gamma 2>&1); rc=$?
 [ "$rc" = 2 ] && [ "$out" = "qargi: project gamma has no local provider: set one with qargi project set gamma models.provider.local NAME" ] && ok "an object that names only a cloud runtime has no local provider: exit 2 and the fix" || no "cloud-only object (rc=$rc): $out"
+# --- the renderer is neutral: the skills directory, the MCP file and entry, the permission rule and the settings file come from the
+# runtime's definition. fakert is a definition in a copy of the tool with its own names for all of them (a schema 2 file made from
+# claude-code's); it has no agent hooks, no adapter and a launch line of its own.
+ROOT=$PWD; TOOL=$T/tool; mkdir -p "$TOOL"
+for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
+FX=$TOOL/bin/qargi
+mkfake() { # name jq-filter: a runtime made from claude-code's definition
+  jq --arg n "$1" '.provider = $n | .family = null | .adapter = null | .adapter_verbs = [] | .resources.skills.project_dir = ".fk/skills" | .resources.skills.user_dir = "~/.fk/skills"
+    | .resources.skills.exclusion = null | .resources.settings.files = [{scope:"user",path:"~/.fk/settings.json",format:"json"}] | .session.render_target = "fk-render"
+    | .session.launch = "fk run --render {render}[ --servers {render}/conf/servers.json]" | '"$2" "$ROOT/lib/providers/claude-code.json" > "$TOOL/lib/providers/$1.json"
+}
+mkfake fakert '.resources.mcp = {file:"conf/servers.json",format:"json",root_pointer:"/servers/remote",entry:{transport:"http",address:"{url}",label:"{name}"},permission_rule:"{server}.{tool}"}
+  | .resources.settings.allow_pointer = "/rules/yes" | .renderers.packs = {label:"FakeRT",settings:{file:"rules.json",ask_pointer:"/rules/prompt"}}'
+mkfake nomcp 'del(.resources.mcp) | del(.renderers) | .resources.settings.allow_pointer = null'
+proj delta; jq '.models = {provider: "fakert"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+$DA skill link s-all --scope project --project delta >/dev/null; $DA tool link issues --scope project --project delta >/dev/null
+FD=$T/s/fakert/delta
+fapply() { $FX packs apply --target fk-render delta "$@"; }
+out=$(fapply); ftok=$(tok_of <<<"$out")
+[ -n "$ftok" ] && grep -q "^fk-render target for delta -> $FD\$" <<<"$out" && grep -q "role scoping is advisory: FakeRT cannot enforce" <<<"$out" && grep -q "^  tool entry: issues.\*  (see conf/servers.json and rules.json)\$" <<<"$out" \
+  && ok "another runtime: the plan names its target and label, and the tool entry in its own rule form and files" || no "fakert plan: $out"
+out=$(fapply --plan "$ftok" --approved test 2>&1)
+[ -f "$FD/.fk/skills/s-all/SKILL.md" ] && [ ! -e "$FD/.claude" ] && cmp -s "$FD/.fk/skills/s-all/refs/r.md" "$T/c/packs/skills/s-all/refs/r.md" && ok "another runtime: the skills go to its skills directory and nothing is made of Claude Code's" || no "fakert skills: $out; $(find "$FD" | head -20)"
+jq -e '.servers.remote.issues == {transport:"http",address:"https://mcp.example.net/",label:"issues"} and (keys == ["servers"])' "$FD/conf/servers.json" >/dev/null && ok "another runtime: the tool pack is an entry built from its template, under its root pointer, in its file" || no "fakert servers: $(cat "$FD/conf/servers.json" 2>&1)"
+jq -e '.rules.yes == ["issues.list_issues"] and .rules.prompt == ["issues.create_issue"] and (.rules | keys == ["prompt","yes"]) and (keys == ["rules"])' "$FD/rules.json" >/dev/null && ok "another runtime: the permission rules use its rule form and its pointers (no deny pointer, no deny list)" || no "fakert rules: $(cat "$FD/rules.json" 2>&1)"
+grep -q "^launch: fk run --render $FD --servers $FD/conf/servers.json\$" <<<"$out" && ok "another runtime: the launch line is its own" || no "fakert launch: $out"
+out=$($FX packs check --target fk-render delta 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^ok   delta: 2 packs, rendered tree matches the manifest, nothing shadowed" <<<"$out" && ok "another runtime: check passes on its render" || no "fakert check (rc=$rc): $out"
+echo '{}' > "$FD/rules.json"; $FX packs check --target fk-render delta 2>&1 | grep -q "differs from the manifest: rules.json" && ok "another runtime: a tampered settings file is reported by the name its definition gives" || no "fakert tamper"
+mkdir -p "$HOME/.fk/skills/s-all"; $FX packs check --target fk-render delta 2>&1 | grep -q "shadowing: skill s-all is also in ~/.fk/skills" && ok "another runtime: shadowing is looked for in its own user skills directory" || no "fakert shadow"
+rmdir "$HOME/.fk/skills/s-all" "$HOME/.fk/skills" "$HOME/.fk"
+$FX packs apply --target claude-code delta >/dev/null 2>&1; [ $? != 0 ] && ok "another runtime: its project is not rendered under the target of another" || no "fakert wrong target"
+
+# a runtime with no usable mcp resource gets its skills only; its tool packs are said to be skipped, and a check does not call them missing
+jq '.models = {provider: "nomcp"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+out=$(fapply); ntok=$(tok_of <<<"$out")
+[ -n "$ntok" ] && grep -q "^  skipped tool issues: provider nomcp has no usable mcp resource in its definition, so it cannot be given MCP servers\$" <<<"$out" && ! grep -q "tool entry" <<<"$out" && ok "a runtime with no mcp resource: the plan skips the tool packs and says why" || no "nomcp plan: $out"
+out=$(fapply --plan "$ntok" --approved test 2>&1)
+[ -f "$T/s/nomcp/delta/.fk/skills/s-all/SKILL.md" ] && [ ! -e "$T/s/nomcp/delta/conf" ] && [ ! -e "$T/s/nomcp/delta/rules.json" ] && ok "a runtime with no mcp resource: only the skills are rendered" || no "nomcp apply: $out"
+out=$($FX packs check --target fk-render delta 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^note: skipped tool issues: provider nomcp has no usable mcp resource" <<<"$out" && ok "a runtime with no mcp resource: check passes and notes the skip" || no "nomcp check (rc=$rc): $out"
 exit $fail
