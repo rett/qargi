@@ -66,9 +66,9 @@ def field(req, key, kinds, what):
 
 
 def descriptor():
-    """The runtime's definition in the shape older readers get (surfaces, tier_detail, aliases, effort), after its schema 2 findings."""
+    """What the adapter reads of the runtime (provider.summary: surfaces, tier_detail, tiers, aliases, effort, model_pattern), after its schema 2 findings."""
     try:
-        d = P.load(NAME)
+        d = P.summary(NAME)
         broken = [m for lvl, m in P.findings_of(NAME)[2] if lvl == "fail"]
     except P.ProviderError as e:
         raise bad(str(e))

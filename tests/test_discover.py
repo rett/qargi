@@ -52,7 +52,7 @@ class Env(unittest.TestCase):
         ans = json.loads(tpl)
         ans["repo"]["path"] = self.repo
         ans["repo"]["url"] = "https://github.com/example/alpha"
-        ans["models"]["provider"] = "claude"
+        ans["models"]["provider"] = "claude-code"
         ans["roles"]["build"]["apt"] = ["groff"]
         ans["roles"]["review"] = dict(ans["roles"]["build"], apt=[], model="claude-opus-5-5")
         self.w(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(ans))
@@ -154,7 +154,7 @@ class Compatible(Env):
         self.assertIn("skill-undeclared", r.stdout)                    # an entry that declares nothing is not filtered here: install asks
         rows = [l for l in r.stdout.splitlines() if l.startswith("  ") and "skill-other" in l]
         self.assertEqual(len(rows), 1, r.stdout)
-        self.assertTrue(rows[0].startswith("  skipped skill-other: not compatible with claude (it declares elsewhere)"), rows[0])
+        self.assertTrue(rows[0].startswith("  skipped skill-other: not compatible with claude-code (it declares elsewhere)"), rows[0])
 
     def test_a_project_with_no_provider_gets_only_the_packs_for_any(self):
         ans = json.loads(self.rd(os.path.join(self.conf, "projects", "alpha.json")))
@@ -285,8 +285,8 @@ class Install(Env):
         members = {"forge": ["build", "test"], "scribe": ["write"], "judge": ["review"]}
         for n in members:
             self.w(os.path.join(d, n + ".md"), "---\nname: %s\ntools: Bash, Read\n---\nbody\n" % n)
-        self.w(os.path.join(self.conf, "agents.json"), json.dumps({n: {"abilities": a, "file": os.path.join(d, n + ".md"), "seq": k}
-                                                                   for k, (n, a) in enumerate(members.items())}))
+        self.w(os.path.join(self.conf, "agents.json"), json.dumps({"schema": 2, "projects": {"alpha": {
+            n: {"roles": a, "file": os.path.join(d, n + ".md"), "seq": k} for k, (n, a) in enumerate(members.items())}}}))
         env = dict(self.env)
         env.pop("QARGI_AGENT_FILE")
         self.env = env
@@ -298,6 +298,22 @@ class Install(Env):
         for n in members:
             self.assertEqual(self.rd(os.path.join(d, n + ".md")).count("Monitor"), 1, n)
 
+    def test_the_members_of_one_project_only_are_edited_when_a_project_is_named(self):
+        d = os.path.join(self.t, "agents")
+        members = {"alpha": {"forge": ["build"], "judge": ["review"]}, "beta": {"forge": ["build"], "other": ["review"]}}
+        for p, ms in members.items():
+            for n in ms:
+                self.w(os.path.join(d, p, n + ".md"), "---\nname: %s\ntools: Bash, Read\n---\nbody\n" % n)
+        self.w(os.path.join(self.conf, "agents.json"), json.dumps({"schema": 2, "projects": {
+            p: {n: {"roles": a, "file": os.path.join(d, p, n + ".md"), "seq": k} for k, (n, a) in enumerate(ms.items())} for p, ms in members.items()}}))
+        env = dict(self.env)
+        env.pop("QARGI_AGENT_FILE")
+        self.env = env
+        r = self.q(["install", "agent-wait", "--project", "alpha", "--role", "build"], answers=["y", "y"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Monitor", self.rd(os.path.join(d, "alpha", "forge.md")))
+        for other in (("alpha", "judge"), ("beta", "forge"), ("beta", "other")):
+            self.assertNotIn("Monitor", self.rd(os.path.join(d, other[0], other[1] + ".md")), other)
     def test_answering_no_changes_nothing(self):
         before = self.rd(self.agent)
         r = self.q(["install", "agent-wait"], answers=["y", "n"])

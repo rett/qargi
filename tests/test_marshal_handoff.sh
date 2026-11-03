@@ -24,7 +24,7 @@ mkdir -p "$HOME" "$T/c/projects" "$S/features" "$T/scratch"
 R=$T/app; git init -q -b master "$R"
 echo 0.1.0 > "$R/VERSION"; git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git -C "$R" checkout -q -b parked
-jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, models:{provider:"claude"}, test_command:"true"}' > "$T/c/projects/app.json"
+jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, models:{provider:{local:"claude-code",cloud:"claude-platform"}}, test_command:"true"}' > "$T/c/projects/app.json"
 commit_on() { # BRANCH FILE: one commit on BRANCH (in a temporary worktree)
   local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "$1"
   echo "$1 $2" > "$w/$2"; git -C "$w" add -A; git -C "$w" commit -q -m "$1 $2"; git -C "$R" worktree remove --force "$w"
@@ -193,13 +193,13 @@ H f1; rc=$?
 jq '.models = {provider: {cloud: "claude-platform"}}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 H f1; rc=$?
 [ $rc = 2 ] && [ "$(cat "$T/e")" = "qargi: project app has no local provider: set one with qargi project set app models.provider.local NAME" ] && [ ! -s "$T/o" ] && ok "packs: an object that names only a cloud runtime is refused with exit 2 and the fix" || no "SPEC packs cloud-only provider: rc=$rc $(out)"
-jq '.models = {provider: "claude"}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
-mkdir -p "$S/render/app/claude/.claude/skills"
+jq '.models = {provider: "claude-code"}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+mkdir -p "$S/render/app/claude-code/.claude/skills"
 H f1; rc=$?
-[ $rc = 0 ] && grep -q "^launch (the checkout's .claude/skills is not our link): claude --add-dir $S/render/app/claude\$" "$T/o" && ok "packs: the exact launch line with --add-dir" || no "SPEC launch line: rc=$rc $(sed -n '/== packs/,/== read/p' "$T/o")"
-echo '{}' > "$S/render/app/claude/mcp.json"
-H f1; grep -q "claude --add-dir $S/render/app/claude --mcp-config $S/render/app/claude/mcp.json\$" "$T/o" && ok "packs: --mcp-config is part of the launch line when the render has one" || no "SPEC launch line with mcp: $(sed -n '/== packs/,/== read/p' "$T/o")"
-mkdir -p "$R/.claude"; ln -s "$S/render/app/claude/.claude/skills" "$R/.claude/skills"
+[ $rc = 0 ] && grep -q "^launch (the checkout's .claude/skills is not our link): claude --add-dir $S/render/app/claude-code\$" "$T/o" && ok "packs: the exact launch line with --add-dir" || no "SPEC launch line: rc=$rc $(sed -n '/== packs/,/== read/p' "$T/o")"
+echo '{}' > "$S/render/app/claude-code/mcp.json"
+H f1; grep -q "claude --add-dir $S/render/app/claude-code --mcp-config $S/render/app/claude-code/mcp.json\$" "$T/o" && ok "packs: --mcp-config is part of the launch line when the render has one" || no "SPEC launch line with mcp: $(sed -n '/== packs/,/== read/p' "$T/o")"
+mkdir -p "$R/.claude"; ln -s "$S/render/app/claude-code/.claude/skills" "$R/.claude/skills"
 H f1
 grep -q "launch: $R/.claude/skills is linked to the render" "$T/o" && grep -q "no flag" "$T/o" && grep -q "any OTHER worktree" "$T/o" && ok "packs: a linked checkout needs no flag, another worktree does" || no "SPEC linked: $(sed -n '/== packs/,/== read/p' "$T/o")"
 rm -rf "$R/.claude"
@@ -216,10 +216,12 @@ rm -f "$R/CLAUDE.md"
 # template with an optional group; noskills has no project skills directory; notarget has no render target and no launch command.
 TOOL2=$T/tool2; mkdir -p "$TOOL2"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$TOOL/$d" ] || cp -r "$TOOL/$d" "$TOOL2/"; done
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$TOOL/lib/providers/claude.json" > "$TOOL2/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.session_launch = "agentx run --render {render}[ --extra {render}/extra.json]"'
-mkprov noskills '.layout.project_skills_dir = null'
-mkprov notarget '.layout.render_target = null | .layout.session_launch = null'
+# shellcheck source=fakeprov.sh
+. "$TOOL/tests/fakeprov.sh"
+mkprov() { fake_runtime "$TOOL" "$TOOL2" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }
+mkprov agentx '.resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render" | .session.launch = "agentx run --render {render}[ --extra {render}/extra.json]"'
+mkprov noskills '.resources.skills |= del(.project_dir)'
+mkprov notarget '.session |= del(.render_target, .launch)'
 setprov() { jq --arg v "$1" 'if $v == "" then del(.models) else .models = {provider: $v} end' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 HX() { python3 -I "$TOOL2/lib/marshal_handoff.py" --state "$S" --conf "$T/c" --project app --repo "$R" "$@" f1 >"$T/o" 2>"$T/e"; }
 sect() { sed -n '/^== packs/,/^== read first/p' "$T/o"; }

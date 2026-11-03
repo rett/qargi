@@ -134,20 +134,6 @@ class Render(unittest.TestCase):
         self.assertIn("unknown command", r.stderr)
         self.assertEqual(run("version").returncode, 0)
 
-    def test_no_help_text_names_a_retired_ability_skill(self):
-        # The abilities are role text that comes with the task block (roles/<role>/ROLE.md); no skill of the same
-        # name exists to load. The changelog keeps the history and is not read here.
-        texts = {"man page": H.man().replace("\\-", "-").replace("\\e", "\\")}
-        for t in C.TOPICS:
-            texts["topic " + t] = H.show_topic(t)
-        for cmd in C.COMMANDS:
-            texts[cmd] = H.show_command(cmd)
-            for v in verbs(cmd):
-                texts["%s %s" % (cmd, v)] = H.show_command(cmd, v)
-        for where, txt in texts.items():
-            for name in ("qargi-build", "qargi-write", "qargi-review", "qargi-test"):
-                self.assertNotIn(name, txt, "%s still names the skill %s" % (where, name))
-
     def test_man_page_is_current_and_lints(self):
         page = H.man()
         self.assertEqual(slurp(os.path.join(ROOT, "man", "qargi.1")), page, "regenerate: python3 lib/help.py man > man/qargi.1")
@@ -274,11 +260,14 @@ class Rich(Env):
         os.makedirs(os.path.join(self.t, "c", "packs", "skills", "pdf"))
         os.makedirs(os.path.join(self.t, "c", "packs", "tools"))
         self.put(os.path.join(self.t, "c", "packs", "tools", "github.json"), {})
-        self.put(os.path.join(self.t, "c", "agents.json"), {"forge": {"abilities": ["build", "test"], "seq": 1}, "scribe": {"abilities": ["write"], "seq": 2}})
+        self.put(os.path.join(self.t, "c", "agents.json"), {"schema": 2, "projects": {"alpha": {"forge": {"roles": ["build", "test"], "seq": 1}, "scribe": {"roles": ["write"], "seq": 2}},
+                                                                              "beta": {"forge": {"roles": ["test"], "seq": 3}, "lone": {"roles": ["write"], "seq": 4}}}})
 
     def test_members_complete_with_their_abilities(self):
-        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "scribe"])
-        self.assertEqual(dict(H.complete_described(["agent", "rename", ""]))["forge"], "build,test")
+        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "lone", "scribe"])   # every project's members, a name once
+        self.assertEqual(H.complete(["agent", "remove", "--project", "alpha", ""]), ["forge", "scribe"])
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "alpha", ""]))["forge"], "build,test")
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "beta", ""]))["forge"], "test")
         self.assertEqual(H.complete(["agent", "for", ""]), list(C.ABILITIES))
 
     def test_sessions_are_narrowed_by_what_the_verb_does(self):

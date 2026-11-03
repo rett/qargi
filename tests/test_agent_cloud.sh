@@ -3,7 +3,7 @@
 # instance (<project>-worker or <project>-reviewer) takes the session's model and effort as overrides, so it is used only when the
 # provider's per_dispatch_model_override (and per_dispatch_effort_override, when an effort is asked) is verified yes; otherwise the
 # legacy role instance (<project>-build ...) runs, and only with the model it was provisioned with. Hermetic: a copy of the tool in
-# a temporary root holds the descriptors with the capabilities verified, so the shipped claude.json is never changed. Offline.
+# a temporary root holds the descriptors with the capabilities verified, so the shipped claude-platform.json is never changed. Offline.
 # Run: tests/test_agent_cloud.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -24,21 +24,24 @@ for d in agents bin lib roles skills provision canon methodologies VERSION; do [
 SHIPT=$T/ship; mkdir -p "$SHIPT"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
 # the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = null)
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$SHIPT/lib/providers/claude.json"
+jq '.capabilities.per_dispatch_model_override.verified_on = null
+  | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"
 SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = "2026-10-31")
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = "2026-10-31")' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$TOOL/lib/providers/claude.json"
-jq '.provider = "effunver" | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$TOOL/lib/providers/claude.json" > "$TOOL/lib/providers/effunver.json"
-python3 -I "$TOOL/lib/provider.py" check claude >/dev/null && python3 -I "$TOOL/lib/provider.py" check effunver >/dev/null && ok "the verified descriptors are valid" || no "descriptors"
-[ "$(python3 -I "$SHIPT/lib/provider.py" effective claude cloud per_dispatch_model_override)" = no ] && ok "shipped (unverified copy): the cloud model override counts as no (unverified)" || no "shipped capability"
-[ "$(python3 -I "$TOOL/lib/provider.py" effective claude cloud per_dispatch_model_override)" = yes ] && [ "$(python3 -I "$TOOL/lib/provider.py" effective effunver cloud per_dispatch_effort_override)" = no ] && ok "the copy: model yes, and effort no for effunver" || no "copy capability"
+jq '.capabilities.per_dispatch_model_override.verified_on = "2026-10-31"
+  | .capabilities.per_dispatch_effort_override.verified_on = "2026-10-31"' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$TOOL/lib/providers/claude-platform.json"
+# shellcheck source=fakeprov.sh
+. tests/fakeprov.sh
+fake_runtime "$TOOL" "$TOOL" effunver cloud '.capabilities.per_dispatch_effort_override.verified_on = null'
+BOTH='{"local":"claude-code","cloud":"claude-platform"}'; EFFUN='{"local":"claude-code","cloud":"effunver"}'
+python3 -I "$TOOL/lib/provider.py" check claude-platform >/dev/null && python3 -I "$TOOL/lib/provider.py" check effunver >/dev/null && ok "the verified descriptors are valid" || no "descriptors"
+[ "$(python3 -I "$SHIPT/lib/provider.py" effective claude-platform cloud per_dispatch_model_override)" = no ] && ok "shipped (unverified copy): the cloud model override counts as no (unverified)" || no "shipped capability"
+[ "$(python3 -I "$TOOL/lib/provider.py" effective claude-platform cloud per_dispatch_model_override)" = yes ] && [ "$(python3 -I "$TOOL/lib/provider.py" effective effunver cloud per_dispatch_effort_override)" = no ] && ok "the copy: model yes, and effort no for effunver" || no "copy capability"
 
 # the projects: alpha has a base pair and the legacy instances, beta only the legacy ones, gamma only a worker, delta nothing
 for p in alpha beta gamma delta epsilon; do
-  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+  jq -n --arg p "$p" --argjson v "$BOTH" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
-jq '.models = {provider: "effunver"}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
+jq --argjson v "$EFFUN" '.models = {provider: $v}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 inst() { # name model effort -> one cloud instance record
   jq -n --arg m "$2" --arg e "$3" '{location:"cloud",deployment_id:"depl_x",environment_id:"env_1",agent:{id:"agent_x",version_pinned:1,model:$m,effort:$e}}'; }
 S=claude-sonnet-5-5; O=claude-opus-5-5; H=claude-haiku-5-5; F=claude-fable-5-1
@@ -86,7 +89,7 @@ e=$("$SHIP" agent for build --surface cloud --project gamma 2>&1); rc=$?
 # --- effort: asked, so its override must be verified too
 [ "$(cl "$YES" build --project epsilon | cut -d' ' -f1)" = "epsilon-build" ] && ok "effort override unverified: an effort is asked, so the legacy instance" || no "epsilon: $(cl "$YES" build --project epsilon)"
 cl "$YES" build --project epsilon | head -1 | grep -q "^epsilon-build $S high build$" && ok "and it keeps the profile's effort in the answer" || no "epsilon line"
-jq '.models = {provider: "effunver"} | .profiles = {pm:{base:"worker",model:"claude-opus-5-5"}}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
+jq --argjson v "$EFFUN" '.models = {provider: $v} | .profiles = {pm:{base:"worker",model:"claude-opus-5-5"}}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 "$YES" agent for build --profile pm --surface cloud --project epsilon >/dev/null 2>&1; [ $? = 2 ] && ok "effort unverified and another model: refused" || no "epsilon pm"
 
 # --- an extension the project enabled counts: fakecloud is a runtime of the pack library (data and a sealed adapter, no file in lib/providers)
@@ -149,10 +152,10 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
 export QARGI_PROJECT=alpha   # a member belongs to a project, and the project's models.provider renders it: alpha gets a checkout
 git init -q "$T/repoa"; jq --arg p "$T/repoa" '.repo.path = $p' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
-$YES agent add builder --project alpha --abilities build,test >/dev/null 2>&1; $YES agent add judge --project alpha --abilities review >/dev/null 2>&1
+$YES agent add worker --project alpha >/dev/null 2>&1; $YES agent add reviewer --project alpha >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
   [ "$a" = "$b" ] && ok "local: 'for $args' is the same with --surface local" || no "local differs for $args: [$a] vs [$b]"
 done
-[ "$($YES agent for build)" = "builder sonnet high build" ] && [ "$($YES agent for review)" = "judge opus high review" ] && ok "local output keeps its shape: MEMBER ALIAS EFFORT PROFILE" || no "local shape: $($YES agent for build)"
+[ "$($YES agent for build)" = "worker sonnet high build" ] && [ "$($YES agent for review)" = "reviewer opus high review" ] && ok "local output keeps its shape: MEMBER ALIAS EFFORT PROFILE" || no "local shape: $($YES agent for build)"
 exit $fail

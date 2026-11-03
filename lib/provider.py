@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""qargi provider: the model-provider definitions. Shipped ones are lib/providers/NAME.json (schema 1: lib/providers/schema.json, or
-schema 2: lib/providers/schema-2.json) and lib/providers/catalogs/FAMILY.json; the user's are in the pack library,
-QARGI_CONF/packs/providers/NAME/definition.json (schema 2 only). A name defined in both places is refused.
+"""qargi provider: the model-provider definitions. Shipped ones are lib/providers/NAME.json (a runtime: one definition on one surface, in
+the schema lib/providers/schema-2.json) and lib/providers/catalogs/FAMILY.json (the models of a family); the user's are in the pack
+library, QARGI_CONF/packs/providers/NAME/definition.json. A name defined in both places is refused.
 
 As a library (import provider; stdlib only, found beside the descriptors, so it works from a checkout and from /opt/qargi):
-  load(name)                           the descriptor as a dict, in the shape of schema 1 (a schema 2 definition is shown in that
-                                       shape, for older readers); ProviderError when there is none
-  definition(name, surface=None)       the schema 2 definition of a provider on a surface; a schema 1 file is upgraded in memory
+  definition(name, surface=None)       the definition of a runtime on its surface (a copy); ProviderError when there is none
   surfaces_of(name) / origin(name)     the surfaces it serves / "shipped" or "library"
   catalog(family) / models_of(name, surface=None) / model_for(models, tier)
                                        a family's catalog; the resolved models of a runtime (catalog followed, '*' expanded); the
                                        model name passed for a tier (alias or id)
-  validate(descriptor, name=None)      [("fail"|"warn", message), ...]; name is the file name the provider must carry. A key or a string with a
+  validate2(document, name=None)       [("fail"|"warn", message), ...]; name is the file name the provider must carry. A key or a string with a
                                        control, escape or bidi character (also one written as a JSON escape, \\u001b) is the only failure reported
   vis(text)                            text with control, escape and bidi characters written out; print() of this module (and of local_run.py)
                                        writes every string through it, so nothing a definition holds reaches the terminal raw
@@ -35,7 +33,7 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        ("yes"|"partial"|"accepted"|"refused", text): may a read-only role run on this surface?
   composed(name, surface, project=None) definition() for a project: with a project, compose()'s definition (the one to read resources,
                                        renderers, barrier and capabilities from when a project is known)
-  layout(name, home=None, project=None) the descriptor's layout: every field of LAYOUT_FIELDS, null when the provider has none; read
+  layout(name, home=None, project=None) the layout of a runtime: every field of LAYOUT_FIELDS, null when the runtime has none; read
                                        from the resources of its definition; a leading ~ is expanded with home (default $HOME)
                                        when it is read, never in the file; with a project (here and in the four below) from the composed
                                        definition, so what an enabled extension adds is there
@@ -94,9 +92,6 @@ Usage: provider.py list
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
                                          name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
-       provider.py migrate NAME --dry-run [--as local=X,cloud=Y]
-                                         prints the schema 2 documents of a schema 1 descriptor (an object, or an array when it is split
-                                         into a catalog and one runtime per surface); notes on stderr; writes nothing
 The library verbs (lib/conformance/library.py; every one that writes is a plan, a token and --approved, and leaves an audit line; a member
 is refused all of them by the guard):
        provider.py new NAME [--kind provider|catalog|extension] [--from minimal|command|hook-cli|PROVIDER]    scaffold an unsealed pack
@@ -191,16 +186,7 @@ class NotServed(Refused):
     """A runtime of that name exists but does not serve the surface (provider_of turns it into NoProvider for a single name)."""
 
 
-NON_PROVIDERS = ("schema", "schema-2", "adapter-schema")   # JSON files in lib/providers/ that describe descriptors and adapters; they are not providers
-
-
-def schema():
-    with open(os.path.join(PROVIDERS, "schema.json")) as f:
-        return json.load(f)
-
-
-def capabilities():
-    return tuple(schema()["properties"]["capabilities"]["properties"])
+NON_PROVIDERS = ("schema-2", "adapter-schema")   # JSON files in lib/providers/ that describe definitions and adapters; they are not providers
 
 
 def _conf():
@@ -437,8 +423,8 @@ def discard_exec_copy(directory):
 
 
 def names(root=None, library=None):
-    """The providers that have a definition: the shipped files (schema.json and schema-2.json describe them and are not one) and the
-    library's. A name defined in both is listed once; using it is refused."""
+    """The providers that have a definition: the shipped files (schema-2.json describes them and is not one) and the library's. A name
+    defined in both is listed once; using it is refused."""
     return sorted(n for n, es in _scan(root, library).items() if any(_kind(e) == "provider" for e in es))
 
 
@@ -485,33 +471,18 @@ def origin(name, root=None, library=None):
     return _entry(name, root, library)["origin"]
 
 
-def load(name, root=None, library=None):
-    """The descriptor of a provider as a dict, in the shape schema 1 had: a schema 1 file as it is; a schema 2 definition as that shape
-    (surfaces, model_pattern, tier_detail, tiers, aliases, effort, capabilities per surface, local.reserved_names, layout, adapter) so
-    that older readers keep working. definition() is the schema 2 form of either."""
-    e = _entry(name, root, library)
-    raw = _read(e)
-    if type(raw.get("schema")) is int and raw["schema"] == 2:
-        return _legacy_view(e, _docs(e), root, library)
-    if e["origin"] == "library":
-        _docs(e)                                  # refuses a library file that is not schema 2
-    return raw
-
-
 def _docs(e):
-    """surface -> definition (schema 2) of an entry: a schema 2 file has the one it names, a schema 1 file is upgraded."""
+    """surface -> definition of an entry: the one surface a runtime serves. ProviderError when the file is not a definition of schema 2."""
     raw = _read(e)
-    if type(raw.get("schema")) is int and raw["schema"] == 2:
-        if raw.get("kind") != "provider":
-            raise ProviderError("'%s' is a %s, not a provider" % (e["name"], raw.get("kind")))
-        if e["origin"] == "library" and raw.get("provider") != e["name"]:
-            raise ProviderError("library definition '%s' declares provider '%s'; the directory and the name must agree" % (e["name"], raw.get("provider")))
-        if raw.get("surface") not in SURFACES:
-            raise ProviderError("provider '%s' has no valid surface (one of %s)" % (e["name"], ", ".join(SURFACES)))
-        return {raw["surface"]: raw}
-    if e["origin"] == "library":
-        raise ProviderError("library definitions are schema 2 and '%s' is not; qargi provider migrate %s --dry-run shows the conversion" % (e["name"], e["name"]))
-    return upgrade_v1(raw)
+    if not (type(raw.get("schema")) is int and raw["schema"] == 2):
+        raise ProviderError("'%s' is not a definition of schema 2 (its schema is %s); see lib/providers/schema-2.json" % (e["name"], _show(raw.get("schema"))))
+    if raw.get("kind") != "provider":
+        raise ProviderError("'%s' is a %s, not a provider" % (e["name"], raw.get("kind")))
+    if e["origin"] == "library" and raw.get("provider") != e["name"]:
+        raise ProviderError("library definition '%s' declares provider '%s'; the directory and the name must agree" % (e["name"], raw.get("provider")))
+    if raw.get("surface") not in SURFACES:
+        raise ProviderError("provider '%s' has no valid surface (one of %s)" % (e["name"], ", ".join(SURFACES)))
+    return {raw["surface"]: raw}
 
 
 def surfaces_of(name, root=None, library=None):
@@ -520,8 +491,7 @@ def surfaces_of(name, root=None, library=None):
 
 
 def definition(name, surface=None, root=None, library=None):
-    """The schema 2 definition of a provider on one surface (a copy). A schema 1 file is upgraded in memory, one definition per surface
-    it lists; without a surface the provider must serve only one."""
+    """The definition of a runtime on its surface (a copy). Without a surface the runtime must serve only one, which is always so."""
     docs = _docs(_entry(name, root, library))
     if surface is None:
         if len(docs) != 1:
@@ -595,126 +565,24 @@ def model_for(models, tier):
     return row["alias"] if models.get("use") == "alias" and row.get("alias") else row["model"]
 
 
-# ---- schema 1 in memory -------------------------------------------------------------------------------------------------
+def summary(name, surface=None, root=None, library=None):
+    """What a reader needs of a runtime on one surface, flat: {provider, surface, surfaces, model_pattern, use, tier_detail: {TIER: {model,
+    alias, verified_on, source}}, tiers: {TIER: model id}, aliases: {TIER: alias or None}, effort: {LEVEL: native or None}, reserved_names,
+    adapter}. It is definition() and models_of() read together; the adapter is the path of a shipped runtime's adapter relative to the tool
+    root (None for a library pack's, which runs only as a sealed copy, and for a runtime that names none). Without a surface the runtime
+    must serve only one. ProviderError when there is no such runtime or it does not serve the surface."""
+    doc = definition(name, surface, root, library)
+    m = _resolve_models(doc, root, library)
+    ad = doc.get("adapter")
+    return {"provider": doc["provider"], "surface": doc["surface"], "surfaces": surfaces_of(name, root, library),
+            "model_pattern": m["pattern"], "use": m["use"], "tier_detail": m["tiers"],
+            "tiers": {t: m["tiers"][t]["model"] for t in TIERS}, "aliases": {t: m["tiers"][t].get("alias") for t in TIERS},
+            "effort": m["effort"], "reserved_names": list(_dict(doc.get("agents")).get("reserved_names") or []),
+            "adapter": "lib/providers/%s/%s" % (doc["provider"], ad) if isinstance(ad, str) and _entry(name, root, library)["origin"] == "shipped" else None}
+
 
 def _dict(v):
     return v if isinstance(v, dict) else {}
-
-
-def _resources_from_layout(lay):
-    """The resources of a schema 1 layout (every field optional). _layout_from() is the way back."""
-    lay = _dict(lay)
-    res = {}
-    settings = lay.get("settings_files") if isinstance(lay.get("settings_files"), list) else None
-    if lay.get("project_skills_dir") is not None or lay.get("user_skills_dir") is not None:
-        sk = {k: lay[f] for k, f in (("project_dir", "project_skills_dir"), ("user_dir", "user_skills_dir")) if lay.get(f) is not None}
-        sk.update(items="dir-per-item", entry="SKILL.md", format="skill-md", link={"project": "dir-symlink", "user": "none"})
-        ex = lay.get("exclusion")
-        if isinstance(ex, dict):
-            sk["exclusion"] = {"form": "settings-key", "files": [f.get("scope") for f in settings or [] if isinstance(f, dict)],
-                               "pointer": "/" + str(ex.get("file_key")), "shape": "map", "off": ex.get("off_value")}
-        res["skills"] = sk
-    if lay.get("project_agents_dir") is not None or lay.get("user_agents_dir") is not None:
-        ag = {k: lay[f] for k, f in (("project_dir", "project_agents_dir"), ("user_dir", "user_agents_dir")) if lay.get(f) is not None}
-        ag.update(items="file-per-item", ext=".md", link={"project": "none", "user": "none"})
-        res["agents"] = ag
-    if settings:
-        res["settings"] = {"files": [{"scope": f.get("scope"), "path": f.get("path"), "format": "json"} for f in settings if isinstance(f, dict)],
-                           "allow_pointer": None}
-    if lay.get("memory_dir") is not None or lay.get("checkout_key") is not None:
-        res["memory"] = {"user_dir": lay.get("memory_dir"), "checkout_key": lay.get("checkout_key"), "link": {"user": "dir-symlink"}}
-    return res
-
-
-def upgrade_v1(d):
-    """surface -> schema 2 definition for a schema 1 descriptor (a pure function; it validates nothing). Each listed surface gets its own
-    definition with the same name: inline models, its own capability cells, and for local the resources of the layout, the reserved
-    names, the session launch line. The adapter path is made relative to the definition's directory when it is inside it."""
-    d = _dict(d)
-    name = d.get("provider")
-    detail = _dict(d.get("tier_detail"))
-    caps = _dict(d.get("capabilities"))
-    lay = _dict(d.get("layout"))
-    ad = d.get("adapter")
-    prefix = "lib/providers/%s/" % name
-    out = {}
-    for s in [x for x in d.get("surfaces") or [] if x in SURFACES] if isinstance(d.get("surfaces"), list) else []:
-        doc = {"schema": 2, "kind": "provider", "provider": name, "family": None, "surface": s,
-               "models": {"pattern": d.get("model_pattern"), "tiers": {t: copy.deepcopy(detail[t]) for t in TIERS if t in detail},
-                          "effort": copy.deepcopy(d.get("effort"))},
-               "capabilities": {c: copy.deepcopy(row[s]) for c, row in caps.items() if isinstance(row, dict) and isinstance(row.get(s), dict)},
-               "resources": _resources_from_layout(lay) if s == "local" else {},
-               "agents": {"reserved_names": list(_dict(d.get("local")).get("reserved_names") or [])} if s == "local" else None,
-               "adapter": ad[len(prefix):] if isinstance(ad, str) and ad.startswith(prefix) and len(ad) > len(prefix) else None}
-        if s == "local" and ("session_launch" in lay or "render_target" in lay):
-            doc["session"] = {"launch": lay.get("session_launch"), "render_target": lay.get("render_target")}
-        out[s] = doc
-    return out
-
-
-def migrate(d, names=None, today=None):
-    """(documents, notes): a schema 1 descriptor as schema 2 documents. A pure function: nothing is read or written.
-    A descriptor for one surface becomes one runtime with inline models. A descriptor for two surfaces is split into a catalog of its
-    family (the descriptor's name; version: the latest date a tier was verified, else today) and one runtime per surface, named
-    NAME-local and NAME-cloud unless names={"local": X, "cloud": Y} says otherwise, each referencing the catalog (local passes the
-    alias when every tier has one, cloud the id). The notes say what a conversion cannot decide for itself."""
-    if _is2(d):
-        raise ProviderError("provider '%s' is already schema 2" % d.get("provider"))
-    bad = [m for lvl, m in validate(d, d.get("provider") if isinstance(d, dict) else None) if lvl == "fail"]
-    if bad:
-        raise ProviderError("provider '%s' breaks schema 1, fix that first (qargi provider check): %s" % (d.get("provider") if isinstance(d, dict) else "?", bad[0]))
-    name = d["provider"]
-    docs = upgrade_v1(d)
-    notes = []
-    ad = d.get("adapter")
-    if isinstance(ad, str) and not ad.startswith("lib/providers/%s/" % name):
-        notes.append("the adapter %s is outside lib/providers/%s/, so it is not carried over; a definition's adapter lives in its own directory" % (ad, name))
-    out = []
-    if len(docs) == 1:
-        doc = next(iter(docs.values()))
-        doc["description"] = "%s on the %s surface, migrated from schema 1" % (name, doc["surface"])
-        out.append(doc)
-    else:
-        names = dict({"local": name + "-local", "cloud": name + "-cloud"}, **(names or {}))
-        dates = [r["verified_on"] for r in d["tier_detail"].values() if r.get("verified_on")]
-        out.append({"schema": 2, "kind": "catalog", "family": name, "description": "the models of %s, migrated from schema 1" % name,
-                    "version": max(dates) if dates else today or datetime.now().strftime("%Y-%m-%d"), "pattern": d["model_pattern"],
-                    "tiers": copy.deepcopy(d["tier_detail"]), "effort": copy.deepcopy(d["effort"])})
-        for s, doc in docs.items():
-            doc["provider"] = names[s]
-            doc["family"] = name
-            doc["description"] = "%s on the %s surface, migrated from schema 1" % (name, s)
-            doc["models"] = {"catalog": name, "use": "alias" if s == "local" and all(r.get("alias") for r in d["tier_detail"].values()) else "id"}
-            out.append(doc)
-        if any(x.get("adapter") for x in out):
-            notes.append("the adapter serves both surfaces and both new definitions name it; split it by surface into each definition's directory")
-    for doc in out:
-        key = doc.get("provider") or doc.get("family")
-        if not NAME_RE.match(key) or len(key) > 40:
-            raise ProviderError("'%s' is not a usable name (lower case letters, digits and -, at most 40 characters)" % key)
-        problems = [m for lvl, m in validate2(doc, key) if lvl == "fail"]
-        if problems:
-            raise ProviderError("the conversion of '%s' is not a valid schema 2 document: %s" % (name, problems[0]))
-    return out, notes
-
-
-def _legacy_view(e, docs, root, library):
-    """A schema 2 definition in the shape of schema 1 (see load()); it is for readers, not a valid schema 1 file."""
-    doc = next(iter(docs.values()))
-    s = doc["surface"]
-    m = _resolve_models(doc, root, library)
-    ad = doc.get("adapter")
-    lay = _layout_from(doc)
-    view = {"schema": 1, "provider": doc["provider"], "surfaces": [s], "model_pattern": m["pattern"],
-            "tier_detail": m["tiers"], "tiers": {t: m["tiers"][t]["model"] for t in TIERS}, "aliases": {t: m["tiers"][t].get("alias") for t in TIERS},
-            "effort": m["effort"],
-            "capabilities": {c: {s: {"value": cl.get("value"), "verified_on": cl.get("verified_on"), "source": cl.get("source", ""), "note": cl.get("note", "")}}
-                             for c, cl in _dict(doc.get("capabilities")).items() if c in capabilities() and isinstance(cl, dict)},
-            "local": {"reserved_names": list(_dict(doc.get("agents")).get("reserved_names") or [])},
-            "adapter": "lib/providers/%s/%s" % (doc["provider"], ad) if isinstance(ad, str) and e["origin"] == "shipped" else None}
-    if any(v is not None for v in lay.values()):
-        view["layout"] = lay
-    return view
 
 
 # ---- the schema subset ------------------------------------------------------------------------------------------------
@@ -783,7 +651,7 @@ def _check(v, s, root, path, out):
             out.append((path, "needs at least %d propert%s" % (s["minProperties"], "y" if s["minProperties"] == 1 else "ies")))
         for k in s.get("required", []):
             if k not in v:
-                if path in ("tier_detail", "tiers"):
+                if path == "tiers":
                     out.append((path, "missing tier '%s'" % k))
                 else:
                     out.append((path, "missing required property '%s'" % k))
@@ -805,39 +673,6 @@ def _check(v, s, root, path, out):
 
 def _msg(path, text):
     return (path + ": " if path else "") + text
-
-
-def _layout_problems(lay):
-    """The rules of the layout a schema cannot state (the types are the schema's)."""
-    if not isinstance(lay, dict):
-        return []
-    bad = []
-    for k in ("project_skills_dir", "project_agents_dir"):
-        v = lay.get(k)
-        if isinstance(v, str) and (not v or v.startswith(("/", "~")) or ".." in v.split("/")):
-            bad.append("layout.%s: '%s' is not a path inside the checkout (relative, no ..)" % (k, v))
-    for k in ("user_skills_dir", "user_agents_dir"):
-        v = lay.get(k)
-        if isinstance(v, str) and not v.startswith("~/"):
-            bad.append("layout.%s: '%s' does not start with ~/" % (k, v))
-    for i, f in enumerate(lay.get("settings_files") or []):
-        v = f.get("path") if isinstance(f, dict) else None
-        if isinstance(v, str) and f.get("scope") == "user" and not v.startswith("~/"):
-            bad.append("layout.settings_files[%d].path: the user file '%s' does not start with ~/" % (i, v))
-        if isinstance(v, str) and isinstance(f, dict) and f.get("scope") != "user" and (not v or v.startswith(("/", "~")) or ".." in v.split("/")):
-            bad.append("layout.settings_files[%d].path: '%s' is not a path inside the checkout (relative, no ..)" % (i, v))
-    if lay.get("exclusion") is not None and not lay.get("settings_files"):
-        bad.append("layout.exclusion: a skill is switched off in a settings file, but settings_files is null or empty")
-    mem = lay.get("memory_dir")
-    if isinstance(mem, str):
-        if "{checkout_key}" in mem and lay.get("checkout_key") is None:
-            bad.append("layout.memory_dir: uses {checkout_key} but checkout_key is null")
-        if not mem.startswith("~/"):
-            bad.append("layout.memory_dir: '%s' does not start with ~/" % mem)
-    sl = lay.get("session_launch")
-    if isinstance(sl, str) and "{render}" not in sl:
-        bad.append("layout.session_launch: the command has no {render}")
-    return bad
 
 
 def _control_problems(d):
@@ -865,65 +700,7 @@ def _control_problems(d):
     return out[:10]
 
 
-def validate(d, name=None):
-    """Findings for a descriptor: schema violations and the rules a schema cannot state are "fail"; a missing verified_on
-    date is a "warn". name, when given, is the file name the provider must equal. A document of schema 2 goes to validate2()."""
-    if isinstance(d, dict) and type(d.get("schema")) is int and d["schema"] == 2:
-        return validate2(d, name)
-    ctl = _control_problems(d)
-    if ctl:
-        return ctl
-    sch = schema()
-    raw = []
-    _check(d, sch, sch, "", raw)
-    out = [("fail", _msg(p, m)) for p, m in raw]
-    if not isinstance(d, dict):
-        return out
-    prov = d.get("provider")
-    if name is not None and isinstance(prov, str) and prov != name:
-        out.append(("fail", "provider '%s' differs from the file name '%s'" % (prov, name)))
-    ad = d.get("adapter")
-    if isinstance(ad, str) and (os.path.isabs(ad) or ".." in ad.split("/") or not ad.startswith("lib/providers/")):
-        out.append(("fail", "adapter: '%s' is not a path under lib/providers/ of the tool" % ad))
-    out += [("fail", m) for m in _layout_problems(d.get("layout"))]
-    detail = d.get("tier_detail") if isinstance(d.get("tier_detail"), dict) else {}
-    pattern = None
-    if isinstance(d.get("model_pattern"), str):
-        try:
-            pattern = re.compile(d["model_pattern"])
-        except re.error as e:
-            out.append(("fail", "model_pattern: not a regular expression (%s)" % e))
-    for t in TIERS:
-        row = detail.get(t)
-        if not isinstance(row, dict):
-            continue
-        if pattern and isinstance(row.get("model"), str) and not pattern.search(row["model"]):
-            out.append(("fail", "tier_detail.%s.model: '%s' does not match model_pattern %s" % (t, row["model"], d["model_pattern"])))
-        if isinstance(d.get("tiers"), dict) and t in d["tiers"] and d["tiers"][t] != row.get("model"):
-            out.append(("fail", "tiers.%s: %s differs from tier_detail.%s.model %s" % (t, _show(d["tiers"][t]), t, _show(row.get("model")))))
-        if isinstance(d.get("aliases"), dict) and d["aliases"].get(t) != row.get("alias"):  # a tier with no alias is absent or null
-            out.append(("fail", "aliases.%s: %s differs from tier_detail.%s.alias %s" % (t, _show(d["aliases"].get(t)), t, _show(row.get("alias")))))
-        if row.get("verified_on") is None and "verified_on" in row:
-            out.append(("warn", "tier_detail.%s.verified_on: not verified" % t))
-    surfaces = [s for s in d.get("surfaces", []) if s in SURFACES] if isinstance(d.get("surfaces"), list) else []
-    caps = d.get("capabilities") if isinstance(d.get("capabilities"), dict) else {}
-    for c in capabilities():
-        row = caps.get(c) if isinstance(caps.get(c), dict) else {}
-        if isinstance(caps.get(c), dict):
-            for s in SURFACES:
-                if s in row and s not in surfaces:
-                    out.append(("fail", "capabilities.%s.%s: the provider does not list the surface '%s'" % (c, s, s)))
-        for s in surfaces:
-            cell = row.get(s)
-            if cell is None:
-                out.append(("warn", "capabilities.%s.%s: no entry for the listed surface; it counts as not supported" % (c, s)))
-            elif isinstance(cell, dict) and "verified_on" in cell and cell["verified_on"] is None:
-                tail = " (counts as not supported)" if cell.get("value") in ("yes", "partial") else ""
-                out.append(("warn", "capabilities.%s.%s.verified_on: not verified%s" % (c, s, tail)))
-    return out
-
-
-# ---- schema 2 ---------------------------------------------------------------------------------------------------------
+# ---- the schema: kinds, capabilities, the rules a schema cannot state -----------------------------------------------------------
 
 KINDS = ("provider", "catalog")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -935,7 +712,7 @@ def schema2():
 
 
 def capabilities2():
-    """The capability names of schema 2: the eight of schema 1 and the six that came with it."""
+    """The capability names a definition can claim."""
     return tuple(schema2()["$defs"]["provider"]["properties"]["capabilities"]["properties"])
 
 
@@ -1124,12 +901,15 @@ def validate_extension(d, name=None):
 
 
 def validate2(d, name=None):
-    """validate() for a document of schema 2: the node of schema-2.json for its kind, then the rules a schema cannot state. name, when
-    given, is the file (or directory) name the definition must carry. An extension goes to validate_extension()."""
+    """Findings for a definition or a catalog: the node of schema-2.json for its kind, then the rules a schema cannot state; "fail" for a
+    violation, "warn" for a capability that is claimed and not verified. name, when given, is the file (or directory) name the document
+    must carry. An extension goes to validate_extension()."""
+    if not isinstance(d, dict):
+        return [("fail", "the document is not a JSON object")]
     ctl = _control_problems(d)
     if ctl:
         return ctl
-    if isinstance(d, dict) and d.get("kind") == "extension":
+    if d.get("kind") == "extension":
         return validate_extension(d, name)
     sch = schema2()
     raw = []
@@ -1198,12 +978,6 @@ def barrier_claim_problem(doc, by=None):
             "{\"class\": \"read-only\"} group in argv), so nothing holds a read-only member and it would be treated as held; set barrier.kind (hook, "
             "sandbox-args or adapter, with what that kind needs), or declare the capability not supported (value no)"
             % (by or doc.get("provider") or "the definition", cell["value"], doc.get("surface") or "its surface"))
-
-
-def _claim_problem(e, doc, by=None):
-    """barrier_claim_problem of a definition read from the entry e, or None. A shipped schema 1 file (upgraded in memory) has no barrier data:
-    its barrier is the guard hook, so there is no claim to judge there (check judges schema 2 files only, too)."""
-    return barrier_claim_problem(doc, by=by) if _is2(_read(e)) else None
 
 
 # ---- capabilities -----------------------------------------------------------------------------------------------------
@@ -1310,7 +1084,7 @@ def cap(name, surface, capability, root=None, library=None, state=None, project=
         by = e if pack == name else _pick(pack, "extension", root, library)
         if not _backed(by, cell, capability, root, library, state, None if pack == name else name, surface):
             return "unverified"
-        if capability == "read_only_barrier" and _claim_problem(e, doc):
+        if capability == "read_only_barrier" and barrier_claim_problem(doc):
             return "no"                  # claimed, even attested, with nothing behind it (barrier kind none, no read-only arguments): fail closed
     return cell["value"]
 
@@ -1575,8 +1349,8 @@ def _home(path, home):
 
 
 def _layout_from(doc):
-    """The layout fields of a schema 2 definition, from its resources and session (the way _resources_from_layout() went). Home is not
-    expanded. An exclusion in a form schema 1 could not say is None here."""
+    """The layout fields of a definition, from its resources and session. Home is not expanded. An exclusion that is not a settings key
+    with one pointer segment is None here."""
     res = _dict(doc.get("resources"))
     sk, ag, st, mem = (_dict(res.get(k)) for k in ("skills", "agents", "settings", "memory"))
     ses = _dict(doc.get("session"))
@@ -1593,13 +1367,13 @@ def _layout_from(doc):
 
 def layout(name, root=None, home=None, library=None, project=None, conf=None):
     """The layout of a provider: every field of LAYOUT_FIELDS (None where the definition has none, or has no resources at all). It is
-    read from the resources (a schema 1 layout is mapped to them) and the session. A leading ~ is expanded here with home (default:
+    read from the resources and the session. A leading ~ is expanded here with home (default:
     $HOME), so the definition stays portable. Project paths stay relative to the checkout. With a project, the resources are those of the
     runtime composed with the project's enabled extensions (a resource an extension adds is there; the runtime's own are unchanged).
     Resources that break the schema are a ProviderError."""
     e = _entry(name, root, library)
     docs = _docs(e)
-    bad = [m for lvl, m in validate(_read(e), name) if lvl == "fail" and m.startswith(("layout", "resources"))]
+    bad = [m for lvl, m in validate2(_read(e), name) if lvl == "fail" and m.startswith("resources")]
     if bad:
         raise ProviderError("provider '%s' has a bad layout: %s" % (name, bad[0]))
     doc = docs.get("local") or next(iter(docs.values()), {})
@@ -1870,7 +1644,7 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
     if accepted(project, surface, conf):
         return "accepted", ""
     by = (comp["provenance"] if comp else {}).get("capabilities.read_only_barrier")
-    claim = _claim_problem(entry, doc, by=by if by != provider else None) if doc is not None else None
+    claim = barrier_claim_problem(doc, by=by if by != provider else None) if doc is not None else None
     why = claim or ("not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported")
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
@@ -1910,24 +1684,15 @@ def _state(findings):
     return _count(f, "failure") if f else (_count(w, "warning") if w else "clean")
 
 
-def _surfaces(d):
-    s = d.get("surfaces")
-    return [x for x in s if x in SURFACES] if isinstance(s, list) else []
-
-
-def _is2(d):
-    return isinstance(d, dict) and type(d.get("schema")) is int and d["schema"] == 2
-
-
 def findings_of(name, root=None, library=None):
-    """(entry, document, findings) for one provider: the validation of its file and, for schema 2, of what it points at (its catalog),
-    plus why it cannot be read as a definition at all (a library file that is not schema 2, a directory that disagrees with the name)."""
+    """(entry, document, findings) for one provider: the validation of its file and of what it points at (its catalog), plus why it
+    cannot be read as a definition at all (a file that is not schema 2, a directory that disagrees with the name)."""
     e = _entry(name, root, library)
     raw = _read(e)
-    findings = validate(raw, name)
-    if _is2(raw) and raw.get("kind") == "provider" and barrier_claim_problem(raw):
+    findings = validate2(raw, name)
+    if raw.get("kind") == "provider" and barrier_claim_problem(raw):
         findings.append(("fail", barrier_claim_problem(raw)))
-    if _is2(raw) and raw.get("kind") == "provider" and isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
+    if raw.get("kind") == "provider" and isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
         try:
             catalog(raw["models"]["catalog"], root, library)
         except Clash:
@@ -1959,7 +1724,7 @@ def cmd_list():
         except ProviderError as ex:
             print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % ex))
             continue
-        surfaces = [raw["surface"]] if _is2(raw) and raw.get("surface") in SURFACES else _surfaces(raw)
+        surfaces = [raw["surface"]] if raw.get("surface") in SURFACES else []
         sealed = seal_state(e)[0]
         note = "  (library%s)" % (", unsealed" if sealed == "unsealed" else ", changed since sealed" if sealed == "drift" else ", not sealed: no record" if sealed == "unrecorded" else "") if e["origin"] == "library" else ""
         print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), note))
@@ -2048,52 +1813,21 @@ def cmd_show(name, as_json, project=None):
         print("qargi: provider '%s' breaks the schema (qargi provider check %s)" % (name, name), file=sys.stderr)
         return 1
     if as_json and project:
-        comps = {sf: compose(name, sf, project) for sf in surfaces_of(name)}
-        print(json.dumps(dict(next(iter(comps.values())), project=project) if len(comps) == 1 else {"project": project, "surfaces": comps}, indent=2))
+        print(json.dumps(dict(compose(name, d["surface"], project), project=project), indent=2))
         return 0
     if as_json:
         print(json.dumps(d, indent=2))
         return 0
-    if _is2(d):
-        return _show2(name, e, next(iter(_docs(e).values())), project)
-    print("%s  (surfaces: %s)" % (name, ", ".join(d["surfaces"])))
-    print("model pattern: %s" % d["model_pattern"])
-    print("tiers")
-    for t in TIERS:
-        r = d["tier_detail"][t]
-        ver = "verified %s" % r["verified_on"] if r["verified_on"] else "verified: no"
-        print("  %-9s %-22s alias %-8s %s  (%s)" % (t, r["model"], r["alias"] or "-", ver, r["source"]))
-    print("effort")
-    for k, v in d["effort"].items():
-        print("  %-7s %s" % (k, v if v is not None else "- (no control)"))
-    print("capabilities")
-    for c in capabilities():
-        print("  %s" % c)
-        for s in d["surfaces"]:
-            cell = d["capabilities"].get(c, {}).get(s)
-            if cell is None:
-                print("    %-6s %-8s no entry" % (s, "no"))
-                continue
-            print("    %-6s %-8s %-28s %s" % (s, cell["value"], _verified(cell), cell["note"]))
-    for sf in (surfaces_of(name) if project else ()):
-        comp = compose(name, sf, project)
-        if comp["extensions"] or comp["ignored"]:
-            print("composed for project %s on %s" % (project, sf))
-            for c, pack in sorted(comp["provenance"].items()):
-                if c.startswith("capabilities.") and pack != name:
-                    cl = comp["definition"]["capabilities"][c[13:]]
-                    print("  %-34s %-8s %-30s %-12s %s" % (c[13:], cl.get("value"), _backing_comp(name, sf, c[13:], cl, comp, project), "[%s]" % pack, cl.get("note", "")))
-            _print_extensions(comp, project)
-    return 0
+    return _show2(name, e, next(iter(_docs(e).values())), project)
 
 
-def adapter_problem(d, tool=None, directory=None):
-    """None when the descriptor has no adapter or the adapter file exists and is executable, else what is wrong. A schema 1 adapter is
-    a path under the tool root; a schema 2 adapter (directory= the definition's directory) is relative to that directory."""
+def adapter_problem(d, directory):
+    """None when the definition has no adapter or the adapter file exists and is executable, else what is wrong. The adapter is a path
+    relative to directory, the definition's directory."""
     ad = d.get("adapter")
     if not isinstance(ad, str) or os.path.isabs(ad) or ".." in ad.split("/"):
-        return None                               # no adapter, or a path validate() already refused
-    path = os.path.join(directory if directory is not None else tool or TOOL, ad)
+        return None                               # no adapter, or a path validate2() already refused
+    path = os.path.join(directory, ad)
     if not os.path.isfile(path):
         return "adapter: %s does not exist" % ad
     if not os.access(path, os.X_OK):
@@ -2105,21 +1839,12 @@ def adapter_exec(name, surface, verb, root=None, library=None):
     """(path, cleanup) of the adapter of a runtime on a surface, ready to run for VERB. A shipped adapter is the file in the tool; a library
     pack's is run only as a private copy of the sealed pack (exec_copy: the content and the executable's hash are checked against the
     record), and cleanup is the directory discard_exec_copy() removes afterwards (None for a shipped one). Unsupported when the runtime has
-    no adapter on that surface or its adapter_verbs do not list VERB (a schema 1 descriptor lists none: it serves what it implements);
+    no adapter on that surface or its adapter_verbs do not list VERB;
     Drift or Refused when a library pack is not sealed or does not approve its adapter."""
     e = _entry(name, root, library)
     doc = _docs(e).get(surface)
     if doc is None:
         raise ProviderError("the provider %s does not list the surface %s" % (name, surface))
-    raw = _read(e)
-    if type(raw.get("schema")) is int and raw["schema"] == 1 and isinstance(raw.get("adapter"), str):
-        # a schema 1 descriptor names its adapter as a path under the tool root (lib/providers/NAME/adapter), whatever its own name is
-        tool = TOOL if root is None else os.path.dirname(os.path.dirname(os.path.abspath(root)))
-        path, top = os.path.join(tool, raw["adapter"]), os.path.join(tool, "lib", "providers")
-        if (os.path.isabs(raw["adapter"]) or os.path.normpath(raw["adapter"]) != raw["adapter"] or not os.path.isfile(path) or not os.access(path, os.X_OK)
-                or not os.path.realpath(path).startswith(os.path.realpath(top) + os.sep)):
-            raise Unsupported("the adapter of provider %s, %s, is missing or not an executable under lib/providers/ of the tool" % (name, raw["adapter"]))
-        return path, None
     ad = doc.get("adapter")
     if not isinstance(ad, str) or not ad:
         raise Unsupported("provider %s has no adapter on the %s surface: it cannot %s" % (name, surface, verb))
@@ -2183,8 +1908,7 @@ def cmd_model(args):
 
 def cmd_check(name):
     e, d, findings = findings_of(name)
-    v2 = _is2(d)
-    bad = adapter_problem(d, directory=e["dir"] if v2 else None)
+    bad = adapter_problem(d, e["dir"])
     if bad:
         findings.append(("fail", bad))
     fails = [m for lvl, m in findings if lvl == "fail"]
@@ -2197,11 +1921,9 @@ def cmd_check(name):
     if fails:
         return 1
     print("adapter: %s" % ("%s (exists, executable)" % d["adapter"] if d.get("adapter") else "none (what needs one is refused)"))
-    if not v2:
-        print("note: schema 1 is the earlier format; qargi provider migrate %s --dry-run shows the schema 2 form" % name)
     rows, cannot = [], []
     for s in surfaces_of(name):
-        for c in (capabilities2() if v2 else capabilities()):
+        for c in capabilities2():
             v = cap(name, s, c)
             if v in ("no", "unverified"):
                 rows.append("  %s: %-32s %s" % (s, c, "unverified (counts as no)" if v == "unverified" else "no"))
@@ -2214,34 +1936,6 @@ def cmd_check(name):
         print(r)
     for line in cannot:
         print(line)
-    return 0
-
-
-def cmd_migrate(args):
-    """migrate NAME --dry-run [--as local=X,cloud=Y]: print the schema 2 documents of a schema 1 descriptor. One document is printed as
-    an object, several as an array. Nothing is written; the gated write is not built."""
-    opts, pos, i = {}, [], 0
-    while i < len(args):
-        if args[i] == "--as" and i + 1 < len(args):
-            opts["as"], i = args[i + 1], i + 2
-        elif args[i] == "--dry-run":
-            opts["dry"], i = True, i + 1
-        else:
-            pos.append(args[i])
-            i += 1
-    names = dict(part.partition("=")[::2] for part in opts["as"].split(",")) if "as" in opts else {}
-    if len(pos) != 1 or pos[0].startswith("--") or ("as" in opts and (set(names) != set(SURFACES) or not all(names.values()))):
-        print("usage: qargi provider migrate NAME --dry-run [--as local=NAME,cloud=NAME]", file=sys.stderr)
-        return 2
-    raw = _read(_entry(pos[0]))
-    if not opts.get("dry"):
-        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form. "
-              "There is nothing to write into the library: its definitions are schema 2 already, and a shipped schema 1 file is replaced by the release that ships it", file=sys.stderr)
-        return 2
-    docs, notes = migrate(raw, names or None)
-    for n in notes:
-        print("qargi: note: " + n, file=sys.stderr)
-    print(json.dumps(docs[0] if len(docs) == 1 else docs, indent=2))
     return 0
 
 
@@ -2285,7 +1979,7 @@ def cmd_of(args):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | model NAME SURFACE TIER | of PROJECT [--surface S] | migrate NAME --dry-run")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | model NAME SURFACE TIER | of PROJECT [--surface S]")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -2331,8 +2025,6 @@ def main(argv):
             return cmd_model(rest)
         if verb == "of":
             return cmd_of(rest)
-        if verb == "migrate":
-            return cmd_migrate(rest)
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):

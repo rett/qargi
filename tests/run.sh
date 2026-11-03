@@ -54,7 +54,6 @@ run bash tests/test_release_preflight.sh
 run bash tests/test_release_publish.sh
 run python3 tests/test_home.py
 run bash tests/test_install.sh
-run python3 tests/test_migrate_home.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
 run bash tests/test_local_run.sh

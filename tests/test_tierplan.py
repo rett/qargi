@@ -5,7 +5,7 @@ QARGI_CONF and QARGI_STATE, directories for the dir tiers, a JSONL fixture (QARG
 fake `ant` that only answers `auth status` (the fixture is the store). The fixtures and the Env come from test_tiers.py.
 Run: python3 tests/test_tierplan.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, re, subprocess, sys, unittest
+import json, os, re, shutil, subprocess, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -136,6 +136,28 @@ class Init(Base):
             self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             self.assertIn("not empty and not a canon-2 store; use qargi canon plan or another path", r.stdout + r.stderr)
         self.assertEqual(e.snap(), before)
+
+    def test_an_interrupted_init_is_finished_by_a_rerun(self):
+        """The marker is the last file written. A set-up that stopped before it leaves only the first files of the seed,
+        and `memory init` finishes it, leaving those files as they are."""
+        e = self.mk()
+        self.init(e, "shared")
+        files = files_under(e.d("shared"))
+        order = ["/shared/INDEX.md", "/roles/build/INDEX.md", "/roles/write/INDEX.md", "/_template.md", "/README.md"]
+        self.assertEqual(sorted(files), sorted(order + ["/CANON.md"]))
+        shutil.rmtree(e.d("shared"))
+        part = {f: "edited " + f for f in order[:2]}
+        put(e.d("shared"), part)
+        r = self.init(e, "shared")
+        self.assertIn("init done", r.stdout)
+        again = files_under(e.d("shared"))
+        self.assertEqual(sorted(again), sorted(files))
+        for f, c in part.items():
+            self.assertEqual(again[f], c)
+        for f in order[2:] + ["/CANON.md"]:
+            self.assertEqual(again[f], files[f])
+        c = e.qargi("memory", "check", "--project", P)
+        self.assertEqual(c.returncode, 0, c.stdout + c.stderr)
 
     def test_a_marker_of_another_version_is_refused(self):
         e = self.mk()

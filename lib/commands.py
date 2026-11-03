@@ -19,18 +19,18 @@ INTRO = (
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by roles/<role>/ROLE.md
 def _provider_models():
-    """The model ids and aliases of the provider descriptors (lib/providers/NAME.json), for completion."""
-    import glob, json, os
+    """The model ids and aliases of the shipped runtimes (lib/provider.py, their catalogs followed), for completion."""
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import provider as P
     out = []
-    for f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers", "*.json"))):
-        if os.path.basename(f) in ("schema.json", "adapter-schema.json"):
-            continue
+    for n in P.names(P.PROVIDERS):
         try:
-            d = json.load(open(f))
-            out += [m for m in list((d.get("tiers") or {}).values()) + list((d.get("aliases") or {}).values()) if isinstance(m, str)]
-        except (OSError, ValueError, AttributeError):
-            pass
-    return tuple(dict.fromkeys(out))
+            rows = list(P.models_of(n, root=P.PROVIDERS)["tiers"].values())
+        except P.ProviderError:
+            continue
+        out += [r["model"] for r in rows] + [r.get("alias") for r in rows]
+    return tuple(dict.fromkeys(m for m in out if isinstance(m, str)))
 
 
 MODELS = _provider_models()
@@ -63,6 +63,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
+MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
@@ -78,7 +79,7 @@ GROUPS = [
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
-    ("Export and import", ["export", "import", "migrate"]),
+    ("Export and import", ["export", "import"]),
     ("Other", ["upgrade", "help", "version"]),
 ]
 
@@ -91,7 +92,7 @@ COMMANDS = {
                  "is none: an agent never pushes; the lead's grant is separate (qargi help push)."),
         "scripts": ["project.sh"],
         "verbs": {
-            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not."),
+            "template": verb("Print an answers file with defaults", [("NAME", "none")], desc="Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set."),
             "init": verb("Validate and store an answers file", [("NAME", "none")],
                          [opt("--answers", "the answers file to store", "FILE", "file"), opt("--force", "replace stored answers")],
                          examples=["qargi project template acme > acme.json", "qargi project init acme --answers acme.json"]),
@@ -156,18 +157,22 @@ COMMANDS = {
         "scripts": ["agent.sh"],
         "verbs": {
             "add": verb("Create a member under a name you choose", [("NAME", "none")],
-                        [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
+                        [opt("--roles", "comma-separated roles it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
                          opt("--project", "the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project")],
                         desc=("A member belongs to a project, and the definition is rendered by the provider of that project. "
                               "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no --project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user-level directory."),
-                        examples=["qargi agent add forge --abilities build,test --project myproject", "qargi agent add scribe --abilities write --model opus --project myproject",
+                        examples=["qargi agent add forge --roles build,test --project myproject", "qargi agent add scribe --roles write --model opus --project myproject",
                                   "qargi agent add worker --project myproject    # the write-class base: build, write and test"]),
-            "list": verb("List the members, their abilities and definitions"),
-            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [PROJECT_OPT]),
-            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [PROJECT_OPT],
-                            desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
+            "list": verb("List the members of every project, their abilities and definitions", [],
+                         [opt("--project", "only the members of this project", "PROJECT", "project")],
+                         desc="One row per member: PROJECT, NAME, ABILITIES, MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. "
+                              "Members are kept per project, so two projects can each have a worker."),
+            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
+                           desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
+                            desc="The project is found as for rename. Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
@@ -175,16 +180,18 @@ COMMANDS = {
                                 "Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model-defaults.json "
                                 "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
-                                "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the "
-                                "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
-            "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
+                                "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing "
+                                "dispatches it), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
+                                "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). The members shown are that project's (`agent list` shows all projects'). Read-only."),
+            "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
+                           desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "the project whose members serve and whose profiles apply (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
                          opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
                          opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort)")],
-                        desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when it is registered; otherwise the first registered member of the role's class (shown as legacy). A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
+                        desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
         },
     },
     "role": {
@@ -526,7 +533,9 @@ COMMANDS = {
                  "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
                  "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
                  "checked out detached; install.sh --user then runs as you and the members to refresh are listed. The git commands that write "
-                 "into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it."),
+                 "into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in "
+                 "the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is "
+                 "changed for that. A member or agent cannot use it."),
         "scripts": ["upgrade.sh"],
         "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
                  opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],
@@ -592,7 +601,7 @@ COMMANDS = {
                                 "is not supported can serve the review role."),
             "check": verb("Validate a definition (a library name or a directory) and say what degrades", [("NAME|DIR", "none")],
                           [opt("--project", "check it as this project composes it with its enabled extensions", "PROJECT", "project")],
-                          desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
+                          desc="Fails on a definition that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
             "new": verb("Scaffold a provider, catalog or extension pack in the library", [("NAME", "none")],
@@ -616,11 +625,6 @@ COMMANDS = {
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
                             opt("--cleanup", "what was cleaned up afterwards", "TEXT"), opt("--note", "anything else worth keeping", "TEXT"), PLAN, APPROVED],
                            desc="Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record."),
-            "migrate": verb("Print the schema 2 form of a schema 1 descriptor (read only)", [("NAME", "none")],
-                            [opt("--dry-run", "required for now: print the documents and write nothing"),
-                             opt("--as", "name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME", "SURFACES")],
-                            desc="One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. "
-                                 "Notes go to stderr. The written form (a plan and your approval) is not built yet, so without --dry-run it exits 2."),
         },
     },
     "noticed": {
@@ -659,8 +663,7 @@ COMMANDS = {
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
-                             opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME"),
-                             opt("--ability", "the earlier name of --role", "ABILITY", ABILITIES)],
+                             opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
                             desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
                                   "BASE_SHA) to copy into the task. A caller that evals the output must stop at the blank line.\n"
                                   "When the project (found by matching the repository against the stored answers) has a Claude Code render "
@@ -769,13 +772,13 @@ COMMANDS = {
     "canon": {
         "summary": "Bring a project's two memory stores to the standard layout and keep them there",
         "desc": ("The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an "
-                 "index with a Load column). plan and apply move a store from any older version without losing a note."),
+                 "index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed."),
         "scripts": ["canon.sh"],
         "verbs": {
             "check": verb("Report conformance and the version of each store", [("PROJECT", "project")], [KIND]),
             "plan": verb("Print every step needed to reach the current canon (changes nothing)", [("PROJECT", "project")],
-                         [KIND, opt("--default-role", "where an old reference store's files go", "ROLE", ROLES)]),
-            "apply": verb("Run the plan", [("PROJECT", "project")], [KIND, PLAN, APPROVED, opt("--default-role", "as for plan", "ROLE", ROLES)]),
+                         [KIND]),
+            "apply": verb("Run the plan", [("PROJECT", "project")], [KIND, PLAN, APPROVED]),
             "import": verb("Merge a foreign store (the old documentation store) under a role", [("PROJECT", "project")],
                            [opt("--from", "the source store id", "STORE_ID", "store"), opt("--role", "the role to import under", "ROLE", ROLES),
                             opt("--map", "the layout of the source", "NAME", ("docs-v0",)), PLAN, APPROVED]),
@@ -862,23 +865,6 @@ COMMANDS = {
                  opt("--password-file", "the password is the first line of this file", "FILE", "file"),
                  opt("--dry-run", "print the plan and stop; changes nothing")],
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
-    },
-    "migrate": {
-        "summary": "Copy the data of the earlier XDG directories to ~/.qargi",
-        "desc": ("home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and "
-                 "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
-                 "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
-                 "directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites "
-                 "old absolute paths (a project's credential file, local-runs.jsonl; the records audit.log, supervisor.log and run-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token "
-                 "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
-                 "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
-                 "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
-                 ),
-        "scripts": ["migrate.py", "migrate_home.py"],
-        "verbs": {
-            "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
-                         examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
-        },
     },
     "lead": {
         "summary": "Give, inspect or take away the cloud lead's right to push",
@@ -1001,7 +987,7 @@ TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
-        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
+        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --roles build,test); qargi agent for ABILITY prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
@@ -1013,7 +999,7 @@ TOPICS = {
         "Role review: the ability review; reads a change, runs its checks and reports a verdict, and changes no file.",
         "Role test: the ability test; writes and repairs tests and proves them failing first and stable.",
         "Role lead: no ability of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
-        "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
+        "A member is a local agent you name (qargi agent add forge --roles build,test), rendered from the one member definition "
         "qargi ships. The task block names the ability and carries its role text; there is no ability skill to load. qargi agent for ABILITY prints the member "
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's role text in its prompt.",
         ]),
@@ -1048,8 +1034,8 @@ TOPICS = {
     "files": ("Where things are", [
         "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
         "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
-        "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used "
-        "(the earlier layout under them is copied by qargi migrate home; until then qargi stops and says so). QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
+        "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
+        "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
         "Nothing is stored in a repository."]),
     "dev": ("Running a branch checkout", [

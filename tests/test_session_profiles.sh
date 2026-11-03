@@ -24,11 +24,11 @@ for d in agents bin lib roles skills provision canon methodologies VERSION; do [
 SHIPT=$T/ship; mkdir -p "$SHIPT"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
 # the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = null)
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$SHIPT/lib/providers/claude.json"
+jq '.capabilities.per_dispatch_model_override.verified_on = null
+  | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"
 SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = "2026-10-31")
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = "2026-10-31")' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$TOOL/lib/providers/claude.json"
+jq '.capabilities.per_dispatch_model_override.verified_on = "2026-10-31"
+  | .capabilities.per_dispatch_effort_override.verified_on = "2026-10-31"' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$TOOL/lib/providers/claude-platform.json"
 
 # the fake ant: logs its arguments, answers a deployment, keeps the body of every session create and numbers the sessions
 cat > "$T/bin/ant" <<'EOS'
@@ -59,7 +59,7 @@ printf '%s\n' "$TOKEN" > "$T/secrets/tok"; chmod 600 "$T/secrets/tok"
 # alpha: private repository (a credential); beta: public (none)
 for p in alpha beta; do
   jq -n --arg p "$p" --arg f "$([ "$p" = alpha ] && echo "$T/secrets/tok")" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",credential_file:$f,long_lived:["main"]},
-    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
 inst() { jq -n --arg d "$1" '{location:"cloud",deployment_id:$d,environment_id:"env_01",agent:{id:"agent_01",version_pinned:3,model:"claude-sonnet-5-5",effort:"high"}}'; }
 jq -n --argjson w "$(inst depl_W)" --argjson r "$(inst depl_R)" --argjson b "$(inst depl_B)" \
@@ -91,11 +91,11 @@ jq -e '.resources | map(.type) == ["memory_store"]' <<<"$body" >/dev/null && ok 
 
 # --- the reviewer is refused until the project accepts that cloud has no read-only barrier
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --asked "review" 2>&1); rc=$?
-{ [ $rc = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project alpha --asked" <<<"$out"; } && ok "start alpha-reviewer: refused (exit 2) with the accept command" || no "reviewer without acceptance (rc=$rc): $out"
+{ [ $rc = 2 ] && grep -q "qargi provider accept claude-platform --surface cloud --no-barrier --project alpha --asked" <<<"$out"; } && ok "start alpha-reviewer: refused (exit 2) with the accept command" || no "reviewer without acceptance (rc=$rc): $out"
 out=$("$YES" send alpha-reviewer "review it" --role review --label rv --new --asked "review" 2>&1); rc=$?
 [ $rc = 2 ] && [ "$(n_creates)" = 0 ] && ok "send --new: refused too, and no session was created" || no "send reviewer without acceptance (rc=$rc, creates=$(n_creates)): $out"
-tok=$("$YES" provider accept claude --surface cloud --no-barrier --project alpha --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
-"$YES" provider accept claude --surface cloud --no-barrier --project alpha --asked "I accept it" --plan "$tok" --approved go >"$T/acc.out" 2>&1 || no "accept: tok=$tok $(cat "$T/acc.out")"
+tok=$("$YES" provider accept claude-platform --surface cloud --no-barrier --project alpha --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+"$YES" provider accept claude-platform --surface cloud --no-barrier --project alpha --asked "I accept it" --plan "$tok" --approved go >"$T/acc.out" 2>&1 || no "accept: tok=$tok $(cat "$T/acc.out")"
 body=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile auditor --asked "audit" 2>&1); rc=$?
 [ $rc = 0 ] && jq -e --arg m "$H" '.agent.type == "agent_with_overrides" and .agent.id == "agent_01" and .agent.model == {id: $m, effort: "low"}' <<<"$body" >/dev/null && ok "after the acceptance: the reviewer body, haiku with effort low for the auditor profile" || no "reviewer accepted (rc=$rc): $body"
 [ "$(jq -r .agent.system <<<"$body")" = "$(agent_prompt review alpha)" ] && ok "the reviewer's system is agent_prompt review alpha" || no "reviewer system"

@@ -4,7 +4,7 @@
 qargi manages the skills of its library and renders them for a project, but a session loads more than that: the skills in the
 checkout's project skills directory, in the render, and in the user's skills directory. Where those are, and how the provider's own
 configuration hides a skill, come from the skills resource of its definition (resources.skills in lib/providers/NAME.json, read
-through lib/provider.py, schema 2; a schema 1 layout is mapped to it); nothing here names a provider. The exclusion forms are
+through lib/provider.py); nothing here names a provider. The exclusion forms are
 read-only: qargi never writes a provider's configuration.
 
   settings-key   a map in a settings file (pointer, off value), the file being one of resources.settings.files by scope
