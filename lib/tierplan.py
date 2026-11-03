@@ -146,6 +146,9 @@ def plan_init(tier_name, project_arg, today):
     me = real(loc)
     if os.path.lexists(loc) and not os.path.isdir(loc):
         raise Refused("%s exists and is not a directory" % loc)
+    pa, rcsv = T.check_args(tier_name, project, T._roles(a) or ["build"])
+    roles = rcsv.split(",")
+    held = {}                                     # what a set-up that was interrupted left (no marker yet)
     if os.path.isdir(loc) and os.listdir(loc):
         marker = os.path.join(loc, "CANON.md")
         if os.path.isfile(marker) and not os.path.islink(marker):
@@ -154,13 +157,14 @@ def plan_init(tier_name, project_arg, today):
             if m.get("canon") == str(C.LATEST) and m.get("kind") == "memory":
                 print("tier %s is already initialised at %s; nothing to do" % (tier_name, loc))
                 return None
-        raise Refused(NOT_CANON)
+        else:
+            held = B.DirBackend(loc).list()
+        if not held or C.detect("memory", held, roles)[0] != "empty":
+            raise Refused(NOT_CANON)
     for o in T.resolve(a, project):
         if o["tier"] != tier_name and o["kind"] == "dir" and o["location"] and nests(me, real(o["location"])):
             raise Refused("tier %s at %s overlaps tier %s at %s" % (tier_name, loc, o["tier"], o["location"]))
-    roles = T._roles(a) or ["build"]
-    pa, rcsv = T.check_args(tier_name, project, roles)
-    plan = M.migrate({}, C.LATEST, "memory", pa, rcsv.split(","), seed_dir(), today)
+    plan = M.migrate(held, C.LATEST, "memory", pa, roles, seed_dir(), today)
     plan.update(verb="init", tier=tier_name, stores={"target": loc}, needs_ant=False, private={"target": tier_name in PRIVATE})
     if repo:
         plan["warning"] = repo_warning(repo, rel)
