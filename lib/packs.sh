@@ -217,7 +217,7 @@ set_off() { # project role json-array
   "$(dirname "$0")/project.sh" set "$1" "roles.$2.packs_off" "$3" >/dev/null
 }
 
-# Claude Code target: the facts only this script knows (links, review, hashes) go to packs_claude.py as one JSON file.
+# Claude Code target: the facts only this script knows (links, review, hashes) go to packs_render.py as one JSON file.
 cc_inputs() { # project outfile
   local prj=$1 out=$2 roles r e k n P want rv rows cpj x why
   [ -f "$DA_CONF/projects/$prj.json" ] || die "no stored answers for project '$prj'"
@@ -296,7 +296,7 @@ cc_lock() { # project: exclusive lock for plan+swap on PROVIDER/.PROJECT.lock; t
   done
 }
 # --target names the render target of the project's provider (layout.render_target); the renderer for it is dispatched here. The
-# only renderer is the Claude Code one (packs_claude.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
+# only renderer is the Claude Code one (packs_render.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
 rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
   local rt='' pv
   if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
@@ -317,7 +317,7 @@ rt_main() { # verb: apply|check with --target
 cc_main() { # verb: apply|check
   local prj=${ARGS[0]:-} PY tok live
   [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
-  PY=$(dirname "$(readlink -f "$0")")/packs_claude.py
+  PY=$(dirname "$(readlink -f "$0")")/packs_render.py
   CC_W=$(mktemp -d); CC_LK=''; trap cc_cleanup EXIT
   cc_inputs "$prj" "$CC_W/in.json"
   live=$RDIR/$prj

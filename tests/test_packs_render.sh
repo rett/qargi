@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The Claude Code target of packs: render a project's enabled skills and tools into a state directory, with a
-# manifest and a drift check. Offline, hermetic. Run: tests/test_packs_claude.sh
+# The render of packs for the local runtime (Claude Code here): render a project's enabled skills and tools into a state directory, with a
+# manifest and a drift check. Offline, hermetic. Run: tests/test_packs_render.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh

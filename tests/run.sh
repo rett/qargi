@@ -59,7 +59,7 @@ run bash tests/test_local.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
 run bash tests/test_packs_seed.sh
-run bash tests/test_packs_claude.sh
+run bash tests/test_packs_render.sh
 run bash tests/test_packs_link.sh
 run bash tests/test_linker.sh
 run bash tests/test_packs_audit.sh
