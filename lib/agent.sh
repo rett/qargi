@@ -26,7 +26,7 @@
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per guard class) and the profiles (a base, a tier and an effort each)
 
-# The provider definitions are read through lib/provider.py (the shipped ones and the library's, schema 1 and 2), never as files. The member
+# The provider definitions are read through lib/provider.py (the shipped ones and the library's), never as files. The member
 # renderer is that module's neighbour, lib/render.py. This program runs isolated; AGENT_PY holds it, apy runs it.
 AGENT_PY=$(cat <<'PYEOF'
 # The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
@@ -34,14 +34,12 @@ AGENT_PY=$(cat <<'PYEOF'
 #   names                                             the providers that have a definition, one per line
 #   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
-#                                                     (a provider with no renderers.agent, a schema 1 descriptor, has its adapter render: verb dispatch-local).
 #                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
 #                                                     renderer and agents resource, and the extensions in the inputs hash); without, the runtime's own
 #   states MEMBERS_FILE ROLE_CLASSES_JSON             {"PROJECT/NAME": [MISSING | STALE | DRIFT ...]} against what the runtime would render today
 import hashlib
 import json
 import os
-import subprocess
 import sys
 
 LIB = sys.argv[1]
@@ -57,11 +55,10 @@ class Fail(Exception):
 
 
 def render_runtime(prov, project=None):
-    """The runtime whose definition renders the members of PROV: PROV itself when its definition carries renderers.agent. A schema 1
-    descriptor (the shipped claude.json) carries none; its members are rendered by the one local runtime whose family is its name.
-    None when there is no such runtime: the descriptor is then a schema 1 one with nothing but its adapter (render_legacy). With a
-    project the definition is the composed one: a renderer an enabled extension adds counts, and a conflict or a changed extension
-    of the project is raised (ProviderError), not hidden."""
+    """The runtime whose definition renders the members of PROV: PROV itself when its definition carries renderers.agent, else the one
+    local runtime of the family PROV names that does. Fail when there is none, or more than one. With a project the definition is the
+    composed one: a renderer an enabled extension adds counts, and a conflict or a changed extension of the project is raised
+    (ProviderError), not hidden."""
     def has(n):
         try:
             P.definition(n, "local")                    # a runtime that does not load is no candidate (whatever it is)
@@ -73,7 +70,9 @@ def render_runtime(prov, project=None):
     found = [n for n in P.names() if n != prov and has(n) and P.definition(n, "local").get("family") == prov]
     if len(found) > 1:
         raise Fail("the family '%s' has more than one local runtime with a member renderer (%s); name one of them" % (prov, ", ".join(found)))
-    return found[0] if found else None
+    if not found:
+        raise Fail("the provider '%s' has no member renderer (its definition names no renderers.agent), so it cannot serve members" % prov)
+    return found[0]
 
 
 def guard_command(rt, cls):
@@ -89,36 +88,8 @@ def guard_command(rt, cls):
     return cmd + (" --class read-only" if cls == "read-only" else "")
 
 
-def render_legacy(prov, name, abilities, cls, model, effort):
-    """A schema 1 descriptor has no renderers: its adapter renders the member (verb dispatch-local), as it did before renderers existed."""
-    d = P.load(prov)
-    ad = d.get("adapter")
-    if not isinstance(ad, str) or not os.path.isfile(os.path.join(os.path.dirname(LIB), ad)):
-        raise Fail("the provider '%s' has no member renderer (its definition names no renderers.agent) and no adapter to render with, so it cannot serve members" % prov)
-    req = {"member": name, "abilities": list(abilities), "class": cls, "model": model, "effort": effort or None}
-    r = subprocess.run([os.path.join(os.path.dirname(LIB), ad), "dispatch-local"], input=json.dumps(req), capture_output=True, text=True)
-    try:
-        text = json.loads(r.stdout)["definition"]["text"] if r.returncode == 0 else None
-        err = None if r.returncode == 0 else json.loads(r.stdout).get("error")
-    except (ValueError, KeyError, TypeError):
-        text, err = None, "unreadable answer"
-    if text is None:
-        raise Fail("the adapter of %s could not render the member definition (exit %d): %s" % (prov, r.returncode, err or ""))
-    ag = (P.definition(prov, "local").get("resources") or {}).get("agents") or {}
-    if not ag.get("project_dir"):
-        raise Fail("the provider '%s' keeps no agent files (its definition has no resources.agents), so it cannot serve members" % prov)
-    content = text.rstrip("\n") + "\n"
-    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    inputs = json.dumps({"adapter": ad, "request": req, "definition": P.definition_hash(prov), "content": sha}, sort_keys=True, separators=(",", ":"))
-    return {"runtime": prov, "path": name + (ag.get("ext") or ".md"), "content": content, "sha256": sha,
-            "inputs_hash": hashlib.sha256(inputs.encode("utf-8")).hexdigest(), "notes": [],
-            "agents": {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir"), "link": ag.get("link")}}
-
-
 def render_member(prov, name, abilities, cls, model, effort, project=None):
     rt = render_runtime(prov, project)
-    if rt is None:
-        return render_legacy(prov, name, abilities, cls, model, effort)
     comp = P.compose(rt, "local", project) if project else None
     doc = comp["definition"] if comp else P.definition(rt, "local")
     spec = doc["renderers"]["agent"]
