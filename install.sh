@@ -28,8 +28,6 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd -P)
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null || { echo "qargi: install.sh needs python3 3.11 or newer" >&2; exit 1; }
 skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-providers qargi-verify qargi-flow qargi-team qargi-session"
-# skills an earlier version installed for the four abilities; roles/<role>/ROLE.md carries their text now
-retired_skills="qargi-build qargi-write qargi-review qargi-test"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -55,43 +53,6 @@ src=$here
 liveconf=${QARGI_CONF:-${QARGI_HOME:-$HOME/.qargi}/config}   # where the install record goes: the live location, never a dev sandbox
 [ -z "$copy" ] || [ "$mode" != user ] || src=$data   # where links/copies come from
 
-# Agent definitions an earlier version of this tool linked from its agents/ folder; they no longer exist there.
-old_agent_links() {
-  local l t
-  for l in "$target"/agents/*.md; do
-    [ -L "$l" ] || continue
-    t=$(readlink "$l")
-    case $t in "$here/agents/"*|"$data/agents/"*) [ -e "$l" ] || { rm -f "$l"; echo "removed the stale link $l"; };; esac
-  done
-}
-
-# The retired skills: remove the links an earlier install made (into this checkout or its copy), keep a real directory
-# (--force removes it) and a link that points anywhere else; then drop the exclude lines the earlier project install wrote.
-retired_cleanup() {
-  local s p t
-  for s in $retired_skills; do
-    p=$target/skills/$s
-    if [ -L "$p" ]; then
-      t=$(readlink "$p")
-      case $t in
-        "$here/"*|"$data/"*) rm -f "$p"; echo "removed $p (the skill is retired)";;
-        *) echo "kept $p (a link to $t, not into this install)";;
-      esac
-    elif [ -e "$p" ]; then
-      if [ -n "$force" ]; then rm -rf "$p"; echo "removed $p (the skill is retired)"
-      else echo "kept $p (not a symlink; use --force to remove)"; fi
-    fi
-  done
-  if [ -n "$exclude_file" ] && [ -f "$exclude_file" ]; then
-    for s in $retired_skills; do
-      if grep -qx -F "/.claude/skills/$s" "$exclude_file"; then
-        grep -v -x -F "/.claude/skills/$s" "$exclude_file" > "$exclude_file.tmp" || true
-        mv "$exclude_file.tmp" "$exclude_file"
-      fi
-    done
-  fi
-}
-
 paths=()
 for s in $skills; do paths+=("$target/skills/$s"); done
 [ "$mode" != user ] || paths+=("$cmd" "$manpage" "$completion" "$zshcomp" "$fishcomp")
@@ -100,7 +61,7 @@ exclude_file=
 if [ "$mode" = project ] && git -C "$proj" rev-parse --git-dir >/dev/null 2>&1; then
   exclude_file=$(git -C "$proj" rev-parse --git-path info/exclude)
   case $exclude_file in /*) ;; *) exclude_file=$proj/$exclude_file;; esac
-  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(dev|qargi|qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-providers|qargi-verify|qargi-flow|qargi-team|qargi-session)(/|\.md$)' || true)
+  tracked=$(git -C "$proj" ls-files -- .claude/skills .claude/agents | grep -E '(^|/)(qargi-task|qargi-project|qargi-instances|qargi-provision|qargi-memory|qargi-packs|qargi-providers|qargi-verify|qargi-flow|qargi-team|qargi-session)(/|\.md$)' || true)
   if [ -n "$tracked" ]; then
     echo "refusing: qargi paths are tracked in $proj; remove them from the repository first" >&2; exit 1
   fi
@@ -114,9 +75,6 @@ if [ -n "$uninstall" ]; then
     grep -v -x -F "$entries" "$exclude_file" > "$exclude_file.tmp" || true
     mv "$exclude_file.tmp" "$exclude_file"
   fi
-  for old in qargi dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
-  old_agent_links
-  retired_cleanup
   for p in "${paths[@]}"; do
     if [ -L "$p" ] || { [ -e "$p" ] && [ -n "$force" ]; }; then rm -rf "$p"; echo "removed $p"
     elif [ -e "$p" ]; then echo "kept $p (not a symlink; use --force to remove)"; fi
@@ -138,10 +96,6 @@ if [ -n "$copy" ] && [ "$mode" = user ]; then
 fi
 
 mkdir -p "$target/skills"
-old_agent_links
-retired_cleanup
-# the dispatch skill had other names before: drop leftover symlinks
-for old in qargi dev; do [ ! -L "$target/skills/$old" ] || rm -f "$target/skills/$old"; done
 for s in $skills; do
   rm -rf "${target:?}/skills/$s"
   if [ -n "$copy" ]; then cp -r "$src/skills/$s" "$target/skills/$s"; else ln -s "$src/skills/$s" "$target/skills/$s"; fi
