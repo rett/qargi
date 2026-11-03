@@ -19,18 +19,18 @@ INTRO = (
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by roles/<role>/ROLE.md
 def _provider_models():
-    """The model ids and aliases of the provider descriptors (lib/providers/NAME.json), for completion."""
-    import glob, json, os
+    """The model ids and aliases of the shipped runtimes (lib/provider.py, their catalogs followed), for completion."""
+    import os, sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import provider as P
     out = []
-    for f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers", "*.json"))):
-        if os.path.basename(f) in ("schema.json", "adapter-schema.json"):
-            continue
+    for n in P.names(P.PROVIDERS):
         try:
-            d = json.load(open(f))
-            out += [m for m in list((d.get("tiers") or {}).values()) + list((d.get("aliases") or {}).values()) if isinstance(m, str)]
-        except (OSError, ValueError, AttributeError):
-            pass
-    return tuple(dict.fromkeys(out))
+            rows = list(P.models_of(n, root=P.PROVIDERS)["tiers"].values())
+        except P.ProviderError:
+            continue
+        out += [r["model"] for r in rows] + [r.get("alias") for r in rows]
+    return tuple(dict.fromkeys(m for m in out if isinstance(m, str)))
 
 
 MODELS = _provider_models()
@@ -599,7 +599,7 @@ COMMANDS = {
                                 "is not supported can serve the review role."),
             "check": verb("Validate a definition (a library name or a directory) and say what degrades", [("NAME|DIR", "none")],
                           [opt("--project", "check it as this project composes it with its enabled extensions", "PROJECT", "project")],
-                          desc="Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
+                          desc="Fails on a definition that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. "
                                "Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles "
                                "therefore cannot be served (for example review where the read-only barrier is not supported)."),
             "new": verb("Scaffold a provider, catalog or extension pack in the library", [("NAME", "none")],
@@ -623,11 +623,6 @@ COMMANDS = {
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
                             opt("--cleanup", "what was cleaned up afterwards", "TEXT"), opt("--note", "anything else worth keeping", "TEXT"), PLAN, APPROVED],
                            desc="Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record."),
-            "migrate": verb("Print the schema 2 form of a schema 1 descriptor (read only)", [("NAME", "none")],
-                            [opt("--dry-run", "required for now: print the documents and write nothing"),
-                             opt("--as", "name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME", "SURFACES")],
-                            desc="One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. "
-                                 "Notes go to stderr. The written form (a plan and your approval) is not built yet, so without --dry-run it exits 2."),
         },
     },
     "noticed": {

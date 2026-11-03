@@ -22,7 +22,8 @@ echo '{"error":"x"}' | $V resolve error >/dev/null && ok "validator accepts an e
 echo '{"surface":"local","class":"write","tool_call":{"tool":"Bash"}}' | $V barrier-check request >/dev/null && no "validator accepts a tool call with neither command nor path" || ok "validator wants a command or a path in a tool call"
 echo '{}' | $V nosuchverb response >/dev/null && no "validator accepts an unknown verb" || ok "validator refuses a verb the schema does not have"
 
-# the harness on the real adapter and on the fixture without a fault; the faults run side by side
+# the harness on the real adapter and on the fixture without a fault; the faults run side by side. The fixture is two runtimes of schema 2,
+# broken-local (the barrier and the member definition) and broken-cloud (the session verbs); each fault runs on the runtime that has the case.
 conf() { bash tests/conformance.sh "$@"; }
 for rt in claude-code claude-platform; do
   conf "$rt" > "$T/$rt.out" 2>&1; rc=$?
@@ -38,9 +39,10 @@ grep -Eq '^ok +\[10\] ' "$T/claude-platform.out" && ok "claude-platform: the ses
 grep -Eq '^ok +\[5\] ' "$T/claude-platform.out" && ok "claude-platform: a credential stays out of argv" || no "claude-platform: case 5"
 grep -Eq '^skip +\[8\] ' "$T/claude-platform.out" && ok "claude-platform: no barrier corpus (the cloud has no read-only barrier)" || no "claude-platform: case 8 was not skipped"
 
-declare -A WANT=([push]=8 [failopen]=8 [argv]=5 [unsupported]=3 [planmut]=4 [stoptwice]=6 [costunit]=7 [badshape]=1 [badmodel]=2 [nonote]=2 [nodef]=9 [none]=0)
+declare -A WANT=([push]=8 [failopen]=8 [argv]=5 [unsupported]=3 [planmut]=4 [stoptwice]=6 [costunit]=7 [badshape]=1 [badmodel]=2 [nonote]=2 [nodef]=9 [none]=0 [nonecloud]=0)
+declare -A RT=([push]=local [failopen]=local [argv]=cloud [unsupported]=cloud [planmut]=cloud [stoptwice]=cloud [costunit]=cloud [badshape]=local [badmodel]=local [nonote]=local [nodef]=local [none]=local [nonecloud]=cloud)
 for f in "${!WANT[@]}"; do
-  ( CONFORMANCE_BROKEN=$f conf broken --tool "$BROKEN" > "$T/broken.$f.out" 2>&1; echo $? > "$T/broken.$f.rc" ) &
+  ( CONFORMANCE_BROKEN=${f%cloud} conf "broken-${RT[$f]}" --tool "$BROKEN" --stub "$BROKEN" > "$T/broken.$f.out" 2>&1; echo $? > "$T/broken.$f.rc" ) &
 done
 wait
 for f in "${!WANT[@]}"; do
@@ -79,8 +81,10 @@ conf claude-platform --tool "$T/inline" > "$T/inline.out" 2>&1; rc=$?
 { [ $rc = 0 ] && ! grep -q '^FAIL' "$T/inline.out" && grep -q 'effort null rule on a changed copy' "$T/inline.out"; } && ok "a schema 2 definition with inline models passes, and the effort rule runs on its models" || { no "inline models: rc=$rc"; sed 's/^/     /' "$T/inline.out"; }
 
 # an adapter that is null is a skip, not a failure; an unknown provider is a usage error
-mkdir -p "$T/null/lib/providers"
-jq '.provider = "nullp" | .adapter = null' lib/providers/claude.json > "$T/null/lib/providers/nullp.json"
+mkdir -p "$T/null/lib/providers/catalogs"; cp lib/providers/catalogs/claude.json "$T/null/lib/providers/catalogs/"
+# shellcheck source=fakeprov.sh
+. tests/fakeprov.sh
+fake_runtime "$ROOT" "$T/null" nullp local '.adapter = null' 
 o=$(conf nullp --tool "$T/null" 2>&1); rc=$?
 { [ $rc = 0 ] && grep -q '^skip' <<<"$o" && grep -q 'no adapter' <<<"$o"; } && ok "a descriptor with adapter null is skipped with a message, exit 0" || no "null adapter: rc=$rc $o"
 conf nosuchprovider >/dev/null 2>&1; [ $? = 2 ] && ok "an unknown provider is a usage error (exit 2)" || no "unknown provider exit"

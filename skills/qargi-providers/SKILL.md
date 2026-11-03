@@ -31,8 +31,8 @@ There is no default. Ask for each surface, and leave one out if the project neve
 - `qargi project set P models.provider.local NAME` and `models.provider.cloud NAME` (also
   `project new|attach --provider-local X --provider-cloud Y`, or `--provider X` for one name).
 - A family name works when exactly one runtime of it serves that surface (name the
-  runtime itself, `claude-code` or `claude-platform`: the bare name `claude` is still the older
-  single definition and goes in the legacy cleanup). A runtime that does not serve the surface is refused.
+  runtime itself, `claude-code` or `claude-platform`; the bare name `claude` is the family of both and
+  works only by that rule). A runtime that does not serve the surface is refused.
 - A verb that needs a surface the answers leave out stops with exit 2 and says which.
 
 ## Add a runtime with no code
@@ -103,8 +103,6 @@ There is no default. Ask for each surface, and leave one out if the project neve
 `qargi provider import SOURCE [--name N] [--ref REF] [--path SUB]` takes a runtime someone else
 wrote, from a directory, a JSON file or an https git URL. It is stored sealed on approval and
 never enabled or linked by the import; a shipped or existing name is refused.
-`qargi provider migrate NAME --dry-run [--as local=X,cloud=Y]` prints the schema 2 form of an
-older descriptor (it writes nothing).
 
 ## Plan, token, approval
 
@@ -178,7 +176,7 @@ an attest, and `provider show RUNTIME --project P` shows which pack provided eac
 ## Who may change a runtime
 
 Only you, with the person present. A local member's guard refuses `provider new`, `import`,
-`seal`, `remove`, `enable`, `disable`, `attest`, `accept` and `migrate`, `project link`, `unlink`
+`seal`, `remove`, `enable`, `disable`, `attest` and `accept`, `project link`, `unlink`
 and `local run`, and any write in the pack library or `state/render`; `QARGI_NESTED` does not
 stand in for a plan token. If a member thinks a runtime should change, it says so in its report.
 The person decides, always: which runtime serves each surface of a project, every import,

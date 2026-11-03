@@ -52,7 +52,7 @@ class Env(unittest.TestCase):
         ans = json.loads(tpl)
         ans["repo"]["path"] = self.repo
         ans["repo"]["url"] = "https://github.com/example/alpha"
-        ans["models"]["provider"] = "claude"
+        ans["models"]["provider"] = "claude-code"
         ans["roles"]["build"]["apt"] = ["groff"]
         ans["roles"]["review"] = dict(ans["roles"]["build"], apt=[], model="claude-opus-5-5")
         self.w(os.path.join(self.conf, "projects", "alpha.json"), json.dumps(ans))
@@ -154,7 +154,7 @@ class Compatible(Env):
         self.assertIn("skill-undeclared", r.stdout)                    # an entry that declares nothing is not filtered here: install asks
         rows = [l for l in r.stdout.splitlines() if l.startswith("  ") and "skill-other" in l]
         self.assertEqual(len(rows), 1, r.stdout)
-        self.assertTrue(rows[0].startswith("  skipped skill-other: not compatible with claude (it declares elsewhere)"), rows[0])
+        self.assertTrue(rows[0].startswith("  skipped skill-other: not compatible with claude-code (it declares elsewhere)"), rows[0])
 
     def test_a_project_with_no_provider_gets_only_the_packs_for_any(self):
         ans = json.loads(self.rd(os.path.join(self.conf, "projects", "alpha.json")))
