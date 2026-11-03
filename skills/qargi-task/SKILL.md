@@ -12,7 +12,7 @@ qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` 
 local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
 one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
 one role (see `/qargi-instances`). All
-of them obey the contract in `agent-contract.md` (this directory): one task,
+of them obey the contract in `contract/contract.md`: one task,
 own clone, patches back, never push, no backlog. The CLI is `qargi` on
 PATH; related skills: `/qargi-instances` (register, list), `/qargi-provision`
 (create cloud resources), `/qargi-memory` (memory stores), `/qargi-verify`

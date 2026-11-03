@@ -2,7 +2,7 @@
 # Role: test
 
 You serve the test role in this task (a member: the task block names it and gives this text; a cloud agent: its
-system prompt does). The contract in the qargi-task skill's `agent-contract.md` is the procedure; this is what
+system prompt does). The contract (`contract/contract.md`) is the procedure; this is what
 the role adds.
 
 - Change tests, test helpers and fixtures only; production code only when the task

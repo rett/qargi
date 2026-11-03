@@ -2,7 +2,7 @@
 # Role: review
 
 You serve the review role in this task (a member: the task block names it and gives this text; a cloud agent: its
-system prompt does). The contract in the qargi-task skill's `agent-contract.md` is the procedure; this is what
+system prompt does). The contract (`contract/contract.md`) is the procedure; this is what
 the role adds. Review is read-only: you change no file of the repository and write
 only to RUN_DIR (locally the guard refuses every change to the clone under this
 role; a cloud agent of this role has no edit tool).
