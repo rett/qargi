@@ -25,10 +25,11 @@ changes or removes files there, or a git command that changes the work tree or t
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
-    install, qargi packs apply|seed|link|unlink and qargi import (it restores the pack library). Read-only verbs (list, show, check,
-    effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
+    install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
+    checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
+    Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
-    verbs call: packs_link.py is packs link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
+    verbs call: packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
@@ -123,7 +124,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -774,6 +775,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
+    if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
+        words = ["project", "unlink" if "unlink" in words[:2] else "link"]
+    if name == "project.sh":
+        words = ["project"] + words
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
         if words[:1] != ["store"] and not any("$" in w or "`" in w for w in words):
             return None
@@ -791,6 +796,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
         which = verb if verb in MEMORY_VERBS else next(w for w in words[1:4] if w in MEMORY_VERBS)
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
+    if area == "project" and verb in ("link", "unlink"):
+        return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
