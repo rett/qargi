@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The weight of the texts a member or a lead loads, and three ways it can only shrink.
 #
-# The texts: skills/**/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md and
+# The texts: skills/**/*.md, contract/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md and
 # packs/skills/**/*.md. Every word of them costs context in every session that loads them, so:
 #
 #  1. Budget. tests/skill-budget.txt holds `PATH MAX_WORDS` per line (sorted; `#` starts a comment). A text over its ceiling
@@ -31,7 +31,7 @@ BUDGET=tests/skill-budget.txt DUPS=tests/skill-dup-allowlist.txt VERBS=tests/ski
 for f in "$BUDGET" "$DUPS" "$VERBS"; do [ -f "$f" ] || { no "no $f"; exit 1; }; done
 
 # the shipped texts
-mapfile -t TEXTS < <({ find skills packs/skills -type f -name '*.md'; ls roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md; } 2>/dev/null | sort)
+mapfile -t TEXTS < <({ find skills packs/skills contract -type f -name '*.md'; ls roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md; } 2>/dev/null | sort)
 [ "${#TEXTS[@]}" -gt 10 ] || no "found only ${#TEXTS[@]} texts: the lookup is broken"
 
 # 1. the budget

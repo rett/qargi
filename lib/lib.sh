@@ -270,7 +270,7 @@ git_auth_env() { # credential-file -> exports for the caller's subshell
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
-# contract, and the role's instructions (roles/<role>/ROLE.md, the same text a local member's task block carries), or for the lead its contract. Provisioning and refresh-prompt
+# contract (contract/), and the role's instructions (roles/<role>/ROLE.md, the same text a local member's task block carries), or for the lead its contract. Provisioning and refresh-prompt
 # build it the same way, so an agent can always be brought back in line with the tool.
 # The teams of a project as text for the lead's prompt: members, bases, scopes, standards,
 # rounds and budget, so a lead started from the console needs only a task.
@@ -297,7 +297,7 @@ tools_off() {
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
-# The directory that holds provision/ and skills/: the checkout, or lib/ itself in an installed copy.
+# The directory that holds provision/, contract/ and skills/: the checkout, or lib/ itself in an installed copy.
 prompt_root() {
   local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
   if [ -d "$lib/../provision/templates" ]; then echo "$lib/.."; else echo "$lib"; fi
@@ -305,25 +305,26 @@ prompt_root() {
 
 agent_prompt() { # role [project]
   local root; root=$(prompt_root)
-  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 sk=$root/skills
+  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 ct=$root/contract
   # a base (worker, reviewer) is a role-neutral agent: the role text comes with each session, so the agent itself holds only a short fallback
   if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
-  [ "$1" = lead ] || cat "$sk/qargi-task/agent-contract.md"
+  # cloud-run.md is the cloud-only part of the contract; the provider definition will compose it later, so for now it is added here
+  [ "$1" = lead ] || cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md"
   local rd; if rd=$(role_dir "$1"); then echo; cat "$rd/ROLE.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
 }
 
 # The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
-# rendered prompt (what refresh-prompt would push); skill is the hash of the two files that change most, the agent
-# contract and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
+# rendered prompt (what refresh-prompt would push); skill is the hash of the files that change most, the contract files (contract/)
+# and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
 prompt_stamp() { # role project
-  local sk sha; sk=$(prompt_root)/skills
+  local ct sha; ct=$(prompt_root)/contract
   sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
   [ "${PIPESTATUS[0]}" = 0 ] || return 1
-  jq -nc --arg s "$sha" --arg k "$(cat "$sk/qargi-task/agent-contract.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+  jq -nc --arg s "$sha" --arg k "$(cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the
