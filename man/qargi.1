@@ -2183,11 +2183,11 @@ Exits 2 when refs changed (1 before). After a passing verify the run records RUN
 .BI "clean " "RUN_DIR"
 Remove a collected, verified run and its temporary directory.
 .br
-Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence).
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake.
 .RS
 .TP
 .B \-\-discard
-also clean a run whose output holds no manifest.
+also clean a run whose output holds no manifest, or whose commits were never merged (dropped on purpose).
 .RE
 .RE
 .TP

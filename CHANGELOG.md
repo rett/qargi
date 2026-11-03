@@ -25,6 +25,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A project's provider is `models.provider`; every verb that takes `--target` (`packs apply`, `packs check`), `packs link` and `unlink`, `skill accept` and `marshal handoff` exit 2 when the project has no provider (`set one with qargi project set P models.provider NAME`) instead of assuming Claude; a name that is not a project says `no such project`. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
 
 ### Fixed
+- `qargi local clean` refuses a run whose commits were never applied, or whose applied branch is not merged into a branch other than `agent/*`; `--discard` drops them on purpose and says how many. A failed apply or merge in a loop can no longer delete finished work.
 - `packs check --target claude-code` no longer reports "shadowing" for every rendered skill once the checkout's `.claude/skills` is the link made by `packs link`.
 
 ## [0.2.0] - 2026-11-02
