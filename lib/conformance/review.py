@@ -9,12 +9,18 @@ nothing when run).
   lines(review, title)            the review as text, one line each
   executables(review)             {path: sha256} of every executable of the review
   policy(root)                    the text-only rules alone, as a list of failures: what a pack of any kind must meet (scan applies them too);
-                                  `python3 -I review.py policy DIR` prints them as FAIL lines (exit 1 when there is one), for a shell caller
+                                  `python3 -I review.py policy DIR` prints them as FAIL lines (exit 1 when there is one), and `review.py vis` is vis() on
+                                  standard input, for a shell caller
+  vis(text)                       text with control, escape, bidi and unpaired-surrogate characters written out (\\x1b, \\u202e): what is
+                                  printed for a person to read, so that nothing in a pack can move the cursor, hide a line or reorder text
 
 The rules (the owner's policy for what a pack may hold):
   * Only text. A file with a NUL byte or invalid UTF-8, a file that starts with the magic of an executable (ELF, Mach-O, PE) or of an
     archive or compressed file, is refused, whatever its name or mode. A pack bundles only examinable scripts; a vendor CLI is installed by
     the user and named in the definition (the review lists it as "needs on PATH").
+  * No control characters: a file with a C0 or C1 control other than tab, newline and a carriage return before a newline, or with a bidi
+    control (U+202A-202E, U+2066-2069, U+200E, U+200F, U+061C), or a file name with any, is refused. Such a character can erase or hide a
+    line of the review or reorder text, so that what the person approves is not what is stored. The review is also printed through vis().
   * No symbolic links; at most 200 files, 1 MB a file and 2 MB in all.
   * Secrets (a token, a key) are refused; the review names the file and line, never the value.
   * Flagged, not refused, so that the person reads them: network commands and URLs, writes outside the run directory, reads of
@@ -53,6 +59,21 @@ WRITES = re.compile(r">>?\s*(?!/dev/(null|stderr|stdout|fd/))(/|~|\$HOME|\$\{HOM
 SECRET_ENV = re.compile(r"(environ\s*(\[|\.get\s*\()|getenv\s*\()\s*[\"'][A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z0-9_]*[\"']|"
                         r"\$\{?[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_]*\}?")
 BLOB = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}|\b[0-9a-fA-F]{128,}\b")
+
+
+# characters a reader's terminal or eye is moved by: C0 (but tab and newline) and C1 controls, DEL, bidi controls, line and paragraph
+# separators, and the unpaired surrogates a file name that is not UTF-8 has under os.walk
+_SHOW = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+_BAD_TEXT = re.compile("[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]|\r(?!\n)")
+_BAD_NAME = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+
+
+def vis(text):
+    """text with every control, escape, bidi or surrogate character written out (\\x1b, \\u202e, \\r), tab and newline kept: for anything printed
+    for a person to read, and to approve."""
+    if not isinstance(text, str):
+        text = str(text)
+    return _SHOW.sub(lambda m: "\\r" if m.group() == "\r" else "\\x%02x" % ord(m.group()) if ord(m.group()) < 256 else "\\u%04x" % ord(m.group()), text)
 
 
 def sha256_bytes(b):
@@ -104,13 +125,25 @@ def _text_problem(raw):
         return False, "not UTF-8 text", None
 
 
+def _control(rel, content):
+    """The failure for the first control or bidi character of a text, or None. It names the line and the code point, never the character."""
+    m = _BAD_TEXT.search(content)
+    if not m:
+        return None
+    n = len(_BAD_TEXT.findall(content))
+    return "%s:%d has a control or bidi character (U+%04X)%s, which can change what a reader sees; a pack holds plain text" % (
+        vis(rel), content.count("\n", 0, m.start()) + 1, ord(m.group()), "" if n == 1 else " and %d more" % (n - 1))
+
+
 def policy(root):
     """The text-only rules alone, for a pack of any kind (a skill's directory, say): [failure message]. A symbolic link or special file, a
     file that is a binary, an archive or not UTF-8 text, a control or bidi character in a file or in its name. Sizes and counts are the
     caller's own rules."""
     out = []
     for rel, p in _files(root):
-        shown = rel
+        shown = vis(rel)
+        if _BAD_NAME.search(rel):
+            out.append("%s: the file name has a control or bidi character, which can change what a reader sees" % shown)
         if os.path.islink(p):
             out.append("%s is a symbolic link, which a pack may not hold" % shown)
             continue
@@ -129,6 +162,9 @@ def policy(root):
         if not text:
             out.append("%s is %s: a pack holds only text files (scripts you can read)" % (shown, why))
             continue
+        c = _control(rel, content)
+        if c:
+            out.append(c)
     return out
 
 
@@ -224,7 +260,9 @@ def scan(root, definition=None):
         r["fail"].append("more than %d files" % MAX_FILES)
     seen = set()
     for rel, p in files:
-        shown = rel
+        shown = vis(rel)
+        if _BAD_NAME.search(rel):
+            r["fail"].append("%s: the file name has a control or bidi character, which can change what a reader sees" % shown)
         if os.path.islink(p):
             r["fail"].append("%s is a symbolic link, which a pack may not hold" % shown)
             continue
@@ -249,6 +287,9 @@ def scan(root, definition=None):
         if not text:
             r["fail"].append("%s is %s: a pack holds only text files (scripts you can read); install a vendor program yourself and name it in the definition" % (shown, why))
             continue
+        ctrl = _control(rel, content)
+        if ctrl:
+            r["fail"].append(ctrl)
         shebang = content.startswith("#!")
         suffix = rel.lower().endswith(SCRIPT_SUFFIX)
         reason = None
@@ -345,7 +386,7 @@ def lines(review, title):
         out.append("warn: %s" % w)
     for m in review["fail"]:
         out.append("FAIL: %s" % m)
-    return out
+    return [vis(ln) for ln in out]               # nothing a pack holds reaches the reader's terminal raw
 
 
 if __name__ == "__main__":
@@ -353,7 +394,10 @@ if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[1] == "policy" and os.path.isdir(sys.argv[2]):
         found = policy(sys.argv[2])
         for m in found:
-            print("FAIL: %s" % m)
+            print("FAIL: %s" % vis(m))
         sys.exit(1 if found else 0)
-    print("usage: review.py policy DIR", file=sys.stderr)
+    if len(sys.argv) == 2 and sys.argv[1] == "vis":
+        sys.stdout.write(vis(sys.stdin.buffer.read().decode("utf-8", "surrogateescape")))
+        sys.exit(0)
+    print("usage: review.py policy DIR | vis", file=sys.stderr)
     sys.exit(2)
