@@ -1017,7 +1017,10 @@ TOPICS = {
         "matches and nothing happens.",
         "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
         "append-only audit log in the state directory.",
-        "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval."]),
+        "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
+        "The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The --approved text is "
+        "recorded, not verified: it is not proof that a person agreed. Never allow-list a gated verb in the runtime's settings: the permission "
+        "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
