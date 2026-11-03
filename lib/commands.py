@@ -626,7 +626,7 @@ COMMANDS = {
                           [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
-                               "enabled extensions. A runtime or a topic it does not have is exit 1, naming both and listing the topics there are; a project with no local runtime is exit 2 (there is no default). Read-only."),
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
             "model": verb("Print the model a runtime maps a tier to on a surface",[("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),

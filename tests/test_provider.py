@@ -819,6 +819,20 @@ class Schema2(unittest.TestCase):
         self.one(runtime(notes=["spawn"]), 'notes: ["spawn"] is not of type object')
         self.one(runtime(notes="text"), "notes: 'text' is not of type object")
 
+    def test_provider_notes_refuses_with_exit_2_what_it_cannot_read_and_exits_1_for_a_missing_topic(self):
+        import contextlib, io
+        def run(side_effect=None, ret=None, *args):
+            err = io.StringIO()
+            with mock.patch.object(P, "notes_of", side_effect=side_effect, return_value=ret), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                return P.main(["notes", *args, "--project", "p"]), err.getvalue()
+        self.assertEqual(run(P.ProviderError("broken pack"), None, "spawn")[0], 2)
+        self.assertEqual(run(P.Drift("changed"), None, "spawn")[0], 2)
+        self.assertEqual(run(P.NoProvider("none"), None)[0], 2)
+        self.assertEqual(run(None, ("r", {"alpha": "x"}), "gamma")[0], 1)
+        self.assertEqual(run(None, ("r", {}), "gamma")[0], 1)
+        self.assertEqual(run(None, ("r", {"alpha": "x"}), "alpha")[0], 0)
+        self.assertIn("broken pack", run(P.ProviderError("broken pack"), None, "spawn")[1])
+
     def test_a_notes_topic_is_lower_case_letters_digits_and_dashes_of_at_most_32_characters(self):
         for bad in ("", "Spawn", "1st", "-a", "a_b", "a b", "a.b", "z" * 33, "spawn\u00e9"):
             self.one(runtime(notes={bad: "x"}), "notes: the topic name %s is not a name" % P._show(bad))

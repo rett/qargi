@@ -95,7 +95,8 @@ Usage: provider.py list
        provider.py notes [TOPIC] [--project P]
                                          the text of a notes topic of the definition of the project's local runtime (composed with its enabled
                                          extensions; the project is P, else the one in effect), or the topic names when none is given; exit 1
-                                         when the runtime has no such topic, 2 when the project has no local runtime
+                                         when the runtime has no such topic or no notes, 2 when the project has no local runtime or the
+                                         runtime is refused (a library pack not sealed or changed since, an unreadable definition)
        provider.py skills-dirs [NAME]   the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -2073,7 +2074,8 @@ def notes_of(project, conf=None, root=None, library=None):
 
 def cmd_notes(args):
     """notes [TOPIC] [--project P]: the text of a notes topic of the project's local runtime, or the topic names when none is given. Exit 1
-    when the runtime has no such topic (the message names both and lists the topics there are)."""
+    when the runtime has no such topic or no notes (the message names both and lists the topics there are); exit 2 when the project has no
+    local runtime or the runtime cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition)."""
     topics, project, i = [], None, 0
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:
@@ -2087,7 +2089,12 @@ def cmd_notes(args):
     if len(topics) > 1:
         print("usage: qargi provider notes [TOPIC] [--project P]", file=sys.stderr)
         return 2
-    runtime, notes = notes_of(project or _project_in_effect())
+    try:
+        runtime, notes = notes_of(project or _project_in_effect())
+    except (NoProvider, Refused, Unsupported):
+        raise
+    except ProviderError as e:                 # a runtime that cannot be read as it stands is a refusal (exit 2), not "no such topic" (exit 1)
+        raise Refused(str(e)) from e
     if not topics:
         if not notes:
             print("qargi: the runtime %s has no notes" % runtime, file=sys.stderr)
