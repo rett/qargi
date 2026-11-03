@@ -30,7 +30,8 @@ class Guard(unittest.TestCase):
 
     def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
-        self.assertEqual(sorted(os.listdir(d)), ["member.md"], "qargi ships one member definition")
+        self.assertEqual(sorted(os.listdir(d)), ["member.body.md", "member.json", "member.md"],
+                         "qargi ships one member definition: the neutral one (member.json, member.body.md) and the template of the claude-code adapter's dispatch-local")
         with open(os.path.join(d, "member.md")) as f:
             text = f.read()
         self.assertIn('command: "qargi __guard{{GUARD_ARGS}}"', text)
