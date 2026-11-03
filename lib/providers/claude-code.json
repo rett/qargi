@@ -60,6 +60,7 @@
     }
   },
   "resources": {
+    "contract_addenda": ["local-run.md"],
     "skills": {
       "project_dir": ".claude/skills",
       "user_dir": "~/.claude/skills",

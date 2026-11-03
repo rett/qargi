@@ -4,6 +4,7 @@ agents/member.body.md 118
 agents/member.md 183
 contract/contract.md 678
 contract/output-format.md 276
+lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform/cloud-run.md 64
 packs/skills/docs-site-member/SKILL.md 112
 packs/skills/gitflow-member/SKILL.md 267

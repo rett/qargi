@@ -2,7 +2,7 @@
 # The weight of the texts a member or a lead loads, and three ways it is held in place.
 #
 # The texts: skills/**/*.md, contract/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md,
-# packs/skills/**/*.md and the contract addenda of the shipped runtimes (lib/providers/*/*.md, which a cloud agent's prompt carries). Every word of them costs context in every session that loads them, so:
+# packs/skills/**/*.md and the contract addenda of the shipped runtimes (lib/providers/*/*.md, which a cloud agent's prompt or a local run's contract directory carries). Every word of them costs context in every session that loads them, so:
 #
 #  1. Budget. tests/skill-budget.txt holds `PATH MAX_WORDS` per line (sorted; `#` starts a comment). A ceiling is exact: a text
 #     over its ceiling fails, and so does one under it ("lower the ceiling to N"), so a longer text and a text with slack both
