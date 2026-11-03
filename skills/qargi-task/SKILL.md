@@ -9,7 +9,8 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
 qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` and `ROLE.md`). Its
 **class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
-local subagent you named and gave roles (`qargi agent add`); an **instance** is a registered cloud agent of
+local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
+one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
 one role (see `/qargi-instances`). All
 of them obey the contract in `agent-contract.md` (this directory): one task,
 own clone, patches back, never push, no backlog. The CLI is `qargi` on
@@ -138,12 +139,23 @@ The local agent gets no way to push, and you check afterwards that it did not.
    failure prints nothing and does not change `prepare`'s result. It records every ref of the real
    repository and of its remote, and writes the role to `RUN/ability` (the file keeps its earlier name) and its class to `RUN/class`: under a
    read-only class (review) the guard refuses every change to the clone, so it writes only to `OUT`.
-2. Take MEMBER, MODEL and EFFORT from step 1, or run `qargi agent for <role> [--profile NAME]`, which prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none;
-   `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
-   (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
-   `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
-   one (`qargi agent add NAME --abilities <role> --project P`, the flag keeps its earlier name), never use another agent type. The agent must run
-   every git command through `GIT`. No opinions on the solution.
+2. How the member starts depends on the project's local runtime (`dispatch.mode` in its definition;
+   `qargi provider show RUNTIME`).
+   - **In-session runtime** (Claude Code). Take MEMBER, MODEL and EFFORT from step 1, or run `qargi agent for <role> [--profile NAME]`, which prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none;
+     `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
+     (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
+     `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
+     one (`qargi agent add NAME --abilities <role> --project P`, the flag keeps its earlier name), never use another agent type. A member that
+     `qargi agent list` shows `STALE` or `DRIFT` runs from an out-of-date or hand-edited file: tell the user, and `qargi agent refresh NAME`
+     only with their go-ahead. The agent must run every git command through `GIT`. No opinions on the solution.
+   - **Command runtime** (a headless CLI; there is no member file, so there is nothing to spawn). Save the task block to
+     `RUN/task.md`, check the command with `qargi local run RUN --dry-run` (it prints the argv, the working directory and the
+     prompt, and runs nothing), then `qargi local run RUN [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout S]`. The
+     command is built from the definition as an array, without a shell, in the run's credential-less environment, with the member's
+     prompt and the task block composed into one prompt; its output goes to `OUT/transcript`. `--again` runs a second time in the same
+     run. A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one
+     (`qargi provider accept`). The runtime is not a sandbox: it runs as the user, so step 3 matters more. An in-session runtime is
+     refused by `local run`. A member's guard refuses `local run`.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent
    (or something it ran) pushed or wrote to the real repository: stop, tell the user,
