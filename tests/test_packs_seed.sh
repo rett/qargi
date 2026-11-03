@@ -176,6 +176,15 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
     && ok "the shipped baseline seeds into a library, every record declaring [\"any\"]" || { no "seeding the shipped baseline (rc=$rc)"; echo "$out" | sed 's/^/       | /'; }
   listed=$(jq -r '.packs[].name' "$PK/baseline.json" | sort); present=$(ls "$PK/skills" | sort)
   [ "$listed" = "$present" ] && ok "every packs/skills directory is listed in baseline.json and the reverse" || no "listed [$listed] vs present [$present]"
+  # the seven shipped packs: three process packs and four member practice packs, each text-only (a SKILL.md and nothing else)
+  want=$(printf '%s\n' docs-site-member gitflow-member keep-a-changelog qargi-contributing review-findings secrets-scan shellcheck-gate)
+  [ "$listed" = "$want" ] && ok "the baseline ships exactly the seven expected packs (count $(wc -l <<<"$listed"))" || no "baseline packs are [$listed], expected [$want]"
+  textonly=1; for d in "$PK"/skills/*/; do [ "$(find "$d" -type f | wc -l)" = 1 ] && [ -f "${d}SKILL.md" ] || { textonly=0; echo "       | not text-only: $d"; }; done
+  [ "$textonly" = 1 ] && ok "every shipped pack is a single SKILL.md" || no "a shipped pack holds more than SKILL.md"
+  for n in review-findings secrets-scan docs-site-member qargi-contributing; do
+    jq -e --arg n "$n" '.packs[] | select(.name==$n) | .kind=="skill" and (.propose|length>0) and .compatible_providers==["any"]' "$PK/baseline.json" >/dev/null \
+      && ok "baseline.json lists $n with a propose value and [\"any\"]" || no "baseline.json entry for $n"
+  done
   for d in "$PK"/skills/*/; do
     n=$(basename "$d"); f=${d}SKILL.md; bad=""
     [ -f "$f" ] || { no "$n: no SKILL.md"; continue; }
