@@ -811,6 +811,68 @@ class Schema2(unittest.TestCase):
         self.assertTrue(any("adds.resources.contract_addenda: an extension cannot add contract addenda" in m for lvl, m in P.validate2(ext, "addon") if lvl == "fail"),
                         P.validate2(ext, "addon"))
 
+    def test_notes_is_an_optional_object_of_topic_names_to_one_line_texts(self):
+        for ok in ({}, {"spawn": "Start a member with the Agent tool."}, {"a": "x", "b-2": "y", "z" * 32: "ü and 日本語 are text"},
+                   {"t%d" % i: "x" for i in range(16)}, {"edge": "x" * 2000}):
+            self.assertEqual(P.validate2(runtime(notes=ok), "mylocal"), [], list(ok)[:2])
+        self.assertEqual(P.validate2(runtime(surface="cloud", notes={"cloud-spawn": "x"}), "mylocal"), [])
+        self.one(runtime(notes=["spawn"]), 'notes: ["spawn"] is not of type object')
+        self.one(runtime(notes="text"), "notes: 'text' is not of type object")
+
+    def test_a_local_runtime_that_works_in_the_session_warns_when_it_has_no_spawn_note(self):
+        in_session = {"mode": "in-session"}
+        def warned(d):
+            return [m for m in warns(d) if "spawn" in m]
+        self.assertEqual(len(warned(runtime(dispatch=in_session))), 1)
+        self.assertEqual(len(warned(runtime(dispatch=in_session, notes={"alpha": "x"}))), 1)
+        self.assertEqual(fails(runtime(dispatch=in_session)), [])                              # a warning, never a failure
+        self.assertEqual(warned(runtime(dispatch=in_session, notes={"spawn": "Start it."})), [])
+        self.assertEqual(warned(runtime()), [])                                                 # a command runtime is started by qargi local run
+        self.assertEqual(warned(runtime(surface="cloud", dispatch=in_session)), [])
+        self.assertIn("spawn", warned(runtime(dispatch=in_session))[0])
+        self.assertEqual(warned(CODE), [])                                                     # the shipped runtime has it
+
+    def test_provider_notes_refuses_with_exit_2_what_it_cannot_read_and_exits_1_for_a_missing_topic(self):
+        import contextlib, io
+        def run(side_effect=None, ret=None, *args):
+            err = io.StringIO()
+            with mock.patch.object(P, "notes_of", side_effect=side_effect, return_value=ret), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                return P.main(["notes", *args, "--project", "p"]), err.getvalue()
+        self.assertEqual(run(P.ProviderError("broken pack"), None, "spawn")[0], 2)
+        self.assertEqual(run(P.Drift("changed"), None, "spawn")[0], 2)
+        self.assertEqual(run(P.NoProvider("none"), None)[0], 2)
+        self.assertEqual(run(None, ("r", {"alpha": "x"}), "gamma")[0], 1)
+        self.assertEqual(run(None, ("r", {}), "gamma")[0], 1)
+        self.assertEqual(run(None, ("r", {"alpha": "x"}), "alpha")[0], 0)
+        self.assertIn("broken pack", run(P.ProviderError("broken pack"), None, "spawn")[1])
+
+    def test_a_notes_topic_is_lower_case_letters_digits_and_dashes_of_at_most_32_characters(self):
+        for bad in ("", "Spawn", "1st", "-a", "a_b", "a b", "a.b", "z" * 33, "spawn\u00e9"):
+            self.one(runtime(notes={bad: "x"}), "notes: the topic name %s is not a name" % P._show(bad))
+
+    def test_a_notes_text_is_a_string_of_at_most_2000_characters(self):
+        self.one(runtime(notes={"spawn": 7}), "notes.spawn: 7 is not of type string")
+        self.one(runtime(notes={"spawn": None}), "notes.spawn: null is not of type string")
+        self.one(runtime(notes={"spawn": ""}), "notes.spawn: the text is empty")
+        self.one(runtime(notes={"spawn": "x" * 2001}), "notes.spawn: the text is longer than 2000 characters")
+
+    def test_a_notes_document_holds_at_most_16_topics(self):
+        self.one(runtime(notes={"t%d" % i: "x" for i in range(17)}), "notes: 17 topics are more than the 16 a definition may hold")
+
+    def test_a_notes_text_has_no_control_or_format_character(self):
+        for ch in ("\x1b", "\u202e", "\n", "\t", "\x00", "\x7f", "\x85"):                  # the rule every string of a definition has: one line of plain text
+            f = fails(runtime(notes={"spawn": "a%sb" % ch}), "mylocal")
+            self.assertEqual(len(f), 1, (ch, f))
+            self.assertIn("notes.spawn", f[0])
+            self.assertNotIn(ch, f[0])
+        for ch in ("\u200b", "\u2060", "\ufeff", "\u00ad", "\U000e0041", "\ue000", "\u0378"):  # the rest of the contract addenda rule: format, private-use, unassigned
+            self.one(runtime(notes={"spawn": "a%sb" % ch}), "notes.spawn: the text is not plain text (no control, format, private-use or unassigned characters)")
+
+    def test_an_extension_cannot_add_notes(self):
+        ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "mycloud", "provides": [], "adds": {"notes": {"spawn": "x"}}}
+        f = [m for lvl, m in P.validate2(ext, "addon") if lvl == "fail"]
+        self.assertEqual(f, ["adds.notes: an extension cannot add notes (only a runtime's own definition has them)"])
+
     def test_every_violation_is_reported_not_only_the_first(self):
         self.assertGreaterEqual(len(fails(runtime(extra=1, surface="x", family="Bad"), "mylocal")), 3)
 
@@ -1625,6 +1687,14 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
                 self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
 
+    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_none(self):
+        notes = P.definition("claude-code")["notes"]
+        self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
+        self.assertIn("subagent_type", notes["spawn"])
+        self.assertIn('{"skillOverrides": {"NAME": "off"}}', notes["skills-dir"])
+        self.assertIn("Not verified", notes["identity"])                         # it says plainly what is not verified
+        self.assertNotIn("notes", P.definition("claude-platform"))
+
     def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
         self.assertEqual(P.layout("claude-code", home="/h")["user_skills_dir"], "/h/.claude/skills")
         self.assertEqual(P.summary("claude-code")["reserved_names"], CODE["agents"]["reserved_names"])
@@ -1796,6 +1866,20 @@ class SealedPacks(V2Tree):
             before = P.tree_hash(d)
             change()
             self.assertNotEqual(P.tree_hash(d), before)
+
+    def test_the_notes_of_a_pack_are_in_its_seal_and_in_the_hash_a_verification_is_bound_to(self):
+        doc = runtime("notep", notes={"spawn": "Start it."})
+        d = self.pack("notep", doc)
+        self.assertEqual(P.definition("notep", **self.kw())["notes"], {"spawn": "Start it."})
+        before = P.definition_hash("notep", **self.kw())
+        doc["notes"]["spawn"] = "Start it differently."                    # an edit of a note after the seal: the pack is not what was approved
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(doc, f)
+        self.assertEqual(self.sstate("notep"), "drift")
+        with self.assertRaises(P.Drift):
+            P.definition("notep", **self.kw())
+        self.pack("notep", doc)                                             # sealed again with the new note: a verification made before no longer matches
+        self.assertNotEqual(P.definition_hash("notep", **self.kw()), before)
 
     def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_so_is_one_with_no_record(self):
         self.pack("sealedp")

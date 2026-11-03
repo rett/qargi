@@ -65,7 +65,10 @@ depends on it.
 ## Changes
 
 Every user-visible change adds a line under `## [Unreleased]` in
-`CHANGELOG.md` in the same commit. Shell scripts must pass
+`CHANGELOG.md`, in the same commit as the change: one logical change per
+commit, with its tests and docs. A change that spans three or more top-level
+directories is split into commits that each build: code and tests, then docs
+and changelog. Shell scripts must pass
 `shellcheck -S warning`. Commit messages state what changed and why; no
 private hostnames, addresses, usernames, home paths or credentials appear in
 the repository or its history.
@@ -93,6 +96,13 @@ from the `/qargi-providers` skill.
      of the local runtime into the run's contract directory, so the contract never names a
      runtime. The provider check fails on a file that is missing, is not text or leaves the
      directory; an extension cannot add them.
+   - **notes** (`notes`): how the runtime does what a skill asks of it, as topics (a lower case
+     name of at most 32 characters, up to 16) with one line of plain text each (at most 2000
+     characters), for example `spawn` (how a lead starts a member), `session-model`,
+     `exploration`, `skills-dir`, `identity` and `commands`. `qargi provider notes TOPIC` prints
+     one for the project's local runtime, so the skills point at a topic and never name a
+     runtime's tools. Say in a note what is verified and what is assumed. An extension cannot add
+     notes.
    - **dispatch** and **barrier**: the command to run (an argv array, never a shell string), how
      the prompt reaches it, which environment variables it may see, and how a read-only member
      is held (`hook`, `sandbox-args`, `adapter` or `none`).

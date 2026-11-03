@@ -622,6 +622,11 @@ COMMANDS = {
             "addenda": verb("Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface)", [("NAME", "none"), ("SURFACE", "none")],
                             desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
                                  "A file that is missing, is not text or leaves the directory is refused."),
+            "notes": verb("Print a note of the project's local runtime, or list the topics it has", [("TOPIC", "none", True)],
+                          [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
+                          desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
+                               "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
@@ -1012,7 +1017,25 @@ TOPICS = {
         "matches and nothing happens.",
         "--asked \"your request\" is required by every cloud verb: it records that you asked for the cloud. Both are written to an "
         "append-only audit log in the state directory.",
-        "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval."]),
+        "qargi lead grant and revoke are interactive instead: you confirm each step at the terminal, and that is the approval.",
+        "The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The --approved text is "
+        "recorded, not verified: it is not proof that a person agreed. Never allow-list a gated verb in the runtime's settings: the permission "
+        "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
+        "(what the member's guard refuses: qargi help guard)."]),
+    "guard": ("What a member's guard refuses", [
+        "The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of "
+        "what the member returned is the backstop.",
+        "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
+        "discover install; import; packs apply, seed, link, unlink and migrate-render; project set (models answers), init, link and unlink; "
+        "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
+        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
+        "directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. "
+        "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
+        "The read-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.",
+        "Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.",
+        "A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
