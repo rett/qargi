@@ -5,8 +5,8 @@
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P]       plan: what would be recorded, and a token
 #   provider.sh accept NAME --surface S --no-barrier --asked "<your words>" [--project P] --plan TOKEN --approved "<your go-ahead>"
 #
-# Applied, it writes models.accept_no_barrier.S = {by, at, reason} to the project's stored answers (qargi project set, which
-# validates them) and one line to the audit log. The reason is the --asked words. The enforcement points (qargi agent add for a
+# Applied, it writes models.accept_no_barrier.S = {by, at, reason} to the project's stored answers (lib/gated_answers.py, which
+# validates them; qargi project set refuses the key) and one line to the audit log. The reason is the --asked words. The enforcement points (qargi agent add for a
 # member that only reviews, provision for a read-only role, session start, local prepare) refuse a read-only role on a surface
 # whose barrier is not supported until this is recorded. Members and agents cannot use it (the guard refuses the verb).
 . "$(dirname "$0")/lib.sh"
@@ -60,5 +60,5 @@ fi
 need_plan "$token"
 rec=$(jq -nc --arg b "$(id -un)" --arg t "$(now)" --arg r "$ASKED" '{by: $b, at: $t, reason: $r}')
 audit_log provider:accept "$NAME $SURFACE $PROJ"
-QARGI_GATED_STORE=1 "$here/project.sh" set "$PROJ" "models.accept_no_barrier.$SURFACE" "$rec" >/dev/null || die "could not record it in the answers of $PROJ; nothing changed"
+python3 -I "$here/gated_answers.py" store "$PROJ" "models.accept_no_barrier.$SURFACE" "$rec" --conf "$DA_CONF" >/dev/null || die "could not record it in the answers of $PROJ; nothing changed"
 echo "project $PROJ accepts $NAME on $SURFACE without a read-only barrier (approved: $APPROVED)"
