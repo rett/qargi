@@ -2,5 +2,5 @@
 OUT is /mnt/session/outputs.
 There is no GIT wrapper: run git directly in the repository clone under /workspace/<repo> (your CLONE),
 and still use no ssh or gh and never push, tag or merge.
-Start a long command detached and poll its log in later calls, never with `pgrep -f`:
+Start a long command detached (the one allowed form of a trailing `&`) and poll its log in later calls:
 `(nohup bash -c '<cmd> </dev/null; echo EXIT=$?' > out 2>&1 &)`
