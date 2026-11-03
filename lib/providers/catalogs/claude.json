@@ -1,0 +1,41 @@
+{
+  "schema": 2,
+  "kind": "catalog",
+  "family": "claude",
+  "description": "The Claude models: one table of tiers and effort levels, shared by every Claude runtime (claude-code, claude-platform)",
+  "version": "2026-11-02",
+  "pattern": "^claude-[a-z0-9.-]+$",
+  "tiers": {
+    "fast": {
+      "model": "claude-haiku-5-5",
+      "alias": "haiku",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "balanced": {
+      "model": "claude-sonnet-5-5",
+      "alias": "sonnet",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "deep": {
+      "model": "claude-opus-5-5",
+      "alias": "opus",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    },
+    "frontier": {
+      "model": "claude-fable-5-1",
+      "alias": "fable",
+      "verified_on": null,
+      "source": "carried from the earlier table; verify against the vendor model list"
+    }
+  },
+  "effort": {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max"
+  }
+}

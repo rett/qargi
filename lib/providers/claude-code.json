@@ -1,0 +1,209 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "claude-code",
+  "family": "claude",
+  "surface": "local",
+  "description": "Claude Code, the local command-line runtime: members are agent files in .claude/agents, skills load from .claude/skills, a PreToolUse hook holds a read-only member",
+  "models": {
+    "catalog": "claude",
+    "use": "alias"
+  },
+  "capabilities": {
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "dispatch",
+      "note": "Agent tool model parameter overrides the definition; verified by a dispatch"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "Agent tool effort parameter",
+      "note": "not yet verified to take effect"
+    },
+    "fixed_tool_allowlist_per_agent": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "agents/member.md",
+      "note": "tools: in the member definition"
+    },
+    "read_only_barrier": {
+      "value": "partial",
+      "verified_on": "2026-10-31",
+      "source": "lib/guard.py",
+      "note": "PreToolUse hook; shell writes are caught heuristically, local verify is the backstop"
+    },
+    "session_budget_ceiling": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/session.sh",
+      "note": "local runs have no cost"
+    },
+    "memory_stores": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/memory.sh",
+      "note": "memory stores are a cloud feature"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/packs.sh",
+      "note": "skills load from .claude/skills"
+    },
+    "mcp": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "lib/packs.sh",
+      "note": "rendered by packs, not end-to-end tested"
+    }
+  },
+  "resources": {
+    "skills": {
+      "project_dir": ".claude/skills",
+      "user_dir": "~/.claude/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {
+        "project": "dir-symlink",
+        "user": "none"
+      },
+      "exclusion": {
+        "form": "settings-key",
+        "files": ["user", "project", "project-local"],
+        "pointer": "/skillOverrides",
+        "shape": "map",
+        "off": "off"
+      }
+    },
+    "agents": {
+      "project_dir": ".claude/agents",
+      "user_dir": "~/.claude/agents",
+      "items": "file-per-item",
+      "ext": ".md",
+      "link": {
+        "project": "none",
+        "user": "none"
+      }
+    },
+    "mcp": {
+      "file": "mcp.json",
+      "format": "json",
+      "root_pointer": "/mcpServers",
+      "entry": {"type": "http", "url": "{url}"},
+      "permission_rule": "mcp__{server}__{tool}"
+    },
+    "settings": {
+      "files": [
+        {"scope": "user", "path": "~/.claude/settings.json", "format": "json"},
+        {"scope": "project", "path": ".claude/settings.json", "format": "json"},
+        {"scope": "project-local", "path": ".claude/settings.local.json", "format": "json"}
+      ],
+      "allow_pointer": "/permissions/allow"
+    },
+    "memory": {
+      "user_dir": "~/.claude/projects/{checkout_key}/memory",
+      "checkout_key": "nonalnum-dash",
+      "link": {
+        "user": "dir-symlink"
+      }
+    }
+  },
+  "agents": {
+    "reserved_names": [
+      "general-purpose",
+      "explore",
+      "plan",
+      "statusline-setup",
+      "claude-code-guide",
+      "claude",
+      "output-style-setup"
+    ]
+  },
+  "renderers": {
+    "agent": {
+      "engine": "map",
+      "format": "markdown-frontmatter",
+      "path": "{name}.md",
+      "body": "body",
+      "fields": [
+        {"from": "name", "to": "name", "refuse_if_missing": true},
+        {"from": "description", "to": "description", "refuse_if_missing": true},
+        {"from": "model", "to": "model", "refuse_if_missing": true},
+        {"from": "effort", "to": "effort", "resolve": "effort"},
+        {
+          "from": "tools",
+          "to": "tools",
+          "tool_map": {
+            "shell": "Bash",
+            "read": "Read",
+            "edit": "Edit",
+            "write": "Write",
+            "search_text": "Grep",
+            "search_files": "Glob",
+            "monitor": "Monitor",
+            "stop_task": "TaskStop",
+            "tool_search": "ToolSearch",
+            "skill": "Skill"
+          },
+          "transform": [{"join": ", "}],
+          "guarantee_for": ["read-only"]
+        },
+        {
+          "to": "hooks",
+          "refuse_if_missing": true,
+          "value": {
+            "PreToolUse": [
+              {
+                "matcher": "Bash|Edit|Write|NotebookEdit|Read|Grep",
+                "hooks": [
+                  {"type": "command", "command": "{barrier.guard_command}", "timeout": 20, "onFailure": "block"}
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "packs": {
+      "label": "Claude Code",
+      "settings": {
+        "file": "settings.json",
+        "ask_pointer": "/permissions/ask",
+        "deny_pointer": "/permissions/deny"
+      }
+    }
+  },
+  "dispatch": {
+    "mode": "in-session"
+  },
+  "barrier": {
+    "kind": "hook",
+    "hook": {
+      "input": "json-stdin",
+      "tool_pointer": "/tool_name",
+      "command_pointer": "/tool_input/command",
+      "cwd_pointer": "/cwd",
+      "path_pointers": {
+        "write": ["/tool_input/file_path", "/tool_input/notebook_path"],
+        "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]
+      },
+      "tool_names": {
+        "shell": ["Bash"],
+        "write": ["Edit", "Write", "NotebookEdit", "MultiEdit"],
+        "read": ["Read", "NotebookRead"],
+        "search": ["Grep"]
+      },
+      "deny": {"exit": 2, "stream": "stderr"},
+      "allow": {"exit": 0}
+    }
+  },
+  "session": {
+    "launch": "claude --add-dir {render}[ --mcp-config {render}/mcp.json][ --settings {render}/settings.json]",
+    "render_target": "claude-code"
+  },
+  "adapter": "adapter",
+  "adapter_verbs": ["resolve", "dispatch-local", "barrier-check"]
+}

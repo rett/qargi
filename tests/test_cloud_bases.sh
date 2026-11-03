@@ -173,7 +173,7 @@ $DA provision plan gamma-build 2>&1 | grep -q '^plan token: [0-9a-f]\{12\}' && o
 sealit() { local t; t=$($DA skill seal "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA skill seal "$1" --plan "$t" --approved test >/dev/null; }
 for pair in sk-build:build sk-write:write sk-review:review sk-audit:audit; do
   n=${pair%%:*}; r=${pair##*:}
-  $DA skill new "$n" >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
+  $DA skill new "$n" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
   $DA skill link "$n" --scope user-role --role "$r" >/dev/null 2>&1 || no "link $n"
 done
 
@@ -242,5 +242,19 @@ grep -q 'provision-apply' "$T/s/audit.log" && [ "$(jq -r 'select(.verb=="provisi
 out=$($DA provision apply gamma-worker "${PA[@]}" --asked "provision the worker" --approved go --plan "$tok" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q 'apply --yes ' "$FAKE/ant.log" && ! grep -q -- '--force' "$FAKE/ant.log" && ok "force: without --force apply is as before and ant never sees it" || no "plain apply (rc=$rc): $out $(cat "$FAKE/ant.log")"
 [ "$(jq -r 'select(.verb=="provision-apply") | .detail' "$T/s/audit.log" | tail -1)" = "gamma-worker" ] && ok "force: and the audit line is unchanged" || no "plain audit line"
+
+# --- a runtime of the pack library on the cloud surface (a definition and no file in lib/providers): provision plans a base on its balanced model
+mkdir -p "$T/ext/fc"
+printf '#!/bin/sh\necho "{}"\n' > "$T/ext/fc/adapter"; chmod 755 "$T/ext/fc/adapter"
+jq -n '{schema:2,kind:"provider",provider:"fakecloud",family:null,surface:"cloud",
+  models:{pattern:"^fake-.+$",tiers:{fast:{model:"fake-cloud-s",alias:null,verified_on:null,source:"test"},"*":{model:"fake-cloud-m",alias:null,verified_on:null,source:"test"}},effort:{low:"l",medium:"m",high:"h",xhigh:null,max:null}},
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:{mode:"adapter"},adapter:"adapter",adapter_verbs:["start-session"]}' > "$T/ext/fc/definition.json"
+t=$($DA provider import "$T/ext/fc" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA provider import "$T/ext/fc" --plan "$t" --approved test --approve-exec adapter >/dev/null 2>&1 || no "import fakecloud"
+jq -n --arg r "$T/repo" '{schema:1,project:"libc",repo:{url:"https://github.com/example/libc",path:$r,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"fakecloud"}},memory:{},budget_cents:500}' > "$T/c/projects/libc.json"
+out=$($DA provision plan --project libc --role worker 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(front "$PD/libc-worker/agents/libc-worker/agent.md" | sed -n 's/^  id: //p')" = fake-cloud-m ]; } && ok "library runtime: the plan of a base takes the balanced model of the loader's definition (no lib/providers file)" || no "library provision (rc=$rc): $out"
+jq -n --arg r "$T/repo" '{schema:1,project:"nocl",repo:{url:"https://github.com/example/nocl",path:$r,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"nosuchrt"}},memory:{},budget_cents:500}' > "$T/c/projects/nocl.json"
+out=$($DA provision plan --project nocl --role worker 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "nosuchrt" <<<"$out"; } && ok "a cloud runtime that has no definition is refused, naming it" || no "unknown cloud runtime (rc=$rc): $out"
 
 [ $fail = 0 ] && echo "cloud bases tests passed" || { echo "cloud bases tests FAILED"; exit 1; }

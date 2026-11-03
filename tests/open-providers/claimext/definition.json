@@ -1,0 +1,14 @@
+{
+  "schema": 2,
+  "kind": "extension",
+  "extension": "claimext",
+  "description": "Claims a read-only barrier for plainrt and adds none: the composition has barrier kind none and no class arguments, a fail-open",
+  "extends": "plainrt",
+  "surface": "local",
+  "provides": ["read_only_barrier"],
+  "adds": {
+    "capabilities": {
+      "read_only_barrier": {"value": "yes", "note": "claimed, but there is nothing behind it"}
+    }
+  }
+}

@@ -89,6 +89,43 @@ cl "$YES" build --project epsilon | head -1 | grep -q "^epsilon-build $S high bu
 jq '.models = {provider: "effunver"} | .profiles = {pm:{base:"worker",model:"claude-opus-5-5"}}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 "$YES" agent for build --profile pm --surface cloud --project epsilon >/dev/null 2>&1; [ $? = 2 ] && ok "effort unverified and another model: refused" || no "epsilon pm"
 
+# --- an extension the project enabled counts: fakecloud is a runtime of the pack library (data and a sealed adapter, no file in lib/providers)
+# that claims no per-dispatch override; ovext, an extension pack, provides both. Once ovext has been verified for THIS runtime, the project
+# that enabled it runs sessions on the base; before that, and for a project that did not enable it, the legacy instance runs.
+FC=$T/ext/fc; OV=$T/ext/ovext; mkdir -p "$FC" "$OV"
+cat > "$FC/adapter" <<'EOS'
+#!/bin/sh
+case $1 in
+  resolve) printf '{"model":"fake-cloud-m","effort_native":"h"}\n';;
+  start-session) jq -c --arg p "$0" '. + {fake_adapter: $p}';;
+  *) echo '{"error":"no such verb"}'; exit 3;;
+esac
+EOS
+chmod 755 "$FC/adapter"
+jq -n '{schema:2,kind:"provider",provider:"fakecloud",family:null,surface:"cloud",
+  models:{pattern:"^fake-.+$",tiers:{"*":{model:"fake-cloud-m",alias:null,verified_on:null,source:"test"}},effort:{low:"l",medium:"m",high:"h",xhigh:null,max:null}},
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:{mode:"adapter"},adapter:"adapter",adapter_verbs:["resolve","start-session"]}' > "$FC/definition.json"
+jq -n '{schema:2,kind:"extension",extension:"ovext",description:"per-dispatch overrides of fakecloud",extends:"fakecloud",provides:["per_dispatch_effort_override","per_dispatch_model_override"],
+  adds:{capabilities:{per_dispatch_model_override:{value:"yes",note:"n"},per_dispatch_effort_override:{value:"yes",note:"n"}}}}' > "$OV/definition.json"
+imp() { local t; t=$("$SHIP" provider import "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); "$SHIP" provider import "$1" --plan "$t" --approved test ${2:+--approve-exec "$2"} >/dev/null 2>&1; }
+imp "$FC" adapter && imp "$OV" && ok "a library cloud runtime and an extension pack are imported" || no "import fakecloud / ovext"
+for p in zeta eta; do
+  jq -n --arg p "$p" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"fakecloud"}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+done
+jq '.models.extensions = ["ovext"]' "$T/c/projects/zeta.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/zeta.json"
+jq --argjson w "$(inst x fake-cloud-m h)" '. + {"zeta-worker":$w,"zeta-build":$w,"eta-worker":$w,"eta-build":$w}' "$T/c/instances.json" > "$T/e.json" && mv "$T/e.json" "$T/c/instances.json"
+[ "$(cl "$SHIP" build --project eta | cut -d' ' -f1)" = eta-build ] && [ "$(cl "$SHIP" build --project zeta | cut -d' ' -f1)" = zeta-build ] && ok "unverified extension: the legacy instance runs, as it does for a project that did not enable it" || no "extension unverified: $(cl "$SHIP" build --project zeta) / $(cl "$SHIP" build --project eta)"
+python3 -I - "$SHIPT/lib" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+import provider as P
+h = P.extension_hash("ovext", "fakecloud", "cloud")
+P.record_verification("ovext", {c: {"hash": h, "by": "attest", "at": "2026-11-02", "note": "test"} for c in ("per_dispatch_model_override", "per_dispatch_effort_override")})
+PY
+[ "$(cl "$SHIP" build --project zeta)" = "zeta-worker fake-cloud-m h build" ] && ok "verified extension: the base runs for the project that enabled it, on the model and effort the library adapter resolved" || no "extension verified: $(cl "$SHIP" build --project zeta)"
+[ "$(cl "$SHIP" build --project eta | cut -d' ' -f1)" = eta-build ] && ok "and a project that did not enable it still runs the legacy instance" || no "eta after verification: $(cl "$SHIP" build --project eta)"
+leftover=''; for d in "${TMPDIR:-/tmp}"/qargi-exec.*; do [ ! -e "$d" ] || leftover=$d; done
+[ -z "$leftover" ] && ok "the adapter ran as a private copy that was removed" || no "an exec copy was left: $leftover"
+
 # --- opt-in profiles
 e=$("$YES" agent for review --profile researcher --surface cloud --project alpha 2>&1 >/dev/null); rc=$?
 { [ $rc = 2 ] && grep -q 'opt-in' <<<"$e"; } && ok "researcher is refused without --opt-in (exit 2)" || no "researcher: rc=$rc $e"
@@ -110,8 +147,9 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 "$YES" agent for build --surface cloud >/dev/null 2>&1; [ $? != 0 ] && ok "cloud needs a project (none is inferred outside one)" || no "cloud without project"
 
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
-export QARGI_PROJECT=alpha   # there is no default provider: the project in effect lends its models.provider to the user-level members
-$YES agent add builder --abilities build,test >/dev/null 2>&1; $YES agent add judge --abilities review >/dev/null 2>&1
+export QARGI_PROJECT=alpha   # a member belongs to a project, and the project's models.provider renders it: alpha gets a checkout
+git init -q "$T/repoa"; jq --arg p "$T/repoa" '.repo.path = $p' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
+$YES agent add builder --project alpha --abilities build,test >/dev/null 2>&1; $YES agent add judge --project alpha --abilities review >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
   [ "$a" = "$b" ] && ok "local: 'for $args' is the same with --surface local" || no "local differs for $args: [$a] vs [$b]"

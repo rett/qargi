@@ -2,10 +2,18 @@
 """Which skills would a session of the project's provider, opened in the project's checkout, load, and who vouches for each?
 
 qargi manages the skills of its library and renders them for a project, but a session loads more than that: the skills in the
-checkout's project skills directory, in the render, and in the user's skills directory. Where those are, which settings files hide
-a skill and under which key all come from the provider's layout (lib/providers/NAME.json, read through lib/provider.py); nothing
-here names a provider. A provider without a project skills directory, or without verified skills support, is refused with exit
-status 3; one without a user skills directory or a way to hide a skill is audited without those and the section says so.
+checkout's project skills directory, in the render, and in the user's skills directory. Where those are, and how the provider's own
+configuration hides a skill, come from the skills resource of its definition (resources.skills in lib/providers/NAME.json, read
+through lib/provider.py, schema 2; a schema 1 layout is mapped to it); nothing here names a provider. The exclusion forms are
+read-only: qargi never writes a provider's configuration.
+
+  settings-key   a map in a settings file (pointer, off value), the file being one of resources.settings.files by scope
+  config-list    a list of entries in one configuration file; an entry hides the skill its match names when it holds the off fields
+  deny-list      a list of skill names in one configuration file
+  none, adapter  nothing is read (adapter: its read-exclusion verb is not called yet); the section says so
+Files are JSON or TOML (TOML needs Python 3.11); a YAML file is noted as unreadable. A provider without a project skills directory,
+or without verified skills support, is refused with exit status 3; one without a user skills directory or a way to hide a skill is
+audited without those and the section says so.
 This audit lists every skill with exactly one state:
 
   qargi       a library pack with approved content and the same content hash, or a skill under the qargi install's skills/
@@ -31,6 +39,11 @@ Called by packs.sh, which holds the facts only the shell knows (the library) in 
   packs_audit.py acceptance FILE SCOPE PROJECT NAME    print one stored acceptance as JSON, or exit 1
   packs_audit.py store accept|unaccept FILE SCOPE PROJECT NAME [HASH PATH APPROVED AT]   the only writer of accepted.json
 
+An acceptance belongs to a resource (skills) and a provider (the project's): the record says so ({sha256, path, approved, at,
+resource, provider}). It is stored under NAME, where the older records are; when that slot holds another provider's acceptance (a
+user acceptance reaches every project, and projects differ in provider), under "resource/provider/NAME". A record with no provider
+is an older one and counts as the project's provider's.
+
 Settings files are only ever read. accepted.json is written atomically (temporary file, then rename), mode 600. `store` refuses in a
 member run (a directory `qargi local prepare` made, at or above the working directory) and writes only <conf>/packs/accepted.json,
 the configuration directory being the environment's (paths.conf(), as the shell's DA_CONF): another FILE is refused.
@@ -47,6 +60,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marshal_refs  # noqa: E402  (in_member_run)
 import paths  # noqa: E402
+import packs_render  # noqa: E402  (render_dir)
 import provider  # noqa: E402
 
 NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
@@ -89,16 +103,37 @@ def layout(inp):
     return provider.layout(inp["provider"], home=inp.get("home") or None)
 
 
+def expand(path, inp):
+    """path with a leading ~ meaning the home directory of the inputs (default $HOME), as provider.layout() does."""
+    home = inp.get("home") or os.path.expanduser("~")
+    if isinstance(path, str) and (path == "~" or path.startswith("~/")):
+        return home.rstrip("/") + path[1:]
+    return path
+
+
+def resources(inp):
+    """The resources of the provider's local definition (its first surface when it has no local one), after the checks of layout()."""
+    layout(inp)
+    surfaces = provider.surfaces_of(inp["provider"])
+    res = provider.definition(inp["provider"], "local" if "local" in surfaces else surfaces[0]).get("resources")
+    return res if isinstance(res, dict) else {}
+
+
+def skills_resource(inp):
+    sk = resources(inp).get("skills")
+    return sk if isinstance(sk, dict) else {}
+
+
 def places(inp):
     """[(label, directory)] of the three places a session would load skills from."""
-    lay = layout(inp)
+    sk = skills_resource(inp)
     out = []
     co = inp.get("checkout") or ""
     if co and os.path.isabs(co) and os.path.isdir(co):
-        out.append(("checkout", os.path.join(co, lay["project_skills_dir"])))
-    out.append(("render", os.path.join(os.path.abspath(inp["state"]), inp["provider"], inp["project"], lay["project_skills_dir"])))
-    if inp.get("home") and lay["user_skills_dir"]:
-        out.append(("user", lay["user_skills_dir"]))
+        out.append(("checkout", os.path.join(co, sk["project_dir"])))
+    out.append(("render", os.path.join(packs_render.render_dir(inp["state"], inp["project"], inp["provider"]), sk["project_dir"])))
+    if inp.get("home") and sk.get("user_dir"):
+        out.append(("user", expand(sk["user_dir"], inp)))
     return out
 
 
@@ -191,36 +226,136 @@ def under(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-def read_settings(inp):
-    """({skill name: settings file that switches it off}, [notes]). The files, the key and the off value are the provider's
-    (layout.settings_files, layout.exclusion). Missing files are fine; unreadable or malformed ones are noted."""
-    lay = layout(inp)
-    exc, off, notes = lay["exclusion"], {}, []
-    if not exc or not lay["settings_files"]:
-        return off, ["note: provider %s has no way to switch a skill off in a settings file: no skill is reported as excluded" % inp["provider"]]
-    key, off_value = exc["file_key"], exc["off_value"]
+MISSING = object()
+NO_WAY = "note: provider %s has no way to switch a skill off in a settings file: no skill is reported as excluded"
+
+
+def exclusion(inp):
+    """The skills resource's exclusion description (a dict with a form), or None when there is none or its form is none."""
+    ex = skills_resource(inp).get("exclusion")
+    return ex if isinstance(ex, dict) and ex.get("form") not in (None, "none") else None
+
+
+def segments(pointer):
+    """The reference tokens of a JSON pointer ("" is the whole document)."""
+    if not isinstance(pointer, str) or (pointer and not pointer.startswith("/")):
+        raise ValueError("'%s' is not a JSON pointer" % pointer)
+    return [t.replace("~1", "/").replace("~0", "~") for t in pointer.split("/")[1:]] if pointer else []
+
+
+def at(data, pointer):
+    """The value a JSON pointer names in a parsed document, or MISSING when a key on the way is absent. Only objects are walked."""
+    cur, segs = data, segments(pointer)
+    for i, s in enumerate(segs):
+        if not isinstance(cur, dict):
+            raise ValueError("not an object" if i == 0 else "%s is not an object" % "/".join(segs[:i]))
+        if s not in cur:
+            return MISSING
+        cur = cur[s]
+    return cur
+
+
+def read_doc(path, fmt):
+    """The parsed configuration file: json, or toml (Python 3.11). OSError / ValueError for what cannot be read."""
+    if fmt == "toml":
+        try:
+            import tomllib
+        except ImportError:
+            raise ValueError("toml files need Python 3.11 or later") from None
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)
+    if fmt == "json":
+        return load(path)
+    raise ValueError("%s files cannot be read here (an adapter would)" % fmt)
+
+
+def match_regex(template):
+    """The pattern of a config-list match value: the text with {name} standing for the skill name."""
+    return re.compile("".join("(?P<name>.+)" if part == "{name}" else re.escape(part) for part in re.split(r"(\{name\})", template)))
+
+
+def entry_name(item, match, off):
+    """The skill name a config-list entry hides, or None: the entry holds every off field, and its fields match (a value with
+    {name} in it gives the name)."""
+    if not isinstance(item, dict) or not isinstance(off, dict) or not off:
+        return None
+    if any(k not in item or item[k] != v for k, v in off.items()):
+        return None
+    name = None
+    for k, t in (match or {}).items():
+        v = item.get(k)
+        if not isinstance(v, str) or not isinstance(t, str):
+            return None
+        m = match_regex(t).fullmatch(v)
+        if m is None:
+            return None
+        if "name" in m.groupdict():
+            name = m.group("name")
+    return name
+
+
+def hidden_in(ex, data, label):
+    """The skill names one parsed file hides under the exclusion ex (ValueError when the part of the file is not what the form needs)."""
+    v = at(data, ex["pointer"])
+    if v is MISSING:
+        return []
+    if ex["form"] == "settings-key":
+        if not isinstance(v, dict):
+            raise ValueError("%s is not an object" % label)
+        return [k for k, x in v.items() if x == ex["off"]]
+    if not isinstance(v, list):
+        raise ValueError("%s is not a list" % label)
+    if ex["form"] == "deny-list":
+        return [x for x in v if isinstance(x, str)]
+    return [n for n in (entry_name(i, ex.get("match"), ex.get("off")) for i in v) if n]
+
+
+def listed_files(inp, ex):
+    """[(scope, path as the definition has it, format)] of the files the exclusion reads, in the order it lists them. A form with one
+    file has no scope of its own: it is the user's when its path is the home directory's or absolute, else the project's."""
+    if ex["form"] != "settings-key":
+        return [("user" if ex["file"].startswith("~/") or os.path.isabs(ex["file"]) else "project", ex["file"], ex["format"])]
+    return [(f.get("scope"), f.get("path"), f.get("format") or "json") for sc in ex["files"]
+            for f in (resources(inp).get("settings") or {}).get("files") or [] if isinstance(f, dict) and f.get("scope") == sc]
+
+
+def exclusion_files(inp, ex):
+    """The same, with the paths made absolute: a path is the home directory's (~/), absolute, or relative to the checkout; one
+    relative with no checkout is left out."""
     co = inp.get("checkout") or ""
-    files = []
-    for sf in lay["settings_files"]:
-        if os.path.isabs(sf["path"]):
-            files.append(sf["path"])
+    out = []
+    for scope, path, fmt in listed_files(inp, ex):
+        path = expand(path, inp)
+        if os.path.isabs(path):
+            out.append((scope, path, fmt))
         elif co and os.path.isabs(co):
-            files.append(os.path.join(co, sf["path"]))
-    for f in files:
+            out.append((scope, os.path.join(co, path), fmt))
+    return out
+
+
+def read_settings(inp):
+    """({skill name: configuration file that switches it off}, [notes]). The files, the pointer and the off value are the exclusion
+    of the provider's skills resource (read only). Missing files are fine; unreadable or malformed ones are noted."""
+    ex = exclusion(inp)
+    if ex is None:
+        return {}, [NO_WAY % inp["provider"]]
+    if ex["form"] == "adapter":
+        return {}, ["note: provider %s reads which skills are off with its adapter (read-exclusion), which qargi does not call yet: no skill is reported as excluded" % inp["provider"]]
+    if not listed_files(inp, ex):
+        return {}, [NO_WAY % inp["provider"]]
+    files, off, notes = exclusion_files(inp, ex), {}, []
+    label = "/".join(segments(ex["pointer"])) or "the file"
+    for _, f, fmt in files:
         if not os.path.lexists(f):
             continue
         try:
-            data = load(f)
-            ov = data.get(key, {}) if isinstance(data, dict) else None
-            if not isinstance(ov, dict):
-                raise ValueError("not an object" if ov is None else "%s is not an object" % key)
-        except (OSError, ValueError) as e:
-            why = e.strerror if isinstance(e, OSError) and e.strerror else str(e).split("\n")[0]
+            names = hidden_in(ex, read_doc(f, fmt), label)
+        except Exception as e:      # not only OSError and ValueError: a file nested too deeply for the parser is a RecursionError, and it is an audit, not a crash
+            why = e.strerror if isinstance(e, OSError) and e.strerror else (str(e).split("\n")[0] or type(e).__name__)
             notes.append("note: cannot read %s (%s): the skills it hides are unknown" % (f, why))
             continue
-        for k, v in ov.items():
-            if v == off_value:
-                off.setdefault(k, f)
+        for k in names:
+            off.setdefault(k, f)
     return off, notes
 
 
@@ -238,12 +373,31 @@ def read_accepted(path):
         return empty, ["note: cannot read %s (%s): nothing is treated as accepted" % (path, str(e).split("\n")[0])]
 
 
-def recorded(acc, project, name):
-    """[(scope, record)] of the acceptances of name that reach project."""
+RESOURCE = "skills"
+
+
+def acceptance_key(table, resource, prov, name):
+    """The key of the acceptance of this resource item for this provider in a table, or None. A record is stored under the name
+    (where acceptances have always been), or under "resource/provider/name" when another provider's record holds the name. A record
+    with no resource or provider is an older one: it counts as skills of the provider asking."""
+    k = "%s/%s/%s" % (resource, prov, name)
+    if isinstance(table.get(k), dict):
+        return k
+    r = table.get(name)
+    if not isinstance(r, dict):
+        return None
+    if prov is None or (r.get("resource", resource) == resource and r.get("provider", prov) == prov):
+        return name
+    return None
+
+
+def recorded(acc, project, name, prov, resource=RESOURCE):
+    """[(scope, record)] of the acceptances of name that reach project, whose provider is prov."""
     out = []
     p = acc["projects"].get(project)
     for scope, table in (("project", p if isinstance(p, dict) else {}), ("user", acc["user"])):
-        r = table.get(name)
+        k = acceptance_key(table, resource, prov, name)
+        r = table.get(k) if k is not None else None
         if isinstance(r, dict) and isinstance(r.get("sha256"), str) and r["sha256"]:
             out.append((scope, r))
     return out
@@ -252,7 +406,7 @@ def recorded(acc, project, name):
 def states(inp):
     """(skills with a state, notes). Each skill: the scanned entry plus state, detail."""
     off, notes = read_settings(inp)
-    if not layout(inp)["user_skills_dir"]:
+    if not skills_resource(inp).get("user_dir"):
         notes.append("note: provider %s has no user skills directory: user-level skills are not listed" % inp["provider"])
     acc, n2 = read_accepted(inp.get("accepted"))
     notes += n2
@@ -261,7 +415,7 @@ def states(inp):
     for e in inp.get("skills", []):
         e = dict(e)
         h, lib, n = e.get("hash") or "", e.get("lib"), e["name"]
-        recs = recorded(acc, inp["project"], n)
+        recs = recorded(acc, inp["project"], n, inp["provider"])
         if h and lib and lib.get("approved") and lib["approved"] == lib.get("hash") and library_hash(n) == h:
             e["state"], e["detail"] = "qargi", "library pack"
         elif any(under(e["real"], r) for r in roots):
@@ -306,20 +460,41 @@ def offers(inp, e):
     return out + hide_offer(inp, e)
 
 
+def nested(pointer, value):
+    """The document that holds value at the JSON pointer."""
+    for seg in reversed(segments(pointer)):
+        value = {seg: value}
+    return value
+
+
+def hide_text(ex, name, fmt):
+    """What the person adds to the file to switch the skill off, as text: the JSON document itself for a settings-key in a JSON file,
+    otherwise words naming the pointer and the entry."""
+    if ex["form"] == "settings-key":
+        if fmt == "json":
+            return json.dumps(nested(ex["pointer"], {name: ex["off"]}))
+        return "set %s to %s" % ("/".join(segments(ex["pointer"]) + [name]), json.dumps(ex["off"]))
+    if ex["form"] == "deny-list":
+        entry = json.dumps(name)
+    else:
+        entry = {k: t.replace("{name}", name) if isinstance(t, str) else t for k, t in (ex.get("match") or {}).items()}
+        entry = json.dumps(dict(entry, **(ex.get("off") or {})))
+    return "add %s to the list at %s" % (entry, ex["pointer"])
+
+
 def hide_offer(inp, e):
-    """The line the person adds to a settings file to switch the skill off, as text only (qargi never writes a settings file): the key
-    and the off value are the provider's exclusion, the file one of its settings files, the unshared one of the checkout for a checkout
-    skill and the user's for a user skill. Nothing for a provider that cannot hide a skill."""
-    lay = layout(inp)
-    exc, files = lay["exclusion"], lay["settings_files"] or []
-    if not exc or not files:
+    """The line the person adds to a configuration file to switch the skill off, as text only (qargi never writes one): the form, the
+    pointer and the off value are the provider's exclusion. For a settings-key the file is the unshared one of the checkout for a
+    checkout skill and the user's for a user skill; a form with one file offers that file (for a user skill only when it is the
+    user's). Nothing for a provider that cannot hide a skill."""
+    ex = exclusion(inp)
+    if ex is None or ex["form"] == "adapter":
         return []
-    co = inp.get("checkout") or ""
+    files = exclusion_files(inp, ex)
     for scope in (("project-local", "project", "user") if "checkout" in e["where"] else ("user",)):
-        for f in files:
-            if f["scope"] == scope and (os.path.isabs(f["path"]) or (co and os.path.isabs(co))):
-                path = f["path"] if os.path.isabs(f["path"]) else os.path.join(co, f["path"])
-                return ["    to hide it instead:         %s in %s" % (json.dumps({exc["file_key"]: {e["name"]: exc["off_value"]}}), clean(path))]
+        for sc, path, fmt in files:
+            if sc == scope:
+                return ["    to hide it instead:         %s in %s" % (hide_text(ex, e["name"], fmt), clean(path))]
     return []
 
 
@@ -337,8 +512,9 @@ def cmd_report(inp):
         say("  " + clean(n))
     present = [s for s in LEGEND if any(e["state"] == s for e in sk)]
     if present:
-        exc = layout(inp)["exclusion"] or {}
-        say("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", exc.get("file_key", "the provider's settings"))) for s in present))
+        ex = exclusion(inp)
+        key = "/".join(segments(ex["pointer"])) if ex and ex.get("pointer") else "the provider's settings"
+        say("  legend: " + "; ".join("%s: %s" % (s, LEGEND[s].replace("{key}", key)) for s in present))
     sys.exit(1 if any(e["state"] == "drifted" for e in sk) else 0)
 
 
@@ -413,8 +589,21 @@ def write_atomic(path, data):
         raise
 
 
+def project_runtime(project, required):
+    """The project's local runtime (what its acceptances belong to). None when it has none and that is not required: an acceptance can
+    still be read and removed then."""
+    try:
+        return provider.provider_of_project(project, paths.conf(), "local")
+    except provider.ProviderError:
+        if required:
+            raise
+        return None
+
+
 def cmd_acceptance(path, scope, project, name):
-    r = table(read_for_write(path), scope, project, False).get(name)
+    t = table(read_for_write(path), scope, project, False)
+    k = acceptance_key(t, RESOURCE, project_runtime(project, False), name)
+    r = t.get(k) if k is not None else None
     if not isinstance(r, dict):
         die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
     # the text fields are printed by the shell in the unaccept plan: no control character (a newline would forge a line of the plan)
@@ -434,12 +623,19 @@ def cmd_store(verb, path, scope, project, name, rest):
         h, p, approved, at = (rest + ["", "", "", ""])[:4]
         if not h:
             die("internal error: no content hash to record")
-        table(data, scope, project, True)[name] = {"sha256": h, "path": p, "approved": approved, "at": at}
+        prov = project_runtime(project, True)
+        t = table(data, scope, project, True)
+        slot = "%s/%s/%s" % (RESOURCE, prov, name)
+        if not (isinstance(t.get(name), dict) and acceptance_key(t, RESOURCE, prov, name) != name):
+            t.pop(slot, None)                        # unless another provider's acceptance holds the name, it goes under the name
+            slot = name
+        t[slot] = {"sha256": h, "path": p, "approved": approved, "at": at, "resource": RESOURCE, "provider": prov}
     else:
         t = table(data, scope, project, False)
-        if name not in t:
+        k = acceptance_key(t, RESOURCE, project_runtime(project, False), name)
+        if k is None:
             die("%s is not accepted %s" % (name, "for every project (--user)" if scope == "user" else "for project " + project))
-        del t[name]
+        del t[k]
         if scope != "user" and not t:
             data["projects"].pop(project, None)
     write_atomic(path, data)

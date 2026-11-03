@@ -1,0 +1,5 @@
+#!/bin/sh
+# The stub transport of the claude-code runtime (see tests/providers/lib/stub.py). Every verb of its adapter is local and reaches
+# no vendor; the stub is here because the suite exports one to every adapter.
+here=$(dirname "$0")
+exec python3 -I "$here/../lib/stub.py" "$here" "$@"
