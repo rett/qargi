@@ -567,6 +567,19 @@ PY
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
+    # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models object).
+    # Those verbs store through here with QARGI_GATED_STORE set, for the one call, after their gate has been passed
+    if [ -z "${QARGI_GATED_STORE:-}" ]; then
+      gated=''
+      case $path in
+        models.extensions|models.extensions.*) gated="qargi provider enable PROJECT EXTENSION (and disable)";;
+        models.accept_no_barrier|models.accept_no_barrier.*) gated="qargi provider accept NAME --surface S --no-barrier";;
+        models) jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$val" \
+                  && gated="qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)";;
+      esac
+      [ -z "$gated" ] || die "$path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated"
+    fi
     # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
     # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before
     case $path in models.provider.local|models.provider.cloud)

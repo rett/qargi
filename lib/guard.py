@@ -112,6 +112,7 @@ import collections, glob, json, os, re, shlex, sys
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
 HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
+PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*[^;&|\n]*(?:\$\(|`)")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
@@ -677,6 +678,8 @@ def bash_skill_refusal(command, here, depth):
     if HANDOFF_SUBST.search(command):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
+    if PROJECT_SET_SUBST.search(command):
+        return "qargi project set with a command substitution in its arguments takes a path the guard cannot read, which could be a models answer, and is not available to an agent"
     if AUDIT_SUBST.search(command):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     segs = SEGMENT.split(SUBST.sub(";", command))
@@ -802,6 +805,14 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "project" and verb in ("link", "unlink"):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
+    if area == "project" and verb == "set" and len(words) > 3:
+        # the models answers choose the runtime and what counts as a read-only barrier: they have gated verbs (provider enable, provider accept),
+        # and project set has no plan token, so a member may not set any of them (the owner may). The path is the second word after set
+        path = words[3]
+        if "$" in path or "`" in path:
+            return "qargi project set takes a path the guard cannot read here (it comes from a variable or a substitution), and a models answer is not available to an agent"
+        if path == "models" or path.startswith("models."):
+            return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
@@ -1042,7 +1053,25 @@ def hook_problem(h):
         return "barrier.hook.deny must be {exit, stream: stderr|stdout} or {exit, stdout: {...}}"
     if not (isinstance(h.get("allow"), dict) and set(h["allow"]) == {"exit"} and _is_exit(h["allow"]["exit"])):
         return "barrier.hook.allow must be {exit: N}"
+    # A refusal must be something the runtime can tell from a pass. The stream form gives the reason on a stream and nothing else, so its exit is
+    # the only sign: the same exit as an allow is a refusal that every runtime reads as a pass. The stdout form is told by the JSON it prints, so that
+    # JSON must be an object that carries the reason (a bare {} or one with no "{reason}" says nothing a runtime reads as a denial).
+    if "stream" in deny and deny["exit"] == h["allow"]["exit"]:
+        return "barrier.hook.deny.exit must differ from barrier.hook.allow.exit (a refusal that exits like an allow is read as an allow)"
+    if "stdout" in deny and not _has_reason(deny["stdout"]):
+        return "barrier.hook.deny.stdout must be a non-empty object with at least one string containing {reason} (otherwise a refusal says nothing a runtime reads as a denial)"
     return None
+
+
+def _has_reason(node):
+    """True when a string anywhere in node (a non-empty JSON value) contains the placeholder {reason}."""
+    if isinstance(node, str):
+        return "{reason}" in node
+    if isinstance(node, list):
+        return any(_has_reason(v) for v in node)
+    if isinstance(node, dict):
+        return any(_has_reason(v) for v in node.values())
+    return False
 
 
 def hook_of(name):

@@ -234,6 +234,28 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_models_to_a_member(self):
+        """qargi project set stores any dotted answer. The models answers choose the runtime and what counts as a barrier (models.extensions,
+        models.accept_no_barrier.*, models.provider.*), so a member may not set them; they have gated verbs (provider enable, provider accept)
+        and the owner's own project set. The other answers stay open."""
+        for path in ("models.extensions", "models.accept_no_barrier.local", "models.provider.local", "models.provider", "models", "models.extensions.0"):
+            for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "QARGI_X=1 qargi project set p %s v",
+                         "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent" % path, r.stderr, c)
+        for c in ("qargi project set p $K v", "qargi project set p \"$K\" v", "qargi project set p `echo models.extensions` v",
+                  "qargi project set p $(echo models.extensions) v", "bash lib/project.sh set p $(echo models.extensions) v"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("a path the guard cannot read", r.stderr, c)
+        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p test_command 'echo models.extensions'",
+                  "qargi project show p", "qargi project validate p", "echo qargi project set p models.extensions x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_local_run_to_a_member(self):
         """qargi local run starts a process (a vendor CLI) with an environment the definition names: the lead's call. Refused as the verb and as
         any use of its helper script; the other local verbs are not touched."""
@@ -1258,6 +1280,29 @@ class HookProtocol(unittest.TestCase):
         with open(path) as f:
             hook = json.load(f)["barrier"]["hook"]
         self.assertEqual(hook, self.load().CLAUDE_HOOK)
+
+    def test_hook_data_that_can_never_refuse_is_not_used(self):
+        """A refusal that exits like an allow and prints nothing a runtime reads as a denial would let every push and skill write through: the
+        data that says so is a problem, whichever way it is written."""
+        g = self.load()
+        self.assertIsNone(g.hook_problem(g.CLAUDE_HOOK))
+        for name in ("FAKEMD_HOOK", "FAKECLI_HOOK"):
+            self.assertIsNone(g.hook_problem(globals()[name]), name)
+        def with_deny(deny, allow=None):
+            h = json.loads(json.dumps(g.CLAUDE_HOOK))
+            h["deny"] = deny
+            if allow is not None:
+                h["allow"] = allow
+            return h
+        for deny, allow in (({"exit": 0, "stream": "stderr"}, None), ({"exit": 0, "stream": "stdout"}, None),
+                            ({"exit": 2, "stream": "stderr"}, {"exit": 2}), ({"exit": 0, "stdout": {}}, None),
+                            ({"exit": 0, "stdout": {"decision": "deny"}}, None), ({"exit": 3, "stdout": {"decision": 1, "reason": ["x", {"a": 2}]}}, None)):
+            why = g.hook_problem(with_deny(deny, allow))
+            self.assertIsNotNone(why, (deny, allow))
+            self.assertIn("barrier.hook.", why)
+        for deny, allow in (({"exit": 2, "stream": "stderr"}, None), ({"exit": 0, "stdout": {"decision": "deny", "reason": "{reason}"}}, None),
+                            ({"exit": 3, "stdout": {"a": [{"b": "no: {reason}"}]}}, {"exit": 0})):
+            self.assertIsNone(g.hook_problem(with_deny(deny, allow)), (deny, allow))
 
     def test_a_hook_input_that_cannot_be_read_is_an_error_not_a_pass(self):
         g = self.load()

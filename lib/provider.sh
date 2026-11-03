@@ -60,5 +60,5 @@ fi
 need_plan "$token"
 rec=$(jq -nc --arg b "$(id -un)" --arg t "$(now)" --arg r "$ASKED" '{by: $b, at: $t, reason: $r}')
 audit_log provider:accept "$NAME $SURFACE $PROJ"
-"$here/project.sh" set "$PROJ" "models.accept_no_barrier.$SURFACE" "$rec" >/dev/null || die "could not record it in the answers of $PROJ; nothing changed"
+QARGI_GATED_STORE=1 "$here/project.sh" set "$PROJ" "models.accept_no_barrier.$SURFACE" "$rec" >/dev/null || die "could not record it in the answers of $PROJ; nothing changed"
 echo "project $PROJ accepts $NAME on $SURFACE without a read-only barrier (approved: $APPROVED)"
