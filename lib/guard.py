@@ -33,6 +33,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
+  - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
+    found like the skill verbs), and qargi project set of any models answer (the other answers stay open);
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
@@ -805,6 +807,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "project" and verb in ("link", "unlink"):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
+    if area == "project" and verb == "init":
+        return "qargi project init stores a whole answers file (the models answers that choose the runtime and what counts as a barrier among them) and is not available to an agent"
     if area == "project" and verb == "set" and len(words) > 3:
         # the models answers choose the runtime and what counts as a read-only barrier: they have gated verbs (provider enable, provider accept),
         # and project set has no plan token, so a member may not set any of them (the owner may). The path is the second word after set
