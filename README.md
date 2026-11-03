@@ -143,12 +143,6 @@ live, `role show NAME` prints one, `role prompt NAME` prints its instructions as
 them, and `role check [NAME]` validates one role or all. `qargi local prepare --role ROLE` prepares a
 local run for that role (default `build`): a read-only role keeps the clone unchanged.
 
-Installations made with the earlier names (roles `dev` and `docs`, the fixed agents
-`qargi-dev`, `qargi-docs`, `qargi-review`, `qargi-test`, cloud agents named
-`<project>-agent-<role>`) move to these with `qargi migrate roles`: it prints a plan
-with every cloud call and a plan token, and applies exactly that plan with `--apply
---plan TOKEN --asked "<your words>"`.
-
 ## Methodologies
 
 A methodology is the way a project is developed and released, as data: its branches, versioning and

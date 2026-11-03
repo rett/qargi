@@ -98,7 +98,7 @@ class Legacy(Base):
 
     def test_every_other_command_stops_and_creates_nothing(self):
         env = self.old()
-        for argv in (("project", "list"), ("instances", "list"), ("report",), ("migrate", "roles"), ("credential", "list")):
+        for argv in (("project", "list"), ("instances", "list"), ("report",), ("credential", "list")):
             r = self.q(ROOT, *argv, **env)
             self.assertNotEqual(r.returncode, 0, argv)
             self.assertIn("qargi migrate home", r.stderr, argv)

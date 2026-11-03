@@ -31,7 +31,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The packs render is neutral: `lib/packs_render.py` takes the skills directory, MCP file and settings from the runtime's definition, and the render directory is `~/.qargi/state/render/PROJECT/RUNTIME/` (it was `state/claude/PROJECT`). `qargi packs migrate-render` moves the existing ones (plan, token, approval).
 - `qargi project set P models.provider.SURFACE X` refuses a runtime that does not serve that surface (exit 2).
 - `qargi project link|unlink PROJECT [--resource skills,agents,memory]`: one plan and token links the project's skills, agents and memory into the work tree you run it in, each the way the runtime's definition says (a directory link, one link per entry, or a copy); for Claude Code the memory directory becomes a link into `~/.qargi/memory/projects/PROJECT`. A real directory in the way moves to `NAME.qargi-backup`; nothing records which work trees exist. A member's guard refuses both.
-- `qargi local run RUN [--dry-run]` runs a task through a runtime whose dispatch is a command (a vendor CLI): the argv comes from the definition, without a shell, in the run's credential-less environment, output in `OUT/transcript`; `--dry-run` prints what would run. A runtime that works inside the session is refused. A member's guard refuses it.
+- `qargi local run RUN [--dry-run]` runs a task through a runtime whose dispatch is a command (a vendor CLI): the argv comes from the definition, without a shell, in a scrubbed environment (only the names the pack's `env_pass` lists, which the review shows), output in `OUT/transcript`; `--dry-run` prints what would run. A runtime that works inside the session is refused. A member's guard refuses it.
 - Extensions: a project's `models.extensions` compose onto its runtime, with the pack that provided each capability recorded; two extensions that provide the same thing, or one that collides with the runtime, are refused. An extension's capability counts only after `provider check` (or `attest`) of that extension passes, bound to its hash and its runtime's. `provider show NAME --project P` and `provider effective ... --project P` show the composed view.
 - The `qargi-providers` skill ships with the others (`install.sh` installs and removes it), and `install.sh` refuses a python3 older than 3.11.
 - `qargi provider adapter-run NAME SURFACE VERB [--check]` runs a verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy that is removed afterwards; a verb the definition does not list exits 3), and `qargi provider model NAME SURFACE TIER` prints the model a tier maps to.
@@ -39,14 +39,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A member whose rendered text depends on an extension is shown STALE after the extension is enabled, disabled or changed, until `qargi agent refresh`.
 
 ### Changed
-- `qargi agent add NAME` needs `--project P` or `--user`, and `agent refresh|rename` of a user-level member need `--user`; nothing is written to the runtime's user-level directory unless you say `--user`. Where a project's member lands follows the runtime's definition (for Claude Code, still the checkout's agents directory, hidden from git).
 - There is no implicit Claude anywhere: `agent`, `provision`, `local prepare` (the read-only barrier), session starts and `project validate` take the provider from the project's `models.provider` and, when it is unset, stop with exit 2 and `project P has no provider: set one with qargi project set P models.provider NAME`. `agent add|refresh|rename` without `--project` use the project in effect (`QARGI_PROJECT`, else the checkout); `agent for --surface cloud --project UNKNOWN` is exit 2. `project validate` still exits 0 and prints the `finding:`.
 - A project's provider is `models.provider`; every verb that takes `--target` (`packs apply`, `packs check`), `packs link` and `unlink`, `skill accept` and `marshal handoff` exit 2 when the project has no provider (`set one with qargi project set P models.provider NAME`) instead of assuming Claude; a name that is not a project says `no such project`. `--target` must be the provider's `layout.render_target` (`claude-code` for Claude).
 - `provider check` is no longer on the member guard's read-only list, because it records the result in `verified.json`.
+- `qargi agent add NAME` requires `--project P`; `--user` is gone from `agent add`, `refresh` and `rename`, and nothing is written to a runtime's user-level directory.
 
 ### Fixed
 - The member guard no longer refuses every file write because one provider definition in the library is broken; it skips it with one note and keeps the other roots. Hook data that would let a call through unjudged is refused, and `compatible_providers` names with a trailing newline are rejected.
 - `packs check --target claude-code` no longer reports "shadowing" for every rendered skill once the checkout's `.claude/skills` is the link made by `packs link`.
+- A library provider pack with no record (placed by hand) is no longer loaded, run, checked or attested: seal it or import it. Skill packs are held to the same text-only policy as provider packs (no executables, archives, links or special files), the review of any pack refuses control and bidi characters and prints everything escaped, and `dispatch.env_pass` refuses names such as HOME, PATH, `LD_*`, `GH_*` and `SSH_*`, shows what it passes in the review, and `provider check` runs adapters with a fixed environment.
+- `qargi local run` builds from the project's composed definition. A read-only run is refused when the barrier comes from an extension, or an extension only claims one, unless the project records `provider accept`. The prompt file lives in `RUN/prompt/` and can no longer overwrite the run's control files.
+- `qargi project set` refuses `models.extensions` and `models.accept_no_barrier` (use `provider enable` and `provider accept`), and the member guard refuses a member any `project set` of `models.*` or of a path it cannot read.
+- `provider check` fails a barrier hook whose refusal can never be told from an allow (equal exit codes, or an empty stdout object), so such a barrier is never verified.
+
+### Removed
+- `qargi migrate roles` and the earlier-role-names migration; `qargi migrate home` stays for now.
 
 ## [0.2.0] - 2026-11-02
 

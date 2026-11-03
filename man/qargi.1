@@ -9,7 +9,7 @@ qargi \- A gathering place for agent work: dispatch, review, remember
 .B qargi help
 [\fIcommand\fR|\fItopic\fR]
 .SH DESCRIPTION
-qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
+qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or an Anthropic Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
 .PP
 Every command takes \fB\-\-help\fR. A command that changes shared resources prints a plan and applies it only with \fB\-\-plan\fR and \fB\-\-approved\fR; a cloud command needs \fB\-\-asked\fR. See APPROVALS.
 .SH CONCEPTS
@@ -17,7 +17,7 @@ Task: you describe one task and an executable check that decides it is done. An 
 .PP
 Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
-Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
+Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
 You decide: the coordinator re\-verifies everything an agent returns (qargi review check), applies it as separate commits, and asks you before anything is pushed.
 .SH APPROVALS
@@ -356,7 +356,7 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
+A member is a local agent you name, rendered from the one member definition qargi ships, with the abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ABILITY prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -678,6 +678,11 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
 .RE
 .RE
 .RS
@@ -2473,7 +2478,7 @@ The agent works in a clone of a bare copy that has no remote, runs git through a
 .BI "run " "RUN"
 Run a task through a command runtime (a vendor CLI) in a prepared run; \-\-dry\-run prints what would run.
 .br
-Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. The command is built from the definition without a shell, runs with the run's credential\-less git wrapper environment, and its output goes to OUT/transcript. A read\-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.
+Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. A read\-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.
 .RS
 .TP
 .BI "\-\-task " "FILE"
@@ -3296,9 +3301,9 @@ print the plan and stop; changes nothing.
 .RE
 .TP
 .B qargi migrate
-Bring an installation made with older names to the current ones.
+Copy the data of the earlier XDG directories to ~/.qargi.
 .PP
-home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. roles renames what was made with the role names dev and docs (now build and write) and the four fixed local agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved definitions; in every project's two memory stores the role folders and the role names in indexes, README and marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their prompts, rebuilt as refresh\-prompt does; and the old agent symlinks, replaced by members (qargi agent add). Without \-\-apply it prints the plan, with every cloud call, and a plan token. It is re\-runnable: what is renamed already is left out, and it stops at the first failure.
+home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. already is left out, and it stops at the first failure.
 .RS
 .TP
 .B home
@@ -3312,36 +3317,6 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
-.RS
-.TP
-.B roles
-Plan, then apply, the move to the ability names and to named members.
-.RS
-.TP
-.BI "\-\-member\-names " "LIST"
-ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester).
-.RE
-.RS
-.TP
-.BI "\-\-project " "PROJECT"
-the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider).
-.RE
-.RS
-.TP
-.B \-\-apply
-apply the plan the token names.
-.RE
-.RS
-.TP
-.BI "\-\-plan " "TOKEN"
-the plan token printed by the same command without \-\-approved.
-.RE
-.RS
-.TP
-.BI "\-\-asked " "REQUEST"
-the request, in your words, for this migration; needed when the plan changes cloud resources.
 .RE
 .RE
 .SS Other

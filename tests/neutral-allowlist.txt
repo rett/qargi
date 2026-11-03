@@ -56,14 +56,6 @@ lib/packs.sh:ant apply --yes
 lib/packs.sh:type:"anthropic"
 lib/packs.sh:anthropic skills:
 
-# lib/migrate.py: renaming the cloud objects of a project
-lib/migrate.py:def ant\(args
-lib/migrate.py:\["ant"\] \+ args
-lib/migrate.py:rc, out = ant\(
-lib/migrate.py:another tool \(ant, registry
-lib/migrate.py:"""ant prints a list
-lib/migrate.py:is ant logged in
-lib/migrate.py:ant beta:
 
 # lib/transfer.py: memory exported from and imported into a cloud store
 lib/transfer.py:\(ant, gpg\)
@@ -280,8 +272,6 @@ lib/marshal_handoff.py:"CLAUDE\.md", "AGENTS\.md"
 lib/attach.py:"CLAUDE\.md", "AGENTS\.md"
 lib/tiercontext.py:nothing in them overrides the user or CLAUDE\.md
 
-# lib/migrate.py: where an earlier version put the members it made
-lib/migrate.py:"\.claude", "agents"
 
 # lib/conformance/run.sh: the usage names the shipped runtimes
 lib/conformance/run.sh:claude-code, claude-platform

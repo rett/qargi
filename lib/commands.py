@@ -10,7 +10,7 @@ TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 
 INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as "
-    "reviewable patches. An agent is a Claude Code subagent on this machine (local, the default) or an Anthropic "
+    "reviewable patches. An agent is a member on this machine (local, the default) or an Anthropic "
     "Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and "
     "never push. A team adds a lead that coordinates members for build, write and review on one task. "
     "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
@@ -143,7 +143,7 @@ COMMANDS = {
     },
     "agent": {
         "summary": "Name the members: the local agents that do the work",
-        "desc": ("A member is a Claude Code subagent you name, rendered from the one member definition qargi ships, with the "
+        "desc": ("A member is a local agent you name, rendered from the one member definition qargi ships, with the "
                  "abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role "
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
@@ -595,7 +595,7 @@ COMMANDS = {
                                  "opaque blobs are flagged. A pack with executables also needs --approve-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.")),
             "seal": verb("Record the current content of a library provider pack as approved", [("NAME", "none")], [PLAN, APPROVED, EXEC]),
             "remove": verb("Remove a library provider pack", [("NAME", "none")], [PLAN, APPROVED]),
-            "enable": verb("Let a project use a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED],
+            "enable": verb("Let a project use a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED, EXEC],
                            desc="An extension adds resources or capabilities to a runtime for one project. It counts only once it is sealed and verified."),
             "disable": verb("Stop a project using a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED]),
             "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
@@ -643,7 +643,7 @@ COMMANDS = {
                          opt("--effort", "an effort level; dropped with a note when the runtime cannot map it", "LEVEL"), opt("--timeout", "seconds before the process group is killed (default from the definition)", "S"),
                          opt("--again", "run a second time in the same run"), opt("--dry-run", "print the argv, the working directory and the prompt, and run nothing")],
                         desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. "
-                              "The command is built from the definition without a shell, runs with the run's credential-less git wrapper environment, and its output goes to OUT/transcript. "
+                              "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
                               "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
@@ -853,7 +853,7 @@ COMMANDS = {
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
     "migrate": {
-        "summary": "Bring an installation made with older names to the current ones",
+        "summary": "Copy the data of the earlier XDG directories to ~/.qargi",
         "desc": ("home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and "
                  "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
                  "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
@@ -862,24 +862,11 @@ COMMANDS = {
                  "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
                  "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
                  "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
-                 "roles renames what was made with the role names dev and docs (now build and write) and the four fixed local "
-                 "agents (now members you name): on this machine the registry, tracker, project answers, pack links and saved "
-                 "definitions; in every project's two memory stores the role folders and the role names in indexes, README and "
-                 "marker; in the cloud the agents and deployments, named as qargi instances normalize names them, and their "
-                 "prompts, rebuilt as refresh-prompt does; and the old agent symlinks, replaced by members (qargi agent add). "
-                 "Without --apply it prints the plan, with every cloud call, and a plan token. It is re-runnable: what is renamed "
                  "already is left out, and it stops at the first failure."),
         "scripts": ["migrate.py", "migrate_home.py"],
         "verbs": {
             "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
                          examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
-            "roles": verb("Plan, then apply, the move to the ability names and to named members", [],
-                          [opt("--member-names", "ability=name pairs for the members that replace the old agents (default builder, writer, reviewer, tester)", "LIST"),
-                           opt("--project", "the project whose provider the new members are rendered for (required when the plan adds members: there is no default provider)", "PROJECT", "project"),
-                           opt("--apply", "apply the plan the token names"), PLAN,
-                           opt("--asked", "the request, in your words, for this migration; needed when the plan changes cloud resources", "REQUEST")],
-                          examples=["qargi migrate roles", "qargi migrate roles --member-names build=forge,write=scribe",
-                                    'qargi migrate roles --apply --plan TOKEN --asked "migrate the roles of myproject"']),
         },
     },
     "lead": {
@@ -1005,7 +992,7 @@ TOPICS = {
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
         "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --abilities build,test); qargi agent for ABILITY prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
-        "Local or cloud: local (a Claude Code subagent) is the default. The cloud is used only when your request for that task names it, "
+        "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
@@ -1018,7 +1005,7 @@ TOPICS = {
         "A member is a local agent you name (qargi agent add forge --abilities build,test), rendered from the one member definition "
         "qargi ships. The task block names the ability and carries its role text; there is no ability skill to load. qargi agent for ABILITY prints the member "
         "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's role text in its prompt.",
-        "Earlier installations (roles dev and docs, and the agents named qargi-<role> that served them) move with qargi migrate roles."]),
+        ]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
         "To apply, run the same command with --plan TOKEN --approved \"your words\". If the plan changed in between, the token no longer "

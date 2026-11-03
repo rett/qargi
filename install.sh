@@ -181,7 +181,7 @@ else
 fi
 
 echo "next: create the members that do the work, with names you choose, for example:"
-echo "  qargi agent add builder --abilities build    (or one member for everything: qargi agent add worker)"
+echo "  qargi agent add worker --project NAME    (and reviewer: qargi agent add reviewer --project NAME)"
 
 if [ -n "$exclude_file" ]; then
   mkdir -p "$(dirname "$exclude_file")"; touch "$exclude_file"
