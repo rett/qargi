@@ -53,7 +53,7 @@ recommended; do not assume answers:
    person accepts that (`qargi provider accept`). For a runtime that is not shipped, see
    `/qargi-providers`.
 6. **Per role, model and effort** (the tiers come from the runtime's catalog), extra apt
-   packages, and Anthropic skills (`pdf`, `docx`, `pptx`, `xlsx`; the write role defaults to `pdf`).
+   packages, and hosted skills (`pdf`, `docx`, `pptx`, `xlsx`; the write role defaults to `pdf`).
 7. **Budget** per cloud session in cents (default 500, set on the deployment).
 8. **Memory.** Create the project's stores or attach existing ones (ids).
 9. **Members, once.** The local workers are agents the user names: ask for their names and abilities, suggesting the two
@@ -62,7 +62,7 @@ recommended; do not assume answers:
     (kept under the config directory, per role if the gates differ).
 
 To link a work tree (`project link`, in each checkout or worktree) or start from a repository (`project new`, `attach`, `adopt`),
-read `repository.md`. Or write the answers file and store it:
+load `repository.md`. Or write the answers file and store it:
 
 ```sh
 qargi project template NAME > answers.json   # edit with the answers

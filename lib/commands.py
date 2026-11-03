@@ -626,8 +626,8 @@ COMMANDS = {
                           [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
-                               "enabled extensions. A runtime or a topic it does not have is exit 1, naming both and listing the topics there are; a project with no local runtime is exit 2 (there is no default). Read-only."),
-            "model": verb("Print the model a runtime maps a tier to on a surface",[("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
+            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
@@ -1025,14 +1025,16 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of "
         "what the member returned is the backstop.",
-        "It refuses verbs that change shared state: skills, tools and packs (new, import, seal, link, remove, accept, packs apply), project link, init and "
-        "models answers, providers (all but the read verbs), release publish, the marshal (all but status, check and handoff without --write), feature "
-        "start, finish and verify, memory tiers, cloud set, unset and login, upgrade and local run.",
-        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills and agents directories, the installed "
-        "copy of the tool, and the render, marshal and feature directories of the state. Reading stays allowed except the lead's signing key. It refuses "
-        "git push, changing a git remote, gh, ssh, scp and sftp.",
+        "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
+        "discover install; import; packs apply, seed, link, unlink and migrate-render; project set (models answers), init, link and unlink; "
+        "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
+        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
+        "directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. "
+        "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
         "The read-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.",
-        "Setting QARGI_NESTED is refused. It skips a plan token check and does not stand in for one.",
+        "Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.",
         "A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "

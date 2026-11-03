@@ -239,7 +239,7 @@ def man(date_from=None):
     w(".PP")
     w("Every command takes \\fB\\-\\-help\\fR. A command that changes shared resources prints a plan and applies it only with "
       "\\fB\\-\\-plan\\fR and \\fB\\-\\-approved\\fR; a cloud command needs \\fB\\-\\-asked\\fR. See APPROVALS.")
-    for t in ("concepts", "approvals", "naming", "memory", "push"):
+    for t in ("concepts", "approvals", "guard", "naming", "memory", "push"):
         title, paras = C.TOPICS[t]
         w(".SH " + t.upper())
         for i, p in enumerate(paras):
