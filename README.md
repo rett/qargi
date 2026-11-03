@@ -315,7 +315,7 @@ none: then a read-only run needs its declared barrier or your acceptance, and `q
 is the proof). The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
-command of its definition, and `qargi local prepare --ability review` records the ability
+command of its definition, and `qargi local prepare --role review` records the ability
 in the run directory for a member that serves several abilities (the guard refuses any
 write to that record). Under review the guard refuses an edit outside the run's output
 directory and a Bash command that writes into the clone. Whatever the ability,
