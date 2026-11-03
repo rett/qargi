@@ -160,7 +160,7 @@ class DevRun(Base):
         self.assertEqual((r.returncode, r.stderr), (0, ""))
 
     def test_no_banner_for_help_version_completion_guard_and_hooks(self):
-        for argv in (("help",), ("help", "dev"), ("version",), ("__complete", "migrate"), ("migrate", "--help"), ("hook", "tool-use")):
+        for argv in (("help",), ("help", "dev"), ("version",), ("__complete", "project"), ("project", "--help"), ("hook", "tool-use")):
             r = self.run_([os.path.join(self.dev, "bin", "qargi"), *argv], input="{}")
             self.assertEqual(r.returncode, 0, argv)
             self.assertNotIn("qargi: dev run from", r.stderr + r.stdout, argv)
@@ -174,17 +174,6 @@ class DevRun(Base):
             r = self.run_([os.path.join(self.dev, "bin", "qargi"), "__guard"], input=json.dumps(
                 {"tool_name": "Write", "tool_input": {"file_path": lib + "/links.json"}, "cwd": self.t}))
             self.assertEqual(r.returncode, 2, (lib, r.stderr))
-
-    def test_migrate_home_refuses_in_a_dev_run_unless_a_location_is_named(self):
-        old = os.path.join(self.home, ".config", "qargi")
-        os.makedirs(old)
-        r = self.q(self.dev, "migrate", "home")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("dev run", r.stderr)
-        self.assertNotIn("plan token", r.stdout)
-        r = self.q(self.dev, "migrate", "home", QARGI_HOME=os.path.join(self.t, "dest"))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("plan token", r.stdout)
 
     def test_the_sandbox_is_ignored_by_version_control(self):
         with open(os.path.join(ROOT, ".gitignore")) as f:
