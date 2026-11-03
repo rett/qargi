@@ -182,7 +182,7 @@ COMMANDS = {
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing "
                                 "dispatches it), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
-                                "The members shown are those of --project, else of the project in effect; with none in effect, every project's (shown as PROJECT/NAME). Read-only."),
+                                "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). The members shown are that project's (`agent list` shows all projects'). Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                            desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
