@@ -11,7 +11,8 @@
 #   agent.sh rename OLD NEW [--project P]
 #   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort
 #
-# NAME in rename, refresh and remove is looked up in --project, else the project in effect, else the one project that has it (two or more: exit 2).
+# NAME in rename, refresh and remove is looked up in --project, else the project in effect (exit 2 when it lacks NAME), else, with none in effect,
+# the one project that has it (two or more: exit 2).
 # Every member belongs to a project (there are no user-level members). Its file goes where the runtime's definition links the project's agents
 # (resources.agents.link.project): entry-symlinks, dir-symlink or copy: into the project's member render under ~/.qargi (state/render/P/RUNTIME.agents),
 # which `qargi project link P --resource agents` links into the checkout; none: straight into the checkout's agents directory (hidden from git).
@@ -236,8 +237,9 @@ need_project() { # verb project-or-empty: a member belongs to a project, and its
   [ -n "$2" ] || { echo "qargi: $1 writes the definition of a member: give --project NAME (the project it belongs to; its definition goes where the runtime links the project's agents)" >&2; exit 2; }
 }
 
-member_project() { # name -> the project whose member NAME is: --project, else the project in effect when it has NAME, else the one project that has it
-  # (a name two or more projects hold, with none named or in effect, is exit 2 and lists them)
+member_project() { # name -> the project whose member NAME is: --project, else the project in effect (which must have NAME), else the one project that has it
+  # when none is in effect (a name two or more projects hold, with none named or in effect, is exit 2 and lists them). A project in effect that lacks
+  # NAME is never skipped over: the verb would act on another project's member from inside this checkout
   local n=$1 held cur
   if [ -n "$PROJ" ]; then
     jq -e --arg p "$PROJ" --arg n "$n" '.projects[$p][$n] != null' "$MEMBERS_FILE" >/dev/null || die "no member named $n in project $PROJ (qargi agent list)"
@@ -246,7 +248,11 @@ member_project() { # name -> the project whose member NAME is: --project, else t
   held=$(jq -r --arg n "$n" '(.projects // {}) | to_entries[] | select(.value[$n] != null) | .key' "$MEMBERS_FILE")
   [ -n "$held" ] || die "no member named $n (qargi agent list)"
   cur=$(python3 -I "$root/lib/help.py" infer)
-  if [ -n "$cur" ] && grep -qx -- "$cur" <<<"$held"; then echo "$cur"; return 0; fi
+  if [ -n "$cur" ]; then
+    grep -qx -- "$cur" <<<"$held" && { echo "$cur"; return 0; }
+    echo "qargi: no member named $n in project $cur, the project in effect; it is a member of $(tr '\n' ' ' <<<"$held" | sed 's/ $//; s/ /, /g'): give --project NAME" >&2
+    exit 2
+  fi
   if [ "$(wc -l <<<"$held")" != 1 ]; then
     echo "qargi: $n is a member of more than one project ($(tr '\n' ' ' <<<"$held" | sed 's/ $//; s/ /, /g')): give --project NAME" >&2
     exit 2
@@ -445,7 +451,7 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
   local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
-  else proj=$(python3 -I "$root/lib/help.py" infer); fi
+  else proj=$(python3 -I "$root/lib/help.py" infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
   pd=$(pdesc "$prov" local) || exit 1
@@ -456,7 +462,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson st "$st" --argjson noeffort "$noeff" --arg prov "$prov" --arg proj "$proj" --arg pat "$(jq -r .model_pattern <<<"$pd")" "$PJQ"'
     def mclass: if ((.roles // []) | length) > 0 and all((.roles // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
-    | [($m[0].projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}] as $all
+    | [($m[0].projects // {}) | to_entries[] | select(.key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}] as $all
     | {provider: $prov, effort_control: ($noeffort | not), aliases: $aliases,
        bases: ($bases | with_entries(.key as $k | .value += {registered: ($all | any(.name == $k))}
          | .value += {flags: (if .value.registered then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
@@ -490,7 +496,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
   echo "members"
   if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME --project P)"; else
-    jq -r --arg proj "$proj" '.members[] | "  \(if $proj == "" then .project + "/" else "" end)\(.name)\t\(.roles | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
+    jq -r '.members[] | "  \(.name)\t\(.roles | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
 }
@@ -630,10 +636,14 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
 }
 
 # agents.json is {"schema": 2, "projects": {P: {NAME: record}}} (an empty object reads as no members). Any other shape is an earlier one: it is never
-# converted and never rewritten, the verbs stop (exit 2) and say what to do.
-jq -e 'type == "object" and (length == 0 or (.schema == 2 and ((keys - ["schema", "projects"]) | length) == 0 and (.projects | type) == "object"
-    and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1 \
-  || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
+# converted and never rewritten, the verbs stop (exit 2) and say what to do. So does a record without what the verbs need (a non-empty list of roles
+# and the path of its file): it would otherwise be refreshed as a read-only member, hide the others in `list`, or be written to a file called "null".
+members_shape_ok || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
+bad=$(jq -r '(.projects // {}) | to_entries[] | .key as $p | .value | to_entries[] | .key as $n | .value
+    | (if (.roles | type) != "array" or (.roles | length) == 0 or (.roles | any(type != "string")) then "roles (a non-empty list of role names)"
+       elif (.file | type) != "string" or .file == "" then "file (the path of its definition)" else empty end) as $f
+    | "member \($n) of project \($p) has no \($f)"' "$MEMBERS_FILE" | head -n 1)
+[ -z "$bad" ] || { echo "qargi: agents.json: $bad: move the file aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
 
 case $verb in
   add) add;;

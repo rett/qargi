@@ -182,7 +182,7 @@ COMMANDS = {
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing "
                                 "dispatches it), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
-                                "The members shown are those of --project, else of the project in effect; with none in effect, every project's (shown as PROJECT/NAME). Read-only."),
+                                "A project is needed, because its models.provider decides the models: --project, else the one in effect (with none, exit 2). The members shown are that project's (`agent list` shows all projects'). Read-only."),
             "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
                            desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
@@ -533,7 +533,9 @@ COMMANDS = {
                  "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
                  "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
                  "checked out detached; install.sh --user then runs as you and the members to refresh are listed. The git commands that write "
-                 "into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it."),
+                 "into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in "
+                 "the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is "
+                 "changed for that. A member or agent cannot use it."),
         "scripts": ["upgrade.sh"],
         "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
                  opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],
