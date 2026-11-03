@@ -347,21 +347,32 @@ def conf_dirs(P, home):
 
 
 _RESOURCE_DIRS = []
+# The directories of Claude Code, the runtime qargi was built for. They are held whatever the library says: a definition of that name that
+# clashes with the shipped one (or is broken) is skipped below, and its directories must not drop out of the protection with it.
+CLAUDE_RESOURCE_DIRS = ((".claude", "skills"), (".claude", "agents")), ("~/.claude/skills", "~/.claude/agents")
 
 
 def resource_dirs():
     """(project, user): the skills and agents directories that the resources of every provider definition name (the shipped ones and the
-    library's, every surface). project: tuples of path components (".claude/skills" is (".claude", "skills")), found anywhere in a path;
-    user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below ~/) is left out. Read once
-    per call of the hook. A definition that cannot be read is an error, so the call is refused: with no list of what to protect, the
-    guard cannot say that a write is safe."""
+    library's, every surface), and those of Claude Code. project: tuples of path components (".claude/skills" is (".claude", "skills")),
+    found anywhere in a path; user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below
+    ~/) is left out. Read once per call of the hook. A definition that does not load (unreadable, a name clash, a name that disagrees with
+    its directory) is skipped with one note on standard error: its directories are unknown, but one broken file of the library must not
+    make the guard refuse every write, and the roots of the definitions that do load stay (the roots only add up)."""
     if not _RESOURCE_DIRS:
         provider = _provider()
         home = os.path.expanduser("~")
-        project, user = [], []
+        project = [tuple(c) for c in CLAUDE_RESOURCE_DIRS[0]]
+        user = [os.path.join(home, u[2:]) for u in CLAUDE_RESOURCE_DIRS[1]]
+        skipped = []
         for name in provider.names():
-            for surface in provider.surfaces_of(name):
-                res = provider.definition(name, surface).get("resources")
+            try:
+                defs = [provider.definition(name, surface) for surface in provider.surfaces_of(name)]
+            except Exception as e:
+                skipped.append("%s (%s)" % (name, str(e).splitlines()[0][:100] if str(e) else type(e).__name__))
+                continue
+            for doc in defs:
+                res = doc.get("resources")
                 for kind in ("skills", "agents"):
                     r = res.get(kind) if isinstance(res, dict) else None
                     r = r if isinstance(r, dict) else {}
@@ -371,6 +382,8 @@ def resource_dirs():
                         project.append(comps)
                     if isinstance(u, str) and u.startswith("~/") and len(u) > 2 and os.path.join(home, u[2:]) not in user:
                         user.append(os.path.join(home, u[2:]))
+        if skipped:
+            print("qargi guard: provider definitions skipped, their skills and agents directories are not protected: %s" % "; ".join(skipped), file=sys.stderr)
         _RESOURCE_DIRS.append((project, user))
     return _RESOURCE_DIRS[0]
 
