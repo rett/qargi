@@ -30,7 +30,7 @@ skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 877
 skills/qargi-project/repository.md 209
 skills/qargi-providers/SKILL.md 774
-skills/qargi-providers/definition.md 577
+skills/qargi-providers/definition.md 635
 skills/qargi-providers/verify.md 494
 skills/qargi-provision/SKILL.md 400
 skills/qargi-session/SKILL.md 899

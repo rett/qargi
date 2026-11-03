@@ -35,7 +35,11 @@ Two resources the definition can carry, both text:
 - **notes**: an object of topic name to text, what the skills would otherwise have to say about
   the runtime; `qargi provider notes [TOPIC]` prints them. At most 16 topics; a name is lower case
   letters, digits and `-`, starting with a letter, at most 32 characters; a text is one line of
-  plain text, not empty, at most 2000 characters. An extension cannot add notes.
+  plain text, not empty, at most 2000 characters. An extension cannot add notes. The lead skills
+  ask for `spawn`, `session-model`, `exploration`, `skills-dir`, `identity` and `commands`. A local
+  runtime that works in the session (`dispatch.mode` `in-session`) without `spawn` leaves the lead
+  no instructions to start a member; `provider check` warns. A missing topic is exit 1, a runtime
+  that cannot be used as it stands (an unsealed or changed pack) exit 2.
 - **resources.contract_addenda**: plain text files in the definition's own directory (relative
   names, UTF-8, at most 16 KB each) that are added to the member contract (in a cloud agent's
   prompt; for a local run as `runtime-addenda.md` in the contract directory), so the neutral

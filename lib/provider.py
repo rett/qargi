@@ -983,6 +983,9 @@ def validate2(d, name=None):
     disp =d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
+    notes = d.get("notes")
+    if d.get("surface") == "local" and isinstance(disp, dict) and disp.get("mode") == "in-session" and not (isinstance(notes, dict) and "spawn" in notes):
+        out.append(("warn", "notes.spawn: a local runtime that works in the session has no way to tell a lead how to start a member without a 'spawn' note (qargi provider notes spawn)"))
     ad = d.get("adapter")
     if isinstance(ad, str) and (not ad or os.path.isabs(ad) or ad.startswith("~") or ".." in ad.split("/")):
         out.append(("fail", "adapter: '%s' is not a path inside the definition's directory" % ad))
