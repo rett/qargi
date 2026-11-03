@@ -1,6 +1,6 @@
 ---
 name: keep-a-changelog
-description: Record every user-visible change in CHANGELOG.md under Unreleased, in the Keep a Changelog categories, in the same commit as the change; never date or cut a release.
+description: Record every user-visible change in CHANGELOG.md under Unreleased, in the Keep a Changelog categories, in the same commit as the change; as a member, never date it or cut a release.
 ---
 # Changelog entries
 
@@ -11,7 +11,9 @@ description: Record every user-visible change in CHANGELOG.md under Unreleased, 
 
 ## When
 - One entry per user-visible change: a command, a flag, an output, a config key, a file format, a behaviour.
-- Put it in the same commit as the code. Never add it later as a separate fix-up commit.
+- Put it in the same commit as the change: one logical change per commit, with its tests and docs.
+- A change that spans three or more top-level directories is split into commits that each build: code and tests, then docs and changelog.
+- Never add the entry later as a separate fix-up commit.
 - Internal refactors, test changes and comment edits get no entry.
 
 ## How to write it
@@ -24,7 +26,7 @@ Example, under `### Changed`:
     - `report --json` now prints the verdict under `result`, not `status` (breaking: update scripts
       that read `status`).
 
-## Never
+## Never (as a member)
 - Add a version heading, put a date on Unreleased, or move entries into a release.
 - Edit a released section.
 - Bump `VERSION`. Releasing is the lead's.

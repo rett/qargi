@@ -8,7 +8,7 @@ lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 121
 packs/skills/gitflow-member/SKILL.md 267
-packs/skills/keep-a-changelog/SKILL.md 274
+packs/skills/keep-a-changelog/SKILL.md 317
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
