@@ -115,11 +115,11 @@ out=$(wm 2>&1); rc=$?
 wm --json | jq -e '[.warnings[] | select(.message | test("no reviewer: review profiles cannot dispatch"))] | length == 1' >/dev/null && ok "models --json: the same problem in warnings[]" || no "warnings json"
 wd agent add builder --project wbase --abilities build,test >/dev/null 2>&1
 out=$(wm 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -E '^ *builder ' <<<"$out" | grep -q 'legacy (in use: no worker)'; } && ok "models: a legacy member in use while there is no worker" || no "legacy in use: $out"
+{ [ $rc = 0 ] && grep -q 'no worker: build,write,test profiles cannot dispatch' <<<"$out" && grep -E '^ *builder ' <<<"$out" | grep -q 'not a base (reviewer, worker)'; } && ok "models: a member that is not a base is flagged, and the missing worker is still flagged (nothing else stands in for it)" || no "not a base: $out"
 wd agent add worker --project wbase --abilities build,write,test >/dev/null 2>&1
 out=$(wm 2>&1)
-grep -E '^ *builder ' <<<"$out" | grep -q 'legacy: retire after worker exists' && ! grep -E '^ *worker +build' <<<"$out" | grep -q legacy && ok "models: a legacy member once the worker exists; the worker itself is not legacy" || no "legacy retire: $out"
-wm --json | jq -e '[.warnings[] | select(.kind == "member" and .name == "builder")][0].message == "legacy: retire after worker exists" and (.members[] | select(.name == "builder") | .flags | length) == 1' >/dev/null && ok "models --json: member flags and warnings agree" || no "member warnings json"
+grep -E '^ *builder ' <<<"$out" | grep -q 'not a base' && ! grep -E '^ *worker +build' <<<"$out" | grep -q 'not a base' && ! grep -q 'no worker' <<<"$out" && ok "models: once the worker exists the missing-base flag is gone; the worker itself is a base" || no "worker registered: $out"
+wm --json | jq -e '[.warnings[] | select(.kind == "member" and .name == "builder")][0].message | startswith("not a base")' >/dev/null && wm --json | jq -e '(.members[] | select(.name == "builder") | .flags | length) == 1' >/dev/null && ok "models --json: member flags and warnings agree" || no "member warnings json"
 wd agent add mix --project wbase --abilities build,review >/dev/null 2>&1
 out=$(wm 2>&1)
 grep -E '^ *mix ' <<<"$out" | grep -q 'write class; never serves review' && ok "models: a mixed-class member is flagged write class" || no "mixed flag: $out"
