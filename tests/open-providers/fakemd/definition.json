@@ -1,0 +1,78 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "fakemd",
+  "family": null,
+  "surface": "local",
+  "description": "A made-up in-session runtime, data only: markdown agent files, a skills directory link, a settings-key exclusion, a hook that denies with a JSON document and exit 0",
+  "models": {
+    "pattern": "^md-[a-z0-9.-]+$",
+    "tiers": {
+      "fast": {"model": "md-small", "alias": "small", "verified_on": null, "source": "fixture"},
+      "*": {"model": "md-large", "alias": "large", "verified_on": null, "source": "fixture"}
+    },
+    "effort": null
+  },
+  "capabilities": {
+    "agent_definitions": {"value": "yes", "verified_on": null, "source": "fixture", "note": "markdown files"},
+    "skills": {"value": "yes", "verified_on": null, "source": "fixture", "note": "a directory link"},
+    "read_only_barrier": {"value": "yes", "verified_on": null, "source": "fixture", "note": "hook with a JSON deny"}
+  },
+  "resources": {
+    "skills": {
+      "project_dir": ".fakemd/skills",
+      "user_dir": "~/.fakemd/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {"project": "dir-symlink", "user": "none"},
+      "exclusion": {"form": "settings-key", "files": ["project"], "pointer": "/skills_off", "shape": "map", "off": "off"}
+    },
+    "agents": {
+      "project_dir": ".fakemd/agents",
+      "user_dir": "~/.fakemd/agents",
+      "items": "file-per-item",
+      "ext": ".md",
+      "link": {"project": "entry-symlinks", "user": "none"}
+    },
+    "settings": {
+      "files": [{"scope": "project", "path": ".fakemd/settings.json", "format": "json"}],
+      "allow_pointer": null
+    }
+  },
+  "agents": {
+    "reserved_names": ["fakemd-builtin"],
+    "tools": {"shell": "run_shell", "read": "open_file", "edit": "patch_file", "write": "create_file", "search_text": "grep_tree"}
+  },
+  "renderers": {
+    "agent": {
+      "engine": "map",
+      "format": "markdown-frontmatter",
+      "path": "{name}.md",
+      "body": "body",
+      "fields": [
+        {"from": "name", "to": "name", "refuse_if_missing": true},
+        {"from": "description", "to": "description", "refuse_if_missing": true},
+        {"from": "model", "to": "model", "refuse_if_missing": true},
+        {"from": "effort", "to": "effort", "resolve": "effort"},
+        {"from": "tools", "to": "tools", "tool_map": {"shell": "run_shell", "read": "open_file", "edit": "patch_file", "write": "create_file", "search_text": "grep_tree"}, "transform": [{"join": ", "}], "guarantee_for": ["read-only"]},
+        {"to": "hooks", "refuse_if_missing": true, "value": {"before_tool": "{barrier.guard_command}"}}
+      ]
+    }
+  },
+  "dispatch": {"mode": "in-session"},
+  "barrier": {
+    "kind": "hook",
+    "hook": {
+      "input": "json-stdin",
+      "tool_pointer": "/event/tool",
+      "command_pointer": "/event/args/cmd",
+      "cwd_pointer": "/workdir",
+      "path_pointers": ["/event/args/target"],
+      "tool_names": {"shell": ["run_shell"], "write": ["patch_file", "create_file"], "read": ["open_file"], "search": ["grep_tree"]},
+      "deny": {"exit": 0, "stdout": {"decision": "deny", "reason": "{reason}"}},
+      "allow": {"exit": 0}
+    }
+  },
+  "session": {"launch": "fakemd --skills {render}", "render_target": "fakemd-render"}
+}
