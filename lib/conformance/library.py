@@ -180,14 +180,17 @@ def name_of(doc):
     return doc.get(k) if k else None
 
 
-def doc_findings(doc, name):
-    """(fail, warn) message lists for a definition document, whatever its kind."""
+def doc_findings(doc, name, directory=None):
+    """(fail, warn) message lists for a definition document, whatever its kind. With the pack's directory, a provider's contract addenda must
+    be there too."""
     if not isinstance(doc, dict) or doc.get("kind") not in KINDS:
         return ["kind: %r is not one of %s" % (doc.get("kind") if isinstance(doc, dict) else None, ", ".join(KINDS))], []
     f = P.validate2(doc, name)
     fails = [m for lvl, m in f if lvl == "fail"]
     if doc["kind"] == "provider" and P.barrier_claim_problem(doc):      # a claimed barrier with nothing behind it is a fail-open: never verified
         fails.append(P.barrier_claim_problem(doc))
+    if directory and doc["kind"] == "provider":
+        fails += P.addenda_problems(doc, directory)
     warns = [m for lvl, m in f if lvl == "warn" and "verified_on: not verified" not in m]   # a library claim is verified by check or attest, not by a date
     if doc["kind"] == "provider" and isinstance(doc.get("models"), dict) and "catalog" in doc["models"]:
         try:
@@ -317,7 +320,7 @@ def prepare(source, opts, tmp, where):
         raise Failure("cannot work out a valid name (lower case letters, digits and -, starting with a letter, at most 40 characters); pass --name")
     if name != natural:
         doc = rename_key(into, doc, name)
-    fails, warns = doc_findings(doc, name)
+    fails, warns = doc_findings(doc, name, into)
     rv = R.scan(into, doc)
     return into, doc, name, rec, rv, bad + rv["fail"] + fails, warns + rv["warn"]
 
@@ -537,7 +540,7 @@ def cmd_seal(args):
     d = os.path.dirname(e["file"])
     doc = read_definition(d)
     rv = R.scan(d, doc)
-    fails, warns = doc_findings(doc, name)
+    fails, warns = doc_findings(doc, name, d)
     fails = rv["fail"] + fails
     old = P.pack_record(d) or {}
     show_review(rv, doc, "%s pack %s" % (doc.get("kind"), name), warns)
@@ -770,7 +773,7 @@ def cmd_check(args):
         raise Refusal("pack '%s' has no record (put there by hand) and was never reviewed, so it is not checked; read it and seal it (qargi provider seal %s), "
                       "or qargi provider import it from its source" % (name, name))
     rv = R.scan(d, doc)
-    fails, warns = doc_findings(doc, name if name else name_of(doc))
+    fails, warns = doc_findings(doc, name if name else name_of(doc), d)
     fails = rv["fail"] + fails
     warns = rv["warn"] + warns
     print("%s: %s pack, %s; %s, %s" % (label, kind, {"sealed": "sealed", "unsealed": "UNSEALED", "drift": "CHANGED since it was sealed", "unrecorded": "no record (put there by hand)",

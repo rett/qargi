@@ -619,6 +619,9 @@ COMMANDS = {
             "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
                                 [opt("--check", "check that the adapter and the verb exist and print nothing else")],
                                 desc="A verb the definition does not list exits 3."),
+            "addenda": verb("Print the texts a runtime's definition adds to the member contract of a cloud agent's prompt", [("NAME", "none"), ("SURFACE", "none")],
+                            desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
+                                 "A file that is missing, is not text or leaves the directory is refused."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
