@@ -61,7 +61,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
 read-only role run there) is refused to a member, found like the skill verbs, and so is every other provider verb that changes the
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
-PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills and launch, stay allowed).
+PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda and notes, stay allowed).
 Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
 verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
@@ -148,7 +148,7 @@ OWN_ONLY = ("linker.py", "render.py")                       # names too common t
 # against a mistake, not a wall against a member that works to get round it; the local verify of the patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
-PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
+PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
