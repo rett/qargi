@@ -141,7 +141,7 @@ class Skills(unittest.TestCase):
     def setUp(self):
         self.t = os.path.realpath(tempfile.mkdtemp())
         self.home, self.conf, self.clone = (os.path.join(self.t, d) for d in ("home", "conf", "run/clone"))
-        for d in ("home/.claude/skills/x", "conf/packs/skills/s", "conf/packs/tools", "run/clone/skills/qargi-build", "run/clone/.claude/skills/p", "run/out", "proj/.claude/skills/p", "proj/src"):
+        for d in ("home/.claude/skills/x", "conf/packs/skills/s", "conf/packs/tools", "run/clone/skills/sample", "run/clone/.claude/skills/p", "run/out", "proj/.claude/skills/p", "proj/src"):
             os.makedirs(os.path.join(self.t, d))
         self.lib, self.lskill = os.path.join(self.conf, "packs"), os.path.join(self.home, ".claude/skills")
         os.symlink(self.lib, os.path.join(self.clone, "link-to-library"))
@@ -392,16 +392,16 @@ class Skills(unittest.TestCase):
                 r = self.call(tool, {key: p})
                 self.assertEqual(r.returncode, 2, (tool, p, r.stderr))
                 self.assertIn("protected location", r.stderr)
-            for p in ("skills/qargi-build/SKILL.md", os.path.join(c, "skills/new/SKILL.md"), "src/a.go", os.path.join(self.t, "run/out/report.md"),
+            for p in ("skills/sample/SKILL.md", os.path.join(c, "skills/new/SKILL.md"), "src/a.go", os.path.join(self.t, "run/out/report.md"),
                       ".claude/skills/p/SKILL.md", os.path.join(c, ".claude/skills/new/SKILL.md"), "sub/.claude/skills/q/SKILL.md",
                       os.path.join(self.t, "conf/projects/p.json"), os.path.join(ls, "../settings.json")):
                 r = self.call(tool, {key: p})
                 self.assertEqual(r.returncode, 0, (tool, p, r.stderr))
 
     def test_the_repositorys_own_skills_directory_stays_editable(self):
-        for c in ("echo x > skills/qargi-build/SKILL.md", "sed -i s/a/b/ skills/qargi-build/SKILL.md", "cp -r skills/qargi-build skills/qargi-new",
-                  "mv skills/a skills/b", "rm -rf skills/old", "git add skills && git commit -m s", "tee skills/qargi-build/notes.md < /dev/null",
-                  "cd skills/qargi-build && touch extra.md", "rsync -a skills/ %s/run/out/skills/" % self.t, "install -m 644 a.md skills/qargi-build/"):
+        for c in ("echo x > skills/sample/SKILL.md", "sed -i s/a/b/ skills/sample/SKILL.md", "cp -r skills/sample skills/sample-new",
+                  "mv skills/a skills/b", "rm -rf skills/old", "git add skills && git commit -m s", "tee skills/sample/notes.md < /dev/null",
+                  "cd skills/sample && touch extra.md", "rsync -a skills/ %s/run/out/skills/" % self.t, "install -m 644 a.md skills/sample/"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -428,7 +428,7 @@ class Skills(unittest.TestCase):
     def test_bash_reads_and_other_writes_are_not_refused(self):
         lib, ls = self.lib, self.lskill
         for c in ("cat %s/x/SKILL.md" % ls, "cat %s/x/SKILL.md > %s/run/out/copy.md" % (ls, self.t), "cp %s/x/SKILL.md %s/run/out/" % (ls, self.t),
-                  "grep -rn foo %s" % lib, "cat %s/accepted.json" % lib, "jq . %s/accepted.json" % lib, "ls -la %s" % ls, "diff -r %s/x skills/qargi-build" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
+                  "grep -rn foo %s" % lib, "cat %s/accepted.json" % lib, "jq . %s/accepted.json" % lib, "ls -la %s" % ls, "diff -r %s/x skills/sample" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
                   "jq . %s/links.json > %s/run/out/l.json" % (lib, self.t), "find %s -name '*.md'" % ls, "find %s -name SKILL.md -exec cat {} +" % self.clone + " > /dev/null",
                   "tar czf %s/run/out/lib.tgz -C %s ." % (self.t, lib), "echo x > %s/home/.claude/settings.json" % self.t, "rm -rf %s/run/out/old" % self.t,
                   "curl -s http://h/f -o %s/run/out/f" % self.t, "touch %s/.claude" % self.proj, "ls ~/.claude/skills", "echo ~/.claude/skills > list.txt", "cd %s && ls" % lib):
@@ -521,18 +521,18 @@ class Skills(unittest.TestCase):
 
     def test_the_installed_tool_and_a_projects_member_definitions_are_protected(self):
         tool = os.path.join(self.t, "opt/qargi")
-        os.makedirs(os.path.join(tool, "skills/qargi-build"))
+        os.makedirs(os.path.join(tool, "skills/sample"))
         os.makedirs(os.path.join(self.proj, ".claude/agents"))
         with open(os.path.join(self.conf, "install.json"), "w") as f:
             json.dump({"tool_root": tool}, f)
-        os.symlink(os.path.join(tool, "skills/qargi-build"), os.path.join(self.lskill, "qargi-build"))   # what install.sh makes
-        for target in (os.path.join(tool, "skills/qargi-build/SKILL.md"), os.path.join(self.lskill, "qargi-build/SKILL.md"),
+        os.symlink(os.path.join(tool, "skills/sample"), os.path.join(self.lskill, "sample"))   # what install.sh makes
+        for target in (os.path.join(tool, "skills/sample/SKILL.md"), os.path.join(self.lskill, "sample/SKILL.md"),
                        os.path.join(tool, "agents/member.md"), os.path.join(self.proj, ".claude/agents/m.md")):
             self.assertEqual(self.call("Write", {"file_path": target}).returncode, 2, target)
             r = self.bash("echo x > %s" % target)
             self.assertEqual(r.returncode, 2, (target, r.stderr))
         self.assertEqual(self.bash("rm -rf %s" % os.path.join(self.proj, ".claude")).returncode, 2)
-        self.assertEqual(self.bash("cat %s" % os.path.join(tool, "skills/qargi-build/SKILL.md")).returncode, 0)   # reading stays allowed
+        self.assertEqual(self.bash("cat %s" % os.path.join(tool, "skills/sample/SKILL.md")).returncode, 0)   # reading stays allowed
         self.assertEqual(self.call("Write", {"file_path": os.path.join(self.clone, ".claude/agents/m.md")}).returncode, 0)   # the clone's is work product
 
     def test_the_clone_exemption_still_holds_beside_the_new_roots(self):
@@ -552,7 +552,7 @@ class Skills(unittest.TestCase):
 
     def test_inside_the_clone_the_dot_claude_skills_directory_is_the_work_product(self):
         for c in ("echo y > .claude/skills/p/SKILL.md", "echo y>%s/.claude/skills/p/SKILL.md" % self.clone, "mkdir -p .claude/skills/new && touch .claude/skills/new/SKILL.md",
-                  "cp -r skills/qargi-build .claude/skills/qb", "mv .claude/skills/p .claude/skills/q", "rm -rf .claude/skills/p", "rm -rf .claude",
+                  "cp -r skills/sample .claude/skills/qb", "mv .claude/skills/p .claude/skills/q", "rm -rf .claude/skills/p", "rm -rf .claude",
                   "sed -i s/a/b/ .claude/skills/p/SKILL.md", "cd .claude/skills/p && touch more.md", "tee .claude/skills/p/n.md < /dev/null",
                   "install -m 644 a.md %s/.claude/skills/p/" % self.clone, "cp -t .claude/skills/p a.md", "git add .claude/skills && git commit -m s"):
             r = self.bash(c)
@@ -949,7 +949,7 @@ class Marshal(unittest.TestCase):
             self.assertIn(self.KEY_NOTE, res.stderr)
         for tool, inp in (("Read", {"file_path": os.path.join(cred, "tok")}), ("Read", {"file_path": os.path.join(cred, "marshalled")}),
                           ("Read", {"file_path": os.path.join(self.conf, "marshal_ed25519")}), ("Grep", {"pattern": "x", "path": os.path.join(cred, "tok")}),
-                          ("Grep", {"pattern": "x", "path": "src"}), ("Glob", {"pattern": "*", "path": cred}), ("Read", {"file_path": "skills/qargi-build"})):
+                          ("Grep", {"pattern": "x", "path": "src"}), ("Glob", {"pattern": "*", "path": cred}), ("Read", {"file_path": "skills/sample"})):
             res = self.call(tool, inp)
             self.assertEqual(res.returncode, 0, (tool, inp, res.stderr))
 
