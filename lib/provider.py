@@ -1133,6 +1133,12 @@ def barrier_claim_problem(doc, by=None):
             % (by or doc.get("provider") or "the definition", cell["value"], doc.get("surface") or "its surface"))
 
 
+def _claim_problem(e, doc, by=None):
+    """barrier_claim_problem of a definition read from the entry e, or None. A shipped schema 1 file (upgraded in memory) has no barrier data:
+    its barrier is the guard hook, so there is no claim to judge there (check judges schema 2 files only, too)."""
+    return barrier_claim_problem(doc, by=by) if _is2(_read(e)) else None
+
+
 # ---- capabilities -----------------------------------------------------------------------------------------------------
 
 VERIFIERS = ("conformance", "attest")
@@ -1237,6 +1243,8 @@ def cap(name, surface, capability, root=None, library=None, state=None, project=
         by = e if pack == name else _pick(pack, "extension", root, library)
         if not _backed(by, cell, capability, root, library, state, None if pack == name else name, surface):
             return "unverified"
+        if capability == "read_only_barrier" and _claim_problem(e, doc):
+            return "no"                  # claimed, even attested, with nothing behind it (barrier kind none, no read-only arguments): fail closed
     return cell["value"]
 
 
@@ -1783,15 +1791,20 @@ def require_barrier(provider, surface, project=None, root=None, conf=None, libra
     v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
-    doc = _docs(_entry(provider, root, library)).get(surface)
+    entry = _entry(provider, root, library)
+    doc = _docs(entry).get(surface)
+    comp = None
     if doc is not None and project:
-        doc = compose(provider, surface, project, root=root, library=library, conf=conf)["definition"]
+        comp = compose(provider, surface, project, root=root, library=library, conf=conf)
+        doc = comp["definition"]
     cell = _dict(_dict(doc and doc.get("capabilities")).get("read_only_barrier"))
     if v == "partial":
         return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
     if accepted(project, surface, conf):
         return "accepted", ""
-    why = "not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported"
+    by = (comp["provenance"] if comp else {}).get("capabilities.read_only_barrier")
+    claim = _claim_problem(entry, doc, by=by if by != provider else None) if doc is not None else None
+    why = claim or ("not supported" if cell.get("value") == "no" or doc is None else "not verified, so it counts as not supported")
     return "refused", ("the provider %s has no read-only barrier on %s (%s), so a read-only role is refused there.\n"
                        "To run it anyway, on your own responsibility, record that you accept this for the project:\n  %s"
                        % (provider, surface, why, accept_command(provider, surface, project)))

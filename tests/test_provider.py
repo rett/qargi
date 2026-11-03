@@ -1281,13 +1281,50 @@ class Verified(V2Tree):
         self.assertEqual(P.cap("fakecli", "local", "mcp", **kw), "unverified")          # a record is for the library; a shipped file is verified by its date
 
     def test_require_skills_and_the_barrier_follow_the_record(self):
-        self.put_lib("libcli", dict(self.lib, capabilities={"skills": cell("yes", None), "read_only_barrier": cell("yes", None)}))
+        barrier = {"kind": "sandbox-args"}
+        self.put_lib("libcli", dict(self.lib, barrier=barrier, capabilities={"skills": cell("yes", None), "read_only_barrier": cell("yes", None)}))
         with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):             # the default state directory is QARGI_STATE
             with self.assertRaises(P.Unsupported):
                 P.require_skills("libcli", "x", **self.kw())
             self.record(skills=self.good(), read_only_barrier=self.good())
             P.require_skills("libcli", "x", **self.kw())
             self.assertEqual(P.require_barrier("libcli", "local", None, **self.kw())[0], "yes")
+
+    def claimant(self, **over):
+        """libcli claiming read_only_barrier with barrier kind none and (unless over says otherwise) no read-only arguments, attested."""
+        self.put_lib("libcli", dict(self.lib, capabilities={"read_only_barrier": cell("yes", None)}, **over))
+        self.record(read_only_barrier=self.good("attest"))
+
+    def test_an_attested_barrier_claim_with_nothing_behind_it_counts_as_no_barrier(self):
+        """The claim is true of nothing (barrier kind none, no read-only arguments): even attested it must not read as a barrier, or agent add of a
+        review member and require-barrier would treat the runtime as held. cap, effective and require_barrier all fail closed."""
+        self.claimant()
+        self.assertEqual(P.cap("libcli", "local", "read_only_barrier", **self.kw(state=self.state)), "no")
+        self.assertEqual(self.eff("read_only_barrier"), "no")
+        with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):
+            state, text = P.require_barrier("libcli", "local", None, **self.kw())
+        self.assertEqual(state, "refused")
+        self.assertIn("barrier.kind is none", text)                                  # says why: the claim, not "not supported"
+        self.assertIn("qargi provider accept libcli --surface local --no-barrier", text)
+
+    def test_a_claim_that_something_holds_still_counts(self):
+        for label, over in (("sandbox-args", {"barrier": {"kind": "sandbox-args"}}),
+                            ("class_argv", {"dispatch": dict(self.lib["dispatch"], class_argv={"read-only": ["--ro"]})})):
+            with self.subTest(label):
+                self.claimant(**over)
+                self.assertEqual(self.eff("read_only_barrier"), "yes")
+                with mock.patch.dict(os.environ, {"QARGI_STATE": self.state}):
+                    self.assertEqual(P.require_barrier("libcli", "local", None, **self.kw())[0], "yes")
+
+    def test_class_arguments_for_another_class_do_not_hold_the_claim(self):
+        self.claimant(dispatch=dict(self.lib["dispatch"], class_argv={"write": ["--w"]}))
+        self.assertEqual(self.eff("read_only_barrier"), "no")
+
+    def test_an_unverified_claim_stays_unverified_and_a_claim_of_no_stays_no(self):
+        self.put_lib("libcli", dict(self.lib, capabilities={"read_only_barrier": cell("yes", None)}))
+        self.assertEqual(P.cap("libcli", "local", "read_only_barrier", **self.kw(state=self.state)), "unverified")
+        self.put_lib("libcli", dict(self.lib, capabilities={"read_only_barrier": cell("no", None)}))
+        self.assertEqual(P.cap("libcli", "local", "read_only_barrier", **self.kw(state=self.state)), "no")
 
 
 class Family(V2Tree):
@@ -3229,6 +3266,17 @@ class Extensions(ExtensionBase):
         self.assertEqual(P.require_barrier("plaincli", "local")[0], "refused")       # asked without the project: the runtime alone
         self.assertEqual(self.q("require-barrier", "plaincli", "local", "--project", "alpha")[0], 0)
         self.assertEqual(self.q("require-barrier", "plaincli", "local")[0], 2)
+
+    def test_an_attested_extension_that_only_claims_the_barrier_is_no_barrier_and_the_refusal_names_it(self):
+        self.put("claimext", cap_ext("claimext", "plaincli", ["read_only_barrier"]))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["claimext"]})
+        P.record_verification("claimext", {"read_only_barrier": {"hash": P.extension_hash("claimext", "plaincli", "local"), "by": "attest", "at": "t", "note": ""}})
+        self.assertEqual(self.eff_for(cap="read_only_barrier"), "no")
+        state, text = P.require_barrier("plaincli", "local", "alpha")
+        self.assertEqual(state, "refused")
+        self.assertIn("claimext", text)
+        self.assertIn("barrier.kind is none", text)
+        self.assertEqual(self.q("require-barrier", "plaincli", "local", "--project", "alpha")[0], 2)
 
     def test_attest_binds_an_extension_capability_to_the_extension_and_its_base(self):
         self.put("resext", cap_ext("resext", "plaincli", ["resume"]))

@@ -323,12 +323,6 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
                      "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
                      "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
                      % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
-        elif state in ("yes", "partial") and not P.accepted(project, "local") and P.barrier_claim_problem(doc):
-            # the definition claims a barrier it does not have (kind none, no read-only arguments): nothing in this run would hold the member
-            fail("the definition of %s claims a read-only barrier on local, but its barrier kind is none and its dispatch supplies no read-only arguments "
-                 "(class_argv, or a {\"class\": \"read-only\"} group in argv), so nothing holds the member and a read-only run is refused here.\n"
-                 "Fix the definition (set the barrier kind, or declare the capability not supported), or, on your own responsibility, record that you accept no "
-                 "barrier for the project:\n  %s" % (runtime, P.accept_command(runtime, "local", project)))
         elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not P.accepted(project, "local") and not has_class_args(disp):
             # the runtime's own barrier is a hook (it lives in the member file of a runtime that loads agent files; a local run has none) or an adapter's
             # barrier-check (a local run never calls it): nothing in this run applies it, so the capability that reads as held holds nothing here
