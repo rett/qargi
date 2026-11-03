@@ -401,23 +401,27 @@ class AgentAdd(Tree):
         self.project("plain")
         rc, out = self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")
         self.assertNotEqual(rc, 0)
-        self.assertIn("provider 'plain' has no local adapter", out)
+        self.assertIn("provider 'plain' has no member renderer", out)
         self.assertFalse(os.path.exists(os.path.join(self.repo, ".claude", "agents", "forge.md")))
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         if os.path.exists(conf):
             with open(conf) as f:
                 self.assertNotIn("forge", json.load(f))
 
-    def test_the_definition_the_adapter_returns_is_the_file_written(self):
+    def test_the_file_written_says_what_the_adapters_template_says(self):
+        """The member file is made from the renderers.agent data of claude-code, no longer by the adapter's dispatch-local; the template
+        (agents/member.md) stays for that verb. Both say the same: the same lines once the quotes the strict emitter leaves off are set aside."""
+        def plain(text):
+            return re.sub(r'(?m)^( *(?:- )?[A-Za-z]+: )"(.*)"$', r"\1\2", text)
         self.project()
         rc, out = self.qargi("agent", "add", "forge", "--abilities", "build,test", "--project", "alpha")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
-            self.assertEqual(f.read(), sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write"))
+            self.assertEqual(plain(f.read()), plain(sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write")))
         rc, out = self.qargi("agent", "add", "judge", "--abilities", "review")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.env["HOME"], ".claude", "agents", "judge.md")) as f:
-            self.assertEqual(f.read(), sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only"))
+            self.assertEqual(plain(f.read()), plain(sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only")))
 
     def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
         self.project()

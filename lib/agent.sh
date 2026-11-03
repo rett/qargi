@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Members: the local agents that do the work, named by you. qargi ships one member definition
-# (agents/member.md); `add` has the active provider's local adapter render it under the name you choose, with the abilities it serves
-# (roles: build, write, review, test and yours; a task block carries the role's text). The members are recorded in ~/.qargi/config/agents.json.
+# Members: the local agents that do the work, named by you. qargi ships one neutral member definition (agents/member.json and
+# agents/member.body.md, no word of any runtime); `add` renders it through the renderers.agent data of the project's local runtime (lib/render.py)
+# under the name you choose, with the abilities it serves (roles: build, write, review, test and yours; a task block carries the role's text).
+# The members are recorded in ~/.qargi/config/agents.json with the hash of the file and of what it was rendered from: `list` and `models`
+# show STALE when the definition, the catalog or the body changed since (qargi agent refresh) and DRIFT when the file was edited by hand.
 #
 #   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
 #   agent.sh list
@@ -16,7 +18,183 @@
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per guard class) and the profiles (a base, a tier and an effort each)
-PROVIDERS=$root/lib/providers            # one descriptor per provider (its models, its reserved agent names and its local adapter)
+
+# The provider definitions are read through lib/provider.py (the shipped ones and the library's, schema 1 and 2), never as files. The member
+# renderer is that module's neighbour, lib/render.py. This program runs isolated; AGENT_PY holds it, apy runs it.
+AGENT_PY=$(cat <<'PYEOF'
+# The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
+#   pdesc PROV                                        the provider as the loader shows it: tiers, aliases, effort, model_pattern, local.reserved_names, adapter
+#   names                                             the providers that have a definition, one per line
+#   render PROV NAME ABILITIES CLASS MODEL EFFORT     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
+#                                                     (a provider with no renderers.agent, a schema 1 descriptor, has its adapter render: verb dispatch-local)
+#   states MEMBERS_FILE ROLE_CLASSES_JSON             {member: [MISSING | STALE | DRIFT ...]} against what the runtime would render today
+import hashlib
+import json
+import os
+import subprocess
+import sys
+
+LIB = sys.argv[1]
+sys.path.insert(0, LIB)
+import provider as P  # noqa: E402
+import render as R  # noqa: E402
+
+AGENTS = os.path.join(os.path.dirname(LIB), "agents")
+
+
+class Fail(Exception):
+    pass
+
+
+def render_runtime(prov):
+    """The runtime whose definition renders the members of PROV: PROV itself when its definition carries renderers.agent. A schema 1
+    descriptor (the shipped claude.json) carries none; its members are rendered by the one local runtime whose family is its name.
+    None when there is no such runtime: the descriptor is then a schema 1 one with nothing but its adapter (render_legacy)."""
+    def has(n):
+        try:
+            return bool(((P.definition(n, "local").get("renderers") or {}).get("agent")))
+        except P.ProviderError:
+            return False
+    if has(prov):
+        return prov
+    found = [n for n in P.names() if n != prov and has(n) and P.definition(n, "local").get("family") == prov]
+    if len(found) > 1:
+        raise Fail("the family '%s' has more than one local runtime with a member renderer (%s); name one of them" % (prov, ", ".join(found)))
+    return found[0] if found else None
+
+
+def guard_command(rt, cls):
+    """The hook command of a member: it names the runtime only when that runtime's hook protocol is not the one the guard assumes."""
+    cmd = "qargi __guard"
+    try:
+        import guard
+        plain = guard.hook_of(rt) == guard.CLAUDE_HOOK
+    except Exception:
+        plain = False
+    if not plain:
+        cmd += " --provider " + rt
+    return cmd + (" --class read-only" if cls == "read-only" else "")
+
+
+def render_legacy(prov, name, abilities, cls, model, effort):
+    """A schema 1 descriptor has no renderers: its adapter renders the member (verb dispatch-local), as it did before renderers existed."""
+    d = P.load(prov)
+    ad = d.get("adapter")
+    if not isinstance(ad, str) or not os.path.isfile(os.path.join(os.path.dirname(LIB), ad)):
+        raise Fail("the provider '%s' has no member renderer (its definition names no renderers.agent) and no adapter to render with, so it cannot serve members" % prov)
+    req = {"member": name, "abilities": list(abilities), "class": cls, "model": model, "effort": effort or None}
+    r = subprocess.run([os.path.join(os.path.dirname(LIB), ad), "dispatch-local"], input=json.dumps(req), capture_output=True, text=True)
+    try:
+        text = json.loads(r.stdout)["definition"]["text"] if r.returncode == 0 else None
+        err = None if r.returncode == 0 else json.loads(r.stdout).get("error")
+    except (ValueError, KeyError, TypeError):
+        text, err = None, "unreadable answer"
+    if text is None:
+        raise Fail("the adapter of %s could not render the member definition (exit %d): %s" % (prov, r.returncode, err or ""))
+    ag = (P.definition(prov, "local").get("resources") or {}).get("agents") or {}
+    if not ag.get("project_dir"):
+        raise Fail("the provider '%s' keeps no agent files (its definition has no resources.agents), so it cannot serve members" % prov)
+    content = text.rstrip("\n") + "\n"
+    sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    inputs = json.dumps({"adapter": ad, "request": req, "definition": P.definition_hash(prov), "content": sha}, sort_keys=True, separators=(",", ":"))
+    return {"runtime": prov, "path": name + (ag.get("ext") or ".md"), "content": content, "sha256": sha,
+            "inputs_hash": hashlib.sha256(inputs.encode("utf-8")).hexdigest(), "notes": [],
+            "agents": {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir")}}
+
+
+def render_member(prov, name, abilities, cls, model, effort):
+    rt = render_runtime(prov)
+    if rt is None:
+        return render_legacy(prov, name, abilities, cls, model, effort)
+    doc = P.definition(rt, "local")
+    spec = doc["renderers"]["agent"]
+    if spec.get("engine", "map") != "map":
+        raise Fail("the member renderer of %s is a '%s' renderer; only the map engine renders members for now" % (rt, spec.get("engine")))
+    res = doc.get("resources") or {}
+    ag = res.get("agents")
+    if not isinstance(ag, dict) or not ag.get("project_dir"):
+        raise Fail("the runtime %s keeps no agent files (its definition has no resources.agents), so it cannot serve members" % rt)
+    with open(os.path.join(AGENTS, "member.json"), encoding="utf-8") as f:
+        meta = json.load(f)
+    with open(os.path.join(AGENTS, meta["body"]), encoding="utf-8") as f:
+        body = f.read()
+    models = P.models_of(rt, "local")
+    tier = next((t for t in P.TIERS if model in (models["tiers"][t].get("alias"), models["tiers"][t]["model"])), None)
+
+    def resolve(kind, value, definition):
+        if kind == "effort":
+            return models["effort"].get(value)
+        if kind == "model":
+            return P.model_for(models, value) if value in models["tiers"] else None
+        raise R.RenderError("no resolver for %r" % kind)
+    inst = {"name": name, "description": meta["description"].replace("{abilities}", ", ".join(abilities)), "abilities": list(abilities),
+            "class": cls, "tier": tier, "model": model, "effort": effort or None, "tools": meta["tools"],
+            "barrier": {"class": cls, "guard_command": guard_command(rt, cls)},
+            "body": body.replace("{skills_dir}", (res.get("skills") or {}).get("project_dir") or "skills")}
+    try:
+        out = R.render_map(inst, spec, resolver=resolve, extra={"runtime": rt, "definition": P.definition_hash(rt)})
+    except R.RenderError as e:
+        raise Fail("the member cannot be rendered for %s: %s" % (rt, e))
+    out["runtime"] = rt
+    out["agents"] = {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir")}
+    return out
+
+
+def states(members_file, rc):
+    with open(members_file, encoding="utf-8") as f:
+        members = json.load(f)
+    out = {}
+    for name, rec in members.items():
+        st, r, f = [], rec.get("render"), rec.get("file") or ""
+        if not os.path.isfile(f):
+            out[name] = ["MISSING"]
+            continue
+        with open(f, "rb") as fh:
+            if isinstance(r, dict) and r.get("hash") and hashlib.sha256(fh.read()).hexdigest() != r["hash"]:
+                st.append("DRIFT")
+        ab = rec.get("abilities") or []
+        cls = "read-only" if ab and all(rc.get(a) == "read-only" for a in ab) else "write"
+        try:
+            if not (isinstance(r, dict) and r.get("inputs_hash")) or not rec.get("provider"):
+                raise Fail("no render is recorded")
+            now = render_member(rec["provider"], name, ab, cls, rec.get("model") or "", rec.get("effort") or "")
+            if now["inputs_hash"] != r["inputs_hash"]:
+                raise Fail("the inputs changed")
+        except (Fail, P.ProviderError):
+            st.insert(0, "STALE")
+        out[name] = st
+    return out
+
+
+def main(argv):
+    verb, a = argv[2], argv[3:]
+    try:
+        if verb == "pdesc" and len(a) == 1:
+            print(json.dumps(P.load(a[0])))
+        elif verb == "names" and not a:
+            print("\n".join(P.names()))
+        elif verb == "render" and len(a) == 6:
+            print(json.dumps(render_member(a[0], a[1], [x for x in a[2].split(",") if x], a[3], a[4], a[5])))
+        elif verb == "states" and len(a) == 2:
+            print(json.dumps(states(a[0], json.loads(a[1]))))
+        else:
+            raise Fail("usage: agent.sh internal call %s" % verb)
+    except (Fail, P.ProviderError) as e:
+        print("qargi: %s" % e, file=sys.stderr)
+        return 1
+    return 0
+
+
+sys.exit(main(sys.argv))
+PYEOF
+)
+apy() { python3 -I -c "$AGENT_PY" "$root/lib" "$@"; }
+PCACHE=$(mktemp -d); trap 'rm -rf "$PCACHE"' EXIT   # a provider is read once per run, however many subshells ask
+pdesc() { # provider -> its description as the loader gives it: tiers, aliases, effort, model_pattern, local.reserved_names, adapter
+  [ -s "$PCACHE/$1" ] || apy pdesc "$1" > "$PCACHE/$1.tmp" || return 1
+  [ -s "$PCACHE/$1" ] || mv "$PCACHE/$1.tmp" "$PCACHE/$1"
+  cat "$PCACHE/$1"
+}
 
 verb=${1:-}; shift || true
 POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
@@ -40,21 +218,28 @@ valid_name() { # name provider -> dies with the rule (the reserved names are the
   printf '%s' "$n" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#n}" -le 40 ] \
     || die "'$n' is not a member name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
   lc=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')
-  for b in $(jq -r '.local.reserved_names[]' "$PROVIDERS/$p.json"); do
+  for b in $(pdesc "$p" | jq -r '.local.reserved_names[]'); do
     [ "$lc" != "$b" ] || die "'$n' is a built-in agent type of the provider; choose another name"
   done
   if [ "$n" = lead ] || valid_role "$n"; then die "'$n' is a role; name the member after itself, for example forge or scribe"; fi
 }
 
-agents_dir() { # project-or-empty -> the directory the definition goes to
+repo_path() { # project -> its local repository (dies when the answers name none)
+  local f=$DA_CONF/projects/$1.json rp
+  [ -f "$f" ] || die "no stored answers for $1"
+  rp=$(jq -r '.repo.path // ""' "$f"); rp=${rp/#\~/$HOME}
+  [ -n "$rp" ] && [ -d "$rp" ] || die "--project $1: its answers name no local repository (repo.path)"
+  echo "$rp"
+}
+
+agents_dir() { # project-or-empty rendered-json -> the directory the definition goes to (the runtime's agents directory: in the project's repository, or the user's)
+  local d
   if [ -n "$1" ]; then
-    local f=$DA_CONF/projects/$1.json rp
-    [ -f "$f" ] || die "no stored answers for $1"
-    rp=$(jq -r '.repo.path // ""' "$f"); rp=${rp/#\~/$HOME}
-    [ -n "$rp" ] && [ -d "$rp" ] || die "--project $1: its answers name no local repository (repo.path)"
-    echo "$rp/.claude/agents"
+    d=$(jq -r '.agents.project_dir' <<<"$2"); echo "$(repo_path "$1")/$d"
   else
-    echo "$HOME/.claude/agents"
+    d=$(jq -r '.agents.user_dir // empty' <<<"$2")
+    [ -n "$d" ] || die "the runtime $(jq -r .runtime <<<"$2") keeps no user-level agents; give --project"
+    echo "${d/#\~/$HOME}"
   fi
 }
 
@@ -88,24 +273,23 @@ project_in_effect() { # explicit-project-or-empty -> that project, else the one 
 
 provider_for() { # project-or-empty surface -> the project's runtime on that surface (models.provider; no default, see project_provider); dies when it has no descriptor
   local p; p=$(project_provider "$1" "$2") || return $?   # exit 2 with the shared message: no project, no such project, no provider for the surface
-  if [ "$p" = schema ] || [ "$p" = adapter-schema ] || [ ! -f "$PROVIDERS/$p.json" ]; then
-    die "models.provider '$p' has no file under lib/providers/; available: $(find "$PROVIDERS" -maxdepth 1 -name '*.json' ! -name schema.json ! -name adapter-schema.json -exec basename {} .json \; | sort | paste -sd, - | sed 's/,/, /g')"
-  fi
+  local err
+  err=$(pdesc "$p" 2>&1 >/dev/null) || die "models.provider '$p' cannot be loaded (${err#qargi: }); available: $(apy names | paste -sd, - | sed 's/,/, /g')"
   echo "$p"
 }
 
-no_effort() { # provider -> 0 when the provider has no effort control (every effort level is null in its descriptor)
-  jq -e '[.effort[]] | all(. == null)' "$PROVIDERS/$1.json" >/dev/null
+no_effort() { # provider -> 0 when the provider has no effort control (every effort level is null in its definition)
+  pdesc "$1" | jq -e '[.effort[]] | all(. == null)' >/dev/null
 }
 
 tier_model() { # provider tier -> the provider's model id
-  jq -r --arg t "$2" '.tiers[$t]' "$PROVIDERS/$1.json"
+  pdesc "$1" | jq -r --arg t "$2" '.tiers[$t]'
 }
 
-adapter_for() { # provider -> the path of its local adapter; dies when the descriptor names none
-  local a; a=$(jq -r '.adapter // empty' "$PROVIDERS/$1.json")
-  [ -n "$a" ] || die "the provider '$1' has no local adapter, so it cannot serve members (its descriptor lib/providers/$1.json names none)"
-  [ -x "$root/$a" ] || die "the local adapter of the provider '$1' is missing or not executable: $root/$a"
+adapter_for() { # provider -> the path of its adapter; dies when the definition names none
+  local a; a=$(pdesc "$1" | jq -r '.adapter // empty')
+  [ -n "$a" ] || die "the provider '$1' has no adapter (its definition names none)"
+  [ -x "$root/$a" ] || die "the adapter of the provider '$1' is missing or not executable: $root/$a"
   echo "$root/$a"
 }
 
@@ -118,21 +302,31 @@ default_for() { # project ability field provider -> the project's answer for it,
   echo "$v"
 }
 
-render() { # name abilities-csv model effort-or-empty provider -> the definition on stdout, from the provider's adapter (dispatch-local)
-  # a member that only reviews is read-only by class, named in its hook command (under the protected agents directory)
-  local cls=read-only a adapter req out rc
-  for a in $(printf '%s' "$2" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || cls='write'; done
-  adapter=$(adapter_for "$5") || exit 1
-  ! no_effort "$5" || set -- "$1" "$2" "$3" '' "$5"
-  req=$(jq -nc --arg n "$1" --arg a "$2" --arg c "$cls" --arg m "$3" --arg e "${4:-}" \
-    '{member: $n, abilities: ($a | split(",")), class: $c, model: $m, effort: (if $e == "" then null else $e end)}')
-  out=$("$adapter" dispatch-local <<<"$req") && rc=0 || rc=$?
-  [ "$rc" = 0 ] || die "the local adapter could not render the member definition (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)"
-  jq -j '.definition.text' <<<"$out"
+member_class() { # abilities-csv -> the guard class of a member: read-only when every ability is, else write
+  local a cls=read-only
+  for a in $(printf '%s' "$1" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || cls='write'; done
+  echo "$cls"
+}
+
+render_member() { # name abilities-csv model effort-or-empty provider -> prints {runtime, path, content, sha256, inputs_hash, notes, agents} (the runtime's renderers.agent)
+  local e=$4
+  ! no_effort "$5" || e=''
+  apy render "$5" "$1" "$2" "$(member_class "$2")" "$3" "$e"
+}
+
+member_record() { # rendered-json -> what the member's record keeps of it: the path, the hash of the bytes and the hash of the inputs
+  jq -c '{path: .path, hash: .sha256, inputs_hash: .inputs_hash}' <<<"$1"
+}
+
+write_member() { # rendered-json file: say what the runtime could not express, then write the file (the old one is replaced whole)
+  local r=$1 f=$2
+  jq -r '.notes[] | "qargi: note: " + .' <<<"$r" >&2
+  mkdir -p "$(dirname "$f")"
+  jq -j .content <<<"$r" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
 }
 
 add() {
-  local n=${POS[0]:-} eproj a list='' dir file seq first bc prov text ro ORIG_EFFORT=$EFFORT
+  local n=${POS[0]:-} eproj a list='' dir file seq first bc prov r ro ORIG_EFFORT=$EFFORT
   [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
   # the provider is the project's (models.provider; no default): --project, else the project in effect here. Only --project puts the member in
   # the project's repository; without it the member is a user-level one and the project in effect lends its provider for this run
@@ -152,7 +346,6 @@ add() {
   # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
   ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
   [ -z "$ro" ] || barrier_guard local "$eproj"
-  adapter_for "$prov" >/dev/null || exit 1
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model "$prov")
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort "$prov")
   if no_effort "$prov"; then   # the provider cannot be told how hard to think: the member records none
@@ -161,15 +354,16 @@ add() {
   fi
   printf '%s' "$MODEL" | grep -Eq '^[a-z0-9][a-z0-9.-]*$' || die "--model: a model alias or id (letters, digits, . -)"
   case $EFFORT in ''|low|medium|high|xhigh|max) ;; *) die "--effort low|medium|high|xhigh|max";; esac
-  dir=$(agents_dir "$PROJ") || exit 1; file=$dir/$n.md
+  r=$(render_member "$n" "$list" "$MODEL" "$EFFORT" "$prov") || exit 1
+  dir=$(agents_dir "$PROJ" "$r") || exit 1; file=$dir/$(jq -r .path <<<"$r")
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
-  text=$(render "$n" "$list" "$MODEL" "$EFFORT" "$prov") || exit 1
-  mkdir -p "$dir"; printf '%s\n' "$text" > "$file"
-  [ -z "$PROJ" ] || hide_in_git "$(dirname "$(dirname "$dir")")" ".claude/agents/$n.md"
+  write_member "$r" "$file"
+  [ -z "$PROJ" ] || hide_in_git "$(repo_path "$PROJ")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
   seq=$(jq '[.[].seq // 0] | max // 0 | . + 1' "$MEMBERS_FILE")
   json_update "$MEMBERS_FILE" '.[$n] = {abilities: ($a | split(",")), file: $f, model: $m, effort: (if $e == "" then null else $e end),
-      project: (if $p == "" then null else $p end), created: $t, seq: $s}' \
-    --arg n "$n" --arg a "$list" --arg f "$file" --arg m "$MODEL" --arg e "$EFFORT" --arg p "$PROJ" --arg t "$(now)" --argjson s "$seq"
+      project: (if $p == "" then null else $p end), created: $t, seq: $s, provider: $v, surface: "local", render: $r}' \
+    --arg n "$n" --arg a "$list" --arg f "$file" --arg m "$MODEL" --arg e "$EFFORT" --arg p "$PROJ" --arg t "$(now)" --argjson s "$seq" \
+    --arg v "$prov" --argjson r "$(member_record "$r")"
   echo "member $n ($list) at $file"
 }
 
@@ -221,6 +415,10 @@ pf_json() { # project-or-empty -> the project's stored answers as one object ({}
   if [ -n "$1" ] && [ -f "$f" ]; then jq -c 'if type == "object" then . else {} end' "$f" 2>/dev/null || echo '{}'; else echo '{}'; fi
 }
 
+member_states() { # role-classes-json -> {member: [MISSING | STALE | DRIFT]}: the file and the render on record against what the runtime renders today
+  apy states "$MEMBERS_FILE" "$1"
+}
+
 role_classes() { # -> {role: class} for every role (a role without a readable class is left out)
   local r c o='{}'
   for r in $DA_ROLES; do
@@ -232,17 +430,17 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 }
 
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
-  local proj=$PROJ pf prov tiers aliases rc out noeff=false
+  local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
-  tiers=$(jq -c .tiers "$PROVIDERS/$prov.json"); aliases=$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")
+  pd=$(pdesc "$prov") || exit 1
+  tiers=$(jq -c .tiers <<<"$pd"); aliases=$(jq -c '.aliases // {}' <<<"$pd")
   rc=$(role_classes)
   ! no_effort "$prov" || noeff=true
-  local miss='{}' n f
-  while IFS=$'\t' read -r n f; do [ -f "$f" ] || miss=$(jq -c --arg n "$n" '.[$n] = true' <<<"$miss"); done < <(jq -r 'to_entries[] | [.key, (.value.file // "")] | @tsv' "$MEMBERS_FILE")
-  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson miss "$miss" --argjson noeffort "$noeff" --arg prov "$prov" --arg pat "$(jq -r .model_pattern "$PROVIDERS/$prov.json")" "$PJQ"'
+  st=$(member_states "$rc") || exit 1
+  out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson st "$st" --argjson noeffort "$noeff" --arg prov "$prov" --arg pat "$(jq -r .model_pattern <<<"$pd")" "$PJQ"'
     def mclass: if ((.abilities // []) | length) > 0 and all((.abilities // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
     | ([$m[0] | to_entries[] | .value | mclass] | unique) as $have
@@ -256,12 +454,14 @@ models() { # the bases, the profiles with the project's own merged in, the escal
        escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
        members: [$m[0] | to_entries | sort_by(.value.seq // 0)[] | .key as $k | (.value | mclass) as $c | baseof($c) as $bn | .value.abilities as $ab
          | {name: $k, abilities: $ab, class: $c, model: (.value.model // null),
-         effort: (.value.effort // null), project: (.value.project // null),
+         effort: (.value.effort // null), project: (.value.project // null), state: ($st[$k] // []),
          pinned: ((.value.model // "") | test($pat)),
          frontier: (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)),
          flags: ([if ($bases | has($k) | not) and $bn != null then (if ($m[0] | has($bn)) then "legacy: retire after \($bn) exists" else "legacy (in use: no \($bn))" end) else empty end,
            if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
-           if $miss[$k] then "definition file missing" else empty end,
+           if ($st[$k] // []) | index("MISSING") then "definition file missing" else empty end,
+           if ($st[$k] // []) | index("STALE") then "STALE: rendered from an older definition, catalog or body, or from none on record (qargi agent refresh \($k))" else empty end,
+           if ($st[$k] // []) | index("DRIFT") then "DRIFT: the file was edited by hand (qargi agent refresh \($k) replaces it)" else empty end,
            if (((.value.model // "") == $tiers.frontier) or ((.value.model // "") == $aliases.frontier)) and $k != "researcher" then "frontier model outside the researcher" else empty end])}]}
     | .warnings = ([(.bases | to_entries[] | .key as $k | .value.flags[] | {kind: "base", name: $k, message: .}),
         (.profiles[] | .name as $k | .flags[] | {kind: "profile", name: $k, message: .}),
@@ -317,11 +517,12 @@ RESOLVEJQ="$RESOLVE_HEAD"'
     )'
 
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov res code noeff=false mem mm want ov
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" local) || exit $?
   ! no_effort "$prov" || noeff=true
-  res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
-    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
+  pd=$(pdesc "$prov") || exit 1
+  res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" \
+    --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
@@ -354,13 +555,14 @@ cloud_inst() { # name -> the registry record when the name is a registered cloud
 }
 
 resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFORT PROFILE (or --json), or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov res code noeff=false base cls row model alias effort req out rc adapter ovm=no ove=yes
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls row model alias effort req out rc adapter ovm=no ove=yes
   local inst='' legacy=true brec='' rec rm n why='' ov alt
   [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" cloud) || exit $?
   ! no_effort "$prov" || noeff=true
-  res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers "$PROVIDERS/$prov.json")" \
-    --argjson aliases "$(jq -c '.aliases // {}' "$PROVIDERS/$prov.json")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
+  pd=$(pdesc "$prov") || exit 1
+  res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" \
+    --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" "$PJQ$CLOUDJQ") || die "could not resolve the profile"
   code=$(jq -r .code <<<"$res")
   if [ "$code" != 0 ]; then echo "qargi: $(jq -r .err <<<"$res")" >&2; exit "$code"; fi
@@ -422,35 +624,50 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
 case $verb in
   add) add;;
   list)
-    jq -r 'to_entries | sort_by(.value.seq // 0)[] | [.key, (.value.abilities | join(",")), (if .value.project then "project " + .value.project else "user" end),
-        (.value.model // "-") + "/" + (.value.effort // "default"), .value.file] | @tsv' "$MEMBERS_FILE" \
-      | while IFS=$'\t' read -r n a s m f; do
-          [ -f "$f" ] || f="$f (MISSING)"
-          printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$a" "$s" "$m" "$f"
-        done | column -t -s "$(printf '\t')"
+    st=$(member_states "$(role_classes)") || exit 1
+    jq -r --argjson st "$st" 'to_entries | sort_by(.value.seq // 0)[] | [.key, (.value.abilities | join(",")), (if .value.project then "project " + .value.project else "user" end),
+        (.value.model // "-") + "/" + (.value.effort // "default"),
+        (.value.file + (if ($st[.key] // []) | length > 0 then " (" + (($st[.key]) | join(", ")) + ")" else "" end))] | @tsv' "$MEMBERS_FILE" \
+      | column -t -s "$(printf '\t')"
     [ "$(jq length "$MEMBERS_FILE")" != 0 ] || echo "no members yet: qargi agent add NAME [--abilities build,write,review,test]";;
   rename)
     old=${POS[0]:-}; new=${POS[1]:-}
     [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW"
     rec=$(jq -ce --arg n "$old" '.[$n]' "$MEMBERS_FILE") || die "no member named $old (qargi agent list)"
-    prov=$(provider_for "$(project_in_effect "$(jq -r '.project // ""' <<<"$rec")")" local) || exit $?
+    mproj=$(jq -r '.project // ""' <<<"$rec")
+    prov=$(provider_for "$(project_in_effect "$mproj")" local) || exit $?
     valid_name "$new" "$prov"
     jq -e --arg n "$new" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already"
-    f=$(jq -r .file <<<"$rec"); nf=$(dirname "$f")/$new.md
+    f=$(jq -r .file <<<"$rec"); ab=$(jq -r '.abilities | join(",")' <<<"$rec")
+    # the file carries the name, so the member is rendered again under the new one, into the directory of the old file
+    r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
+    oldrel=$(jq -r '.render.path // ""' <<<"$rec"); base=$(dirname "$f")
+    [ -z "$oldrel" ] || [ "${f%/"$oldrel"}" = "$f" ] || base=${f%/"$oldrel"}
+    nf=$base/$(jq -r .path <<<"$r")
     [ ! -e "$nf" ] || die "$nf exists already"
-    if [ -f "$f" ]; then sed "s/^name: $old\$/name: $new/" "$f" > "$nf" && rm -f "$f"; fi
-    json_update "$MEMBERS_FILE" '.[$new] = (.[$old] | .file = $f) | del(.[$old])' --arg old "$old" --arg new "$new" --arg f "$nf"
+    write_member "$r" "$nf"
+    [ ! -f "$f" ] || rm -f "$f"
+    [ -z "$mproj" ] || hide_in_git "$(repo_path "$mproj")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
+    json_update "$MEMBERS_FILE" '.[$new] = (.[$old] | .file = $f | .provider = $v | .surface = "local" | .render = $r) | del(.[$old])' --arg old "$old" --arg new "$new" --arg f "$nf" \
+      --arg v "$prov" --argjson r "$(member_record "$r")"
     echo "renamed member $old -> $new ($nf)";;
   refresh)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
     prov=$(provider_for "$(project_in_effect "$(jq -r '.project // ""' <<<"$rec")")" local) || exit $?
-    new=$(render "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(jq -r '.aliases.balanced // .tiers.balanced' "$PROVIDERS/$prov.json")" '.model // $d' <<<"$rec")" \
+    r=$(render_member "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
-    if [ -f "$f" ] && [ "$new" = "$(cat "$f")" ]; then echo "member $n is current ($f)"; exit 0; fi
-    mkdir -p "$(dirname "$f")"; printf '%s\n' "$new" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
-    echo "refreshed member $n ($f); sessions started afterwards use it";;
+    # the file is the render's bytes: written again unless it is already those (a hand-edited file is replaced, and the output says so)
+    drift=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
+    [ -z "$want" ] || [ ! -f "$f" ] || [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$want" ] || drift=1
+    if [ -f "$f" ] && [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$(jq -r .sha256 <<<"$r")" ]; then
+      json_update "$MEMBERS_FILE" '.[$n] += {provider: $v, surface: "local", render: $r}' --arg n "$n" --arg v "$prov" --argjson r "$(member_record "$r")"
+      echo "member $n is current ($f)"; exit 0
+    fi
+    write_member "$r" "$f"
+    json_update "$MEMBERS_FILE" '.[$n] += {provider: $v, surface: "local", render: $r}' --arg n "$n" --arg v "$prov" --argjson r "$(member_record "$r")"
+    echo "refreshed member $n ($f); sessions started afterwards use it${drift:+; the edits made to the file by hand are gone}";;
   models) models;;
   remove)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent remove NAME"

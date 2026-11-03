@@ -37,7 +37,7 @@ $DA role check probe >/dev/null 2>&1 && no "an unknown class passed" || ok "an u
 printf '{"class":"write","description":"Poke."}\n' > "$T/c/roles/probe/role.json"
 
 # members serve roles of yours; the class decides the guard
-$DA agent add looker --abilities audit >/dev/null 2>&1 && grep -q 'command: "qargi __guard --class read-only"' "$HOME/.claude/agents/looker.md" && ok "a member of only read-only roles is read-only by class" || no "looker"
+$DA agent add looker --abilities audit >/dev/null 2>&1 && grep -q 'command: qargi __guard --class read-only$' "$HOME/.claude/agents/looker.md" && ok "a member of only read-only roles is read-only by class" || no "looker"
 $DA agent add mixed --abilities audit,probe >/dev/null 2>&1 && ! grep -q -- '--class' "$HOME/.claude/agents/mixed.md" && ok "a member with a write role names no class" || no "mixed"
 $DA agent add audit >/dev/null 2>&1 && no "a member took a role's name" || ok "a member cannot be named after a role"
 [ "$($DA agent for audit | cut -d" " -f1)" = looker ] && ok "agent for finds the member of a role of yours" || no "for audit: $($DA agent for audit 2>&1)"
