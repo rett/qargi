@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-03T04:56:54Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-03T06:20:55Z",
- "finished_at": null,
+ "finished_at": "2026-11-03T06:26:41Z",
  "updated_by": "rett@arc",
- "rev": 6,
- "updated_at": "2026-11-03T06:20:55Z",
+ "rev": 7,
+ "updated_at": "2026-11-03T06:26:41Z",
  "feature": "clean-guard",
  "project": "qargi"
 }
