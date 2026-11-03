@@ -312,6 +312,23 @@ out=$("$DA" provider check skext --project pnosk 2>&1)
 { grep -q "^ok   link-skills" <<<"$out" && [ "$(sk)" = yes ]; } && ok "extensions: its check ran the link case on the composition, and now skills count" || no "skext check: $out / $(sk)"
 [ "$("$DA" provider effective nosk local skills)" = no ] && ok "extensions: for the runtime alone they still do not" || no "skext leaked"
 
+# --- a barrier that is claimed and not there is a fail-open, and the check fails it -------------------------------------------------------
+echo "# a read-only barrier claimed and not provided"
+# failopen: claims read_only_barrier, barrier kind none, no read-only arguments in its dispatch. The check fails it (a directory, and the
+# pack as the import would store it), naming the surface and the fix, and nothing of it is verified.
+out=$("$DA" provider check "$FIX/failopen" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "^fail: .*read_only_barrier.* on local" <<<"$out" && grep -q "set barrier.kind" <<<"$out" && grep -q "declare the capability not supported" <<<"$out" && grep -q "nothing is verified while the pack fails" <<<"$out"; } && ok "failopen: check fails a claimed read_only_barrier with barrier kind none and no class arguments, naming the surface and the fix" || no "failopen check: rc=$rc $out"
+out=$("$DA" provider import "$FIX/failopen" 2>&1); rc=$?
+{ [ $rc != 0 ] && [ -z "$(tokp <<<"$out")" ] && [ ! -e "$LIB/failopen" ]; } && ok "failopen: and the import is refused at the plan, with no token" || no "failopen import: rc=$rc $out"
+# claimext adds a claim and no barrier to plainrt (which has none and no class arguments): the composition is the same fail-open
+imp "$FIX/plainrt" && imp "$FIX/claimext" && ok "claimext: the runtime and an extension that only claims a barrier are imported (an extension is judged on the composition)" || no "plainrt/claimext import"
+C=pclaim; mkproj "$C" "$T/r-claim"
+"$DA" project set "$C" models.provider.local plainrt >/dev/null 2>&1
+X=$C; out=$(enable claimext)
+out=$("$DA" provider check claimext --project "$C" 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "^fail: .*read_only_barrier.*claimext.*plainrt.* on local" <<<"$out" && grep -q "set barrier.kind" <<<"$out" && grep -q "declare the capability not supported" <<<"$out"; } && ok "claimext: check fails the composition, naming the extension, the runtime, the surface and the fix" || no "claimext check: rc=$rc $out"
+[ ! -e "$T/s/providers/claimext/verified.json" ] && [ "$("$DA" provider effective plainrt local read_only_barrier --project "$C")" = no ] && ok "claimext: and nothing is verified, so the claim counts as no" || no "claimext verified: $(cat "$T/s/providers/claimext/verified.json" 2>&1)"
+
 # --- the whole run changed nothing in the tool ----------------------------------------------------------------------------------------
 cd "$ROOT" || exit 1
 rm -rf "$T"

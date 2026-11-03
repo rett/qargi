@@ -766,6 +766,7 @@ class StartSession(Tree):
     def test_a_verified_barrier_on_cloud_needs_no_acceptance(self):
         def mutate(d):
             d["capabilities"]["read_only_barrier"] = {"value": "yes", "verified_on": "2026-10-31", "source": "test", "note": "a changed copy"}
+            d["barrier"] = {"kind": "adapter"}                                   # a claimed barrier needs one behind it, or the adapter refuses the definition
         self.definition("claude-platform", mutate)
         rc, out, _ = self.call(self.req(role="reviewer", profile="review"), adapter=self.platform)
         self.assertEqual(rc, 0, out)

@@ -1094,6 +1094,33 @@ def validate2(d, name=None):
     return out
 
 
+def has_class_args(disp):
+    """Does a dispatch carry read-only arguments: class_argv, or a {"class": ...} group in argv (also inside an {"if": ..., "then": [...]})?"""
+    def has(items):
+        return any(isinstance(i, dict) and ("class" in i or has(i.get("then") or [])) for i in items if isinstance(i, dict))
+    disp = disp if isinstance(disp, dict) else {}
+    argv = disp.get("argv")
+    return bool(disp.get("class_argv")) or (isinstance(argv, list) and has(argv))
+
+
+def barrier_claim_problem(doc, by=None):
+    """Why a definition's claim of read_only_barrier (yes or partial) is a fail-open, or None. The claim is true of nothing when the barrier
+    kind is none (or absent) and the dispatch has no read-only arguments: no hook, no sandbox, no adapter and no class arguments hold a
+    read-only member, yet the capability reads as a barrier, so a read-only run would be treated as held. doc is a runtime definition or
+    a composition of a runtime and extensions (compose()); by names the extension that gives the claim, for the message."""
+    cell = _dict(_dict(doc.get("capabilities")).get("read_only_barrier")) if isinstance(doc, dict) else {}
+    if cell.get("value") not in ("yes", "partial"):
+        return None
+    bar = doc.get("barrier")
+    kind = bar.get("kind") if isinstance(bar, dict) else None
+    if kind not in (None, "none") or has_class_args(doc.get("dispatch")):
+        return None
+    return ("capabilities.read_only_barrier: %s claims %s on %s, but barrier.kind is none and the dispatch has no read-only arguments (class_argv, or a "
+            "{\"class\": \"read-only\"} group in argv), so nothing holds a read-only member and it would be treated as held; set barrier.kind (hook, "
+            "sandbox-args or adapter, with what that kind needs), or declare the capability not supported (value no)"
+            % (by or doc.get("provider") or "the definition", cell["value"], doc.get("surface") or "its surface"))
+
+
 # ---- capabilities -----------------------------------------------------------------------------------------------------
 
 VERIFIERS = ("conformance", "attest")
@@ -1806,6 +1833,8 @@ def findings_of(name, root=None, library=None):
     e = _entry(name, root, library)
     raw = _read(e)
     findings = validate(raw, name)
+    if _is2(raw) and raw.get("kind") == "provider" and barrier_claim_problem(raw):
+        findings.append(("fail", barrier_claim_problem(raw)))
     if _is2(raw) and raw.get("kind") == "provider" and isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
         try:
             catalog(raw["models"]["catalog"], root, library)

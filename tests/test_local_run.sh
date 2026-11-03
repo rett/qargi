@@ -161,6 +161,29 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q '"--ro"' <<<"$out" && ok "with the project's acceptance it goes on, and the class group adds its arguments" || no "accepted: rc=$rc $out"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 
+# a runtime whose definition claims read_only_barrier (and the owner attested it) with barrier kind none and no read-only arguments in its
+# dispatch: nothing would hold the member, yet the capability reads as yes. A fail-open: the read-only run is refused like any barrier-less one
+mk fakeclaim "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakeclaim",family:null,surface:"local",models:$m,
+  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+verify_ro fakeclaim
+setprov fakeclaim; prep "$T/r" rv2c review; task
+[ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = yes ] && ok "fail-open claim: the attested claim reads as yes (that is the hole)" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+  && ok "a read-only run of a runtime that claims a barrier it does not have is refused (exit 2) with the accept command" || no "fail-open claim, dry: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "fail-open claim, real: rc=$rc $out"
+prep "$T/r" w2c; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "a write run of the same runtime is not affected" || no "fail-open claim, write: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-02", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" rv2d review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "with the project's acceptance of no barrier the same read-only run goes on" || no "fail-open claim, accepted: rc=$rc $out"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+setprov fakeobj
+
 # --- the project's extensions are part of the definition a run acts on (A2) ---------------------------------------------------------
 # fakenobar has a command dispatch and no barrier; sandext gives it a sandbox-args barrier and claims read_only_barrier, and the owner
 # attested it. The extension adds no read-only arguments (an extension cannot add class_argv), so nothing in a local run applies that
