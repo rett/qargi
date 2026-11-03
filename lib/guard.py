@@ -41,7 +41,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     provider enable|disable|accept (no environment variable or option opens project set to the two keys any more), is refused in any use;
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
-    ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
+    ~/.qargi/config/packs), the credentials
     directory and install.json of the same configuration directories (not the rest of it: a member may run qargi verbs that
     change instances, agents or projects; the guard decides by the path a write construct names, never by the verb, and a
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
@@ -361,7 +361,7 @@ class MemoryReason(MarshalReason):
 
 def conf_dirs(P, home):
     """The configuration directories a qargi installation may keep its packs, credentials and install record in."""
-    return (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"), P.legacy_conf(), os.path.join(home, ".config", "qargi"))
+    return (P.conf(), os.path.join(P.root(), "config"), os.path.join(home, ".qargi", "config"))
 
 
 _RESOURCE_DIRS = []
@@ -411,8 +411,7 @@ def protected_roots():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
-    # the library where the data lives now, the default and the QARGI_HOME one beside an override, and the earlier XDG
-    # libraries, which stay as a backup after `qargi migrate home`
+    # the library where the data lives, the default and the QARGI_HOME one beside an override
     # Besides the library, only the credentials and the install record of each configuration directory: not the rest of
     # <conf> (instances, agents, projects, profiles), which qargi verbs a member runs legitimately change.
     # The user's skills and agents directories are the ones the definitions name. No resource names a plugins directory yet, so the one

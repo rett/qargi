@@ -273,7 +273,7 @@ lib/tiercontext.py:nothing in them overrides the user or CLAUDE\.md
 # lib/conformance/run.sh: the usage names the shipped runtimes
 lib/conformance/run.sh:claude-code, claude-platform
 
-# lib/paths.py: the places an earlier version used; ant keeps its login under the XDG config directory
+# lib/paths.py: XDG_CONFIG_HOME is not used for qargi data; ant keeps its login under it
 lib/paths.py:the ant CLI keeps its login
 
 # ======================================================================================================================================
