@@ -15,12 +15,11 @@ Installed and dev runs: `install.sh --user` records the tool root it installed i
 whose real path differs from that record, run without QARGI_HOME, QARGI_CONF or QARGI_STATE, is a dev run: it keeps its
 data in <tool root>/.qargi (git-ignored), so a branch checkout never touches live data. With no record, or the same
 tool root, the run is the installed one and uses ~/.qargi. The "live" locations (live_root, live_conf) are the ones an
-installed run uses; the record is read from there, and the legacy check and `migrate home` use them too.
+installed run uses; the record is read from there, and `migrate home` uses them too.
 Importing this module never creates anything.
 
-  paths.py check     exit 3 with the message when only the earlier layout exists; in a dev run print the banner to
-                     stderr and exit 0 (bin/qargi runs it before every command except help, version, __complete,
-                     __guard and the run-event hooks)"""
+  paths.py banner    in a dev run print the banner to stderr, else nothing; exit 0 (bin/qargi runs it before every command
+                     except help, version, __complete, __guard and the run-event hooks)"""
 import json, os, sys
 
 
@@ -80,23 +79,6 @@ def legacy_state():
     return os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "qargi")
 
 
-def legacy_pending():
-    """The earlier directories that exist, when the live root does not and nothing was named: data is waiting to be
-    migrated. A dev run has a root of its own and is never held back."""
-    if explicit() or dev_run() or os.path.lexists(live_root()):
-        return []
-    return [d for d in (legacy_conf(), legacy_state()) if os.path.isdir(d)]
-
-
-MESSAGE = ("qargi keeps its data in %s now; yours is still in %s. Nothing was changed. Run: qargi migrate home "
-           "(it shows the plan first and copies, so the old directories stay as a backup).")
-
-
-def refusal():
-    old = legacy_pending()
-    return (MESSAGE % (live_root(), " and ".join(old))) if old else ""
-
-
 def banner():
     if not dev_run():
         return ""
@@ -104,13 +86,9 @@ def banner():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["check"]:
-        m = refusal()
-        if m:
-            print("qargi: " + m, file=sys.stderr)
-            sys.exit(3)
+    if sys.argv[1:] == ["banner"]:
         if banner():
             print("qargi: " + banner(), file=sys.stderr)
         sys.exit(0)
-    print("usage: paths.py check", file=sys.stderr)
+    print("usage: paths.py banner", file=sys.stderr)
     sys.exit(2)

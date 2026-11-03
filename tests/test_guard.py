@@ -439,25 +439,24 @@ class Skills(unittest.TestCase):
         other = os.path.join(self.t, "xdg")
         os.makedirs(os.path.join(other, "qargi/packs"))
         target = os.path.join(other, "qargi/packs/links.json")
-        r = self.bash("echo x > %s" % target, QARGI_CONF=None, XDG_CONFIG_HOME=other)         # the XDG default
-        self.assertEqual(r.returncode, 2, r.stderr)
+        r = self.bash("echo x > %s" % target, QARGI_CONF=None, XDG_CONFIG_HOME=other)         # XDG_CONFIG_HOME does not move the library
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.bash("echo x > %s" % target).returncode, 0)                    # QARGI_CONF names another root
-        r = self.bash("echo x > %s/.config/qargi/packs/links.json" % self.home, QARGI_CONF=None)   # the plain default, under HOME
+        r = self.bash("echo x > %s/.config/qargi/packs/links.json" % self.home, QARGI_CONF=None)   # nor is the XDG default one
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.bash("echo x > %s/.qargi/config/packs/links.json" % self.home, QARGI_CONF=None)   # the plain default, under HOME
         self.assertEqual(r.returncode, 2, r.stderr)
         r = self.call("Write", {"file_path": os.path.join(self.t, "alt/packs/links.json")}, QARGI_CONF=os.path.join(self.t, "alt"))
         self.assertEqual(r.returncode, 2, r.stderr)
-        r = self.bash("echo x > %s/.config/qargi/packs/links.json" % self.home)         # the default stays protected beside QARGI_CONF
+        r = self.bash("echo x > %s/.qargi/config/packs/links.json" % self.home)         # the default stays protected beside QARGI_CONF
         self.assertEqual(r.returncode, 2, r.stderr)
 
-    def test_the_pack_library_is_protected_where_the_data_lives_now_and_where_it_was(self):
-        for d in (".qargi/config/packs", ".config/qargi/packs", "qh/config/packs", "qh2/config/packs", "xdgc/qargi/packs"):
+    def test_the_pack_library_is_protected_where_the_data_lives(self):
+        for d in (".qargi/config/packs", "qh/config/packs", "qh2/config/packs", "xdgc/qargi/packs"):
             os.makedirs(os.path.join(self.t, d if d.startswith(("qh", "xdgc")) else "home/" + d), exist_ok=True)
         new_default = "%s/.qargi/config/packs/links.json" % self.home
-        old_default = "%s/.config/qargi/packs/links.json" % self.home
         for target, env in ((new_default, dict(QARGI_CONF=None)),                                    # ~/.qargi/config
-                            (old_default, dict(QARGI_CONF=None)),                                    # the earlier library stays protected
-                            (os.path.join(self.t, "qh/config/packs/links.json"), dict(QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh"))),
-                            (os.path.join(self.t, "xdgc/qargi/packs/links.json"), dict(QARGI_CONF=None, XDG_CONFIG_HOME=os.path.join(self.t, "xdgc")))):
+                            (os.path.join(self.t, "qh/config/packs/links.json"), dict(QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh")))):
             r = self.bash("echo x > %s" % target, **env)
             self.assertEqual(r.returncode, 2, (target, r.stderr))
             r = self.call("Write", {"file_path": target}, **env)
@@ -465,21 +464,20 @@ class Skills(unittest.TestCase):
         # protection stops at the library: the rest of the new root is not a skill
         r = self.bash("echo x > %s/.qargi/config/instances.json" % self.home, QARGI_CONF=None)
         self.assertEqual(r.returncode, 0, r.stderr)
-        # QARGI_HOME is the root; XDG_CONFIG_HOME no longer moves it
+        # QARGI_HOME is the root; XDG_CONFIG_HOME does not move it, and an XDG library is not one
+        self.assertEqual(self.bash("echo x > %s/xdgc/qargi/packs/links.json" % self.t, QARGI_CONF=None, XDG_CONFIG_HOME=os.path.join(self.t, "xdgc")).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s/.config/qargi/packs/links.json" % self.home, QARGI_CONF=None).returncode, 0)
         other = os.path.join(self.t, "qh2/config/packs/links.json")
         self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None).returncode, 0)
         self.assertEqual(self.bash("echo x > %s" % other, QARGI_CONF=None, QARGI_HOME=os.path.join(self.t, "qh2")).returncode, 2)
 
     def test_credentials_and_the_install_record_are_protected_the_rest_of_conf_is_not(self):
-        qh, qh3, xdgc = (os.path.join(self.t, d) for d in ("qh", "qh3", "xdgc"))
+        qh, qh3 = (os.path.join(self.t, d) for d in ("qh", "qh3"))
         bases = {"QARGI_CONF": (self.conf, dict()),
                  "QARGI_HOME": (qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)),
                  "QARGI_HOME beside QARGI_CONF": (qh3 + "/config", dict(QARGI_HOME=qh3)),
                  "live": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
-                 "live beside QARGI_HOME": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None, QARGI_HOME=qh)),
-                 "earlier": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None)),
-                 "earlier through XDG_CONFIG_HOME": (xdgc + "/qargi", dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc)),
-                 "earlier default beside XDG_CONFIG_HOME": (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc))}
+                 "live beside QARGI_HOME": (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None, QARGI_HOME=qh))}
         for name, (base, env) in bases.items():
             os.makedirs(os.path.join(base, "credentials"), exist_ok=True)
             os.makedirs(os.path.join(base, "projects"), exist_ok=True)
@@ -972,9 +970,8 @@ class Marshal(unittest.TestCase):
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
     def test_the_signing_key_is_found_like_the_other_qargi_paths(self):
-        qh, xdgc = os.path.join(self.t, "qh"), os.path.join(self.t, "xdgc")
-        for base, env in ((qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)), (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None)),
-                          (os.path.join(self.home, ".config/qargi"), dict(QARGI_CONF=None)), (xdgc + "/qargi", dict(QARGI_CONF=None, XDG_CONFIG_HOME=xdgc))):
+        qh = os.path.join(self.t, "qh")
+        for base, env in ((qh + "/config", dict(QARGI_CONF=None, QARGI_HOME=qh)), (os.path.join(self.home, ".qargi/config"), dict(QARGI_CONF=None))):
             k = os.path.join(self.make_key(base), "marshal_ed25519")
             self.key_refused(["cat %s" % k, "base64 %s" % k, "bash -c 'cat %s'" % k], env)
             res = self.call("Read", {"file_path": k}, **env)

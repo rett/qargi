@@ -164,7 +164,6 @@ class Home(unittest.TestCase):
         self.assertNotEqual(with_records, MH.token(self.build()))
 
     def test_after_apply_qargi_works_and_a_second_plan_has_nothing_to_do(self):
-        self.assertEqual(self.q("project", "list").returncode, 1, "the legacy refusal should hold before the copy")
         self.assertEqual(self.apply().returncode, 0)
         r = self.q("project", "list")
         self.assertEqual(r.returncode, 0, r.stderr)
