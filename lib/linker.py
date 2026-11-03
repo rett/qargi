@@ -3,7 +3,7 @@
 
 One engine serves every resource of a provider definition (skills, agents, ...). A caller describes ONE link with a Link object:
 
-  Link(kind, project, checkout, dest, source, mode, state)
+  Link(kind, project, checkout, dest, source, mode, state, words=None, root=None, source_root=None)
 
   kind      the resource kind's name (`skills`, `agents`, ...); it is part of the plan, so a plan for one kind is not one for another
   project   the project's name (for messages and recovery commands)
@@ -16,6 +16,12 @@ One engine serves every resource of a provider definition (skills, agents, ...).
             copy           dest stays a real directory and holds a copy of each entry of source, recorded in a manifest beside it, for
                            runtimes that do not follow symbolic links; unlink removes only a copy that is still what qargi made
   state     the state directory; source must lie below it and be reached through no symbolic link
+  root      scope user: a link that lives outside every checkout (a runtime's memory directory in the home directory). root is the
+            directory dest is relative to (the home directory), checkout is not used, and nothing is asked of git: no work tree, no
+            tracked files, no exclude hint. Everything else holds, and the parents of dest between root and dest may be missing (they are
+            made) but may not be symbolic links
+  source_root  the directory source must lie below and be reached through no symbolic link, when it is not the state directory
+            (a project's memory in ~/.qargi/memory)
 
 Nothing in a Link names a provider or a runtime. The words a message needs (the plural of the resource, the command that undoes the
 link, ...) are the Link's `words`; a caller whose messages must stay as they are overrides the hooks below (inspect_real, show_real,
@@ -262,7 +268,7 @@ def token_of(facts):
 class Link:
     """One link to make or undo: the data above, the words of its messages and the hooks of a caller that has more to say."""
 
-    def __init__(self, kind, project, checkout, dest, source, mode, state, words=None):
+    def __init__(self, kind, project, checkout, dest, source, mode, state, words=None, root=None, source_root=None):
         if not isinstance(kind, str) or not KIND_RE.fullmatch(kind):
             die("not a resource kind: %s" % (kind,))
         if not isinstance(project, str) or not NAME_RE.fullmatch(project) or ".." in project:
@@ -274,12 +280,14 @@ class Link:
             die("not a path inside a checkout: %s" % (dest,))
         self.kind, self.project, self.checkout, self.dest, self.mode = kind, project, checkout, dest, mode
         self.parts = parts
+        self.root = os.path.abspath(root) if root else None     # scope user: the directory dest is relative to
+        self.user = self.root is not None
         self.source = os.path.abspath(source)
-        self.state = os.path.abspath(state)
+        self.state = os.path.abspath(source_root or state)      # what source must lie below
         singular = kind[:-1] if kind.endswith("s") else kind
         self.words = {"plural": kind, "singular": singular, "dir": "%s directory" % kind, "source": "this project's %s source" % kind,
                       "source_word": "%s source" % kind, "loads": "the project's %s from the source" % kind, "cli": "packs",
-                      "unlink": "qargi packs unlink %s" % project}
+                      "unlink": "qargi packs unlink %s" % project, "place": "the checkout"}
         self.words.update(words or {})
 
     # ---- hooks -----------------------------------------------------------------------------------------------------------------
@@ -309,7 +317,21 @@ class Link:
     # ---- the checkout ----------------------------------------------------------------------------------------------------------
 
     def locate(self):
-        """(checkout realpath, destination path, backup path) of a checkout that is the top of a git work tree."""
+        """(checkout realpath, destination path, backup path) of a checkout that is the top of a git work tree; for scope user, of the
+        root directory (any directory that exists: nothing is asked of git)."""
+        if self.user:
+            if not os.path.isabs(self.root) or not os.path.isdir(self.root):
+                die("%s is not a directory; refusing" % self.root)
+            base = os.path.realpath(self.root)
+            cdir = base
+            for part in self.parts[:-1]:
+                cdir = os.path.join(cdir, part)
+                if os.path.islink(cdir):
+                    die("%s is a symbolic link; refusing (the link would be created outside the directory it is meant for)" % cdir)
+                if os.path.lexists(cdir) and not os.path.isdir(cdir):
+                    die("%s exists and is not a directory; refusing" % cdir)
+            link = os.path.join(cdir, self.parts[-1])
+            return base, link, link + BACKUP_SUFFIX
         co = self.checkout or ""
         if not co:
             die("project %s has no checkout (repo.path is empty): qargi project set %s repo.path DIR" % (self.project, self.project))
@@ -365,7 +387,7 @@ def classify_dir(verb, lk):
                 facts["state"] = "linked"
                 return facts
             die("%s is a symbolic link to %s, not to %s; refusing to replace it" % (link, os.readlink(link), w["source"]))
-        if tracked(base, rel):
+        if not lk.user and tracked(base, rel):
             die("files under %s are tracked by git in %s: the repository's owner decides how its %s are loaded; "
                 "qargi does not touch tracked files" % (rel, base, w["plural"]))
         if os.path.lexists(backup):
@@ -403,7 +425,7 @@ def show_dir(facts, lk):
     p, link, source, backup, rel = (clean(facts[k]) for k in ("project", "link", "source", "backup", "rel"))
     w = lk.words
     if facts["verb"] == "link":
-        say("link plan for %s: the checkout %s loads %s" % (p, clean(facts["checkout"]), w["loads"]))
+        say("link plan for %s: %s %s loads %s" % (p, clean(w["place"]), clean(facts["checkout"]), w["loads"]))
         say("  link:   %s" % link)
         say("  target: %s" % source)
         if facts["state"] == "absent":
@@ -481,7 +503,7 @@ def apply_link(facts, lk, pfd):
     say("linked: %s -> %s" % (link, source))
     if real:
         say("backup: %s (the former %s; %s moves it back)" % (backup, facts["rel"], w["unlink"]))
-    hint = exclude_hint(facts["checkout"], facts["rel"])
+    hint = None if lk.user else exclude_hint(facts["checkout"], facts["rel"])
     if hint:
         say(hint)
 
@@ -703,7 +725,7 @@ def classify_entries(verb, lk):
         if n not in names:
             facts["entries"].append([n, "stale", own[n]])
     facts["entries"].sort(key=lambda e: e[0])
-    t = tracked_any(base, [rel + "/" + n for n, a, _ in facts["entries"] if a != "same"])
+    t = None if lk.user else tracked_any(base, [rel + "/" + n for n, a, _ in facts["entries"] if a != "same"])
     if t:
         die("files under %s are tracked by git in %s (%s): the repository's owner decides how its %s are loaded; "
             "qargi does not touch tracked files" % (rel, base, t, w["plural"]))
@@ -718,7 +740,7 @@ def show_entries(facts, lk):
     w = lk.words
     acts = facts["entries"]
     if facts["verb"] == "link":
-        say("link plan for %s: the checkout %s loads %s, one link per entry" % (p, clean(facts["checkout"]), w["loads"]))
+        say("link plan for %s: %s %s loads %s, one link per entry" % (p, clean(w["place"]), clean(facts["checkout"]), w["loads"]))
         say("  directory: %s" % link)
         say("  source:    %s" % source)
         if facts["state"] == "absent":
@@ -742,6 +764,8 @@ def show_entries(facts, lk):
 
 
 def hint_entries(facts):
+    if facts.get("user"):
+        return None
     if facts["verb"] != "link":
         return None
     return exclude_hint_many(facts["checkout"], [facts["rel"] + "/" + n for n, a, _ in facts["entries"] if a == "new"])
@@ -1061,7 +1085,7 @@ def classify_copy(verb, lk):
         if dfd is not None:
             os.close(dfd)
     facts["entries"].sort(key=lambda e: e[0])
-    t = tracked_any(base, [rel + "/" + n for n, a, _, _ in facts["entries"] if a not in ("same", "forget")] + [rel + COPY_SUFFIX])
+    t = None if lk.user else tracked_any(base, [rel + "/" + n for n, a, _, _ in facts["entries"] if a not in ("same", "forget")] + [rel + COPY_SUFFIX])
     if t:
         die("files under %s are tracked by git in %s (%s): the repository's owner decides how its %s are loaded; "
             "qargi does not touch tracked files" % (rel, base, t, w["plural"]))
@@ -1076,7 +1100,7 @@ def show_copy(facts, lk):
     w = lk.words
     acts = facts["entries"]
     if facts["verb"] == "link":
-        say("link plan for %s: the checkout %s loads %s, as copies (this runtime does not follow links)" % (p, clean(facts["checkout"]), w["loads"]))
+        say("link plan for %s: %s %s loads %s, as copies (this runtime does not follow links)" % (p, clean(w["place"]), clean(facts["checkout"]), w["loads"]))
         say("  directory: %s" % link)
         say("  source:    %s" % source)
         say("  manifest:  %s (what qargi copied, with its content hash)" % clean(facts["manifest"]))
@@ -1102,6 +1126,8 @@ def show_copy(facts, lk):
 
 
 def hint_copy(facts):
+    if facts.get("user"):
+        return None
     if facts["verb"] != "link":
         return None
     return exclude_hint_many(facts["checkout"], [facts["rel"] + "/" + n for n, a, _, _ in facts["entries"] if a == "new"] + [facts["rel"] + COPY_SUFFIX])
@@ -1209,6 +1235,8 @@ def apply_dir(verb, facts, lk, pfd):
 
 
 def hint_dir(facts):
+    if facts.get("user"):
+        return None
     return exclude_hint(facts["checkout"], facts["rel"]) if facts["verb"] == "link" else None
 
 
@@ -1226,7 +1254,10 @@ def _mode(lk):
 
 def plan(verb, lk):
     """The facts of the plan (a JSON-able dict) for verb link|unlink; refuses what must not be touched."""
-    return _mode(lk)[0](verb, lk)
+    facts = _mode(lk)[0](verb, lk)
+    if lk.user:
+        facts["user"] = True       # scope user: no work tree, so no exclude hint
+    return facts
 
 
 def show_plan(facts, lk):
@@ -1246,12 +1277,22 @@ def cmd_plan(verb, lk, tokenfile):
         fh.write(token_of(facts))
 
 
-def cmd_apply(verb, lk, token):
+def refuse_member_run(verb, lk):
     if marshal_refs.in_member_run():
         die("%s %s is not available in a member run: only the lead's session changes what a checkout loads; nothing was changed" % (lk.words["cli"], verb))
+
+
+def cmd_apply(verb, lk, token):
+    refuse_member_run(verb, lk)
     facts = plan(verb, lk)
     if facts["state"] == "linked" or token_of(facts) != token:
         die("the plan changed since it was approved; nothing was changed")
+    apply_planned(verb, lk, facts)
+
+
+def apply_planned(verb, lk, facts):
+    """Act on facts, a plan that was just made and approved (the caller has checked its token). A caller that applies several links under
+    one token (qargi project link) plans them all, checks the one token, then calls this for each."""
     hold()
     try:
         pfd = open_parent(facts["checkout"], lk.parts[:-1], create=verb == "link" and facts["state"] == "absent")
