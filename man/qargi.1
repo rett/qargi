@@ -1445,8 +1445,8 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RS
 .TP
-.BI "migrate\-render " "[PROJECT]"
-Move an earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
+.B migrate\-render
+Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
 .br
 Prints the move and a plan token; with \-\-plan and \-\-approved it moves the directory, re\-points the checkout's skills link only when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.
 .RS
