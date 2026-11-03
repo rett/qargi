@@ -52,7 +52,7 @@ Only you, with the person present, run the verbs that change one: `new`, `import
 `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, the install verb of `qargi discover`, `qargi packs seed`,
 `qargi packs apply`, `qargi packs link|unlink|migrate-render` and `qargi project link|unlink`. A local
 member never does: its guard refuses these verbs and any write in the pack library or in a
-skills directory of any runtime (`.claude/skills` for Claude Code), and `QARGI_NESTED` does
+skills directory of any runtime (`qargi provider notes skills-dir`), and `QARGI_NESTED` does
 not stand in for the plan token of `import`, `seal` or `packs apply`. If a member
 thinks a skill should change, it says so in its report; you show the person the plan
 and token and wait for their go-ahead before you apply it. The `--approved` text is
@@ -90,15 +90,14 @@ recorded, not verified: it is not proof that a person agreed.
   shadowed skills, tools that need credentials) and a token; with `--plan TOKEN --approved "..."`
   it renders the union of the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/`
   (RUNTIME is the runtime's name, for example `claude-code`; inside it the runtime's skills
-  directory, `.claude/skills` for Claude Code, then `mcp.json`, `settings.json` and
-  `MANIFEST.json`) and prints the launch line
-  `claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json`.
+  directory, then `mcp.json`, `settings.json` and
+  `MANIFEST.json`) and prints the launch line.
   Same rule as the cloud apply: show the person the plan and wait for their go-ahead.
-  Nothing is written into a repository or `~/.claude`; role scoping is advisory (the
+  Nothing is written into a repository or the runtime's user directory; role scoping is advisory (the
   render is the union of roles); the guard refuses a member any write under
   `state/render/`. Vault credentials a tool needs are reported: the person configures
   them. `qargi packs check --target claude-code PROJECT` reports drift and shadowing
-  (a same-named skill in `~/.claude/skills` or the project's `.claude/skills`) and is
+  (a same-named skill in the user's or the project's skills directory) and is
   read only.
   The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or writable render files and a bad manifest.
 - **Renders made before the runtime names:** an earlier version rendered into
@@ -112,7 +111,7 @@ recorded, not verified: it is not proof that a person agreed.
   packs with no `--add-dir`. A real directory is moved to `skills.qargi-backup` (never deleted) and the
   plan lists its skills as same, differs or new; offer `skill import` and `skill link` for the new ones.
   `packs unlink PROJECT` undoes it. Git-tracked skills, a foreign link and a symlinked parent are
-  refused. `.claude` is not tracked, so each worktree needs its own link. A project must name its
+  refused. The link is not tracked, so each worktree needs its own. A project must name its
   provider (`models.provider`); there is no default. A local member never runs these verbs. If a link
   stops half way, the message says where the skills are; `packs unlink PROJECT` moves a backup back
   when its link is gone.
@@ -127,11 +126,10 @@ recorded, not verified: it is not proof that a person agreed.
   `qargi skill accept PROJECT NAME [--user]` records one they want (name and content hash; the plan
   shows the import review); `skill unaccept` removes it. An accepted skill that changes is `drifted`
   and fails `check`. To switch a skill off without removing it the person sets the runtime's
-  exclusion in their settings (for Claude Code `skillOverrides`; another runtime may use a config
+  exclusion in their settings (`qargi provider notes skills-dir`; another runtime may use a config
   list or a deny list); qargi only reads those files.
-  For an `unmanaged` skill the section prints the line to add, as text built from the provider's
-  layout (`to hide it instead: {"skillOverrides": {"NAME": "off"}} in <settings file>`), and never
-  writes it.
+  For an `unmanaged` skill the section prints the line to add (`to hide it instead: ...`), as text built from the provider's
+  layout, and never writes it.
 - `qargi skill|tool check PROJECT ROLE` reviews and drift-checks what reaches a role.
   `remove NAME` is refused while the pack is linked.
 

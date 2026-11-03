@@ -142,8 +142,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
 2. How the member starts depends on the project's local runtime (`dispatch.mode` in its definition;
    `qargi provider show RUNTIME`).
    - **In-session runtime** (Claude Code). Take MEMBER, MODEL and EFFORT from step 1, or run `qargi agent for <role> [--profile NAME]`, which prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is the alias, `-` when none;
-     `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
-     (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
+     `qargi agent models` shows the bases and profiles they came from). Spawn it as `qargi provider notes spawn` says, with the task block plus
      `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
      one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member that
      `qargi agent list` shows `STALE` or `DRIFT` runs from an out-of-date or hand-edited file: tell the user, and `qargi agent refresh NAME`
