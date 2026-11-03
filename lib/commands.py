@@ -533,7 +533,9 @@ COMMANDS = {
                  "shows the commits and files that would change and prints a plan token. With --plan TOKEN --approved \"...\" it applies exactly "
                  "that: a branch on the current branch moves forward only (fast-forward), another branch is checked out at its tip, a tag is "
                  "checked out detached; install.sh --user then runs as you and the members to refresh are listed. The git commands that write "
-                 "into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it."),
+                 "into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in "
+                 "the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is "
+                 "changed for that. A member or agent cannot use it."),
         "scripts": ["upgrade.sh"],
         "opts": [opt("--branch", "the branch to move to (default: the installed checkout's current branch)", "BRANCH"),
                  opt("--tag", "a tag to check out instead", "TAG"), PLAN, APPROVED],

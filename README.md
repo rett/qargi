@@ -454,7 +454,7 @@ active profile is used.
 
 ## Upgrading the installed tool
 
-`qargi upgrade --branch develop` fetches that branch of the installed checkout's origin (for example `/opt/qargi`), shows the commits and files that would change and prints a plan token; `qargi upgrade --branch develop --plan TOKEN --approved "..."` applies exactly that (fast-forward only on the current branch, `--tag T` for a tag), re-runs `install.sh --user` and lists the members to refresh. The git commands that write into the root-owned checkout run through `sudo`.
+`qargi upgrade --branch develop` fetches that branch of the installed checkout's origin (for example `/opt/qargi`), shows the commits and files that would change and prints a plan token; `qargi upgrade --branch develop --plan TOKEN --approved "..."` applies exactly that (fast-forward only on the current branch, `--tag T` for a tag), re-runs `install.sh --user` and lists the members to refresh. When `~/.qargi/config/agents.json` is in an earlier shape, which every `qargi agent` verb refuses, the plan and the end of the upgrade warn about it and say to move it aside and add the members again with `qargi agent add NAME --project P`; the upgrade itself does not touch it. The git commands that write into the root-owned checkout run through `sudo`.
 
 Status: pre-release, see [CHANGELOG.md](CHANGELOG.md). Licensed under the MIT
 license, see [LICENSE](LICENSE).
