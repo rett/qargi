@@ -1042,7 +1042,25 @@ def hook_problem(h):
         return "barrier.hook.deny must be {exit, stream: stderr|stdout} or {exit, stdout: {...}}"
     if not (isinstance(h.get("allow"), dict) and set(h["allow"]) == {"exit"} and _is_exit(h["allow"]["exit"])):
         return "barrier.hook.allow must be {exit: N}"
+    # A refusal must be something the runtime can tell from a pass. The stream form gives the reason on a stream and nothing else, so its exit is
+    # the only sign: the same exit as an allow is a refusal that every runtime reads as a pass. The stdout form is told by the JSON it prints, so that
+    # JSON must be an object that carries the reason (a bare {} or one with no "{reason}" says nothing a runtime reads as a denial).
+    if "stream" in deny and deny["exit"] == h["allow"]["exit"]:
+        return "barrier.hook.deny.exit must differ from barrier.hook.allow.exit (a refusal that exits like an allow is read as an allow)"
+    if "stdout" in deny and not _has_reason(deny["stdout"]):
+        return "barrier.hook.deny.stdout must be a non-empty object with at least one string containing {reason} (otherwise a refusal says nothing a runtime reads as a denial)"
     return None
+
+
+def _has_reason(node):
+    """True when a string anywhere in node (a non-empty JSON value) contains the placeholder {reason}."""
+    if isinstance(node, str):
+        return "{reason}" in node
+    if isinstance(node, list):
+        return any(_has_reason(v) for v in node)
+    if isinstance(node, dict):
+        return any(_has_reason(v) for v in node.values())
+    return False
 
 
 def hook_of(name):

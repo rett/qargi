@@ -1259,6 +1259,29 @@ class HookProtocol(unittest.TestCase):
             hook = json.load(f)["barrier"]["hook"]
         self.assertEqual(hook, self.load().CLAUDE_HOOK)
 
+    def test_hook_data_that_can_never_refuse_is_not_used(self):
+        """A refusal that exits like an allow and prints nothing a runtime reads as a denial would let every push and skill write through: the
+        data that says so is a problem, whichever way it is written."""
+        g = self.load()
+        self.assertIsNone(g.hook_problem(g.CLAUDE_HOOK))
+        for name in ("FAKEMD_HOOK", "FAKECLI_HOOK"):
+            self.assertIsNone(g.hook_problem(globals()[name]), name)
+        def with_deny(deny, allow=None):
+            h = json.loads(json.dumps(g.CLAUDE_HOOK))
+            h["deny"] = deny
+            if allow is not None:
+                h["allow"] = allow
+            return h
+        for deny, allow in (({"exit": 0, "stream": "stderr"}, None), ({"exit": 0, "stream": "stdout"}, None),
+                            ({"exit": 2, "stream": "stderr"}, {"exit": 2}), ({"exit": 0, "stdout": {}}, None),
+                            ({"exit": 0, "stdout": {"decision": "deny"}}, None), ({"exit": 3, "stdout": {"decision": 1, "reason": ["x", {"a": 2}]}}, None)):
+            why = g.hook_problem(with_deny(deny, allow))
+            self.assertIsNotNone(why, (deny, allow))
+            self.assertIn("barrier.hook.", why)
+        for deny, allow in (({"exit": 2, "stream": "stderr"}, None), ({"exit": 0, "stdout": {"decision": "deny", "reason": "{reason}"}}, None),
+                            ({"exit": 3, "stdout": {"a": [{"b": "no: {reason}"}]}}, {"exit": 0})):
+            self.assertIsNone(g.hook_problem(with_deny(deny, allow)), (deny, allow))
+
     def test_a_hook_input_that_cannot_be_read_is_an_error_not_a_pass(self):
         g = self.load()
         for data in ([], "ls", None, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Bash", "tool_input": [1]}):

@@ -2568,6 +2568,25 @@ class Cases(LibraryBase):
         self.assertIn("read_only_barrier                  verified (cases barrier-hook)", out)
         self.assertEqual(P.effective("fakemd", "local", "read_only_barrier"), "yes")
 
+    def test_hook_data_that_can_never_refuse_fails_the_check(self):
+        """A definition whose refusal looks like an allow (deny exit 0 with the reason on stderr, an empty stdout object, or the same exit as an
+        allow) cannot be a barrier: the check names the problem and the barrier is not verified, so nothing silently allows everything."""
+        base = {"input": "json-stdin", "tool_pointer": "/event/tool", "command_pointer": "/event/args/cmd", "cwd_pointer": "/workdir",
+                "path_pointers": {"write": ["/event/args/target"], "read": ["/event/args/target"]},
+                "tool_names": {"shell": ["run_shell"], "write": ["patch_file"], "read": ["open_file"]}}
+        for i, (deny, allow) in enumerate((({"exit": 0, "stream": "stderr"}, {"exit": 0}), ({"exit": 0, "stdout": {}}, {"exit": 0}),
+                                           ({"exit": 2, "stream": "stderr"}, {"exit": 2}))):
+            with self.subTest(deny=deny, allow=allow):
+                name = "badhook%d" % i
+                hook = dict(base, deny=deny, allow=allow)
+                d = fake_runtime(name=name, barrier={"kind": "hook", "hook": hook}, capabilities={"read_only_barrier": {"value": "yes"}}, resources={})
+                d["provider"] = name
+                self.import_pack(self.source(name, d))
+                out = self.check(name, expect=1)
+                self.assertRegex(out, r"FAIL barrier-hook: .*barrier\.hook\.")
+                self.assertNotIn("read_only_barrier                  verified", out)
+                self.assertNotEqual(P.effective(name, "local", "read_only_barrier"), "yes")
+
     def test_the_shipped_claude_code_hook_data_passes_its_own_corpus(self):
         from conformance import cases
         doc = P.definition("claude-code")
