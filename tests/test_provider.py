@@ -3,7 +3,7 @@
 Hermetic: every changed descriptor is a copy in a temporary directory, never the user's data.
 Run: python3 tests/test_provider.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import copy, json, os, shutil, subprocess, sys, tempfile, unittest
+import copy, hashlib, json, os, shutil, stat, subprocess, sys, tempfile, unittest
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -812,8 +812,8 @@ class Schema2(unittest.TestCase):
         self.assertEqual(fails(d, "fakecli"), [])
 
     def test_an_unknown_or_unbuilt_kind_is_refused(self):
-        self.one(runtime(kind="extension"), "kind: 'extension' is not one of provider, catalog")
-        self.one(runtime(kind="widget"), "kind: 'widget' is not one of provider, catalog")
+        self.one(runtime(kind="widget"), "kind: 'widget' is not one of provider, catalog, extension")
+        self.one(runtime(kind="extension"), "extends: null is not a runtime or family name")      # an extension is a pack kind; it has its own rules (validate_extension)
         d = runtime()
         del d["kind"]
         self.one(d, "missing required property 'kind'")
@@ -1758,6 +1758,167 @@ class ShippedClaude(unittest.TestCase):
         self.assertEqual(P.provider_of({"models": {"provider": {"local": "claude-code", "cloud": "claude-platform"}}}, "cloud", root=root), "claude-platform")
         with self.assertRaises(P.NoProvider):                            # the cloud runtime does not serve the local surface
             P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha", root=root)
+
+
+class SealedPacks(V2Tree):
+    """A library pack is used only while it is what was sealed: tree_hash, the record, seal_state, Drift, exec_copy, definition_hash."""
+
+    def pack(self, name="libcli", doc=None, files=None, sealed=True, execs=()):
+        """A library pack made by hand: definition.json and files, and a record that names the content hash when sealed."""
+        d = os.path.join(self.library, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(doc or runtime(name, capabilities={"skills": cell("yes", None)}), f)
+        for rel, text in (files or {}).items():
+            os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+            with open(os.path.join(d, rel), "w") as f:
+                f.write(text)
+            os.chmod(os.path.join(d, rel), 0o755 if rel in execs else 0o644)
+        rec = {"kind": "provider", "sealed": sealed}
+        if sealed:
+            rec.update(sha256=P.tree_hash(d), executables={x: self.sha(os.path.join(d, x)) for x in execs})
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            json.dump(rec, f)
+        return d
+
+    @staticmethod
+    def sha(path):
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+
+    def sstate(self, name="libcli"):
+        return P.seal_state(P.entry_any(name, **self.kw()))[0]
+
+    def test_the_hash_of_a_tree_ignores_the_record_and_sees_everything_else(self):
+        d = self.pack(files={"a": "1", "b/c": "2"})
+        h = P.tree_hash(d)
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            f.write("{}")
+        self.assertEqual(P.tree_hash(d), h)
+        def touch(*p):
+            with open(os.path.join(d, *p), "w"):
+                pass
+        for change in (lambda: touch("b", "c"), lambda: os.chmod(os.path.join(d, "a"), 0o755), lambda: touch("new"), lambda: os.remove(os.path.join(d, "a"))):
+            before = P.tree_hash(d)
+            change()
+            self.assertNotEqual(P.tree_hash(d), before)
+
+    def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_one_with_no_record_is_the_owners_own(self):
+        self.pack("sealedp")
+        self.assertEqual(self.sstate("sealedp"), "sealed")
+        self.assertEqual(P.definition("sealedp", **self.kw())["provider"], "sealedp")
+        self.pack("freshp", sealed=False)
+        self.assertEqual(self.sstate("freshp"), "unsealed")
+        with self.assertRaises(P.Drift) as cm:
+            P.definition("freshp", **self.kw())
+        self.assertIn("is not sealed; qargi provider check freshp, then qargi provider seal freshp", str(cm.exception))
+        self.assertIsInstance(cm.exception, P.Refused)                               # exit 2, like a name that is defined twice
+        d = self.pack("changedp")
+        with open(os.path.join(d, "extra.txt"), "w") as f:
+            f.write("added after the seal")
+        self.assertEqual(self.sstate("changedp"), "drift")
+        with self.assertRaises(P.Drift):
+            P.load("changedp", **self.kw())
+        d = self.pack("handp")
+        os.remove(os.path.join(d, ".pack.json"))
+        self.assertEqual(self.sstate("handp"), "unrecorded")
+        self.assertEqual(P.definition("handp", **self.kw())["provider"], "handp")
+        d = self.pack("brokenp")
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            f.write("not json")
+        self.assertEqual(self.sstate("brokenp"), "drift")
+
+    def test_a_catalog_is_sealed_like_a_runtime(self):
+        d = os.path.join(self.library, "famcat")
+        os.makedirs(d)
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(catalog("famcat"), f)
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            json.dump({"kind": "catalog", "sealed": False}, f)
+        with self.assertRaises(P.Drift):
+            P.catalog("famcat", **self.kw())
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            json.dump({"kind": "catalog", "sealed": True, "sha256": P.tree_hash(d)}, f)
+        self.assertEqual(P.catalog("famcat", **self.kw())["family"], "famcat")
+
+    def test_the_definition_hash_covers_the_pack_so_an_edited_script_stales_a_record(self):
+        d = self.pack(files={"adapter": "#!/bin/sh\n"}, execs=("adapter",))
+        h = P.definition_hash("libcli", **self.kw())
+        with open(os.path.join(d, "adapter"), "w") as f:
+            f.write("#!/bin/sh\necho changed\n")
+        with open(os.path.join(d, ".pack.json")) as f:
+            rec = json.load(f)
+        rec["sha256"] = P.tree_hash(d)                                              # sealed again, definition.json untouched
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            json.dump(rec, f)
+        self.assertNotEqual(P.definition_hash("libcli", **self.kw()), h)
+
+    def test_without_a_record_the_hash_is_the_document_alone_as_before(self):
+        d = self.pack()
+        os.remove(os.path.join(d, ".pack.json"))
+        with open(os.path.join(d, "definition.json")) as f:
+            doc = json.load(f)
+        want = hashlib.sha256(json.dumps({"definition": doc}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+        self.assertEqual(P.definition_hash("libcli", **self.kw()), want)
+
+    def test_exec_copy_is_a_private_copy_of_what_was_approved_and_refuses_the_rest(self):
+        self.pack(files={"adapter": "#!/bin/sh\necho ok\n", "other": "#!/bin/sh\n"}, execs=("adapter",))
+        copy, path = P.exec_copy("libcli", "adapter", **self.kw(tmp=self.tmp))
+        self.addCleanup(shutil.rmtree, os.path.dirname(copy), True)
+        self.assertEqual(os.path.basename(path), "adapter")
+        self.assertTrue(os.access(path, os.X_OK))
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(copy)).st_mode), 0o700)
+        for rel in ("other", "../adapter", "/bin/sh", "nosuch"):
+            with self.assertRaises(P.Refused, msg=rel):
+                P.exec_copy("libcli", rel, **self.kw())
+        with self.assertRaises(P.Refused):
+            P.exec_copy("claude-code", "adapter")                                   # shipped: part of the tool, not a library pack
+        with open(os.path.join(self.library, "libcli", "adapter"), "a") as f:
+            f.write("echo drift\n")
+        with self.assertRaises(P.Drift):
+            P.exec_copy("libcli", "adapter", **self.kw())
+
+    def test_exec_copy_checks_the_executables_own_hash_against_the_record(self):
+        d = self.pack(files={"adapter": "#!/bin/sh\n"}, execs=("adapter",))
+        with open(os.path.join(d, ".pack.json")) as f:
+            rec = json.load(f)
+        rec["executables"]["adapter"] = "0" * 64
+        with open(os.path.join(d, ".pack.json"), "w") as f:
+            json.dump(rec, f)
+        with self.assertRaises(P.Drift):
+            P.exec_copy("libcli", "adapter", **self.kw())
+
+    def test_definitions_unsealed_shows_what_an_unusable_pack_names(self):
+        self.pack("freshp", sealed=False, doc=runtime("freshp", resources={"skills": {"project_dir": ".fresh/skills", "items": "dir-per-item", "entry": "SKILL.md"}}))
+        self.assertEqual(P.definitions_unsealed("freshp", **self.kw())["local"]["resources"]["skills"]["project_dir"], ".fresh/skills")
+        with self.assertRaises(P.ProviderError):
+            P.definitions_unsealed("nosuch", **self.kw())
+
+    def test_an_extension_has_its_own_rules(self):
+        good = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "provides": ["resume"],
+                "adds": {"capabilities": {"resume": cell("yes")}, "adapter_verbs": {"resume": "verbs/resume"}}}
+        self.assertEqual(P.validate2(good, "addon"), [])
+        for mutate, needle in ((lambda d: d.update(extra=1), "extra: additional property is not allowed"), (lambda d: d.update(extension="Bad"), "extension: 'Bad' is not a name"),
+                               (lambda d: d.update(extension="other"), "extension 'other' differs from the file name 'addon'"),
+                               (lambda d: d.update(extends="../x"), "extends: '../x' is not a runtime or family name"),
+                               (lambda d: d.update(provides=["resume", "nosuch"]), "provides: unknown capability 'nosuch'"),
+                               (lambda d: d.update(provides=["skills"]), "provides must equal the capability names of adds.capabilities (resume)"),
+                               (lambda d: d["adds"]["capabilities"]["resume"].update(value="maybe"), "adds.capabilities.resume: a cell"),
+                               (lambda d: d["adds"].update(adapter_verbs={"resume": "../x"}), "adds.adapter_verbs"),
+                               (lambda d: d.update(adds="x"), "adds: an object"), (lambda d: d.update(schema=1), "schema: 1 is not the supported version 2")):
+            d = copy.deepcopy(good)
+            mutate(d)
+            self.assertTrue(any(needle in m for lvl, m in P.validate2(d, "addon") if lvl == "fail"), (needle, P.validate2(d, "addon")))
+
+    def test_record_verification_writes_atomically_with_private_modes_and_an_empty_map_removes_it(self):
+        f = P.record_verification("libcli", {"skills": {"hash": "h", "by": "conformance", "at": "t", "note": ""}}, state=self.state)
+        self.assertEqual(P.verification("libcli", self.state)["skills"]["by"], "conformance")
+        self.assertEqual(stat.S_IMODE(os.stat(f).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.dirname(f)).st_mode), 0o700)
+        self.assertEqual(os.listdir(os.path.dirname(f)), ["verified.json"])
+        P.record_verification("libcli", {}, state=self.state)
+        self.assertFalse(os.path.exists(f))
+        P.record_verification("libcli", {}, state=self.state)                      # nothing to remove is not an error
 
 
 if __name__ == "__main__":
