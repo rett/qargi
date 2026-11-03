@@ -20,8 +20,9 @@
 `bin/qargi` is the single command; `lib/` holds the scripts behind it;
 `skills/qargi-*` are the skills (each a short guide that calls the command; the
 abilities are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
-gets with its task block); `agents/member.md` is the one member definition `qargi agent add`
-renders under the names users choose; `provision/` the resource and memory
+gets with its task block); `agents/member.json` and `agents/member.body.md` are the one neutral
+member definition `qargi agent add` renders, through the project's runtime, under the names users
+choose; `lib/providers/` holds the shipped runtime definitions and model catalogs; `provision/` the resource and memory
 templates; `examples/` sample repository profiles; `packs/` the baseline packs shipped
 with qargi (`baseline.json` and `skills/<name>/SKILL.md`).
 
@@ -65,11 +66,81 @@ Every user-visible change adds a line under `## [Unreleased]` in
 private hostnames, addresses, usernames, home paths or credentials appear in
 the repository or its history.
 
-## Adding a provider
+## Add a runtime with no code
 
-1. Write `lib/providers/NAME.json` to the schema (`qargi provider show claude` is the example). Give every model id the `verified_on` date and `source` from the vendor's own current model list; never write an id from memory. Set each capability per surface and leave `verified_on` null where you have not tested it.
-2. Write the adapter, `lib/providers/NAME/adapter` (or set `"adapter": null` for a descriptor that is data only). Implement only the verbs the descriptor supports; the others exit 3.
-3. Add a stub transport and fixtures under `tests/providers/NAME/` and run `bash tests/conformance.sh NAME` until it is clean.
+A runtime (an agent CLI, a local model runner) is a data file; you do not change qargi to add one.
+This walks through a fictional command-line runtime, `fakecli`. The lead follows the same steps
+from the `/qargi-providers` skill.
+
+1. Scaffold it: `qargi provider new fakecli --from command` (a plan and a token; apply it with
+   `--plan TOKEN --approved "<your words>"`). The pack is `~/.qargi/config/packs/providers/fakecli/`
+   and is unusable until you seal it. `--from minimal`, `hook-cli` or the name of another runtime
+   start from other templates.
+2. Edit `definition.json`. Four parts decide how qargi uses the runtime:
+   - **models**: the pattern a model id must match, the model for each tier (`"*"` for all of
+     them) and the effort levels (`null` for none). Write down where each id came from.
+   - **render**: how a member becomes the runtime's own file (`agents` and `renderers.agent`),
+     or `"agents": null` for a runtime with no agent files.
+   - **link**: where its skills, agents, MCP file, settings and memory live (`resources`) and
+     whether each is linked as a directory, one link per entry, or copied.
+   - **dispatch** and **barrier**: the command to run (an argv array, never a shell string), how
+     the prompt reaches it, which environment variables it may see, and how a read-only member
+     is held (`hook`, `sandbox-args`, `adapter` or `none`).
+
+   ```json
+   {"schema": 2, "kind": "provider", "provider": "fakecli", "family": null, "surface": "local",
+    "description": "fakecli, a command-line model runner",
+    "models": {"pattern": "^fake-.+$", "effort": null,
+               "tiers": {"*": {"model": "fake-1", "alias": null, "verified_on": null, "source": "fakecli --list-models"}}},
+    "capabilities": {"skills": {"value": "yes"}},
+    "resources": {"skills": {"project_dir": ".fake/skills", "items": "dir-per-item", "entry": "SKILL.md",
+                             "format": "skill-md", "link": {"project": "dir-symlink", "user": "none"}}},
+    "agents": null,
+    "dispatch": {"mode": "command", "argv": ["fakecli", "run", "--model", "{model}"],
+                 "class_argv": {"read-only": ["--sandbox", "read-only"]}, "prompt": {"via": "stdin"},
+                 "cwd": "{clone}", "env_pass": ["FAKECLI_API_KEY"], "timeout_s": 1800, "output": {"format": "text"}},
+    "barrier": {"kind": "sandbox-args"},
+    "session": {"render_target": "fakecli"}}
+   ```
+
+   `session.render_target` is the name `qargi packs apply --target` takes for the runtime; without
+   it qargi makes no render of the project's skills for it, so there is nothing to link.
+   `qargi provider show claude-code` is a runtime with agent files, a hook barrier and
+   in-session dispatch; `lib/providers/schema-2.json` is the format.
+3. `qargi provider check fakecli` validates it and runs the hermetic cases; `qargi provider seal
+   fakecli` approves it as it is; run `check` again to record what is verified. A capability
+   counts only when it is claimed and verified. For what no hermetic case can show, such as an
+   operating-system sandbox that really holds, `qargi provider attest` records a check you ran,
+   asked each time.
+4. Point a project at it: `qargi project set P models.provider.local fakecli` (a role's stored
+   `model` that does not match the runtime's `pattern` makes it refuse, naming each role; start
+   the project with `project attach --provider-local fakecli`, or edit the answers file and
+   `project init P --answers FILE --force`). Render its skills
+   with `qargi packs apply --target fakecli P` and link them with `qargi project link P`. For a task,
+   `qargi local prepare ...` followed by `qargi local run RUN --dry-run` shows the exact command, and
+   `qargi local run RUN` runs it.
+
+A pack holds text only: scripts you can read, never a compiled program, an archive or a symlink. A
+pack with a script (a renderer, an adapter) needs `--approve-exec` naming it when you seal or import
+it, and that script runs with your rights, so read it first. The vendor CLI itself is installed by you
+and only named in the definition. To share a runtime, hand over the directory: `qargi provider
+import DIR` shows whoever imports it the same review.
+
+## Adding a runtime to qargi itself
+
+A shipped runtime is reviewed data and code in this repository.
+
+1. Write `lib/providers/NAME.json` to schema 2 (`qargi provider show claude-code` is the example),
+   and the model catalog it shares in `lib/providers/catalogs/FAMILY.json`. Give every model id the
+   `verified_on` date and `source` from the vendor's own current model list; never write an id from
+   memory. Set each capability and leave `verified_on` null where you have not tested it.
+2. If it needs code, write the adapter, `lib/providers/NAME/adapter`, and list its verbs in
+   `adapter_verbs` (`"adapter": null` for a definition that is data only). Implement only those
+   verbs; the others exit 3.
+3. Add a stub transport and fixtures under `tests/providers/NAME/` and run
+   `bash tests/conformance.sh NAME` until it is clean.
 4. Run `qargi provider check NAME` until it is clean, and read what it says degrades.
-5. If the read-only barrier is not supported on a surface, say so in the descriptor. A person accepts it per project with `qargi provider accept`; do not default it on.
-6. Add a CHANGELOG entry, and run one scratch session on the real provider with the owner's approval before relying on any unverified capability.
+5. If the read-only barrier is not supported on a surface, say so in the definition. A person accepts
+   it per project with `qargi provider accept`; do not default it on.
+6. Add a CHANGELOG entry, and run one scratch session on the real runtime with the owner's approval
+   before relying on any unverified capability.
