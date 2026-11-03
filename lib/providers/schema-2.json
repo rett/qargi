@@ -89,6 +89,11 @@
             "render_target": {"type": ["string", "null"], "description": "transitional: the --target name the packs renderer answers to; absent or null: the runtime has no packs renderer of its own, and the verb that needs one is refused with exit 3"}
           }
         },
+        "notes": {
+          "description": "How this runtime does what a skill asks of it, as short topics (a topic name to its text), read with the notes verb of provider so the skills stay free of any runtime's words. At most 16 topics; a topic is a lower case name (letters, digits and -, starting with a letter, at most 32 characters); a text is one line of plain text (no control, format, private-use or unassigned character), not empty, at most 2000 characters. Not available to an extension. A library pack's notes are part of the definition, so the seal hash covers them.",
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
         "adapter": {"type": ["string", "null"], "description": "an executable relative to the definition's directory (no .. and no absolute path); called as adapter VERB with a JSON request on stdin"},
         "adapter_verbs": {"type": "array", "items": {"type": "string"}, "description": "the verbs the adapter serves; absent means every verb of the adapter contract"}
       }

@@ -853,6 +853,33 @@ def _resource_problems(res, extension=False):
     return bad
 
 
+NOTE_TOPIC_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+NOTE_MAX, NOTES_MAX = 2000, 16
+
+
+def _notes_problems(notes):
+    """The rules of a definition's notes (topic name -> text) that a schema cannot state: at most NOTES_MAX topics, each topic a lower case
+    name of at most 32 characters, each text a non-empty string of at most NOTE_MAX characters with no format, private-use or unassigned
+    character (the control characters, tab and newline too, are refused for every string of a definition by _control_problems)."""
+    if not isinstance(notes, dict):
+        return []                                  # the schema reports the type
+    bad = []
+    if len(notes) > NOTES_MAX:
+        bad.append("notes: %d topics are more than the %d a definition may hold" % (len(notes), NOTES_MAX))
+    for topic, text in notes.items():
+        if not NOTE_TOPIC_RE.match(topic):
+            bad.append("notes: the topic name %s is not a name (lower case letters, digits and -, starting with a letter, at most 32 characters)" % _show(topic))
+        elif not isinstance(text, str):
+            bad.append("notes.%s: %s is not of type string" % (topic, _show(text)))
+        elif not text:
+            bad.append("notes.%s: the text is empty" % topic)
+        elif len(text) > NOTE_MAX:
+            bad.append("notes.%s: the text is longer than %d characters" % (topic, NOTE_MAX))
+        elif _addendum_has_bad_character(text):
+            bad.append("notes.%s: the text is not plain text (no control, format, private-use or unassigned characters)" % topic)
+    return bad
+
+
 EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "surface", "provides", "requires", "adds")
 EXTENSION_ADDS = ("capabilities", "resources", "renderers", "dispatch", "barrier", "adapter_verbs")
 RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory")
@@ -899,6 +926,8 @@ def validate_extension(d, name=None):
             out.append(("fail", "adds.adapter_verbs: {VERB: a path inside the pack}"))
         if isinstance(adds.get("resources"), dict):
             out += [("fail", "adds." + m) for m in _resource_problems(adds["resources"], extension=True)]
+        if "notes" in adds:
+            out.append(("fail", "adds.notes: an extension cannot add notes (only a runtime's own definition has them)"))
     rq = d.get("requires")
     if rq is not None and not isinstance(rq, dict):
         out.append(("fail", "requires: an object"))
@@ -943,7 +972,8 @@ def validate2(d, name=None):
         return out
     out += [("fail", m) for m in _models_problems(d.get("models"))]
     out += [("fail", m) for m in _resource_problems(d.get("resources"))]
-    disp = d.get("dispatch")
+    out += [("fail", m) for m in _notes_problems(d.get("notes"))]
+    disp =d.get("dispatch")
     if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
         out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     ad = d.get("adapter")
