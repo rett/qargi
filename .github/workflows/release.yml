@@ -1,0 +1,57 @@
+# A GitHub release for every release tag. A tag like 1.2.3 pushed to the repository publishes a release whose notes are that
+# version's section of CHANGELOG.md and whose files are the source archive of the tag and its checksum. Nothing else runs here:
+# the tag itself is made by the release process (qargi release finish, then push), and only a tag on master's history counts.
+# A tag that was pushed before this workflow existed is published by running it by hand with that tag (workflow_dispatch).
+name: release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'An existing release tag to publish, for example 0.2.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: The tag looks like a release
+        run: |
+          [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG"; exit 1; }
+        shell: bash
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+      - name: The tag is on master
+        run: |
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          git merge-base --is-ancestor "$(git rev-list -n1 "refs/tags/$TAG")" origin/master || { echo "tag $TAG is not on master's history: no release"; exit 1; }
+      - name: Notes and files
+        run: |
+          mkdir -p dist
+          bash lib/changelog_section.sh "$TAG" > dist/notes.md
+          git archive --format=tar.gz --prefix="qargi-$TAG/" -o "dist/qargi-$TAG.tar.gz" "refs/tags/$TAG"
+          (cd dist && sha256sum "qargi-$TAG.tar.gz" > "qargi-$TAG.tar.gz.sha256")
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "release $TAG exists: left as it is"; exit 0; fi
+          gh release create "$TAG" --verify-tag --title "qargi $TAG" --notes-file dist/notes.md \
+            "dist/qargi-$TAG.tar.gz" "dist/qargi-$TAG.tar.gz.sha256"
