@@ -124,7 +124,7 @@ packs attached to it, not for its ability:
 | `test` | test | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
 | `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
 
-The members are yours to name: `qargi agent add forge --abilities build,test --project P` renders
+The members are yours to name: `qargi agent add forge --roles build,test --project P` renders
 the one member definition qargi ships through the project's local runtime into that runtime's own
 file (for Claude Code `forge.md`, in the repository's agents directory, hidden from git, or in the
 project's member render once `qargi project link` is applied), with the abilities it serves (all
@@ -315,7 +315,7 @@ none: then a read-only run needs its declared barrier or your acceptance, and `q
 is the proof). The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
-command of its definition, and `qargi local prepare --ability review` records the ability
+command of its definition, and `qargi local prepare --role review` records the ability
 in the run directory for a member that serves several abilities (the guard refuses any
 write to that record). Under review the guard refuses an edit outside the run's output
 directory and a Bash command that writes into the clone. Whatever the ability,
