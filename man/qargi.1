@@ -9,7 +9,7 @@ qargi \- A gathering place for agent work: dispatch, review, remember
 .B qargi help
 [\fIcommand\fR|\fItopic\fR]
 .SH DESCRIPTION
-qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or an Anthropic Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
+qargi dispatches one\-off, task\-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or a cloud agent (only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name.
 .PP
 Every command takes \fB\-\-help\fR. A command that changes shared resources prints a plan and applies it only with \fB\-\-plan\fR and \fB\-\-approved\fR; a cloud command needs \fB\-\-asked\fR. See APPROVALS.
 .SH CONCEPTS

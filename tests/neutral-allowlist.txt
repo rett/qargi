@@ -221,9 +221,7 @@ lib/supervise.py:Claude Code settings\.json
 bin/qargi:hook:subagent-start
 
 # lib/commands.py: help text that names the local runtime
-lib/commands.py:Claude Code subagent on this machine
 lib/commands.py:claude-code renders for a local Claude Code session
-lib/commands.py:A member is a Claude Code subagent you name
 lib/commands.py:~/\.claude/skills and any \.claude/skills
 lib/commands.py:member as subagent_type
 lib/commands.py:A lead is a Claude Code session
@@ -252,7 +250,6 @@ lib/commands.py:"subagent-start": verb
 lib/commands.py:"subagent-stop": verb
 lib/commands.py:cannot message a local subagent
 lib/commands.py:your Claude Code settings\.json
-lib/commands.py:\(a Claude Code subagent\)
 lib/commands.py:This Claude Code session as lead
 lib/commands.py:and Anthropic's skills\. recommend
 lib/commands.py:Anthropic's skills"\)

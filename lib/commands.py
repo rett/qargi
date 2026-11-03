@@ -10,8 +10,8 @@ TAGLINE = "A gathering place for agent work: dispatch, review, remember."
 
 INTRO = (
     "qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as "
-    "reviewable patches. An agent is a member on this machine (local, the default) or an Anthropic "
-    "Managed Agents agent (cloud, only when you ask for it in that request). Agents work in their own clone and "
+    "reviewable patches. An agent is a member on this machine (local, the default) or a "
+    "cloud agent (only when you ask for it in that request). Agents work in their own clone and "
     "never push. A team adds a lead that coordinates members for build, write and review on one task. "
     "Everything qargi stores about you and your projects lives outside every repository. Inside a project's repository you can leave out its name."
 )
