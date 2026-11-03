@@ -239,6 +239,19 @@ echo '{}' > "$T/c/agents.json"
 out=$($DA agent list 2>&1); { grep -q 'no members yet' <<<"$out" && [ "$(cat "$T/c/agents.json")" = '{}' ]; } && ok "an empty object reads as no members" || no "empty object: $out"
 $DA agent add fresh --roles build --project pbase >/dev/null 2>&1 && jq -e '.schema == 2 and (.projects.pbase | keys == ["fresh"])' "$T/c/agents.json" >/dev/null && ok "and the first add writes the current shape" || no "add to {}: $(cat "$T/c/agents.json")"
 $DA agent remove fresh >/dev/null 2>&1; jq -e '.projects == {}' "$T/c/agents.json" >/dev/null && ok "the last member of a project leaves no empty project" || no "empty project left: $(cat "$T/c/agents.json")"
+# the right shape with a record that lacks a field the verbs need is refused too, naming the member: it must not become a read-only worker on refresh,
+# hide the members in list, or be written to a file called "null"
+for spec in 'roles|{"file":"/x/forge.md","model":"opus","effort":null,"seq":1}' 'roles|{"roles":[],"file":"/x/forge.md","seq":1}' 'roles|{"roles":"build","file":"/x/forge.md","seq":1}' \
+    'roles|{"roles":[1],"file":"/x/forge.md","seq":1}' 'file|{"roles":["build"],"model":"opus","seq":1}' 'file|{"roles":["build"],"file":"","seq":1}' 'file|{"roles":["build"],"file":7,"seq":1}'; do
+  field=${spec%%|*}; rec=${spec#*|}
+  body=$(jq -nc --argjson r "$rec" '{schema:2,projects:{pbase:{forge:$r}}}'); printf '%s\n' "$body" > "$T/c/agents.json"; bad=''
+  for v in "list" "models" "for build" "add x --project pbase" "remove forge" "refresh forge" "rename forge anvil"; do
+    out=$($DA agent $v 2>&1); rc=$?
+    { [ $rc = 2 ] && [ "$(wc -l <<<"$out")" = 1 ] && grep -q 'forge' <<<"$out" && grep -q 'pbase' <<<"$out" && grep -q "no $field" <<<"$out" && grep -q 'qargi agent add NAME --project P' <<<"$out"; } || bad="$bad [$v rc=$rc $out]"
+  done
+  [ "$(cat "$T/c/agents.json")" = "$body" ] || bad="$bad [rewritten]"
+  [ -z "$bad" ] && ok "a record with a bad $field is refused by every verb (exit 2, one line, names the member): ${rec:0:50}" || no "record ${rec:0:50}:$bad"
+done
 cp "$T/agents.keep" "$T/c/agents.json"
 # the members of a project go to the runtime's member render when its definition links the project's agents (entry-symlinks here)
 LIB4=$T/c/packs/providers/fakelink; mkdir -p "$LIB4"

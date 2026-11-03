@@ -636,10 +636,14 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
 }
 
 # agents.json is {"schema": 2, "projects": {P: {NAME: record}}} (an empty object reads as no members). Any other shape is an earlier one: it is never
-# converted and never rewritten, the verbs stop (exit 2) and say what to do.
-jq -e 'type == "object" and (length == 0 or (.schema == 2 and ((keys - ["schema", "projects"]) | length) == 0 and (.projects | type) == "object"
-    and (.projects | all(.[]; type == "object" and all(.[]; type == "object")))))' "$MEMBERS_FILE" >/dev/null 2>&1 \
-  || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
+# converted and never rewritten, the verbs stop (exit 2) and say what to do. So does a record without what the verbs need (a non-empty list of roles
+# and the path of its file): it would otherwise be refreshed as a read-only member, hide the others in `list`, or be written to a file called "null".
+members_shape_ok || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
+bad=$(jq -r '(.projects // {}) | to_entries[] | .key as $p | .value | to_entries[] | .key as $n | .value
+    | (if (.roles | type) != "array" or (.roles | length) == 0 or (.roles | any(type != "string")) then "roles (a non-empty list of role names)"
+       elif (.file | type) != "string" or .file == "" then "file (the path of its definition)" else empty end) as $f
+    | "member \($n) of project \($p) has no \($f)"' "$MEMBERS_FILE" | head -n 1)
+[ -z "$bad" ] || { echo "qargi: agents.json: $bad: move the file aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
 
 case $verb in
   add) add;;
