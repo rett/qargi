@@ -234,6 +234,28 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_models_to_a_member(self):
+        """qargi project set stores any dotted answer. The models answers choose the runtime and what counts as a barrier (models.extensions,
+        models.accept_no_barrier.*, models.provider.*), so a member may not set them; they have gated verbs (provider enable, provider accept)
+        and the owner's own project set. The other answers stay open."""
+        for path in ("models.extensions", "models.accept_no_barrier.local", "models.provider.local", "models.provider", "models", "models.extensions.0"):
+            for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "QARGI_X=1 qargi project set p %s v",
+                         "echo $(qargi project set p %s v)", "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent" % path, r.stderr, c)
+        for c in ("qargi project set p $K v", "qargi project set p \"$K\" v", "qargi project set p `echo models.extensions` v",
+                  "qargi project set p $(echo models.extensions) v", "bash lib/project.sh set p $(echo models.extensions) v"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("a path the guard cannot read", r.stderr, c)
+        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p test_command 'echo models.extensions'",
+                  "qargi project show p", "qargi project validate p", "echo qargi project set p models.extensions x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_local_run_to_a_member(self):
         """qargi local run starts a process (a vendor CLI) with an environment the definition names: the lead's call. Refused as the verb and as
         any use of its helper script; the other local verbs are not touched."""

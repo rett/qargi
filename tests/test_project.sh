@@ -95,6 +95,15 @@ for k in marshal.backend marshal.ttl.x marshal; do
   v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
   msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
 done
+# models.extensions and models.accept_no_barrier.* take a plan token and an approval through provider enable and provider accept: project set is not a way around them
+cp $T/c/projects/demo.json $T/before.json
+for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|provider enable' 'models.accept_no_barrier.local|{"by":"a","at":"t","reason":"r"}|provider accept' \
+          'models.accept_no_barrier|{"local":{"by":"a","at":"t","reason":"r"}}|provider accept' 'models|{"extensions":["x"]}|provider enable' 'models|{"accept_no_barrier":{}}|provider accept'; do
+  IFS='|' read -r k v want <<<"$kv"
+  msg=$($DA project set demo "$k" "$v" 2>&1); rc=$?
+  { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
+done
+$DA project set demo models.provider.local claude >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
 # attach does not guess a provider and stores none; it says so, in the plan and after storing, and the stored answers still validate
 AR=$T/arepo; git init -q -b main "$AR"; echo x > "$AR/README"; git -C "$AR" -c user.name=t -c user.email=t@example.net add -A
 git -C "$AR" -c user.name=t -c user.email=t@example.net commit -q -m one
