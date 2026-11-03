@@ -16,7 +16,7 @@ import canon as C
 for kind, part in (("reference", "reference"), ("memory", "memory")):
     tmp = tempfile.mkdtemp(); st = os.path.join(tmp, "s.jsonl"); open(st, "w").close()
     r = subprocess.run([sys.executable, canon, "plan", "--kind", kind, "--project", "demo", "--roles", roles,
-                        "--default-role", "build", "--store", st, "--seed", seed], capture_output=True, text=True)
+                        "--store", st, "--seed", seed], capture_output=True, text=True)
     plan = json.loads(r.stdout)
     mems = C.simulate({}, plan["ops"])
     base = os.path.join(rs, part)

@@ -663,7 +663,7 @@ class Planning(Stores):
         self.assertTrue(P.split({nineteen: B.note(nineteen, "# x\n", "1")}, {"prefix": ["/d0"]}, {}, False, TODAY, "c", None, B.cloud_problem))
 
     def test_canon_check_accepts_the_archive(self):
-        plan = C.make_plan("reference", {}, "demo", ["build"], "build", SEED, TODAY)
+        plan = C.make_plan("reference", {}, "demo", ["build"], SEED, TODAY)
         mems = {p: v["content"] for p, v in C.simulate({}, plan["ops"]).items()}
         guide = "# G\n\nKind: guide\nApplies to: any\nSources: me\n"
         mems["/_archive/%s/roles/build/guide.md" % TODAY] = P.add_origin(guide, "archived from /roles/build/guide.md@%s on %s" % (B.digest(guide)[:12], TODAY))
@@ -682,8 +682,8 @@ class Planning(Stores):
         for kind in self.kinds:
             b = self.store(kind, {})
             mems = b.list()
-            plan = P.migrate(mems, C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
-            direct = C.make_plan("memory", mems, "demo", ["build", "write"], "build", SEED, TODAY)
+            plan = P.migrate(mems, C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
+            direct = C.make_plan("memory", mems, "demo", ["build", "write"], SEED, TODAY)
             self.assertEqual(plan["from_version"], "empty")
             self.assertEqual([o["op"] for o in plan["target"]["ops"]], [o["op"] for o in direct["ops"]])
             B.apply_ops(b, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)
@@ -691,12 +691,12 @@ class Planning(Stores):
             self.assertEqual(self.snap(b), want)
             self.assertIn("/CANON.md", want)
             self.assertIn("/roles/write/INDEX.md", want)
-            again = P.migrate(b.list(), C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
+            again = P.migrate(b.list(), C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
             self.assertEqual(again["target"]["ops"], [])                         # idempotent
             with self.assertRaises(ValueError):
-                P.migrate(mems, 1, "memory", "demo", ["build"], "build", SEED, TODAY)
+                P.migrate(mems, 1, "memory", "demo", ["build"], SEED, TODAY)
             fresh = self.store(kind, {})
-            plan = P.migrate(fresh.list(), C.LATEST, "memory", "demo", ["build", "write"], "build", SEED, TODAY)
+            plan = P.migrate(fresh.list(), C.LATEST, "memory", "demo", ["build", "write"], SEED, TODAY)
             fresh.create("/README.md", "written meanwhile")
             with self.assertRaises(B.StaleError):                                # a set-up planned on an empty store is refused once it is not
                 B.apply_ops(fresh, plan["target"]["ops"], plan["target"]["expect"], dry_run=False)
