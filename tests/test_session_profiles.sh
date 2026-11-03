@@ -175,4 +175,37 @@ got=$(jq -S . "$FAKE/body.$last.json" 2>&1)
 [ "$got" = "$want" ] && ok "legacy start: the request body is unchanged" || { no "legacy golden"; diff <(echo "$want") <(echo "$got") | head -10; }
 [ "$(trk "sesn_$last" .instance)" = alpha-build ] && [ "$(trk "sesn_$last" .role)" = null ] && [ "$(trk "sesn_$last" .prompt_sha)" = null ] && ok "and it is tracked with no role fields, as before" || no "legacy tracker row"
 
+# --- a runtime of the pack library on the cloud surface (data and a sealed adapter; there is no file for it in lib/providers): the base
+# session is built by its adapter, which runs as a private copy of the sealed pack that is removed afterwards
+mkdir -p "$T/tmp" "$T/ext/fc"; export TMPDIR=$T/tmp
+cat > "$T/ext/fc/adapter" <<'EOS'
+#!/bin/sh
+case $1 in
+  resolve) printf '{"model":"fake-cloud-m","effort_native":"h"}\n';;
+  start-session) jq -c --arg p "$0" '. + {fake_adapter: $p}';;
+  *) echo '{"error":"no such verb"}'; exit 3;;
+esac
+EOS
+chmod 755 "$T/ext/fc/adapter"
+jq -n '{schema:2,kind:"provider",provider:"fakecloud",family:null,surface:"cloud",
+  models:{pattern:"^fake-.+$",tiers:{"*":{model:"fake-cloud-m",alias:null,verified_on:null,source:"test"}},effort:{low:"l",medium:"m",high:"h",xhigh:null,max:null}},
+  capabilities:{per_dispatch_model_override:{value:"yes",note:"n"},per_dispatch_effort_override:{value:"yes",note:"n"}},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"adapter"},adapter:"adapter",adapter_verbs:["resolve","start-session"]}' > "$T/ext/fc/definition.json"
+t=$("$YES" provider import "$T/ext/fc" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); "$YES" provider import "$T/ext/fc" --plan "$t" --approved test --approve-exec adapter >/dev/null 2>&1 || no "import fakecloud"
+python3 -I - "$TOOL/lib" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+import provider as P
+h = P.definition_hash("fakecloud")
+P.record_verification("fakecloud", {c: {"hash": h, "by": "attest", "at": "2026-11-02", "note": "test"} for c in ("per_dispatch_model_override", "per_dispatch_effort_override")})
+PY
+jq -n '{schema:1,project:"libp",repo:{url:"https://github.com/example/libp",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"fakecloud"}},memory:{},budget_cents:500}' > "$T/c/projects/libp.json"
+jq --argjson w "$(inst depl_L)" '. + {"libp-worker":$w}' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
+body=$(QARGI_DRY_RUN=1 "$YES" start libp-worker --role build --asked "start the build base" 2>"$T/err"); rc=$?
+{ [ $rc = 0 ] && jq -e '.fake_adapter | test("/qargi-exec\\.[^/]+/fakecloud/adapter$")' <<<"$body" >/dev/null && [ "$(jq -r '.model' <<<"$body")" = fake-cloud-m ] && [ "$(jq -r '.effort' <<<"$body")" = h ]; } \
+  && ok "library runtime: the dry run is built by its adapter (a sealed private copy), with the model and effort its adapter resolved" || no "library start (rc=$rc): $body $(cat "$T/err")"
+[ -z "$(ls "$T/tmp")" ] && ok "library runtime: the copy of the pack is removed afterwards" || no "left in TMPDIR: $(ls "$T/tmp")"
+echo "# drift" >> "$T/c/packs/providers/fakecloud/adapter"
+out=$(QARGI_DRY_RUN=1 "$YES" start libp-worker --role build --asked "start" 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "changed since it was sealed" <<<"$out"; } && ok "library runtime: an adapter changed after the approval is not run" || no "library drift (rc=$rc): $out"
+
 [ $fail = 0 ] && echo "session profile tests passed" || { echo "session profile tests FAILED"; exit 1; }
