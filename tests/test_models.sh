@@ -155,6 +155,12 @@ $DA agent models --project alpha >/dev/null 2>&1 && no "bad provider token accep
 $DA project template alpha | jq -e '.roles | all(.[]; .model == null) and (.build.effort == "high") and (.write.effort == "medium")' >/dev/null && ok "project template names no model (a role takes its provider's tier once one is set)" || no "template models"
 $DA project template alpha | jq -e '.models.provider == ""' >/dev/null && ! $DA project template alpha | grep -qi claude && ok "project template names no provider and no vendor" || no "template provider"
 
+# models needs a project (--project, else the one in effect: the provider is the project's); its help must not promise a listing of every project
+out=$(QARGI_PROJECT='' $DA agent models 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'project' <<<"$out"; } && ok "models with no project in effect: exit 2, and says why" || no "models without a project: rc=$rc $out"
+hp=$($DA help agent models 2>&1)
+! grep -qi 'every project' <<<"$hp" && ! grep -q 'PROJECT/NAME' <<<"$hp" && ok "and its help does not describe a listing of every project" || no "models help promises a listing of every project"
+
 shellcheck -x -S warning lib/agent.sh lib/project.sh tests/test_models.sh >/dev/null 2>&1 && ok "shellcheck clean" || no "shellcheck"
 rm -rf "$T"
 exit $fail
