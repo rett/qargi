@@ -39,8 +39,8 @@ when the owner asks. Not in the middle of a merge, a `feature verify` run or a c
 5. **Check that reply against the four failure points** before you go on:
    - **wrong base or worktree**: a new worktree starts from the commit it was cut from, which may be older than the
      feature. Its HEAD must be what the note says, or it must say it will move to the feature branch.
-   - **missing project packs**: it must see the project's skills (`qargi-flow` and the project's own). No
-     `.claude/skills` link in its checkout and no `--add-dir` in its launch line means it does not see them: restart it with the
+   - **missing project packs**: it must see the project's skills (`qargi-flow` and the project's own).
+     No link in its checkout or launch line (`qargi provider notes skills-dir`) means it does not see them: restart it with the
      launch line.
    - **not knowing where the host and the qargi data are**: it must name the host from the note and know the project answers
      live there. On another host the data is not present, and it must say so instead of guessing.

@@ -53,7 +53,7 @@ Only the lead, never a member, and only as the project's `lead.push` grant says 
   repository, Contents and Pull requests read and write, nothing else), checks it, and then shows and asks
   about each of its three steps (token and vault; the GitHub tool; the Push rules), skipping what is already
   in place. `qargi lead status PROJECT` shows what is in place and what is missing; `qargi lead revoke
-  PROJECT` takes the grant away. From Claude Code run them with `!`. The steps are also available one by
+  PROJECT` takes the grant away. Run them (`qargi provider notes commands`). The steps are also available one by
   one (`credential setup lead-push`, `packs apply`, `instances refresh-prompt`) for an agent to run with your
   words in `--approved`.
 - **A series too large to carry.** The GitHub tool takes the full content of every changed file for each commit, so a series that touches large files (a 500 KB man page changed in several commits) can be too big for the lead to carry. It then reports BLOCKED for delivery only, leaves the member's `run.bundle`, and its `team.json` says so. The coordinator (this session, with the `lead.push.local` grant) carries it: apply the patches on the base, set the author to the person (the members' commits are authored by the agent), verify with `/qargi-verify`, push `agent/<slug>` and open the pull request. `qargi team check` reports the lead's BLOCKED status and reason.
