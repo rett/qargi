@@ -133,6 +133,12 @@ COMMANDS = {
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it", [("FILE", "file")]),
+            "link": verb("Make this work tree load the project's skills, agents and memory from ~/.qargi", [("PROJECT", "project", True)],
+                         [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED],
+                         desc=("One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). "
+                               "A real directory in the way is moved to NAME.qargi-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. "
+                               "A member's guard refuses it.")),
+            "unlink": verb("Undo project link in this work tree and restore the backups", [("PROJECT", "project", True)], [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED]),
         },
     },
     "agent": {
@@ -150,14 +156,15 @@ COMMANDS = {
                         [opt("--abilities", "comma-separated abilities it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
-                         opt("--project", "put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it", "PROJECT", "project")],
+                         opt("--project", "the project the member belongs to: its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project"),
+                         opt("--user", "a user-level member for no project (the runtime's agents directory in your home)")],
                         desc=("The definition is rendered by the provider of the project in effect: --project, else QARGI_PROJECT, else the project whose checkout you are in. "
-                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider)."),
+                              "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no project and no --user, and a project with no provider (exit 2: there is no default provider). Nothing is written to a user-level directory unless you pass --user."),
                         examples=["qargi agent add forge --abilities build,test", "qargi agent add scribe --abilities write --model opus",
                                   "qargi agent add worker    # the write-class base: build, write and test"]),
             "list": verb("List the members, their abilities and definitions"),
-            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")]),
-            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")],
+            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [PROJECT_OPT, opt("--user", "a user-level member")]),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [PROJECT_OPT, opt("--user", "a user-level member")],
                             desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
@@ -626,6 +633,13 @@ COMMANDS = {
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
         "verbs": {
+            "run": verb("Run a task through a command runtime (a vendor CLI) in a prepared run; --dry-run prints what would run", [("RUN", "dir")],
+                        [opt("--task", "the file with the task block (default RUN/task.md)", "FILE", "file"), opt("--model", "a tier or a model id the runtime accepts (default the balanced tier)", "MODEL"),
+                         opt("--effort", "an effort level; dropped with a note when the runtime cannot map it", "LEVEL"), opt("--timeout", "seconds before the process group is killed (default from the definition)", "S"),
+                         opt("--again", "run a second time in the same run"), opt("--dry-run", "print the argv, the working directory and the prompt, and run nothing")],
+                        desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. "
+                              "The command is built from the definition without a shell, runs with the run's credential-less git wrapper environment, and its output goes to OUT/transcript. "
+                              "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),

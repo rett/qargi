@@ -142,7 +142,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
    `qargi agent models` shows the bases and profiles they came from). Spawn the Agent tool with `subagent_type` MEMBER, `model` MODEL
    (omit it when `-`) and `effort` EFFORT, because the call's model and effort override the member definition, with the task block plus
    `CLONE`, `OUT`, `GIT` and `BASE_SHA`. A profile whose base class does not fit the role is refused. No member serves the role: ask the user to add
-   one (`qargi agent add NAME --abilities <role>`, the flag keeps its earlier name), never use another agent type. The agent must run
+   one (`qargi agent add NAME --abilities <role> --project P`, the flag keeps its earlier name), never use another agent type. The agent must run
    every git command through `GIT`. No opinions on the solution.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent

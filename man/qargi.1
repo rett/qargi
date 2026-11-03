@@ -230,6 +230,48 @@ List the stored projects.
 .BI "validate " "FILE"
 Check an answers file without storing it.
 .RE
+.RS
+.TP
+.BI "link " "[PROJECT]"
+Make this work tree load the project's skills, agents and memory from ~/.qargi.
+.br
+One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). A real directory in the way is moved to NAME.qargi\-backup, never deleted. Run it inside a work tree to link that one; nothing records which work trees exist. A member's guard refuses it.
+.RS
+.TP
+.BI "\-\-resource " "LIST"
+what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "unlink " "[PROJECT]"
+Undo project link in this work tree and restore the backups.
+.RS
+.TP
+.BI "\-\-resource " "LIST"
+what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
 .TP
 .B qargi methodology
 List and inspect the development and release methodologies.
@@ -320,7 +362,7 @@ A member is a Claude Code subagent you name, rendered from the one member defini
 .BI "add " "NAME"
 Create a member under a name you choose.
 .br
-The definition is rendered by the provider of the project in effect: \-\-project, else QARGI_PROJECT, else the project whose checkout you are in. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, and no project or a project with no provider (exit 2: there is no default provider).
+The definition is rendered by the provider of the project in effect: \-\-project, else QARGI_PROJECT, else the project whose checkout you are in. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no project and no \-\-user, and a project with no provider (exit 2: there is no default provider). Nothing is written to a user\-level directory unless you pass \-\-user.
 .RS
 .TP
 .BI "\-\-abilities " "LIST"
@@ -339,7 +381,12 @@ effort level, written into the definition and recorded with the member (default 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-put it in that project's repository (.claude/agents, hidden from git) instead of ~/.claude/agents; its models.provider renders it.
+the project the member belongs to: its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
+.RE
+.RS
+.TP
+.B \-\-user
+a user\-level member for no project (the runtime's agents directory in your home).
 .RE
 .RE
 .RS
@@ -351,6 +398,16 @@ List the members, their abilities and definitions.
 .TP
 .BI "rename " "OLD NEW"
 Rename a member and its definition.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-user
+a user\-level member.
+.RE
 .RE
 .RS
 .TP
@@ -358,6 +415,16 @@ Rename a member and its definition.
 Re\-render a member from the member definition qargi ships now.
 .br
 Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-user
+a user\-level member.
+.RE
 .RE
 .RS
 .TP
@@ -2387,6 +2454,43 @@ the request, in your words, that names the cloud instance; recorded in the audit
 Prepare, verify and clean a local run that has no way to push.
 .PP
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
+.RS
+.TP
+.BI "run " "RUN"
+Run a task through a command runtime (a vendor CLI) in a prepared run; \-\-dry\-run prints what would run.
+.br
+Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. The command is built from the definition without a shell, runs with the run's credential\-less git wrapper environment, and its output goes to OUT/transcript. A read\-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.
+.RS
+.TP
+.BI "\-\-task " "FILE"
+the file with the task block (default RUN/task.md).
+.RE
+.RS
+.TP
+.BI "\-\-model " "MODEL"
+a tier or a model id the runtime accepts (default the balanced tier).
+.RE
+.RS
+.TP
+.BI "\-\-effort " "LEVEL"
+an effort level; dropped with a note when the runtime cannot map it.
+.RE
+.RS
+.TP
+.BI "\-\-timeout " "S"
+seconds before the process group is killed (default from the definition).
+.RE
+.RS
+.TP
+.B \-\-again
+run a second time in the same run.
+.RE
+.RS
+.TP
+.B \-\-dry\-run
+print the argv, the working directory and the prompt, and run nothing.
+.RE
+.RE
 .RS
 .TP
 .B prepare

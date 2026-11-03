@@ -48,7 +48,7 @@ recommended; do not assume answers:
 8. **Members, once.** The local workers are agents the user names. Ask for their
    names and abilities, suggesting the two base members (`worker` for build, write and
    test; `reviewer` for review); specializations such as the auditor are profiles, not
-   members (`qargi agent models`). Create each with `qargi agent add NAME --abilities LIST` (`--project NAME` puts it in this
+   members (`qargi agent models`). Create each with `qargi agent add NAME --abilities LIST --project NAME` (or `--user` for one that belongs to no project; the project form puts it in this
    repository's `.claude/agents`, hidden from git); skip names that `qargi agent list`
    already shows.
 9. **Profile.** Which profile file holds the repository's gates and review steps

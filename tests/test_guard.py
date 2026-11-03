@@ -234,6 +234,24 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_local_run_to_a_member(self):
+        """qargi local run starts a process (a vendor CLI) with an environment the definition names: the lead's call. Refused as the verb and as
+        any use of its helper script; the other local verbs are not touched."""
+        for form in ("qargi local run %s", "/opt/q/bin/qargi local run %s", "sudo qargi local run %s", "bash -c 'qargi local run %s'", "env FOO=1 qargi local run %s",
+                     "cd src && qargi local run %s", "echo $(qargi local run %s)", "./lib/local.sh run %s"):
+            for tail in ("/tmp/r", "/tmp/r --dry-run", "/tmp/r --task t.md --again"):
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi local run starts the runtime's command", r.stderr, c)
+        for c in ("python3 -I lib/local_run.py run /tmp/r x", "./lib/local_run.py dry /tmp/r", "cd lib && python3 local_run.py x", "/opt/q/lib/local_run.py x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi local run starts the runtime's command", r.stderr, c)
+        for c in ("qargi local verify /tmp/r", "cat lib/local_run.py", "grep -n argv lib/local_run.py"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
                      "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",

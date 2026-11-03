@@ -122,7 +122,7 @@ packs attached to it, not for its ability:
 | `test` | test | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
 | `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
 
-The members are yours to name: `qargi agent add forge --abilities build,test` renders
+The members are yours to name: `qargi agent add forge --abilities build,test --project P` renders
 the one member definition qargi ships into `~/.claude/agents/forge.md` (`--project
 NAME` puts it in that repository, hidden from git), with the abilities it serves (all
 four by default; `worker` and `reviewer`, the two base names, default to their base's abilities). The provider that renders it is the project's `models.provider` (`--project NAME`, else the project you are in or `QARGI_PROJECT`); with none, `agent add` refuses. Two base members cover
@@ -352,7 +352,7 @@ A project adds or overrides profiles in its answers as `profiles.<name>` (`base`
 
 Search is not a role: mapping the repository and finding call sites is done by a read-only exploration subagent on a small model inside the lead's context. The lead's own session model is chosen in Claude Code (`/model` or settings), not by qargi; the `lead` profile is the recommendation and the cloud lead's default `lead.model`.
 
-Moving from one-per-ability members: `qargi agent add worker` and `qargi agent add reviewer` (each defaults to its base's abilities), `qargi agent models` to see the legacy members flagged, then retire builder, writer and tester with `qargi agent remove`. The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
+Moving from one-per-ability members: `qargi agent add worker --project P` and `qargi agent add reviewer --project P` (each defaults to its base's abilities), `qargi agent models` to see the legacy members flagged, then retire builder, writer and tester with `qargi agent remove`. The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
 
 Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
 
@@ -405,8 +405,8 @@ Both ask what to include (or take `--only`/`--project`). Export asks for an opti
 ```sh
 ./install.sh --user                    # skills in ~/.claude, command in ~/.local/bin
 ./install.sh --project /path/to/repo   # skills for one repository only
-qargi agent add worker                       # then the read-only base:
-qargi agent add reviewer
+qargi agent add worker --project P                     # then the read-only base:
+qargi agent add reviewer --project P
 ```
 
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
