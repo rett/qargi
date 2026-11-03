@@ -10,7 +10,10 @@ nothing when run).
   executables(review)             {path: sha256} of every executable of the review
   policy(root)                    the text-only rules alone, as a list of failures: what a pack of any kind must meet (scan applies them too);
                                   `python3 -I review.py policy DIR` prints them as FAIL lines (exit 1 when there is one), and `review.py vis` is vis() on
-                                  standard input, for a shell caller
+                                  standard input, for a shell caller; for a file (a tool pack's JSON) it applies the same rules to the file and to every key and
+                                  string of its JSON
+  strings_problems(doc)           the failures for a parsed JSON document with a control, escape or bidi character in a key or a string, after the JSON
+                                  escapes are decoded ("\\u001b" in a file is plain ASCII, the string it decodes to is not): [message]
   vis(text)                       text with control, escape, bidi and unpaired-surrogate characters written out (\\x1b, \\u202e): what is
                                   printed for a person to read, so that nothing in a pack can move the cursor, hide a line or reorder text
 
@@ -33,6 +36,7 @@ The review dict: files [{path, size, sha256, exec, text}], executables [{path, s
 urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text],
 env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning), bytes, count."""
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -168,6 +172,58 @@ def policy(root):
         if c:
             out.append(c)
     return out
+
+
+def strings_problems(doc, limit=10):
+    """The failures for a parsed JSON document (a definition, a tool pack) that holds a control, escape, bidi or surrogate character in a key
+    or in a string, whether it was written raw or as a JSON escape (\\u001b): the bytes of a file can be plain ASCII and still decode to a
+    string that moves a reader's cursor, so the rule is applied to the parsed values. Tab and newline are refused too: a definition holds
+    one-line text. Each message names the place and the code point, never the character; at most limit are returned, then a count."""
+    found = []
+
+    def say(path, what, m):
+        found.append("%s: %s has a control or bidi character (U+%04X), which can change what a reader sees; a definition holds plain one-line text"
+                     % (vis(path) or "the document", what, ord(m.group())))
+
+    def walk(x, path):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                here = "%s.%s" % (path, k) if path else str(k)
+                m = _BAD_NAME.search(k) if isinstance(k, str) else None
+                if m:
+                    say(here, "the key", m)
+                walk(v, here)
+        elif isinstance(x, list):
+            for i, v in enumerate(x):
+                walk(v, "%s[%d]" % (path, i))
+        elif isinstance(x, str):
+            m = _BAD_NAME.search(x)
+            if m:
+                say(path, "the value", m)
+    walk(doc, "")
+    if len(found) > limit:
+        found = found[:limit] + ["and %d more strings with such characters" % (len(found) - limit)]
+    return found
+
+
+def _policy_file(path, label):
+    """The text-only rules for one file; when it is JSON, also strings_problems() of what it decodes to."""
+    out = []
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(MAX_FILE + 1)
+    except OSError:
+        return out
+    text, why, content = _text_problem(raw)
+    if not text:
+        return ["%s is %s: a pack holds only text files (scripts you can read)" % (label, why)]
+    c = _control(label, content)
+    if c:
+        out.append(c)
+    try:
+        return out + strings_problems(json.loads(content))
+    except (ValueError, RecursionError):
+        return out
 
 
 def _files(root):
@@ -407,13 +463,13 @@ def lines(review, title):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) == 3 and sys.argv[1] == "policy" and os.path.isdir(sys.argv[2]):
-        found = policy(sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] == "policy" and (os.path.isdir(sys.argv[2]) or os.path.isfile(sys.argv[2])):
+        found = policy(sys.argv[2]) if os.path.isdir(sys.argv[2]) else _policy_file(sys.argv[2], "the tool file")
         for m in found:
             print("FAIL: %s" % vis(m))
         sys.exit(1 if found else 0)
     if len(sys.argv) == 2 and sys.argv[1] == "vis":
         sys.stdout.write(vis(sys.stdin.buffer.read().decode("utf-8", "surrogateescape")))
         sys.exit(0)
-    print("usage: review.py policy DIR | vis", file=sys.stderr)
+    print("usage: review.py policy DIR|FILE | vis", file=sys.stderr)
     sys.exit(2)

@@ -155,6 +155,9 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     [ -z "$net" ] || { echo "network commands mentioned:"; echo "$net" | sed 's/^/  /' | showable; }
     if grep -rqE 'sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY' "$p"; then echo "FAIL: looks like a secret"; rc=1; fi
   else
+    # the owner's policy for every pack, tool packs too: only UTF-8 text, and no control or bidi character in the file or, after the JSON
+    # escapes are decoded, in any key or string (\u001b is plain ASCII on disk); everything below is printed through showable
+    pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
     jq -e . "$p" >/dev/null 2>&1 || { echo "FAIL: not valid JSON"; return 1; }
     local msg; msg=$(jq -r '
       . as $t |
@@ -164,9 +167,9 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
         ((.tools // {}) | to_entries[]? | select(.value|IN("always_allow","always_ask","auto")|not) | "FAIL: tools."+.key+": policy must be always_allow, always_ask or auto"),
         ((.tools // {}) | to_entries[]? | select((.key|test("(^|_)(create|update|delete|remove|post|push|write|merge|send|set|add|edit|close|comment)")) and (.value=="always_allow" or .value=="auto") and ($t.write_ok != true)) | "FAIL: tools."+.key+": a write-like tool may not run unattended (use always_ask) unless write_ok is true on the pack, on purpose")
       ] | .[]' "$p" 2>/dev/null)
-    if [ -n "$msg" ]; then echo "$msg"; rc=1; fi
+    if [ -n "$msg" ]; then echo "$msg" | showable; rc=1; fi
     [ "$(jq -r '.write_ok // false' "$p")" != true ] || echo "NOTE: write_ok is set: write-like tools may run unattended"
-    jq -r '"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + .value) | join(", "))' "$p"
+    jq -r '"tools: " + ((.tools // {}) | to_entries | map(.key + "=" + (.value|tostring)) | join(", "))' "$p" | showable
     jq -e '(.vault_ids // []) | all(test("^vlt_[A-Za-z0-9]+$"))' "$p" >/dev/null 2>&1 || { echo "FAIL: vault_ids must be vault ids (vlt_...), never secrets"; rc=1; }
     if grep -qE 'sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer [A-Za-z0-9._-]{20,}' "$p"; then echo "FAIL: looks like a secret (credentials belong in a vault)"; rc=1; fi
   fi
