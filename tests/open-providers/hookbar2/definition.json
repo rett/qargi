@@ -1,0 +1,26 @@
+{
+  "schema": 2,
+  "kind": "extension",
+  "extension": "hookbar2",
+  "description": "A second read-only barrier for fakecli, which conflicts with the first: a hook that takes the call as JSON on standard input and denies with exit 2 and a reason on standard error",
+  "extends": "fakecli",
+  "provides": ["read_only_barrier"],
+  "adds": {
+    "capabilities": {
+      "read_only_barrier": {"value": "yes", "note": "hook, fixture"}
+    },
+    "barrier": {
+      "kind": "hook",
+      "hook": {
+        "input": "json-stdin",
+        "tool_pointer": "/tool",
+        "command_pointer": "/input/command",
+        "cwd_pointer": "/cwd",
+        "path_pointers": ["/input/path"],
+        "tool_names": {"shell": ["sh"], "write": ["tee", "ed"], "read": ["cat"], "search": ["grep"]},
+        "deny": {"exit": 2, "stream": "stderr"},
+        "allow": {"exit": 0}
+      }
+    }
+  }
+}

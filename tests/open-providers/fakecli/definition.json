@@ -1,0 +1,205 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "fakecli",
+  "family": null,
+  "surface": "local",
+  "description": "A made-up command-line runtime, data only: TOML agent files, a skills directory link, a config-list exclusion, command dispatch with resume, no barrier",
+  "models": {
+    "pattern": "^fc-[a-z0-9.-]+$",
+    "tiers": {
+      "fast": {
+        "model": "fc-mini",
+        "alias": null,
+        "verified_on": null,
+        "source": "fixture"
+      },
+      "*": {
+        "model": "fc-main",
+        "alias": null,
+        "verified_on": null,
+        "source": "fixture"
+      }
+    },
+    "effort": {
+      "low": "l",
+      "medium": "m",
+      "high": "h",
+      "xhigh": null,
+      "max": null
+    }
+  },
+  "capabilities": {
+    "agent_definitions": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture",
+      "note": "TOML files"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture",
+      "note": "a directory link"
+    },
+    "headless_dispatch": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture",
+      "note": "fakecli-bin run"
+    },
+    "resume": {
+      "value": "yes",
+      "verified_on": null,
+      "source": "fixture",
+      "note": "fakecli-bin resume"
+    }
+  },
+  "resources": {
+    "skills": {
+      "project_dir": ".agents/skills",
+      "user_dir": "~/.agents/skills",
+      "items": "dir-per-item",
+      "entry": "SKILL.md",
+      "format": "skill-md",
+      "link": {
+        "project": "dir-symlink",
+        "user": "none"
+      },
+      "exclusion": {
+        "form": "config-list",
+        "file": ".fake/config.toml",
+        "format": "toml",
+        "pointer": "/skills/config",
+        "match": {
+          "name": "{name}"
+        },
+        "off": {
+          "enabled": false
+        }
+      }
+    },
+    "agents": {
+      "project_dir": ".fake/agents",
+      "user_dir": "~/.fake/agents",
+      "items": "file-per-item",
+      "ext": ".toml",
+      "link": {
+        "project": "entry-symlinks",
+        "user": "none"
+      }
+    }
+  },
+  "agents": {
+    "reserved_names": [
+      "fake-builtin"
+    ],
+    "tools": {
+      "shell": "sh",
+      "read": "cat",
+      "edit": "ed",
+      "write": "tee"
+    }
+  },
+  "renderers": {
+    "agent": {
+      "engine": "map",
+      "format": "toml",
+      "path": "{name}.toml",
+      "fields": [
+        {
+          "from": "name",
+          "to": "name",
+          "refuse_if_missing": true
+        },
+        {
+          "from": "description",
+          "to": "description"
+        },
+        {
+          "from": "model",
+          "to": "model",
+          "refuse_if_missing": true
+        },
+        {
+          "from": "effort",
+          "to": "effort",
+          "resolve": "effort"
+        },
+        {
+          "from": "tools",
+          "to": "tools",
+          "tool_map": {
+            "shell": "sh",
+            "read": "cat",
+            "edit": "ed",
+            "write": "tee"
+          }
+        },
+        {
+          "from": "class",
+          "to": "mode"
+        },
+        {
+          "from": "body",
+          "to": "prompt"
+        }
+      ]
+    }
+  },
+  "dispatch": {
+    "mode": "command",
+    "argv": [
+      "fakecli-bin",
+      "run",
+      {
+        "if": "model",
+        "then": [
+          "--model",
+          "{model}"
+        ]
+      },
+      {
+        "if": "effort",
+        "then": [
+          "--effort",
+          "{effort}"
+        ]
+      },
+      "--cd",
+      "{clone}"
+    ],
+    "class_argv": {
+      "read-only": [
+        "--sandbox",
+        "read-only"
+      ]
+    },
+    "prompt": {
+      "via": "stdin"
+    },
+    "cwd": "{clone}",
+    "timeout_s": 60,
+    "output": {
+      "format": "text"
+    },
+    "resume": {
+      "argv": [
+        "fakecli-bin",
+        "resume",
+        "{session_id}"
+      ]
+    },
+    "exit": {
+      "0": "ok",
+      "*": "failed"
+    }
+  },
+  "barrier": {
+    "kind": "none"
+  },
+  "session": {
+    "launch": "fakecli-bin --skills {render}",
+    "render_target": "fakecli-render"
+  }
+}
