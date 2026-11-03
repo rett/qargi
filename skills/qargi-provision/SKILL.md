@@ -9,13 +9,12 @@ argument-hint: plan|apply|add-reference NAME ...
 `NAME` is `<project>-<role>` (`--project P --role R`, role defaults to `build`, from a fixed list) or
 a base, `<project>-worker` (class write) or `<project>-reviewer` (read-only, which needs the
 project's `qargi provider accept NAME --surface cloud --no-barrier` first, because the cloud has no
-read-only barrier). The agent and deployment are `<project>-<role>` and `<project>-deployment-<role>`;
-the environment, `<project>-environment`, is shared by the roles of the project and holds the
+read-only barrier). The environment, `<project>-environment`, is shared by the roles of the project and holds the
 packages of all enabled roles; the memory stores belong to the project: `<project>-memory` and
 `<project>-reference`. New stores are created in the canon layout and each enabled role's skeleton is
 seeded (the project's stored answers must exist). Existing stores of those names are attached (the
 plan says so), not duplicated; `--memory-store ID` / `--reference-store ID` name them explicitly.
-Files and `claude-lock.json` stay in the state directory, outside any repository. Resources created
+Files and the lock stay in the state directory, outside any repository. Resources created
 in the Console or by hand cannot be adopted: this creates new ones.
 
 | Verb | Command | Notes |
@@ -25,8 +24,8 @@ in the Console or by hand cannot be adopted: this creates new ones.
 | add-reference | `qargi provision add-reference NAME --asked "..." --approved "..."` | Adds `<NAME>-reference` (read-only) to an existing instance. |
 
 Defaults come from the project's stored answers (`/qargi-project`): the role's model, effort,
-packages and Anthropic skills, the budget (cents, set on the deployment) and the memory stores;
-flags override them. Without stored answers: Sonnet 5.5, effort high, budget 500. Models and effort
+packages and hosted skills, the budget (cents, set on the deployment) and the memory stores;
+flags override them. Without stored answers: the cloud runtime's balanced tier, effort high, budget 500. Models and effort
 can also be chosen at `init` (`/qargi-instances`).
 
 The lead (`PROJECT-lead`) is provisioned after its members: the role agents named in the project's

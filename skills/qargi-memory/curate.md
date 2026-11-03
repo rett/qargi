@@ -22,4 +22,4 @@ or `memstore_` ids): `split` takes what `--prefix`, `--role` or `--note-kind` pi
 moves the originals to `/_archive/<date>/`), `copy` leaves the source alone, `merge` adds what `TO`
 lacks and moves a split's archived originals back. A collision goes to `/_conflicts/<date>/`,
 nothing is deleted, each note written records its origin in `Sources:`. Without `--approved` they
-print the plan and its token; apply exactly that with `--plan TOKEN --approved "..."`.
+print the plan and its token; apply exactly that with `--plan TOKEN --approved "..."`. A store that changed since the plan is refused.

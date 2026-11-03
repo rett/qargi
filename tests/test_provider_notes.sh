@@ -2,7 +2,8 @@
 # The notes of a runtime's definition and the verb that reads them: `provider notes [TOPIC] [--project P]` prints the text of TOPIC from the
 # definition of the project's local runtime (composed with its extensions; the project is --project, else the one in effect), or lists the
 # topics when it is given none. A topic or a runtime with no notes is exit 1 and names both; a project with no local runtime has no
-# provider to ask (exit 2, there is no default); the verb changes nothing. Hermetic and offline: a copy of the tool holds the fake runtimes
+# provider to ask, and a runtime that cannot be used as it stands (a library pack never sealed or changed since, a definition that is not
+# readable) is refused: both are exit 2 (there is no default); the verb changes nothing. Hermetic and offline: a copy of the tool holds the fake runtimes
 # (tests/fakeprov.sh), so the shipped definitions are never changed. Run: tests/test_provider_notes.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -77,6 +78,19 @@ run alpha --project noprov
 { [ $rc = 2 ] && [ -z "$out" ] && grep -q "has no provider" <<<"$err" && ! grep -qi "claude" <<<"$err"; } && ok "a project with no provider is exit 2 (no default)" || no "no provider: rc=$rc out=$out err=$err"
 run alpha --project cloudonly
 { [ $rc = 2 ] && [ -z "$out" ] && grep -q "no local provider" <<<"$err"; } && ok "a project with no local runtime is exit 2 (the verb asks for the local surface)" || no "cloud only: rc=$rc out=$out err=$err"
+
+# a runtime that cannot be used as it stands is a refusal (exit 2), not "no such topic" (exit 1)
+mkdir -p "$T/c/packs/providers/unsealed"
+jq '.provider = "unsealed" | .family = null | .notes = {"alpha": "x"} | del(.adapter, .adapter_verbs)' "$SRC/lib/providers/claude-code.json" > "$T/c/packs/providers/unsealed/definition.json"
+mkproj unsealedp '"unsealed"'
+run alpha --project unsealedp
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "never reviewed" <<<"$err"; } && ok "a library runtime that was never sealed is exit 2" || no "unsealed: rc=$rc out=$out err=$err"
+printf '{ not json' > "$TOOL/lib/providers/garbled.json"
+mkproj garbledp '"garbled"'
+run alpha --project garbledp
+{ [ $rc = 2 ] && [ -z "$out" ] && grep -q "garbled" <<<"$err"; } && ok "a definition that is not readable is exit 2" || no "garbled: rc=$rc out=$out err=$err"
+run --project garbledp
+[ $rc = 2 ] && ok "listing the topics of such a runtime is exit 2 too" || no "garbled list: rc=$rc out=$out err=$err"
 
 # the shipped runtime of Claude Code has the topics the skills point at, and the text of a topic is what the verb prints
 mkproj onclaude '{"local":"claude-code","cloud":"claude-platform"}'

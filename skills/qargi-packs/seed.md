@@ -21,6 +21,6 @@ nobody until you `link` it, for example `qargi skill link NAME --scope project -
 version exists (this is what `install.sh --user` runs).
 
 After an update of a linked pack, seed prints the follow-ups: `qargi packs apply --target
-claude-code P` for each project the links reach and `qargi packs apply INSTANCE` for cloud agents.
+RUNTIME P` for each project the links reach and `qargi packs apply INSTANCE` for cloud agents.
 To take the shipped version of an edited pack again: unlink it, remove it (the `remove` verb of
 `skill`), seed.

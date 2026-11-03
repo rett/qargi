@@ -1,6 +1,6 @@
 ---
 name: qargi-session
-description: Hand a lead's work over to a fresh Claude Code session (a new session, a new worktree, possibly an older base) from stored state and not from the lead's memory - write the handoff note with qargi marshal handoff, start the new session with it, make it report what it believes before it does anything, check that report, and only then let it proceed. Load it when you lead and are about to end or restart a session (after /compact, after a skill, agent or settings change a running session cannot reload, when context is tight, or when the owner asks). For the lead or a Claude Code session, never for a member.
+description: Hand a lead's work over to a fresh session (a new session, a new worktree, possibly an older base) from stored state and not from the lead's memory - write the handoff note with qargi marshal handoff, start the new session with it, make it report what it believes before it does anything, check that report, and only then let it proceed. Load it when you lead and are about to end or restart a session (after /compact, after a skill, agent or settings change a running session cannot reload, when context is tight, or when the owner asks). For the lead session, never for a member.
 argument-hint: [NAME]
 ---
 
@@ -25,7 +25,7 @@ when the owner asks. Not in the middle of a merge, a `feature verify` run or a c
 2. **Read it, then add only what is not stored.** Check it matches what you know (a stale suite line, a branch you
    expected). Append what only you know (a decision and why, a dead end, what you were about to do) under a heading
    `Lead's addition (not stored state)`. Never put a credential, token or plan token in the note, and never an approval.
-3. **Start the new session with the note as its first message.** If your session has a tool that starts a sibling Claude Code
+3. **Start the new session with the note as its first message.** If your session has a tool that starts a sibling
    session, use it in the worktree where the work continues, with the launch line from the note's packs section. Otherwise
    give the owner the exact command: that launch line, run in that worktree, with `--continue` or `--resume` when the owner
    wants this conversation reloaded, and the note's path (or text) as the first message. Release the feature

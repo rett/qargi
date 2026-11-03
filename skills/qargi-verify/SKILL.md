@@ -6,7 +6,7 @@ argument-hint: <run directory with patches/ and manifest.json>
 
 # /qargi-verify (you are the coordinator)
 
-The one take-in sequence, for one returned run or several. Gates come from the repository's profile, the only source of gates (`~/.qargi/config/profiles/<repo>.md`); without one, use the repository's own documented checks. A run is **open** until `qargi local verify` has passed on it.
+The one take-in sequence, for one returned run or several. Gates come from the repository's profile, the only source of gates (`~/.qargi/config/profiles/<repo>.md`); without one, use the repository's own documented checks. An **open** run is a local run made by `qargi local prepare` that `qargi local verify` has not yet passed; a cloud collect is never open.
 
 ## 1. Verify every open run before applying any
 
@@ -27,11 +27,11 @@ For each run:
 
 Report DONE or BLOCKED, evidence, deviations and the agent's `noticed_not_acted_on` notes (`qargi noticed list`, then `qargi noticed resolve`). Ask before any push; merge to a long-lived branch only when told.
 
-On approval, for each run in turn: `qargi feature merge NAME agent/<slug>`, the branch name taken from the run's slug. Apply the profile's coordinator steps and strip trailers. **Never squash**: keep the agent's separate commits; send one that mixes changes back to be split.
+On approval, for each run in turn, with an open feature: `qargi feature merge NAME agent/<slug>`, the branch name taken from the run's slug. For a cloud collect or a project with no open feature, apply the series with `git am` onto the branch the user names (authors reset to the user), or split a mixed commit by file yourself. Apply the profile's coordinator steps and strip trailers. **Never squash**: keep the agent's separate commits; send one that mixes changes back to be split.
 
 ## 4. Clean up, after the merge
 
-Only when the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest. Then `qargi review prune [--yes]`. Never delete files in /dev/shm by pattern; only a run's own TMP is yours. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason on a rejection; `qargi mark --help` lists codes), then `qargi close SID`.
+Only when the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest. Then `qargi review prune [--yes]`. Never delete files in /dev/shm by pattern; only a run's own TMP is yours. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason code on a rejection or when rework was needed; `qargi mark --help` lists codes), then `qargi close SID`.
 
 ## Never
 

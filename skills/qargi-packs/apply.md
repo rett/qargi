@@ -11,7 +11,7 @@ go-ahead before `--plan TOKEN --approved "..."`.
   token; with `--plan TOKEN --approved "..."` it uploads the custom skills, replaces the agent's
   skill, MCP-server and tool lists (a new agent version) and re-points the deployment. Vault ids
   a tool needs are reported, not attached.
-- **A local session:** `qargi packs apply --target claude-code PROJECT` (the target is the render
+- **A local session:** `qargi packs apply --target RUNTIME PROJECT` (the target is the render
   target of the project's local runtime) prints the plan (what is added, changed or removed,
   packs skipped as not compatible, shadowed skills, tools that need credentials). With the token
   and approval it renders the union of the project's roles into
@@ -19,7 +19,7 @@ go-ahead before `--plan TOKEN --approved "..."`.
   skills directory, then `mcp.json`, `settings.json` and `MANIFEST.json`) and prints the launch
   line. Nothing is written into a repository or the runtime's user directory; role scoping is
   advisory (the render is the union of roles). Vault credentials a tool needs are reported: the
-  person configures them. `qargi packs check --target claude-code PROJECT` reports drift and
+  person configures them. `qargi packs check --target RUNTIME PROJECT` reports drift and
   shadowing (a same-named skill in the user's or the project's skills directory) and is read
   only. The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill
   and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or

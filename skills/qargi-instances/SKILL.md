@@ -1,6 +1,6 @@
 ---
 name: qargi-instances
-description: The workers a project dispatches to. Local members - add, refresh, list (STALE, DRIFT), profiles and tiers, and `qargi agent for ROLE [--profile P]` to pick member, model and effort. Cloud instances (Managed Agents deployments) - register, list, inspect, budget, refresh-prompt, normalize, remove. Load it to create or update a member, choose a model or effort, dispatch, or manage a cloud instance.
+description: The workers a project dispatches to. Local members - add, refresh, list (STALE, DRIFT), profiles and tiers, and `qargi agent for ROLE [--profile P]` to pick member, model and effort. Cloud instances (cloud agents) - register, list, inspect, budget, refresh-prompt, normalize, remove. Load it to manage members, models, effort, dispatch or cloud instances.
 argument-hint: agent add|list|models|refresh|for ... | instances init|list|show|remove ...
 ---
 
@@ -33,9 +33,10 @@ effort and a purpose. Shipped profiles: `build`, `write`, `test` (worker); `revi
   refused. Per-task diff checks: `--profile auditor` on review (fast, low effort). Search is not a role:
   `qargi provider notes exploration`. Your own session model is set in the runtime (`qargi provider notes session-model`); the
   `lead` profile has no base, is never dispatched, and its tier is the recommendation. Frontier is opt-in: `--profile researcher`
-  (review, read-only) for research or a hard design question, only when the owner or you name it for the task.
+  only when the owner or you name it for the task.
+- `qargi instances init --location local --agent FILE [--name N] [--model M] [--effort E]` records a local agent file's path, sha256, model and effort.
 - With the runtime's `dispatch.mode` `command` there is no member file: `qargi local run RUN` runs the CLI with the member's
-  prompt composed in (`/qargi-task`). A new runtime is added in `/qargi-providers`.
+  prompt composed in (`/qargi-task`).
 
 ## Cloud instances
 
