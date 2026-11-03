@@ -54,7 +54,7 @@ machines and developers (see the shared marshal below). Your routine:
    different paths run in parallel; the same file goes one after the other. A task runs targeted checks only.
 3. **Take each task in**: `/qargi-verify` the series; `qargi review apply RUN` (runs `review check` and `local verify`, creates
    `agent/<slug>` in a temporary worktree at the run's base, applies the series, prints the next commands), then
-   `qargi feature merge NAME BRANCH`, then `qargi local clean RUN`, then `qargi review prune [--yes]` to delete merged `agent/*`
+   `qargi feature merge NAME BRANCH`, then (only once that merge succeeded; clean refuses unmerged work) `qargi local clean RUN`, then `qargi review prune [--yes]` to delete merged `agent/*`
    branches. Run `qargi local verify RUN` on every returned run before merging any of them: a passing verify arms the run
    (afterwards the lead's own fast-forwards are accepted), but a run never verified before the first merge fails the strict check.
 4. **When the feature is complete** (still yours? `qargi marshal check NAME`): `qargi feature sync NAME` (pulls in what other features landed; a conflict stops here, see
