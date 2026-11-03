@@ -42,6 +42,15 @@ if LIB not in sys.path:
 import provider as P  # noqa: E402                         (lib/provider.py puts itself in sys.modules under this name when it is the script)
 from conformance import review as R  # noqa: E402
 
+_print = print
+
+
+def print(*args, **kw):  # noqa: A001  (this module's print: every word is written through R.vis)
+    """The print of this module. What a pack holds (file names, lines of its files, strings of its definition) is printed for a person to read
+    and approve, so a control, escape or bidi character in it is written out (\\x1b, \\u202e) and cannot erase, hide or reorder a line of the review."""
+    _print(*[R.vis(a) if isinstance(a, str) else a for a in args], **kw)
+
+
 KINDS = ("provider", "catalog", "extension")
 KEYS = {"provider": "provider", "catalog": "family", "extension": "extension"}
 FROM_KINDS = ("minimal", "command", "hook-cli")
@@ -754,6 +763,9 @@ def cmd_check(args):
     label = name or os.path.basename(d)
     kind = doc.get("kind")
     state = P.seal_state(e)[0] if e is not None else "directory"
+    if state == "unrecorded":                                      # nobody read it or approved it: nothing of it is judged, recorded or run
+        raise Refusal("pack '%s' has no record (put there by hand) and was never reviewed, so it is not checked; read it and seal it (qargi provider seal %s), "
+                      "or qargi provider import it from its source" % (name, name))
     rv = R.scan(d, doc)
     fails, warns = doc_findings(doc, name if name else name_of(doc))
     fails = rv["fail"] + fails
@@ -772,7 +784,7 @@ def cmd_check(args):
         print("executables: %s" % ", ".join(sorted(R.executables(rv))))
     if fails:
         print("nothing is verified while the pack fails")
-        if name and state in ("sealed", "unrecorded"):
+        if name and state == "sealed":
             P.record_verification(name, {})
         return 1
     if kind == "extension":
@@ -797,7 +809,7 @@ def check_extension(doc, d, name, e, state, opts):
     except P.Conflict as err:
         print("fail: %s" % err)
         print("nothing is verified while the pack fails")
-        if state in ("sealed", "unrecorded"):
+        if state == "sealed":
             P.record_verification(name, {})
         return 1
     except P.ProviderError as err:                                 # no runtime to compose it onto (a fresh scaffold, say): the pack is fine, nothing is verified
@@ -833,7 +845,7 @@ def record_results(doc, results, name, state, hash_now):
     if name is None:
         print("a directory is not recorded: put the pack in the library (qargi provider import) to have a verification recorded")
         return 1 if bad else 0
-    if state not in ("sealed", "unrecorded"):
+    if state != "sealed":
         print("nothing recorded: %s; seal it (qargi provider seal %s) and check again" % ("the pack is " + state, name))
         return 1 if bad else 0
     h = hash_now()
@@ -872,8 +884,8 @@ def cmd_attest(args):
     if cap not in P.capabilities2():
         raise Failure("unknown capability '%s'; one of %s" % (cap, ", ".join(P.capabilities2())))
     state = P.seal_state(e)[0]
-    if state not in ("sealed", "unrecorded"):
-        raise Refusal("pack '%s' %s; seal it first, so that the attestation is bound to the content that was reviewed" % (name, P.seal_state(e)[1] or state))
+    if state != "sealed":
+        raise Refusal("pack '%s' %s; seal it first (qargi provider seal %s), so that the attestation is bound to the content that was reviewed" % (name, P.seal_state(e)[1] or state, name))
     ext = e["kind"] == "extension"
     if ext:
         try:
@@ -937,7 +949,7 @@ def list_other_kinds():
             if kind == "provider":
                 continue
             state, _ = P.seal_state(e)
-            print("%-12s %-12s %s  (library%s)" % (n, kind, "-", "" if state in ("sealed", "unrecorded") else ", " + ("unsealed" if state == "unsealed" else "changed since sealed")))
+            print("%-12s %-12s %s  (library%s)" % (n, kind, "-", "" if state == "sealed" else ", " + {"unsealed": "unsealed", "unrecorded": "not sealed: no record"}.get(state, "changed since sealed")))
 
 
 def show_pack(name, as_json, project=None):
@@ -953,7 +965,7 @@ def show_pack(name, as_json, project=None):
     print("%s  (%s, library, %s)" % (name, e["kind"], state + (": " + why if why else "")))
     for ln in summary_lines(doc):
         print(ln)
-    if e["kind"] == "extension" and state in ("sealed", "unrecorded") and not [1 for lvl, _ in P.validate_extension(doc, name) if lvl == "fail"]:
+    if e["kind"] == "extension" and state == "sealed" and not [1 for lvl, _ in P.validate_extension(doc, name) if lvl == "fail"]:
         try:
             base, surface = P.extension_base(name, project)
         except P.ProviderError as err:

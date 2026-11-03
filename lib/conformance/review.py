@@ -8,11 +8,19 @@ nothing when run).
                                   it has one: the files it names as executables are then executables whatever their mode
   lines(review, title)            the review as text, one line each
   executables(review)             {path: sha256} of every executable of the review
+  policy(root)                    the text-only rules alone, as a list of failures: what a pack of any kind must meet (scan applies them too);
+                                  `python3 -I review.py policy DIR` prints them as FAIL lines (exit 1 when there is one), and `review.py vis` is vis() on
+                                  standard input, for a shell caller
+  vis(text)                       text with control, escape, bidi and unpaired-surrogate characters written out (\\x1b, \\u202e): what is
+                                  printed for a person to read, so that nothing in a pack can move the cursor, hide a line or reorder text
 
 The rules (the owner's policy for what a pack may hold):
   * Only text. A file with a NUL byte or invalid UTF-8, a file that starts with the magic of an executable (ELF, Mach-O, PE) or of an
     archive or compressed file, is refused, whatever its name or mode. A pack bundles only examinable scripts; a vendor CLI is installed by
     the user and named in the definition (the review lists it as "needs on PATH").
+  * No control characters: a file with a C0 or C1 control other than tab, newline and a carriage return before a newline, or with a bidi
+    control (U+202A-202E, U+2066-2069, U+200E, U+200F, U+061C), or a file name with any, is refused. Such a character can erase or hide a
+    line of the review or reorder text, so that what the person approves is not what is stored. The review is also printed through vis().
   * No symbolic links; at most 200 files, 1 MB a file and 2 MB in all.
   * Secrets (a token, a key) are refused; the review names the file and line, never the value.
   * Flagged, not refused, so that the person reads them: network commands and URLs, writes outside the run directory, reads of
@@ -22,7 +30,8 @@ An executable is a file with an executable mode, a shebang line, a script suffix
 adapter verbs). The review lists each with its sha256, interpreter and first lines; the person approves them by name.
 
 The review dict: files [{path, size, sha256, exec, text}], executables [{path, sha256, why, interpreter, head}], fail [msg], warn [msg],
-urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text], bytes, count."""
+urls [url], network ["path:line: text"], flags ["path:line: what"], secrets ["path:line"], needs_on_path [command], argv [text],
+env_pass [name] (the variables of the caller's environment the runtime's command receives; a credential-looking one is also a warning), bytes, count."""
 import hashlib
 import os
 import re
@@ -50,7 +59,23 @@ WRITES = re.compile(r">>?\s*(?!/dev/(null|stderr|stdout|fd/))(/|~|\$HOME|\$\{HOM
                     r"\bopen\([^)]*[\"'][wax]b?\+?[\"']|\.write_text\(|\.write_bytes\(|shutil\.(rmtree|move|copy)|os\.(remove|unlink|rmdir|rename|makedirs)\(")
 SECRET_ENV = re.compile(r"(environ\s*(\[|\.get\s*\()|getenv\s*\()\s*[\"'][A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z0-9_]*[\"']|"
                         r"\$\{?[A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)[A-Z0-9_]*\}?")
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL")
 BLOB = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}|\b[0-9a-fA-F]{128,}\b")
+
+
+# characters a reader's terminal or eye is moved by: C0 (but tab and newline) and C1 controls, DEL, bidi controls, line and paragraph
+# separators, and the unpaired surrogates a file name that is not UTF-8 has under os.walk
+_SHOW = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+_BAD_TEXT = re.compile("[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]|\r(?!\n)")
+_BAD_NAME = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")
+
+
+def vis(text):
+    """text with every control, escape, bidi or surrogate character written out (\\x1b, \\u202e, \\r), tab and newline kept: for anything printed
+    for a person to read, and to approve."""
+    if not isinstance(text, str):
+        text = str(text)
+    return _SHOW.sub(lambda m: "\\r" if m.group() == "\r" else "\\x%02x" % ord(m.group()) if ord(m.group()) < 256 else "\\u%04x" % ord(m.group()), text)
 
 
 def sha256_bytes(b):
@@ -85,6 +110,64 @@ def stage(src, dst):
                 shutil.copyfile(p, out)
                 os.chmod(out, 0o700 if st.st_mode & 0o111 else 0o600)
     return bad
+
+
+def _text_problem(raw):
+    """(is_text, why, content): why names what the bytes are when they are not text; content is the decoded text when they are."""
+    for magic, what in MAGICS:
+        if raw.startswith(magic) and (magic != b"MZ" or b"\x00" in raw[:512]):
+            return False, what, None
+    if len(raw) > 262 and raw[257:262] == b"ustar":
+        return False, "a tar archive", None
+    if b"\x00" in raw:
+        return False, "binary (it has a NUL byte)", None
+    try:
+        return True, None, raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "not UTF-8 text", None
+
+
+def _control(rel, content):
+    """The failure for the first control or bidi character of a text, or None. It names the line and the code point, never the character."""
+    m = _BAD_TEXT.search(content)
+    if not m:
+        return None
+    n = len(_BAD_TEXT.findall(content))
+    return "%s:%d has a control or bidi character (U+%04X)%s, which can change what a reader sees; a pack holds plain text" % (
+        vis(rel), content.count("\n", 0, m.start()) + 1, ord(m.group()), "" if n == 1 else " and %d more" % (n - 1))
+
+
+def policy(root):
+    """The text-only rules alone, for a pack of any kind (a skill's directory, say): [failure message]. A symbolic link or special file, a
+    file that is a binary, an archive or not UTF-8 text, a control or bidi character in a file or in its name. Sizes and counts are the
+    caller's own rules."""
+    out = []
+    for rel, p in _files(root):
+        shown = vis(rel)
+        if _BAD_NAME.search(rel):
+            out.append("%s: the file name has a control or bidi character, which can change what a reader sees" % shown)
+        if os.path.islink(p):
+            out.append("%s is a symbolic link, which a pack may not hold" % shown)
+            continue
+        st = os.lstat(p)
+        if not stat.S_ISREG(st.st_mode):
+            out.append("%s is not a regular file" % shown)
+            continue
+        if st.st_size > MAX_FILE:
+            continue
+        try:
+            with open(p, "rb") as f:
+                raw = f.read()
+        except OSError:
+            continue
+        text, why, content = _text_problem(raw)
+        if not text:
+            out.append("%s is %s: a pack holds only text files (scripts you can read)" % (shown, why))
+            continue
+        c = _control(rel, content)
+        if c:
+            out.append(c)
+    return out
 
 
 def _files(root):
@@ -162,9 +245,16 @@ def _argv_text(definition):
     return out
 
 
+def _env_pass(definition):
+    """The variable names dispatch.env_pass lists (the caller's environment that the runtime's command receives), as written."""
+    disp = definition.get("dispatch") if isinstance(definition, dict) and isinstance(definition.get("dispatch"), dict) else {}
+    v = disp.get("env_pass")
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
 def scan(root, definition=None):
     r = {"files": [], "executables": [], "fail": [], "warn": [], "urls": [], "network": [], "flags": [], "secrets": [], "needs_on_path": [],
-         "argv": [], "bytes": 0, "count": 0}
+         "argv": [], "env_pass": [], "bytes": 0, "count": 0}
     files = _files(root)
     named = _named(definition)
     norm = {}
@@ -179,44 +269,36 @@ def scan(root, definition=None):
         r["fail"].append("more than %d files" % MAX_FILES)
     seen = set()
     for rel, p in files:
+        shown = vis(rel)
+        if _BAD_NAME.search(rel):
+            r["fail"].append("%s: the file name has a control or bidi character, which can change what a reader sees" % shown)
         if os.path.islink(p):
-            r["fail"].append("%s is a symbolic link, which a pack may not hold" % rel)
+            r["fail"].append("%s is a symbolic link, which a pack may not hold" % shown)
             continue
         st = os.lstat(p)
         if not stat.S_ISREG(st.st_mode):
-            r["fail"].append("%s is not a regular file" % rel)
+            r["fail"].append("%s is not a regular file" % shown)
             continue
         r["bytes"] += st.st_size
         if st.st_size > MAX_FILE:
-            r["fail"].append("%s is larger than %d bytes" % (rel, MAX_FILE))
+            r["fail"].append("%s is larger than %d bytes" % (shown, MAX_FILE))
             continue
         try:
             with open(p, "rb") as f:
                 raw = f.read()
         except OSError as e:
-            r["fail"].append("%s cannot be read: %s" % (rel, e.strerror))
+            r["fail"].append("%s cannot be read: %s" % (shown, e.strerror))
             continue
-        text, why = True, None
-        for magic, what in MAGICS:
-            if raw.startswith(magic) and (magic != b"MZ" or b"\x00" in raw[:512]):
-                text, why = False, what
-                break
-        if text and len(raw) > 262 and raw[257:262] == b"ustar":
-            text, why = False, "a tar archive"
-        if text and b"\x00" in raw:
-            text, why = False, "binary (it has a NUL byte)"
-        content = None
-        if text:
-            try:
-                content = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                text, why = False, "not UTF-8 text"
+        text, why, content = _text_problem(raw)
         isx = bool(st.st_mode & 0o111)
         row = {"path": rel, "size": st.st_size, "sha256": sha256_bytes(raw), "exec": isx, "text": text}
         r["files"].append(row)
         if not text:
-            r["fail"].append("%s is %s: a pack holds only text files (scripts you can read); install a vendor program yourself and name it in the definition" % (rel, why))
+            r["fail"].append("%s is %s: a pack holds only text files (scripts you can read); install a vendor program yourself and name it in the definition" % (shown, why))
             continue
+        ctrl = _control(rel, content)
+        if ctrl:
+            r["fail"].append(ctrl)
         shebang = content.startswith("#!")
         suffix = rel.lower().endswith(SCRIPT_SUFFIX)
         reason = None
@@ -247,6 +329,11 @@ def scan(root, definition=None):
     r["urls"] = sorted(set(r["urls"]))[:15]
     r["needs_on_path"] = needs_on_path(definition)
     r["argv"] = _argv_text(definition)
+    r["env_pass"] = _env_pass(definition)
+    for n in r["env_pass"]:
+        if SECRET_NAME.search(n.upper()):
+            r["warn"].append("dispatch.env_pass hands %s to the command: the name looks like a credential, and it reaches everything that command does; approve it only if the "
+                             "command needs it" % n)
     return r
 
 
@@ -299,6 +386,8 @@ def lines(review, title):
         out.append("needs on PATH (installed by you, not part of the pack): %s" % ", ".join(review["needs_on_path"]))
     for a in review["argv"]:
         out.append("runs: %s" % a)
+    if review.get("env_pass"):
+        out.append("environment handed to the command (env_pass): %s" % ", ".join(review["env_pass"]))
     if review["urls"]:
         out.append("URLs mentioned:")
         out.extend("  " + u for u in review["urls"])
@@ -313,4 +402,18 @@ def lines(review, title):
         out.append("warn: %s" % w)
     for m in review["fail"]:
         out.append("FAIL: %s" % m)
-    return out
+    return [vis(ln) for ln in out]               # nothing a pack holds reaches the reader's terminal raw
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == "policy" and os.path.isdir(sys.argv[2]):
+        found = policy(sys.argv[2])
+        for m in found:
+            print("FAIL: %s" % vis(m))
+        sys.exit(1 if found else 0)
+    if len(sys.argv) == 2 and sys.argv[1] == "vis":
+        sys.stdout.write(vis(sys.stdin.buffer.read().decode("utf-8", "surrogateescape")))
+        sys.exit(0)
+    print("usage: review.py policy DIR | vis", file=sys.stderr)
+    sys.exit(2)

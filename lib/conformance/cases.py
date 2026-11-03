@@ -76,7 +76,7 @@ def verdicts(doc, results):
 
 def run(doc, directory, name, entry, sealed=False, opts=None, rv=None):
     """All the cases for a provider definition. directory: the pack directory; name: its library name or None; sealed: pack code may run."""
-    usable = name is not None and entry is not None and P.seal_state(entry)[0] in ("sealed", "unrecorded")
+    usable = name is not None and entry is not None and P.seal_state(entry)[0] == "sealed"
     res = {}
     for case in (render_agent, link_skills, barrier_hook, adapter_harness):
         try:
@@ -377,7 +377,8 @@ def adapter_harness(doc, directory, name, sealed, usable):
             json.dump(staged, f)
         stubs = os.path.join(tmp, "stubs")
         shutil.copytree(os.path.join(copy, "conformance"), stubs, symlinks=True)
-        r = subprocess.run(["bash", RUN_SH, name, "--tool", tool, "--stub", stubs], capture_output=True, text=True, timeout=HARNESS_TIMEOUT, stdin=subprocess.DEVNULL)
+        r = subprocess.run(["bash", RUN_SH, name, "--tool", tool, "--stub", stubs], capture_output=True, text=True, timeout=HARNESS_TIMEOUT, stdin=subprocess.DEVNULL,
+                           env=P.pack_env(tmp, tmp))              # the pack's adapter and stub run with nothing of the caller's environment
         lines = r.stdout.splitlines()
         for ln in lines:
             m = LINE.match(ln)

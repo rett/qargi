@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); export QARGI_CONF=$T/c QARGI_STATE=$T/s
-DA=./bin/qargi; fail=0
+DA=./bin/qargi; fail=0; HANDSEAL=$PWD/tests/handseal.py
 base=$($DA project template demo | jq '.repo.url="https://github.com/example/demo"')
 chk() { # name expected(0|1) jq-filter
   local f=$T/a.json; jq "$3" <<<"$base" > "$f"
@@ -150,6 +150,7 @@ jq -n '{schema:2, kind:"provider", provider:"fakelink", family:null, surface:"lo
     {from:"tools", to:"tools", tool_map:{shell:"sh", read:"cat", edit:"ed", write:"tee"}}, {from:"class", to:"mode"},
     {from:"body", to:"prompt"}]}},
   dispatch:{mode:"in-session"}, barrier:{kind:"none"}}' > "$LIB/definition.json"
+python3 -I "$HANDSEAL" "$LIB"                             # a library pack counts only once sealed
 LR=$T/lrepo; git init -q -b main "$LR"; echo x > "$LR/README"; $G -C "$LR" add -A; $G -C "$LR" commit -q -m one
 lproj() { jq -n --arg p "$1" --arg r "$2" --arg v "$3" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }

@@ -63,6 +63,37 @@ $DA packs render beta build "$T/o2" >/dev/null 2>&1 && jq -e '.[0].name=="issues
 mkdir -p "$T/src/leaky"; printf -- '---\nname: leaky\ndescription: Use when testing.\n---\nkey ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$T/src/leaky/SKILL.md"
 $DA skill import "$T/src/leaky" --compatible any 2>&1 | grep -q "looks like a secret" && ok "a skill with a secret is refused at import" || no "secret skill accepted"
 
+# --- a skill pack holds only text, like every other pack: a binary, an archive, a special file, a symlink, a NUL byte, invalid UTF-8, or a
+# control or bidi character in a file or in its name is refused at import (the review says which and prints it escaped), and at seal
+SKM=$'---\nname: NAME\ndescription: Use when testing the text-only policy.\n---\nbody\n'
+mkskill_dir() { local d=$T/src/$1; rm -rf "$d"; mkdir -p "$d"; printf '%s' "${SKM//NAME/$1}" > "$d/SKILL.md"; }
+for c in elf zip nul latin ctrl bidi crlf name fifo link; do mkskill_dir pol-$c; done
+printf '\x7fELF\x02\x01\x01\x00rest' > "$T/src/pol-elf/helper"
+printf 'PK\x03\x04rest' > "$T/src/pol-zip/refs.dat"
+printf 'a\x00b\n' > "$T/src/pol-nul/refs.md"
+printf 'caf\xe9\n' > "$T/src/pol-latin/refs.md"
+printf 'harmless\x1b[2K\x1b[1Aforged\n' > "$T/src/pol-ctrl/refs.md"
+printf 'a \xe2\x80\xae txet\n' > "$T/src/pol-bidi/refs.md"
+printf 'dos\r\nlines\r\n' > "$T/src/pol-crlf/refs.md"
+printf 'x\n' > "$T/src/pol-name/$(printf 'n\x1b[8mame.md')"
+mkfifo "$T/src/pol-fifo/pipe"
+ln -s /etc/passwd "$T/src/pol-link/lnk"
+for c in elf:"an ELF executable" zip:"a zip archive" nul:"NUL byte" latin:"not UTF-8" ctrl:"control or bidi character" bidi:"control or bidi character" name:"control or bidi character" fifo:"not a regular file" link:"symbolic link"; do
+  n=pol-${c%%:*}; why=${c#*:}
+  out=$(timeout 20 $DA skill import "$T/src/$n" --compatible any 2>&1); rc=$?
+  { [ $rc = 1 ] && grep -q "FAIL" <<<"$out" && grep -q "$why" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ ! -e "$T/c/packs/skills/$n" ]; } && ok "a skill pack with $n is refused at import ($why)" || no "policy $n: rc=$rc $out"
+done
+out=$(timeout 20 $DA skill import "$T/src/pol-ctrl" --compatible any 2>&1); out2=$(timeout 20 $DA skill import "$T/src/pol-name" --compatible any 2>&1)
+{ ! grep -q $'\x1b' <<<"$out$out2" && grep -q 'n\\x1b\[8mame.md' <<<"$out2"; } && ok "the review prints a file name with an escape in it escaped, not raw" || no "raw escape in the review: $(printf '%s' "$out$out2" | od -c | head -5)"
+tok=$($DA skill import "$T/src/pol-crlf" --compatible any | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+[ -n "$tok" ] && ok "a carriage return before a newline (a DOS text file) is not a control character" || no "crlf refused"
+# a stored skill that is changed afterwards is refused at seal
+$DA skill new pol-late --compatible any >/dev/null; sed -i 's/^description: .*/description: Use when testing late additions./' "$T/c/packs/skills/pol-late/SKILL.md"; seal pol-late
+printf '\x7fELF\x02\x01\x01\x00rest' > "$T/c/packs/skills/pol-late/helper"
+out=$($DA skill seal pol-late 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "an ELF executable" <<<"$out" && ! grep -q '^plan token' <<<"$out"; } && ok "seal refuses a skill pack that gained a binary" || no "seal binary: rc=$rc $out"
+rm -f "$T/c/packs/skills/pol-late/helper"
+
 # --- provisioning picks up attached skills and tools
 $DA provision plan --project alpha --role write >/dev/null 2>&1
 grep -q "./skills/alpha-all" "$T/s/provision/alpha-write/agents/alpha-write/agent.md" && [ -f "$T/s/provision/alpha-write/agents/alpha-write/skills/alpha-write/SKILL.md" ] && ok "provisioning attaches custom skills" || no "skills not in the rendered agent"
@@ -188,7 +219,8 @@ tok=$($DA tool import "$T/ct.json" --compatible fam | sed -n 's/^plan token: \([
 # matching: a runtime name or its family; a pack the provider is not on is skipped with a note, never attached silently
 for rt in "famcli:local" "famhost:cloud"; do n=${rt%%:*}; s=${rt##*:}; mkdir -p "$T/c/packs/providers/$n"
   jq -n --arg n "$n" --arg s "$s" '{schema:2,kind:"provider",provider:$n,family:"fam",surface:$s,models:{pattern:"^.+$",tiers:{"*":{model:"m",alias:"m",verified_on:"2026-11-02",source:"test"}},effort:null},
-    dispatch:{mode:"command",argv:[$n,"run"],prompt:{via:"stdin"},cwd:"{clone}",output:{format:"text"}},agents:null,resources:{},barrier:{kind:"none"}}' > "$T/c/packs/providers/$n/definition.json"; done
+    dispatch:{mode:"command",argv:[$n,"run"],prompt:{via:"stdin"},cwd:"{clone}",output:{format:"text"}},agents:null,resources:{},barrier:{kind:"none"}}' > "$T/c/packs/providers/$n/definition.json"
+  python3 -I tests/handseal.py "$T/c/packs/providers/$n"; done                  # a library pack counts only once sealed
 $DA skill unlink style --scope user >/dev/null; $DA skill unlink build-only --scope user-role --role build >/dev/null
 mkp m-any any; mkp m-fam fam; mkp m-cli famcli; mkp m-host famhost; mkp m-other elsewhere; mkp m-two "elsewhere,fam"
 jq -n '{schema:1,project:"mp",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
