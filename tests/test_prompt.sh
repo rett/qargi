@@ -55,6 +55,13 @@ grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "
 grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
 grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
 grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the build prompt does not name RUN_DIR"
+# the contract is neutral about the runtime's tools and says each rule once: the Bash tool, run_in_background and Monitor are the claude-code addendum's,
+# the detached start is the cloud addendum's, and a cloud member's prompt holds one no-push rule and one background-command rule
+grep -qE "run_in_background|Monitor|Bash tool" contract/*.md && no "the contract names a runtime's tools" || ok "the contract does not name a runtime's tools (Bash tool, run_in_background, Monitor)"
+grep -qF "run_in_background" lib/providers/claude-code/local-run.md && grep -qF "nohup" lib/providers/claude-platform/cloud-run.md && ok "each runtime's addendum carries its own way to start a long command" || no "an addendum lost its recipe"
+for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' "profile's rules for examples"; do
+  grep -qF -- "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
+done
 # no project, a project without a cloud runtime, one whose runtime does not resolve, an unknown one: no addendum, and no default runtime
 mkproj nocloud '{"local":"claude-code"}'; mkproj ghost '{"cloud":"nosuchrt"}'
 for pr in "" nocloud ghost nosuchproj; do

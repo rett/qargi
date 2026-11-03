@@ -15,7 +15,7 @@ grouped under the one change they implement, so a change is reviewed with its co
 base {branch, sha}, branch, scope[], done {command, exit_code, output_tail},
 gates[] {name, command, result pass|fail|not run, exit_code, verdict_line
 verbatim}, commits[] {sha, subject}, touched_paths[] {path, reason},
-deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|suggestion|log|other} (deliverables
+deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|log|other} (deliverables
 that are not patches), usage_impact[] {kind: command|flag|output|config|file, before, after, where}
 (required when you change something a user sees or types), on_top_of {run, head_sha} and, per commit,
 for_group (when your work builds on another member's series), environment {tool versions, test_user}.
@@ -25,4 +25,4 @@ A role that changes the repository returns patches: everything above.
 
 A read-only role (review) returns a report and no patches: `report.md` and `manifest.json` in OUT, with
 `status`, `commits: []` and the report listed in `artifacts[]` (kind `report`). No `patches/`, no `series.md`,
-no bundle. A suggested fix travels as a separate patch file in OUT listed with kind `suggestion`.
+no bundle. A suggested fix goes in the report as a fenced diff, never a patch file.
