@@ -124,6 +124,20 @@ class Render(unittest.TestCase):
                 if verb and verbs(cmd) and verb not in verbs(cmd):
                     self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
 
+    def test_the_guard_topic_is_listed_renders_and_is_in_the_man_page(self):
+        self.assertIn("guard", C.TOPICS)
+        title, paras = C.TOPICS["guard"]
+        text = " ".join(paras)
+        self.assertLessEqual(len(text.split()), 250)
+        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push"):
+            self.assertIn(needle, text)
+        self.assertIn("guard", H.show_overview())
+        self.assertIn(title, H.show_topic("guard"))
+        self.assertIn("guard", H.man())
+        r = subprocess.run([BIN, "help", "guard"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("local verify", r.stdout)
+
     def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
         text = " ".join(C.TOPICS["approvals"][1])
         for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
