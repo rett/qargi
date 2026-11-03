@@ -8,10 +8,11 @@ T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TABLE=$PWD/lib/model-defaults.json
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
 mkdir -p "$HOME" "$T/c/projects"
-# there is no default provider: the provider is a project's models.provider. pbase is the project in effect for the user-level members below
-jq -n '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
+# there is no default provider: the provider is a project's models.provider, and a member belongs to a project. pbase is the project in effect
+git init -q "$T/repop"
+jq -n --arg p "$T/repop" '{schema:1,project:"pbase",repo:{url:"https://github.com/example/pbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/pbase.json"
 export QARGI_PROJECT=pbase
-A=$HOME/.claude/agents
+A=$T/repop/.claude/agents
 
 PROV=$PWD/lib/providers
 TIERS='["fast","balanced","deep","frontier"]'
@@ -33,9 +34,9 @@ jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(.
 [ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\nclaude.json\nschema-2.json\nschema.json')" ] && ok "claude (schema 1) and its split, claude-code and claude-platform, are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
-$DA agent add b1 --user --abilities build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"
-$DA agent add r1 --user --abilities review >/dev/null 2>&1 && [ "$(mline r1 model claude-opus-5-5)" = 1 ] && [ "$(mline r1 effort high)" = 1 ] && ok "add: review gets the review row" || no "review default"
-$DA agent add t1 --user --abilities test,build >/dev/null 2>&1 && [ "$(mline t1 effort low)" = 1 ] && ok "add: the first listed ability decides" || no "first ability"
+$DA agent add b1 --project pbase --abilities build >/dev/null 2>&1 && [ "$(mline b1 model claude-sonnet-5-5)" = 1 ] && [ "$(mline b1 effort high)" = 1 ] && ok "add: build gets the table's model and effort" || no "build default: $(head -5 "$A/b1.md")"
+$DA agent add r1 --project pbase --abilities review >/dev/null 2>&1 && [ "$(mline r1 model claude-opus-5-5)" = 1 ] && [ "$(mline r1 effort high)" = 1 ] && ok "add: review gets the review row" || no "review default"
+$DA agent add t1 --project pbase --abilities test,build >/dev/null 2>&1 && [ "$(mline t1 effort low)" = 1 ] && ok "add: the first listed ability decides" || no "first ability"
 ! grep -q '{{' "$A/b1.md" && sed -n 1,3p "$A/b1.md" | grep -q '^---$' && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/b1.md") && ok "no placeholder and no blank frontmatter line" || no "frontmatter"
 jq -e '.b1.model == "claude-sonnet-5-5" and .b1.effort == "high"' "$T/c/agents.json" >/dev/null && ok "the registry records them" || no "registry"
 
@@ -44,12 +45,12 @@ for pair in "tw:write" "ro:read-only"; do
   r=${pair%%:*}; c=${pair##*:}; mkdir -p "$T/c/roles/$r"
   jq -n --arg c "$c" '{class:$c}' > "$T/c/roles/$r/role.json"; echo "the $r role" > "$T/c/roles/$r/ROLE.md"
 done
-$DA agent add cw --user --abilities tw >/dev/null 2>&1 && [ "$(mline cw model claude-sonnet-5-5)" = 1 ] && [ "$(mline cw effort high)" = 1 ] && ok "a custom write role falls back to the build row" || no "custom write: $($DA agent add cw2 --user --abilities tw 2>&1)"
-$DA agent add cr --user --abilities ro >/dev/null 2>&1 && [ "$(mline cr model claude-opus-5-5)" = 1 ] && [ "$(mline cr effort high)" = 1 ] && ok "a custom read-only role falls back to the review row" || no "custom read-only"
+$DA agent add cw --project pbase --abilities tw >/dev/null 2>&1 && [ "$(mline cw model claude-sonnet-5-5)" = 1 ] && [ "$(mline cw effort high)" = 1 ] && ok "a custom write role falls back to the build row" || no "custom write: $($DA agent add cw2 --project pbase --abilities tw 2>&1)"
+$DA agent add cr --project pbase --abilities ro >/dev/null 2>&1 && [ "$(mline cr model claude-opus-5-5)" = 1 ] && [ "$(mline cr effort high)" = 1 ] && ok "a custom read-only role falls back to the review row" || no "custom read-only"
 
 # explicit values win
-$DA agent add ex --user --abilities review --model claude-haiku-5-5 --effort max >/dev/null 2>&1 && [ "$(mline ex model claude-haiku-5-5)" = 1 ] && [ "$(mline ex effort max)" = 1 ] && ok "explicit --model and --effort win" || no "explicit"
-$DA agent add ex2 --user --abilities build --effort turbo >/dev/null 2>&1 && no "bad effort accepted" || ok "a bad effort is still refused"
+$DA agent add ex --project pbase --abilities review --model claude-haiku-5-5 --effort max >/dev/null 2>&1 && [ "$(mline ex model claude-haiku-5-5)" = 1 ] && [ "$(mline ex effort max)" = 1 ] && ok "explicit --model and --effort win" || no "explicit"
+$DA agent add ex2 --project pbase --abilities build --effort turbo >/dev/null 2>&1 && no "bad effort accepted" || ok "a bad effort is still refused"
 
 # a project's answers
 git init -q "$T/repo"
@@ -63,15 +64,15 @@ $DA agent add pt --abilities test --project alpha >/dev/null 2>&1 && grep -q '^m
 $DA agent add pe --abilities build --project alpha --model claude-haiku-5-5 >/dev/null 2>&1 && grep -q '^model: claude-haiku-5-5$' "$PA/pe.md" && grep -q '^effort: xhigh$' "$PA/pe.md" && ok "explicit model, project effort" || no "mixed"
 
 # refresh keeps the effort
-$DA agent add rf --user --abilities build --model claude-haiku-5-5 --effort medium >/dev/null 2>&1
+$DA agent add rf --project pbase --abilities build --model claude-haiku-5-5 --effort medium >/dev/null 2>&1
 sed -i '/^effort:/d' "$A/rf.md"
-$DA agent refresh rf --user >/dev/null 2>&1 && [ "$(mline rf effort medium)" = 1 ] && [ "$(mline rf model claude-haiku-5-5)" = 1 ] && ok "refresh keeps the recorded effort and model" || no "refresh"
+$DA agent refresh rf >/dev/null 2>&1 && [ "$(mline rf effort medium)" = 1 ] && [ "$(mline rf model claude-haiku-5-5)" = 1 ] && ok "refresh keeps the recorded effort and model" || no "refresh"
 # an old member without effort has no effort line
-jq '.old = {abilities:["build"], file:($f), model:"sonnet", effort:null, project:null, created:"x", seq:99}' --arg f "$A/old.md" "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
-$DA agent refresh old --user >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: sonnet$' "$A/old.md" && ! grep -q '^effort:' "$A/old.md" && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/old.md") && ok "a member without effort renders no effort line" || no "old member"
+jq '.old = {abilities:["build"], file:($f), model:"sonnet", effort:null, project:"pbase", created:"x", seq:99}' --arg f "$A/old.md" "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+$DA agent refresh old >/dev/null 2>&1; [ -f "$A/old.md" ] && grep -q '^model: sonnet$' "$A/old.md" && ! grep -q '^effort:' "$A/old.md" && ! grep -q '^$' <(sed -n '1,/^hooks:/p' "$A/old.md") && ok "a member without effort renders no effort line" || no "old member"
 
 # agent models
-$DA agent add rs --user --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1
+$DA agent add rs --project pbase --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1
 out=$($DA agent models 2>&1)
 grep -E '^ *review ' <<<"$out" | grep -q 'deep -> opus -> claude-opus-5-5/high' && grep -E '^ *build ' <<<"$out" | grep -q 'balanced -> sonnet -> claude-sonnet-5-5/high' && ok "models: tier, alias, id and effort per profile" || no "tier text: $out"
 grep -q 'provider: claude' <<<"$out" && ok "models: the active provider" || no "provider line"
@@ -102,30 +103,30 @@ grep -E '^ *build ' <<<"$out" | grep -q 'project' && grep -E '^ *test ' <<<"$out
 jq '.profiles = "nonsense"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 $DA agent models --project alpha --json | jq -e '.profiles.build.source == "project"' >/dev/null && ok "profiles of the wrong type are ignored" || no "profiles type"
 # the researcher is read-only when added
-$DA agent add res2 --user --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
+$DA agent add res2 --project pbase --abilities review --model claude-fable-5-1 --effort high >/dev/null 2>&1 && grep -q -- '--class read-only' "$A/res2.md" && ok "a researcher (review ability) is read-only by class" || no "researcher class"
 
 # problems are flagged rows, never an error
-W=$T/w; mkdir -p "$W/home" "$W/c/projects"
-jq -n '{schema:1,project:"wbase",repo:{url:"https://github.com/example/wbase",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$W/c/projects/wbase.json"
+W=$T/w; mkdir -p "$W/home" "$W/c/projects"; git init -q "$W/repow"
+jq -n --arg p "$W/repow" '{schema:1,project:"wbase",repo:{url:"https://github.com/example/wbase",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$W/c/projects/wbase.json"
 wd() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" "$@"; }
 wm() { HOME=$W/home QARGI_CONF=$W/c QARGI_STATE=$W/s QARGI_PROJECT=wbase "$DA" agent models "$@"; }
 out=$(wm 2>&1); rc=$?
 { [ $rc = 0 ] && grep -q 'no reviewer: review profiles cannot dispatch' <<<"$out" && grep -E '^ *reviewer ' <<<"$out" | grep -q 'no reviewer'; } && ok "models: a missing base is flagged (no reviewer)" || no "missing base: rc=$rc $out"
 wm --json | jq -e '[.warnings[] | select(.message | test("no reviewer: review profiles cannot dispatch"))] | length == 1' >/dev/null && ok "models --json: the same problem in warnings[]" || no "warnings json"
-wd agent add builder --user --abilities build,test >/dev/null 2>&1
+wd agent add builder --project wbase --abilities build,test >/dev/null 2>&1
 out=$(wm 2>&1); rc=$?
 { [ $rc = 0 ] && grep -E '^ *builder ' <<<"$out" | grep -q 'legacy (in use: no worker)'; } && ok "models: a legacy member in use while there is no worker" || no "legacy in use: $out"
-wd agent add worker --user --abilities build,write,test >/dev/null 2>&1
+wd agent add worker --project wbase --abilities build,write,test >/dev/null 2>&1
 out=$(wm 2>&1)
 grep -E '^ *builder ' <<<"$out" | grep -q 'legacy: retire after worker exists' && ! grep -E '^ *worker +build' <<<"$out" | grep -q legacy && ok "models: a legacy member once the worker exists; the worker itself is not legacy" || no "legacy retire: $out"
 wm --json | jq -e '[.warnings[] | select(.kind == "member" and .name == "builder")][0].message == "legacy: retire after worker exists" and (.members[] | select(.name == "builder") | .flags | length) == 1' >/dev/null && ok "models --json: member flags and warnings agree" || no "member warnings json"
-wd agent add mix --user --abilities build,review >/dev/null 2>&1
+wd agent add mix --project wbase --abilities build,review >/dev/null 2>&1
 out=$(wm 2>&1)
 grep -E '^ *mix ' <<<"$out" | grep -q 'write class; never serves review' && ok "models: a mixed-class member is flagged write class" || no "mixed flag: $out"
-wd agent add gone --user --abilities test >/dev/null 2>&1; rm -f "$W/home/.claude/agents/gone.md"
+wd agent add gone --project wbase --abilities test >/dev/null 2>&1; rm -f "$W/repow/.claude/agents/gone.md"
 out=$(wm 2>&1); rc=$?
 { [ $rc = 0 ] && grep -E '^ *gone ' <<<"$out" | grep -q 'definition file missing'; } && ok "models: a member whose definition file is missing is flagged" || no "missing file: $out"
-wd agent add deepthought --user --abilities review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --user --abilities review --model fable >/dev/null 2>&1; wd agent add researcher --user --abilities review --model fable >/dev/null 2>&1
+wd agent add deepthought --project wbase --abilities review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --project wbase --abilities review --model fable >/dev/null 2>&1; wd agent add researcher --project wbase --abilities review --model fable >/dev/null 2>&1
 out=$(wm 2>&1)
 { grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"
 jq -n --arg p "$W" '{schema:1,project:"beta",repo:{url:"https://github.com/example/beta",path:$p,long_lived:["main"]},roles:{},models:{provider:"claude"},memory:{},budget_cents:500,

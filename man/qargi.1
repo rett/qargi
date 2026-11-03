@@ -362,7 +362,7 @@ A member is a Claude Code subagent you name, rendered from the one member defini
 .BI "add " "NAME"
 Create a member under a name you choose.
 .br
-The definition is rendered by the provider of the project in effect: \-\-project, else QARGI_PROJECT, else the project whose checkout you are in. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no project and no \-\-user, and a project with no provider (exit 2: there is no default provider). Nothing is written to a user\-level directory unless you pass \-\-user.
+A member belongs to a project, and the definition is rendered by the provider of that project. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no \-\-project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user\-level directory.
 .RS
 .TP
 .BI "\-\-abilities " "LIST"
@@ -381,12 +381,7 @@ effort level, written into the definition and recorded with the member (default 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project the member belongs to: its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
-.RE
-.RS
-.TP
-.B \-\-user
-a user\-level member for no project (the runtime's agents directory in your home).
+the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
 .RE
 .RE
 .RS
@@ -403,11 +398,6 @@ Rename a member and its definition.
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
 .RE
-.RS
-.TP
-.B \-\-user
-a user\-level member.
-.RE
 .RE
 .RS
 .TP
@@ -419,11 +409,6 @@ Keeps its name, abilities and model. Use it after an upgrade changes the definit
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
-.RE
-.RS
-.TP
-.B \-\-user
-a user\-level member.
 .RE
 .RE
 .RS
@@ -457,7 +442,7 @@ The base member is the one the profile names (worker for build, write and test, 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-prefer that project's own members and read its profiles (default: the project of the current directory).
+the project whose members serve and whose profiles apply (default: the project of the current directory).
 .RE
 .RS
 .TP
