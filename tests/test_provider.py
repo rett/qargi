@@ -909,6 +909,54 @@ class Schema2(unittest.TestCase):
         self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
 
 
+class BarrierClaim(Tree):
+    """A runtime that claims read_only_barrier but has no barrier (kind none, no read-only arguments in its dispatch) is a fail-open: a read-only
+    run would be treated as held by a barrier that does not exist. The check fails it, naming the surface and the fix."""
+
+    def claim(self, value="yes", surface="local", barrier=None, dispatch=None):
+        d = runtime("claimant", surface=surface, capabilities={"read_only_barrier": cell(value)})
+        d["barrier"] = barrier
+        if dispatch is not None:
+            d["dispatch"] = dispatch
+        return d
+
+    def problems(self, d):
+        self.put("claimant", d)
+        _, _, findings = P.findings_of("claimant", root=self.root)
+        return [m for lvl, m in findings if lvl == "fail" and "read_only_barrier" in m]
+
+    def test_a_yes_with_barrier_none_and_no_class_arguments_fails_and_names_the_surface_and_the_fix(self):
+        for surface in ("local", "cloud"):
+            with self.subTest(surface):
+                msgs = self.problems(self.claim(surface=surface, barrier={"kind": "none"}))
+                self.assertEqual(len(msgs), 1, msgs)
+                self.assertIn("on %s" % surface, msgs[0])
+                self.assertIn("barrier.kind is none", msgs[0])
+                self.assertIn("set barrier.kind", msgs[0])
+                self.assertIn("declare the capability not supported", msgs[0])
+
+    def test_a_partial_claim_and_an_absent_barrier_are_the_same_fail_open(self):
+        self.assertEqual(len(self.problems(self.claim("partial", barrier={"kind": "none"}))), 1)
+        self.assertEqual(len(self.problems(self.claim(barrier=None))), 1)
+        self.assertEqual(len(self.problems(self.claim(barrier={}))), 1)
+
+    def test_a_barrier_kind_or_read_only_arguments_or_no_claim_is_fine(self):
+        base = runtime("claimant")["dispatch"]
+        with_class = dict(base, class_argv={"read-only": ["--sandbox", "read-only"]})
+        with_group = dict(base, argv=base["argv"] + [{"class": "read-only", "then": ["--ro"]}])
+        for label, d in (("hook", self.claim(barrier={"kind": "hook"})), ("sandbox-args", self.claim(barrier={"kind": "sandbox-args"})),
+                         ("adapter", self.claim(barrier={"kind": "adapter"})), ("class_argv", self.claim(barrier={"kind": "none"}, dispatch=with_class)),
+                         ("argv group", self.claim(barrier={"kind": "none"}, dispatch=with_group)), ("declared no", self.claim("no", barrier={"kind": "none"}))):
+            with self.subTest(label):
+                self.assertEqual(self.problems(d), [])
+        self.assertEqual(self.problems(runtime("claimant")), [])                       # no claim at all
+
+    def test_the_helper_the_run_uses_says_the_same(self):
+        self.assertIn("read_only_barrier", P.barrier_claim_problem(self.claim(barrier={"kind": "none"})))
+        self.assertIsNone(P.barrier_claim_problem(self.claim(barrier={"kind": "hook"})))
+        self.assertIsNone(P.barrier_claim_problem(self.claim("no", barrier={"kind": "none"})))
+
+
 def hand_seal(directory, kind="provider"):
     """A record that names the content as it is: what `provider seal` leaves after a review, for a fixture a test builds by hand. Without
     one a library pack is "unrecorded" and is not used."""
@@ -1514,7 +1562,8 @@ class V2Cli(CliBase):
         self.assertIn("adapter: adapter (exists, executable)", self.run_cli("check", "libad")[1])
 
     def test_check_degrades_follow_the_record_for_a_library_definition(self):
-        self.put_lib("libcli", runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "read_only_barrier": cell("yes", "2026-11-02")}))
+        self.put_lib("libcli", runtime("libcli", capabilities={"skills": cell("yes", "2026-11-02"), "read_only_barrier": cell("yes", "2026-11-02")},
+                                      barrier={"kind": "sandbox-args"}))
         out = self.run_cli("check", "libcli")[1]
         self.assertRegex(out, r"local: skills\s+unverified \(counts as no\)")
         self.assertIn("the review role cannot be served on local", out)
@@ -3187,6 +3236,25 @@ class Extensions(ExtensionBase):
             P.compose("plaincli", "local", project="alpha")
         rc, _, err = self.q("effective", "plaincli", "local", "skills", "--project", "alpha")
         self.assertEqual(rc, 2)
+
+    def test_an_extension_that_claims_a_barrier_and_adds_none_fails_its_check_on_the_composition(self):
+        self.put("clamext", cap_ext("clamext", "plaincli", ["read_only_barrier"]))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["clamext"]})
+        rc, out, _ = self.q("check", "clamext", "--project", "alpha")
+        self.assertEqual(rc, 1, out)
+        self.assertRegex(out, r"fail: .*read_only_barrier.*clamext.*plaincli.* on local")
+        self.assertIn("set barrier.kind", out)
+        self.assertIn("declare the capability not supported", out)
+        self.assertIn("nothing is verified while the pack fails", out)
+        self.assertEqual(P.verification("clamext"), {})
+        self.assertEqual(P.effective("plaincli", "local", "read_only_barrier", project="alpha"), "no")
+
+    def test_an_extension_that_claims_a_barrier_and_adds_one_passes_that_check(self):
+        self.put("barx", cap_ext("barx", "plaincli", ["read_only_barrier"], adds={"capabilities": {"read_only_barrier": {"value": "yes", "note": "n"}}, "barrier": {"kind": "sandbox-args"}}))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["barx"]})
+        rc, out, _ = self.q("check", "barx", "--project", "alpha")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("fail:", out)
 
 
 class ExtensionConflicts(ExtensionBase):
