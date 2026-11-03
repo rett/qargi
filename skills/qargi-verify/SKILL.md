@@ -1,18 +1,18 @@
 ---
 name: qargi-verify
-description: Coordinator procedure for verifying and applying the patches a member or a cloud agent returned: check the manifest, scrub, apply on a scratch branch, re-run gates and the DONE check yourself, then report and apply only with the user's approval.
+description: Take in the patches a member or cloud agent returned: verify every open run, scrub, apply on a scratch branch, re-run the gates and the DONE check yourself, report, and merge only with the user's approval. Use when a dispatched run has finished or the user asks to review, apply or merge returned work.
 argument-hint: <run directory with patches/ and manifest.json>
 ---
 
 # /qargi-verify (you are the coordinator)
 
-The one take-in sequence, for one returned run or several. Gates come from the repository's profile, the single source of which gates run (`~/.qargi/config/profiles/<repo>.md`); without one, use the repository's own documented checks. A run is **open** until `qargi local verify` has passed on it.
+The one take-in sequence, for one returned run or several. Gates come from the repository's profile, the only source of gates (`~/.qargi/config/profiles/<repo>.md`); without one, use the repository's own documented checks. A run is **open** until `qargi local verify` has passed on it.
 
 ## 1. Verify every open run before applying any
 
 For each run:
 
-1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop, tell the user, review nothing further. A pass arms the run, so your own later fast-forwards are accepted.
+1. `qargi local verify RUN_DIR` (a cloud collect has none). A change in the real repository's refs means the agent pushed or wrote there: stop, tell the user, review nothing further. A pass arms the run for your merges.
 2. `qargi review check RUN_DIR`: a numbered series, one patch per commit, a matching manifest and `series.md`. A FAIL goes back to the agent.
 3. `manifest.json`: base SHA equals the current base; `done.exit_code`; gate verdict lines; touched paths inside SCOPE; status DONE.
 4. Read each commit's diff on its own, with the agent's commit advice: one logical change, its tests, docs and changelog entry. Run the profile's private-name or secret scrub on the patches and grep commit messages for private names and trailers (`git interpret-trailers`). Refuse on a hit.
@@ -20,7 +20,7 @@ For each run:
 ## 2. Apply and check
 
 - Local: `qargi review apply RUN_DIR` makes `agent/<slug>` (the run's slug, which the command prints) in a temporary worktree at the run's base. Cloud: `git am --3way` the `*.patch` files in name order on a scratch checkout of the base.
-- Rebuild the generated files the profile names, run its gates (long ones in the background, trusting only their verdict lines), then the DONE command verbatim. Only your own runs count. Check that each commit builds.
+- Rebuild the generated files the profile names, run its gates yourself (trust only their verdict lines), then the DONE command verbatim. Check that each commit builds.
 - Anything the profile marks for a second-model review gets one first.
 
 ## 3. Report, then merge
