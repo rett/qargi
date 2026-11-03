@@ -182,6 +182,22 @@ prep "$T/r" rv2d review; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "with the project's acceptance of no barrier the same read-only run goes on" || no "fail-open claim, accepted: rc=$rc $out"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+
+# arguments for another class, or an empty read-only list, hold no read-only member either: the same claim with nothing behind it
+for v in write empty; do
+  case $v in
+    write) CA='{"write":["--w"]}';;
+    empty) CA='{"read-only":[]}';;
+  esac
+  mk "fakeclaim$v" "$(jq -n --arg n "fakeclaim$v" --argjson ca "$CA" --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:$n,family:null,surface:"local",models:$m,
+    capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
+    dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],class_argv:$ca,prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+  verify_ro "fakeclaim$v"
+  setprov "fakeclaim$v"; prep "$T/r" "rv2$v" review; task
+  out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q "fakeclaim$v" <<<"$out" && grep -q "qargi provider accept fakeclaim$v --surface local --no-barrier" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+    && ok "a read-only run whose only class arguments are $v ones is refused: they hold no read-only member" || no "class arguments ($v): rc=$rc $out"
+done
 setprov fakeobj
 
 # --- the project's extensions are part of the definition a run acts on (A2) ---------------------------------------------------------
