@@ -67,8 +67,8 @@ def bind(inp):
 
 def skills_dir(inp):
     """The project skills directory of the project's provider (relative to a checkout or a render), or exit 3."""
-    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render")
-    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render")
+    provider.require_skills(inp["provider"], "link the checkout's skills directory to the render", project=inp["project"])
+    return provider.require(inp["provider"], "project_skills_dir", "link the checkout's skills directory to the render", project=inp["project"])
 
 
 def render_path(inp):
@@ -88,7 +88,7 @@ class SkillsLink(linker.Link):
                          dict(WORDS, unlink="qargi packs unlink %s" % inp["project"]))
 
     def source_missing(self):
-        target = provider.layout(self.inp["provider"])["render_target"]
+        target = provider.layout(self.inp["provider"], project=self.project)["render_target"]
         how = "run qargi packs apply --target %s %s first" % (target, self.project) if target else "qargi does not make one for this provider"
         die("there is no render of %s yet: %s" % (self.project, how))
 

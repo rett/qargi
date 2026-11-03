@@ -30,7 +30,8 @@ side under <state>/render/<project>/, which is also where a staged tree lives un
 
   packs_render.py migrate plan TOKENFILE    the renders an earlier version made under <state>/claude/<project>/, and where each goes
   packs_render.py migrate apply TOKEN       move them (and the checkout links that point into them), if the plan is still the one
-  packs_render.py label PROVIDER            how the plan calls the runtime (renderers.packs.label of its definition, else its name)
+  packs_render.py label PROVIDER [PROJECT]  how the plan calls the runtime (renderers.packs.label of its definition, with a project of the
+                                            composed one, else its name)
 """
 import ctypes
 import hashlib
@@ -121,10 +122,11 @@ def target_of(inp):
     P = provider_module()
     rt = inp["provider"]
     home = inp.get("home") or os.path.expanduser("~")
-    skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home)
-    lay = P.layout(rt, home=home)
+    project = inp.get("project") if isinstance(inp.get("project"), str) else None   # with a project, the definition is the composed one (its extensions' resources and renderers)
+    skills_dir = P.require(rt, "project_skills_dir", WOULD, home=home, project=project)
+    lay = P.layout(rt, home=home, project=project)
     surfaces = P.surfaces_of(rt)
-    d = P.definition(rt, "local" if "local" in surfaces else surfaces[0])
+    d = P.composed(rt, "local" if "local" in surfaces else surfaces[0], project)
     res = d.get("resources") if isinstance(d.get("resources"), dict) else {}
     user_dir = (res.get("skills") or {}).get("user_dir")
     packs = (d.get("renderers") or {}).get("packs") if isinstance(d.get("renderers"), dict) else None
@@ -769,7 +771,7 @@ def migration_plan(state, conf):
                 continue
             try:
                 runtime = P.provider_of(answers, "local", name)
-                lay = P.layout(runtime)
+                lay = P.layout(runtime, project=name)
             except P.ProviderError as e:
                 left(str(e))
                 continue
@@ -888,11 +890,11 @@ def main():
             die(str(e))
         except OSError as e:
             die("%s: %s" % (e.filename or "file system error", e.strerror or e))
-    if len(sys.argv) == 3 and sys.argv[1] == "label":
+    if len(sys.argv) in (3, 4) and sys.argv[1] == "label":
         P = provider_module()
         try:
             surfaces = P.surfaces_of(sys.argv[2])
-            d = P.definition(sys.argv[2], "local" if "local" in surfaces else surfaces[0])
+            d = P.composed(sys.argv[2], "local" if "local" in surfaces else surfaces[0], sys.argv[3] if len(sys.argv) == 4 else None)
             lb = ((d.get("renderers") or {}).get("packs") or {}).get("label")
             print(lb if isinstance(lb, str) and lb else sys.argv[2])
         except P.ProviderError:

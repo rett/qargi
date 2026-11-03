@@ -230,6 +230,24 @@ tok=$($DA project link lp --resource memory | tokp)
 out=$(cd "$RUN/clone" && $DA project link lp --resource memory --plan "$tok" --approved test 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "not available in a member run" <<<"$out" && [ ! -e "$LD" ] && [ ! -L "$LD" ]; } && ok "a member's run never applies project link" || no "member run: rc=$rc $out"
 
+# an extension the project enabled is part of the definition project link reads: fakelink has no skills; an extension pack of the library gives
+# it the skills resource, which is linked once the project enabled it and the extension has been checked (its skills capability is verified)
+SX=$T/ext/skext; mkdir -p "$SX"
+jq -n '{schema:2,kind:"extension",extension:"skext",description:"gives fakelink skills",extends:"fakelink",provides:["skills"],
+  adds:{capabilities:{skills:{value:"yes",note:"n"}},resources:{skills:{project_dir:".fake/skills",items:"dir-per-item",entry:"SKILL.md",format:"skill-md",link:{project:"dir-symlink",user:"none"}}}}}' > "$SX/definition.json"
+xt=$($DA provider import "$SX" | tokp); $DA provider import "$SX" --plan "$xt" --approved test >/dev/null 2>&1 || no "could not import the skills extension"
+SRD=$T/s/render/lp/fakelink/.fake/skills; mkdir -p "$SRD/s1"; echo s > "$SRD/s1/SKILL.md"; SLD=$LR/.fake/skills
+$DA project link lp --resource skills >/dev/null 2>&1; [ $? = 3 ] && ok "extension: a project that did not enable it still has no skills link (exit 3)" || no "skills before enabling: $?"
+jq '.models.extensions = ["skext"]' "$T/c/projects/lp.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/lp.json"
+$DA project link lp --resource skills >/dev/null 2>&1; [ $? = 3 ] && ok "extension: enabled but not checked, its skills capability is unverified and counts as no (exit 3)" || no "skills unverified: $?"
+$DA provider check skext --project lp >/dev/null 2>&1 || no "check of the skills extension"
+out=$($DA project link lp --resource skills 2>&1); xtok=$(tokp <<<"$out")
+{ [ -n "$xtok" ] && grep -q "link:   $SLD" <<<"$out" && grep -q "target: $SRD" <<<"$out" && [ ! -e "$SLD" ]; } && ok "extension: verified, the plan links the checkout's skills directory to the render (from the composed resources)" || no "skills plan: $out"
+out=$($DA project link lp --resource skills --plan "$xtok" --approved test 2>&1)
+{ [ -L "$SLD" ] && [ "$(readlink "$SLD")" = "$SRD" ] && [ -f "$SLD/s1/SKILL.md" ]; } && ok "extension: and apply makes the link" || no "skills apply: $out"
+lgo unlink lp --resource skills >/dev/null 2>&1; [ ! -e "$SLD" ] && [ -f "$SRD/s1/SKILL.md" ] && ok "extension: unlink drops the link and keeps the render" || no "skills unlink"
+jq 'del(.models.extensions)' "$T/c/projects/lp.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/lp.json"
+
 # the real runtime: skills (dir-symlink) and memory in one plan; agents are not linked by Claude Code's definition, so they are skipped
 CR=$T/crepo; git init -q -b main "$CR"; echo x > "$CR/README"; $G -C "$CR" add -A; $G -C "$CR" commit -q -m one
 lproj lc "$CR" claude
