@@ -53,7 +53,7 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   tree_hash(dir) / pack_record(dir) / seal_state(entry)
                                        a library pack's content hash (every file but .pack.json), its record, and whether it is sealed,
                                        unsealed (made by `provider new`, not yet sealed), changed since sealed (drift) or has no record
-                                       (a file the owner put there by hand). An unsealed or changed pack is not used (Drift, exit 2).
+                                       (a file put there by hand, never read or approved). Only a sealed pack is used; any other is Drift (exit 2).
   definitions_unsealed(name)           {surface: definition} without the seal check, for a reader that only needs to see what a definition names
   exec_copy(name, rel)                 a private copy of a sealed library pack with the executable rel, after its hash and the pack's were
                                        checked against the record and again on the copy; the only way qargi runs a library pack's code
@@ -291,8 +291,8 @@ def pack_record(directory):
 
 def seal_state(e):
     """(state, why) of an entry: shipped; sealed (the record names the content hash and it is the hash now); unsealed (a record that says
-    so: `provider new` made it); drift (the content is not what was sealed); unrecorded (a library directory with no record: a file the
-    owner put there by hand, used as it is)."""
+    so: `provider new` made it); drift (the content is not what was sealed); unrecorded (a library directory with no record: a file
+    put there by hand, which nobody read or approved; it is not used, any more than an unsealed or a changed pack)."""
     if e["origin"] != "library":
         return "shipped", ""
     rec = pack_record(os.path.dirname(e["file"]))
@@ -368,7 +368,10 @@ def _pick(name, kind, root, library):
     es = [e for e in es if _kind(e) == kind]
     if es and es[0]["origin"] == "library":
         state, why = seal_state(es[0])
-        if state in ("unsealed", "drift"):
+        if state == "unrecorded":
+            raise Drift("%s '%s' %s and was never reviewed, so it is not used; read it and seal it (qargi provider seal %s), or qargi provider import it from its source"
+                        % (kind, name, why, name))
+        if state != "sealed":
             raise Drift("%s '%s' %s; qargi provider check %s, then qargi provider seal %s" % (kind, name, why, name, name))
     return es[0] if es else None
 
@@ -1066,7 +1069,7 @@ def definition_hash(name, root=None, library=None):
 
 
 def _sealed_hash(e):
-    """The content hash a sealed library entry's record names, else None (shipped, unrecorded: the document alone is what counts)."""
+    """The content hash a sealed library entry's record names, else None (a shipped entry: the document alone is what counts)."""
     if e["origin"] != "library":
         return None
     rec = pack_record(os.path.dirname(e["file"])) or {}
@@ -1786,7 +1789,7 @@ def cmd_list():
             continue
         surfaces = [raw["surface"]] if _is2(raw) and raw.get("surface") in SURFACES else _surfaces(raw)
         sealed = seal_state(e)[0]
-        note = "  (library%s)" % (", unsealed" if sealed == "unsealed" else ", changed since sealed" if sealed == "drift" else "") if e["origin"] == "library" else ""
+        note = "  (library%s)" % (", unsealed" if sealed == "unsealed" else ", changed since sealed" if sealed == "drift" else ", not sealed: no record" if sealed == "unrecorded" else "") if e["origin"] == "library" else ""
         print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), note))
     lib = _library_module()
     if lib:

@@ -76,7 +76,7 @@ def verdicts(doc, results):
 
 def run(doc, directory, name, entry, sealed=False, opts=None, rv=None):
     """All the cases for a provider definition. directory: the pack directory; name: its library name or None; sealed: pack code may run."""
-    usable = name is not None and entry is not None and P.seal_state(entry)[0] in ("sealed", "unrecorded")
+    usable = name is not None and entry is not None and P.seal_state(entry)[0] == "sealed"
     res = {}
     for case in (render_agent, link_skills, barrier_hook, adapter_harness):
         try:

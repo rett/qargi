@@ -909,6 +909,13 @@ class Schema2(unittest.TestCase):
         self.assertTrue(any("models: additional property is not allowed" in m for m in fails(d)))
 
 
+def hand_seal(directory, kind="provider"):
+    """A record that names the content as it is: what `provider seal` leaves after a review, for a fixture a test builds by hand. Without
+    one a library pack is "unrecorded" and is not used."""
+    with open(os.path.join(directory, ".pack.json"), "w") as f:
+        json.dump({"kind": kind, "sealed": True, "sha256": P.tree_hash(directory)}, f)
+
+
 class V2Tree(Tree):
     """A temporary shipped directory (root, with catalogs/) and a temporary pack library, both fixtures."""
 
@@ -927,6 +934,7 @@ class V2Tree(Tree):
         os.makedirs(os.path.join(self.library, name), exist_ok=True)
         with open(os.path.join(self.library, name, "definition.json"), "w") as f:
             json.dump(d, f)
+        hand_seal(os.path.join(self.library, name))
 
     def kw(self, **extra):
         return dict(root=self.root, library=self.library, **extra)
@@ -1059,6 +1067,7 @@ class Loader(V2Tree):
         os.makedirs(os.path.join(self.library, "broken"))
         with open(os.path.join(self.library, "broken", "definition.json"), "w") as f:
             f.write("{")
+        hand_seal(os.path.join(self.library, "broken"))
         self.put_lib("named", runtime("other-name"))
         self.put_lib("old", descriptor())
         self.assertEqual(P.names(**self.kw()), ["broken", "fakecli", "named", "old"])
@@ -1107,6 +1116,7 @@ class Loader(V2Tree):
         self.addCleanup(shutil.rmtree, os.path.join(conf, "packs", "providers", "homecli"), True)
         with open(os.path.join(conf, "packs", "providers", "homecli", "definition.json"), "w") as f:
             json.dump(runtime("homecli"), f)
+        hand_seal(os.path.join(conf, "packs", "providers", "homecli"))
         self.assertIn("homecli", P.names())
         self.assertEqual(P.origin("homecli"), "library")
 
@@ -1407,6 +1417,7 @@ class V2Cli(CliBase):
             with open(os.path.join(self.library, name, rel), "w") as f:
                 f.write("#!/bin/sh\n")
             os.chmod(os.path.join(self.library, name, rel), mode)
+        hand_seal(os.path.join(self.library, name))
 
     def put_catalog(self, family):
         with open(os.path.join(self.root, "catalogs", family + ".json"), "w") as f:
@@ -1804,7 +1815,7 @@ class SealedPacks(V2Tree):
             change()
             self.assertNotEqual(P.tree_hash(d), before)
 
-    def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_one_with_no_record_is_the_owners_own(self):
+    def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_so_is_one_with_no_record(self):
         self.pack("sealedp")
         self.assertEqual(self.sstate("sealedp"), "sealed")
         self.assertEqual(P.definition("sealedp", **self.kw())["provider"], "sealedp")
@@ -1823,7 +1834,17 @@ class SealedPacks(V2Tree):
         d = self.pack("handp")
         os.remove(os.path.join(d, ".pack.json"))
         self.assertEqual(self.sstate("handp"), "unrecorded")
-        self.assertEqual(P.definition("handp", **self.kw())["provider"], "handp")
+        with self.assertRaises(P.Drift) as cm:                                      # a file put there by hand was never read or approved: it is not used
+            P.definition("handp", **self.kw())
+        self.assertIn("has no record (put there by hand)", str(cm.exception))
+        self.assertIn("qargi provider seal handp", str(cm.exception))
+        self.assertIn("qargi provider import", str(cm.exception))
+        with self.assertRaises(P.Drift):
+            P.load("handp", **self.kw())
+        with self.assertRaises(P.Drift):
+            P.definition_hash("handp", **self.kw())
+        with self.assertRaises(P.Drift):
+            P.exec_copy("handp", "adapter", **self.kw())
         d = self.pack("brokenp")
         with open(os.path.join(d, ".pack.json"), "w") as f:
             f.write("not json")
@@ -1853,14 +1874,6 @@ class SealedPacks(V2Tree):
         with open(os.path.join(d, ".pack.json"), "w") as f:
             json.dump(rec, f)
         self.assertNotEqual(P.definition_hash("libcli", **self.kw()), h)
-
-    def test_without_a_record_the_hash_is_the_document_alone_as_before(self):
-        d = self.pack()
-        os.remove(os.path.join(d, ".pack.json"))
-        with open(os.path.join(d, "definition.json")) as f:
-            doc = json.load(f)
-        want = hashlib.sha256(json.dumps({"definition": doc}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-        self.assertEqual(P.definition_hash("libcli", **self.kw()), want)
 
     def test_exec_copy_is_a_private_copy_of_what_was_approved_and_refuses_the_rest(self):
         self.pack(files={"adapter": "#!/bin/sh\necho ok\n", "other": "#!/bin/sh\n"}, execs=("adapter",))
@@ -2374,6 +2387,35 @@ class Scaffold(LibraryBase):
 
 class CheckVerbs(LibraryBase):
     """`provider check` on packs in each state."""
+
+    def by_hand(self, name="handcli"):
+        """A pack the owner (or a script) put in the library with no record: nobody reviewed it and nobody sealed it."""
+        d = os.path.join(self.lib, name)
+        os.makedirs(d)
+        doc = fake_runtime(name, adapter="adapter", adapter_verbs=["resolve"])
+        jwrite(os.path.join(d, "definition.json"), doc)
+        fwrite(os.path.join(d, "adapter"), "#!/usr/bin/env python3\nopen(%r, 'w').write('ran')\nprint('{}')\n" % os.path.join(self.tmp, "adapter-ran"))
+        os.chmod(os.path.join(d, "adapter"), 0o755)
+        return d
+
+    def test_a_pack_put_there_by_hand_is_not_checked_attested_loaded_or_trusted(self):
+        d = self.by_hand()
+        for verb, args in (("check", ("handcli",)), ("attest", ("handcli", "mcp", "--asked", "ok", "--did", "x", "--result", "pass", "--cost-cents", "0", "--cleanup", "none")),
+                           ("show", ("handcli",)), ("layout", ("handcli",)), ("effective", ("handcli", "local", "skills"))):
+            rc, out, err = self.q(verb, *args)
+            self.assertEqual(rc, 2, (verb, out, err))
+            self.assertIn("has no record", out + err, verb)
+            self.assertIn("qargi provider seal handcli", out + err, verb)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "adapter-ran")))         # no pack code ran
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "handcli", "verified.json")))
+        self.assertFalse(os.path.exists(os.path.join(d, ".pack.json")))
+        rc, out, _ = self.q("list")
+        self.assertRegex(out, r"handcli .*has no record")
+        rc, out, err = self.q("seal", "handcli")                                       # the way in: read the review, then seal
+        self.assertEqual(rc, 0, err)
+        self.apply("seal", "handcli", exec_names="adapter")
+        self.assertEqual(self.q("check", "handcli")[0], 0)
+        self.assertEqual(P.seal_state(P.entry_any("handcli"))[0], "sealed")
 
     def test_check_of_an_unsealed_pack_judges_it_and_records_nothing(self):
         self.apply("new", "mine")
