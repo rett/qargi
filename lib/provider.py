@@ -595,6 +595,22 @@ def model_for(models, tier):
     return row["alias"] if models.get("use") == "alias" and row.get("alias") else row["model"]
 
 
+def summary(name, surface=None, root=None, library=None):
+    """What a reader needs of a runtime on one surface, flat: {provider, surface, surfaces, model_pattern, use, tier_detail: {TIER: {model,
+    alias, verified_on, source}}, tiers: {TIER: model id}, aliases: {TIER: alias or None}, effort: {LEVEL: native or None}, reserved_names,
+    adapter}. It is definition() and models_of() read together; the adapter is the path of a shipped runtime's adapter relative to the tool
+    root (None for a library pack's, which runs only as a sealed copy, and for a runtime that names none). Without a surface the runtime
+    must serve only one. ProviderError when there is no such runtime or it does not serve the surface."""
+    doc = definition(name, surface, root, library)
+    m = _resolve_models(doc, root, library)
+    ad = doc.get("adapter")
+    return {"provider": doc["provider"], "surface": doc["surface"], "surfaces": surfaces_of(name, root, library),
+            "model_pattern": m["pattern"], "use": m["use"], "tier_detail": m["tiers"],
+            "tiers": {t: m["tiers"][t]["model"] for t in TIERS}, "aliases": {t: m["tiers"][t].get("alias") for t in TIERS},
+            "effort": m["effort"], "reserved_names": list(_dict(doc.get("agents")).get("reserved_names") or []),
+            "adapter": "lib/providers/%s/%s" % (doc["provider"], ad) if isinstance(ad, str) and _entry(name, root, library)["origin"] == "shipped" else None}
+
+
 # ---- schema 1 in memory -------------------------------------------------------------------------------------------------
 
 def _dict(v):
