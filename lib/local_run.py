@@ -16,7 +16,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        before the first element that carries the prompt argument, or at the end. For sandbox flags a definition keeps out
                        of argv. The barrier kind `sandbox-args` needs them (or a class element in argv) for a read-only run.
   dispatch.prompt      {via: stdin|file|arg, file: "prompt.md"}: stdin reads the prompt file, file passes its path ({prompt_file}), arg
-                       passes the text ({prompt_arg}, at most 120000 bytes). The prompt is the neutral member body (agents/member.body.md) and
+                       passes the text ({prompt_arg}, at most 120000 bytes). The file is a plain name inside RUN/prompt/, a directory of
+                       its own: it can never be a control file of the run (refs.before, class, dispatch.json ...). The prompt is the neutral member body (agents/member.body.md) and
                        the task block, with what qargi recorded about the run (class, paths); the runtime has no agent files to carry it.
   dispatch.cwd         "{clone}" (default) or a directory inside it.
   dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused.
@@ -57,6 +58,7 @@ MAX_ARG = 120000          # one argument may not exceed 131072 bytes on Linux
 MAX_TASK = 1 << 20
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROMPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PROMPT_DIR = "prompt"     # where the prompt file goes: a directory of the run for it alone, so no name can reach a control file of the run
 
 
 class Stop(Exception):
@@ -335,7 +337,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     if via == "arg" and len(prompt.encode("utf-8")) > MAX_ARG:
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
     mname, native, notes = models_values(runtime, model, effort, project)
-    pfile = os.path.join(run, pname)
+    pfile = os.path.join(run, PROMPT_DIR, pname)
     member = ""
     try:
         with open(os.path.join(run, "profile"), encoding="utf-8") as f:
@@ -401,10 +403,29 @@ def write_private(path, text):
         f.write(text)
 
 
+def write_prompt(run, path, text):
+    """Write the prompt file in RUN/prompt/ and nowhere else: the directory must be a real directory of the run (not a link out of it),
+    the file a new or regular one (not a link, not a pipe), so the prompt can never overwrite what qargi recorded about the run."""
+    d = os.path.join(run, PROMPT_DIR)
+    if os.path.islink(d) or (os.path.exists(d) and not os.path.isdir(d)):
+        fail("%s is not a plain directory of the run; the prompt file goes there and nowhere else" % d)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    if os.path.realpath(d) != os.path.join(os.path.realpath(run), PROMPT_DIR) or os.path.dirname(path) != d:
+        fail("the prompt file %s is not inside %s" % (path, d))
+    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        fail("%s is not a plain file; the prompt file replaces only a file of its own" % path)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    except OSError as e:
+        fail("cannot write the prompt file %s: %s" % (path, e.strerror or e))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def run_it(plan, run):
     out = os.path.join(run, "out")
     os.makedirs(out, exist_ok=True)
-    write_private(plan["prompt_file"], plan["prompt"])
+    write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
     started = time.time()
     timed_out = False
