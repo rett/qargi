@@ -3406,6 +3406,18 @@ class Review(unittest.TestCase):
         self.assertEqual(rv["executables"][0]["why"], "the agent renderer")
         self.assertTrue(any("no executable mode" in w for w in rv["warn"]))
 
+    def test_policy_is_the_text_only_rules_alone_and_it_is_what_a_skill_pack_meets(self):
+        d = self.tree({"SKILL.md": "---\nname: s\n---\n", "ok.md": "fine\n", "bin": b"\x7fELF\x02\x01", "z": b"PK\x03\x04x", "nul": b"a\x00b", "latin": b"caf\xe9",
+                       "big.md": "x" * 5})
+        os.symlink("ok.md", os.path.join(d, "lnk"))
+        os.mkfifo(os.path.join(d, "pipe"))
+        msgs = self.R.policy(d)
+        for needle in ("bin is an ELF executable", "z is a zip archive", "nul is binary", "latin is not UTF-8", "lnk is a symbolic link",
+                       "pipe is not a regular file"):
+            self.assertTrue(any(needle in m for m in msgs), (needle, msgs))
+        self.assertEqual(len(msgs), 6, msgs)
+        self.assertEqual(self.R.policy(self.tree({"SKILL.md": "x\n", "sub/refs.md": "y\n"})), [])
+
     def test_a_named_path_outside_the_pack_is_a_failure(self):
         d = self.tree({"definition.json": "{}"})
         rv = self.R.scan(d, {"adapter": "../evil"})

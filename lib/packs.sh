@@ -69,6 +69,7 @@ done
 export PLAN_ARG ASKED
 PROVPY=$(dirname "$(readlink -f "$0")")/provider.py
 COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
+REVIEWPY=$(dirname "$(readlink -f "$0")")/conformance/review.py
 
 # The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
 # field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
@@ -137,7 +138,9 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     head -1 "$p/SKILL.md" | grep -qx -- '---' || { echo "FAIL: SKILL.md has no front matter"; rc=1; }
     grep -q '^name: *[a-z0-9]' "$p/SKILL.md" || { echo "FAIL: SKILL.md front matter has no name"; rc=1; }
     grep -q '^description: *[^< ]' "$p/SKILL.md" || { echo "FAIL: SKILL.md front matter has no real description"; rc=1; }
-    [ -z "$(find "$p" -type l)" ] || { echo "FAIL: symbolic links are not allowed"; rc=1; }
+    # the owner's policy for every pack: only text (no binary, archive, special file or symbolic link, no NUL byte, invalid UTF-8); the same
+    # rules as the provider packs (conformance/review.py)
+    pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
     n=$(find "$p" -type f ! -name .pack.json | wc -l); size=$(find "$p" -type f ! -name .pack.json -exec cat {} + | wc -c)
     echo "files: $n, $size bytes"
     { [ "$n" -le 100 ] && [ "$size" -le 2000000 ]; } || { echo "FAIL: more than 100 files or 2 MB"; rc=1; }

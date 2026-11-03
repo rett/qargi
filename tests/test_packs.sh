@@ -63,6 +63,29 @@ $DA packs render beta build "$T/o2" >/dev/null 2>&1 && jq -e '.[0].name=="issues
 mkdir -p "$T/src/leaky"; printf -- '---\nname: leaky\ndescription: Use when testing.\n---\nkey ghp_%s\n' "abcdefghijklmnopqrstuvwxyz0123456789" > "$T/src/leaky/SKILL.md"
 $DA skill import "$T/src/leaky" --compatible any 2>&1 | grep -q "looks like a secret" && ok "a skill with a secret is refused at import" || no "secret skill accepted"
 
+# --- a skill pack holds only text, like every other pack: a binary, an archive, a special file, a symlink, a NUL byte or invalid UTF-8 is
+# refused at import (the review says which), and at seal
+SKM=$'---\nname: NAME\ndescription: Use when testing the text-only policy.\n---\nbody\n'
+mkskill_dir() { local d=$T/src/$1; rm -rf "$d"; mkdir -p "$d"; printf '%s' "${SKM//NAME/$1}" > "$d/SKILL.md"; }
+for c in elf zip nul latin fifo link; do mkskill_dir pol-$c; done
+printf '\x7fELF\x02\x01\x01\x00rest' > "$T/src/pol-elf/helper"
+printf 'PK\x03\x04rest' > "$T/src/pol-zip/refs.dat"
+printf 'a\x00b\n' > "$T/src/pol-nul/refs.md"
+printf 'caf\xe9\n' > "$T/src/pol-latin/refs.md"
+mkfifo "$T/src/pol-fifo/pipe"
+ln -s /etc/passwd "$T/src/pol-link/lnk"
+for c in elf:"an ELF executable" zip:"a zip archive" nul:"NUL byte" latin:"not UTF-8" fifo:"not a regular file" link:"symbolic link"; do
+  n=pol-${c%%:*}; why=${c#*:}
+  out=$(timeout 20 $DA skill import "$T/src/$n" --compatible any 2>&1); rc=$?
+  { [ $rc = 1 ] && grep -q "FAIL" <<<"$out" && grep -q "$why" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ ! -e "$T/c/packs/skills/$n" ]; } && ok "a skill pack with $n is refused at import ($why)" || no "policy $n: rc=$rc $out"
+done
+# a stored skill that is changed afterwards is refused at seal
+$DA skill new pol-late --compatible any >/dev/null; sed -i 's/^description: .*/description: Use when testing late additions./' "$T/c/packs/skills/pol-late/SKILL.md"; seal pol-late
+printf '\x7fELF\x02\x01\x01\x00rest' > "$T/c/packs/skills/pol-late/helper"
+out=$($DA skill seal pol-late 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "an ELF executable" <<<"$out" && ! grep -q '^plan token' <<<"$out"; } && ok "seal refuses a skill pack that gained a binary" || no "seal binary: rc=$rc $out"
+rm -f "$T/c/packs/skills/pol-late/helper"
+
 # --- provisioning picks up attached skills and tools
 $DA provision plan --project alpha --role write >/dev/null 2>&1
 grep -q "./skills/alpha-all" "$T/s/provision/alpha-write/agents/alpha-write/agent.md" && [ -f "$T/s/provision/alpha-write/agents/alpha-write/skills/alpha-write/SKILL.md" ] && ok "provisioning attaches custom skills" || no "skills not in the rendered agent"
