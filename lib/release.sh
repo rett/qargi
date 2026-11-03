@@ -18,6 +18,11 @@
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push
 #
+#   release.sh publish VERSION [--plan T --approved W]
+#                                           create the GitHub release of the tag VERSION (gh release create --verify-tag, through
+#                                           QARGI_GH) with the tag's changelog section as notes; for a tag pushed before the release
+#                                           workflow existed. Refuses when the release exists, the tag is missing or the section is empty.
+#
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
 
@@ -32,7 +37,7 @@ while [ $# -gt 0 ]; do
 done
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|publish VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -250,5 +255,36 @@ PY
     else
       echo "no origin remote: nothing was pushed"
     fi;;
-  *) die "usage: qargi release start|status|verify|push|finish VERSION [--hotfix] [--project P]";;
+  publish)
+    tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it)"
+    notes=$(mktemp "$DA_STATE/.release-notes.XXXXXX"); trap 'rm -f "$notes"; on_exit' EXIT
+    g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
+    sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
+    printf '%s\n' "$sect" > "$notes"
+    title="$PROJ $VER"
+    gh_release_state "$VER"
+    case $GHS in
+      found) die "tag $VER already has a GitHub release: nothing to publish";;
+      nogh) echo "note: gh is not installed, so whether GitHub has a release for tag $VER was not checked; applying needs it" >&2;;
+      noauth) echo "note: gh is not authenticated, so whether GitHub has a release for tag $VER was not checked; applying needs it (gh auth login)" >&2;;
+      unchecked) echo "note: could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer})" >&2;;
+    esac
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" | plan_token)
+    echo "publish the GitHub release of tag $VER of $PROJ: tag at ${tc:0:7} ($(g log -1 --format=%s "$tc"))"
+    echo "notes (the $VER section of CHANGELOG.md at the tag):"
+    sed 's/^/  | /' "$notes"
+    echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES"
+    echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
+    need_plan "$tok"
+    case $GHS in
+      missing) ;;
+      nogh) die "gh is not installed: create the release by hand, or run the release workflow by hand with this tag";;
+      noauth) die "gh is not authenticated (gh auth login); nothing was published";;
+      *) die "could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer}); nothing was published";;
+    esac
+    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
+    audit_log "release:publish" "$PROJ $VER"
+    echo "published the release of tag $VER: $out";;
+  *) die "usage: qargi release start|status|verify|push|finish|publish VERSION [--hotfix] [--project P]";;
 esac
