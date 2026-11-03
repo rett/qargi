@@ -36,7 +36,7 @@ mkdir -p "$T/c/projects"
 mkproj() { jq -n --arg p "$1" --argjson v "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{},budget_cents:500}' > "$T/c/projects/$1.json"; }
 mkproj alpha '{"local":"claude-code","cloud":"claude-platform"}'
 # a scratch copy of the tool whose skill and preamble can be edited
-mkdir "$T/copy"; cp -r bin lib roles skills provision contract "$T/copy/"; DC=$T/copy/bin/qargi
+copy_tool "$PWD" "$T/copy"; DC=$T/copy/bin/qargi
 
 render() { bash -c ". '$1/lib/lib.sh'; agent_prompt build alpha"; }
 render "$PWD" > "$FAKE/system"; echo 1 > "$FAKE/aver"
