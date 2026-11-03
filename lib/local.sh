@@ -326,6 +326,20 @@ WRAP
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
     "$0" verify "$RUN" >/dev/null 2>&1 || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+    # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
+    # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
+    nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
+    if [ "${nc:-0}" -gt 0 ]; then
+      if [ -n "$DISCARD" ]; then echo "qargi: dropped $nc unmerged commit(s) of $RUN on purpose" >&2
+      else
+        [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
+        read -r _ab atip _ < "$RUN/applied"
+        rp=$(cat "$RUN/repo.path" 2>/dev/null || true)
+        if [ -n "$rp" ] && [ -z "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then
+          die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+        fi
+      fi
+    fi
     t=$(cat "$RUN/tmpdir" 2>/dev/null || true)
     case $t in */qargi-run.??????|"$RUN"/tmp) [ ! -d "$t" ] || rm -rf -- "$t";; esac
     rm -rf -- "$RUN"

@@ -86,6 +86,13 @@ out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^findin
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider claude >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
+# the message follows the key: the provision note belongs to answers a provision reads; a deployment option of the methodology
+# (github-release, none) is not one, so only what was set is said; a deployment value that is no option keeps the note
+msg=$($DA project set demo budget_cents 2600 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set budget_cents keeps the provision note" || { echo "FAIL set budget note: $msg"; fail=1; }
+for v in github-release none; do
+  msg=$($DA project set demo deployment "$v" 2>&1); [ "$msg" = "demo: deployment = \"$v\"" ] && echo "ok   set deployment $v says only what was set" || { echo "FAIL set deployment $v: $msg"; fail=1; }
+done
+msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
 # marshal.ttl is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
