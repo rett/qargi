@@ -22,7 +22,7 @@ chk "push by coordinator refused"   1 '.roles.build.push={mode:"coordinator",bra
 chk "push by agent refused"         1 '.roles.write.push={mode:"agent",branch_pattern:"docs/<slug>",credential:"vault:vlt_x"}'
 chk "bad push mode"                 1 '.roles.build.push.mode="always"'
 chk "bad effort"                    1 '.roles.build.effort="turbo"'
-chk "bad model"                     1 '.models.provider="claude" | .roles.build.model="gpt"'
+chk "bad model"                     1 '.models.provider={local:"claude-code",cloud:"claude-platform"} | .roles.build.model="gpt"'
 chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
@@ -44,7 +44,7 @@ chkm "profile not an object"        '.profiles.tiny="x"' 'profiles.tiny: '
 chkm "project-only needs base"      '.profiles.tiny={tier:"fast"}' 'profiles.tiny.base: '
 chkm "unknown base"                 '.profiles.tiny={base:"boss"}' 'profiles.tiny.base: '
 chkm "bad tier"                     '.profiles.tiny={base:"worker",tier:"huge"}' 'profiles.tiny.tier: '
-chkm "bad model alias"              '.models.provider="claude" | .profiles.tiny={base:"worker",model:"gpt"}' 'profiles.tiny.model: '
+chkm "bad model alias"              '.models.provider={local:"claude-code",cloud:"claude-platform"} | .profiles.tiny={base:"worker",model:"gpt"}' 'profiles.tiny.model: '
 chkm "bad effort (profile)"         '.profiles.tiny={base:"worker",effort:"turbo"}' 'profiles.tiny.effort: '
 chkm "purpose not a string"         '.profiles.tiny={base:"worker",purpose:5}' 'profiles.tiny.purpose: '
 chkm "purpose too long"             '.profiles.tiny={base:"worker",purpose:("x"*301)}' 'profiles.tiny.purpose: '
@@ -56,7 +56,7 @@ chkm "unknown profile key"          '.profiles.tiny={base:"worker",colour:"red"}
 ACC='{by:"rett",at:"2026-10-31T12:00:00Z",reason:"review on cloud, no barrier, my call"}'
 chk  "accept_no_barrier recorded"   0 ".models.accept_no_barrier.cloud=$ACC"
 chk  "accept_no_barrier, both"      0 ".models.accept_no_barrier={cloud:$ACC,local:$ACC}"
-chk  "models.provider alone is fine" 0 '.models.provider="claude"'
+chk  "models.provider alone is fine" 0 '.models.provider={local:"claude-code",cloud:"claude-platform"}'
 chkm "accept_no_barrier not an object" '.models.accept_no_barrier="yes"' 'models.accept_no_barrier: '
 chkm "accept_no_barrier unknown surface" ".models.accept_no_barrier.moon=$ACC" 'models.accept_no_barrier.moon: '
 chkm "accept_no_barrier record is a string" '.models.accept_no_barrier.cloud="yes"' 'models.accept_no_barrier.cloud: '
@@ -82,12 +82,12 @@ fnd "validate: no models at all is a finding"                'del(.models)'     
 fnd "validate: models without a provider is a finding"       '.models={}'                yes
 fnd "validate: a blank provider is a finding"                '.models.provider="  "'     yes
 fnd "validate: a provider that is not a string is a finding" '.models.provider=3'        yes
-fnd "validate: a provider named is no finding"               '.models.provider="claude"' no
+fnd "validate: a provider named is no finding"               '.models.provider={local:"claude-code",cloud:"claude-platform"}' no
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
-$DA project set demo models.provider claude >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
+$DA project set demo models.provider.local claude-code >/dev/null 2>&1 && $DA project set demo models.provider.cloud claude-platform >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
 $DA project set demo budget_cents 2500 >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 2500 ] && echo "ok   set budget" || { echo "FAIL set budget"; fail=1; }
 # the message follows the key: the provision note belongs to answers a provision reads; a deployment option of the methodology
 # (github-release, none) is not one, so only what was set is said; a deployment value that is no option keeps the note
@@ -113,7 +113,7 @@ for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|pro
   msg=$($DA project set demo "$k" "$v" 2>&1); rc=$?
   { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
 done
-$DA project set demo models.provider.local claude >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
+$DA project set demo models.provider.local claude-code >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude-code ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
 # no environment variable opens project set to the gated keys: QARGI_GATED_STORE was one, honoured from any caller, and is gone
 cp $T/c/projects/demo.json $T/before.json
 for k in models.extensions models.accept_no_barrier.local; do
@@ -336,9 +336,9 @@ jq 'del(.models.extensions)' "$T/c/projects/lp.json" > "$T/p.tmp" && mv "$T/p.tm
 
 # the real runtime: skills (dir-symlink) and memory in one plan; agents are not linked by Claude Code's definition, so they are skipped
 CR=$T/crepo; git init -q -b main "$CR"; echo x > "$CR/README"; $G -C "$CR" add -A; $G -C "$CR" commit -q -m one
-lproj lc "$CR" claude
+lproj lc "$CR" claude-code
 CM=$HOME/.qargi/memory/projects/lc; mkdir -p "$CM"; echo n > "$CM/b.md"
-CRD=$T/s/render/lc/claude/.claude/skills; mkdir -p "$CRD/s1"; echo s > "$CRD/s1/SKILL.md"       # what packs apply makes
+CRD=$T/s/render/lc/claude-code/.claude/skills; mkdir -p "$CRD/s1"; echo s > "$CRD/s1/SKILL.md"       # what packs apply makes
 CD=$HOME/.claude/projects/$(sed 's/[^A-Za-z0-9]/-/g' <<<"$CR")/memory
 out=$(lgo link lc 2>&1)
 { [ -L "$CR/.claude/skills" ] && [ "$(readlink "$CR/.claude/skills")" = "$CRD" ] && [ -L "$CD" ] && [ "$(readlink "$CD")" = "$CM" ] && grep -q "^agents: not linked, the runtime links no agents at project level" <<<"$out"; } && ok "claude: skills and memory linked in one apply, agents skipped with the reason" || no "claude link: $out"

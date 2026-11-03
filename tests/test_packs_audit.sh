@@ -20,7 +20,7 @@ R=$T/repo
 CS=$R/.claude/skills; ACC=$T/c/packs/accepted.json
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha "$R"; proj beta "$R"
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
@@ -389,7 +389,7 @@ out=$($DA skill accept alpha mine 2>&1); rc=$?
 # --- schema 2 providers: the exclusion forms (settings-key with a nested pointer and a TOML file, config-list, deny-list, none, adapter)
 # and the acceptances (a record names its resource and provider; an older record counts as the project's provider's). Definitions
 # are schema 2 files of the tool copy, made from claude's own; qargi only reads the configuration files, and the test checks that.
-python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1] + "/lib"); import provider; d = provider.definition("claude", "local"); d["adapter"] = None; print(json.dumps(d))' "$ROOT" > "$T/v2base.json"
+python3 -I -c 'import sys, json; sys.path.insert(0, sys.argv[1] + "/lib"); import provider; d = provider.definition("claude-code", "local"); d["adapter"] = None; print(json.dumps(d))' "$ROOT" > "$T/v2base.json"
 mkv2() { jq --arg n "$1" ".provider = \$n | .resources.skills.project_dir = \".sk/skills\" | .resources.skills.user_dir = \"~/.sk/skills\" | $2" "$T/v2base.json" > "$TOOL/lib/providers/$1.json"; }
 SF='.resources.settings.files = [{scope:"user",path:"~/.tk/settings.json",format:"json"},{scope:"project",path:".tk/settings.toml",format:"toml"}]'
 mkv2 tomlkey "$SF | .resources.skills.exclusion = {form:\"settings-key\",files:[\"user\",\"project\"],pointer:\"/ui/hidden\",shape:\"map\",off:\"gone\"}"

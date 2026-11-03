@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The adapters of the claude runtimes: claude-code (local: resolve, dispatch-local, barrier-check) and claude-platform (cloud: resolve,
-start-session), the router that stands in for the schema 1 claude.json (lib/providers/claude/adapter), and the code that reaches them.
+start-session), and the code that reaches them.
 Hermetic: every changed definition lives in a copy of the tool tree in a temporary directory, never in the checkout.
 Run: python3 tests/test_provider_adapter.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
@@ -11,7 +11,6 @@ ROOT = os.path.realpath(os.path.join(HERE, ".."))
 PROVIDERS = os.path.join(ROOT, "lib", "providers")
 CODE = os.path.join(PROVIDERS, "claude-code", "adapter")          # the local runtime
 PLATFORM = os.path.join(PROVIDERS, "claude-platform", "adapter")  # the cloud runtime
-ROUTER = os.path.join(PROVIDERS, "claude", "adapter")             # what claude.json names while that file stays
 TEMPLATE = os.path.join(ROOT, "agents", "member.md")
 TOOL = ("bin", "lib", "agents", "roles", "provision", "methodologies", "packs", "catalog", "canon", "skills", "VERSION")
 
@@ -57,7 +56,6 @@ class Tree(unittest.TestCase):
                 shutil.copy2(src, self.tool)
         self.code = os.path.join(self.tool, "lib", "providers", "claude-code", "adapter")
         self.platform = os.path.join(self.tool, "lib", "providers", "claude-platform", "adapter")
-        self.adapter = os.path.join(self.tool, "lib", "providers", "claude", "adapter")
 
     def runtime(self, name, mutate, base="claude-code"):
         """A runtime of another name: a copy of the shipped claude-code (or claude-platform) definition, in no family, changed by mutate, with
@@ -177,41 +175,6 @@ class Resolve(Tree):
         os.remove(os.path.join(self.tool, "lib", "providers", "catalogs", "claude.json"))
         self.assertEqual(run(self.code, "resolve", {"surface": "local", "tier": "fast"})[0], 1)
         self.assertEqual(run(self.platform, "resolve", {"surface": "cloud", "tier": "fast"})[0], 1)
-
-
-class Router(Tree):
-    """lib/providers/claude/adapter is what claude.json names while that file stays: it passes each request to the runtime that serves it."""
-
-    def test_each_verb_reaches_the_runtime_that_serves_it(self):
-        env = dict(os.environ)
-        for verb, req, want in (("resolve", {"surface": "local", "tier": "deep"}, run(CODE, "resolve", {"surface": "local", "tier": "deep"})),
-                                ("resolve", {"surface": "cloud", "tier": "deep"}, run(PLATFORM, "resolve", {"surface": "cloud", "tier": "deep"})),
-                                ("dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"},
-                                 run(CODE, "dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"})),
-                                ("start-session", fixture("worker.request"), run(PLATFORM, "start-session", fixture("worker.request"))),
-                                ("cost", {}, run(CODE, "cost", {}))):
-            with self.subTest(verb=verb, surface=req.get("surface")):
-                self.assertEqual(run(ROUTER, verb, req, env=env), want)
-
-    def test_a_refusal_keeps_its_exit_status_its_body_and_its_stderr(self):
-        req = fixture("refused/reviewer-no-acceptance.request")
-        direct = subprocess.run([PLATFORM, "start-session"], input=json.dumps(req), capture_output=True, text=True)
-        via = subprocess.run([ROUTER, "start-session"], input=json.dumps(req), capture_output=True, text=True)
-        self.assertEqual(direct.returncode, 2)
-        self.assertEqual((via.returncode, via.stdout, via.stderr), (direct.returncode, direct.stdout, direct.stderr))
-
-    def test_what_it_cannot_read_is_the_local_runtimes_bad_request(self):
-        for verb, raw in (("resolve", "not json"), ("barrier-check", "[]"), ("start-session", ""), ("frobnicate", "{}")):
-            with self.subTest(verb=verb):
-                self.assertEqual(run(ROUTER, verb, None, raw=raw)[0], 1)
-
-    def test_it_runs_isolated_from_any_directory(self):
-        env = dict(os.environ, PYTHONPATH=self.tmp)
-        with open(os.path.join(self.tmp, "json.py"), "w") as f:
-            f.write("raise SystemExit(99)\n")
-        r = subprocess.run([self.adapter, "resolve"], input='{"surface":"cloud","tier":"fast"}', capture_output=True, text=True, env=env, cwd=self.tmp)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)["model"], "claude-haiku-5-5")
 
 
 class Protocol(Tree):
