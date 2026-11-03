@@ -19,7 +19,8 @@ roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 167
-skills/qargi-flow/SKILL.md 1723
+skills/qargi-flow/SKILL.md 951
+skills/qargi-flow/marshal.md 435
 skills/qargi-instances/SKILL.md 1020
 skills/qargi-memory/SKILL.md 1493
 skills/qargi-packs/SKILL.md 1784
