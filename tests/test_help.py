@@ -274,11 +274,14 @@ class Rich(Env):
         os.makedirs(os.path.join(self.t, "c", "packs", "skills", "pdf"))
         os.makedirs(os.path.join(self.t, "c", "packs", "tools"))
         self.put(os.path.join(self.t, "c", "packs", "tools", "github.json"), {})
-        self.put(os.path.join(self.t, "c", "agents.json"), {"forge": {"abilities": ["build", "test"], "seq": 1}, "scribe": {"abilities": ["write"], "seq": 2}})
+        self.put(os.path.join(self.t, "c", "agents.json"), {"schema": 2, "projects": {"alpha": {"forge": {"roles": ["build", "test"], "seq": 1}, "scribe": {"roles": ["write"], "seq": 2}},
+                                                                              "beta": {"forge": {"roles": ["test"], "seq": 3}, "lone": {"roles": ["write"], "seq": 4}}}})
 
     def test_members_complete_with_their_abilities(self):
-        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "scribe"])
-        self.assertEqual(dict(H.complete_described(["agent", "rename", ""]))["forge"], "build,test")
+        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "lone", "scribe"])   # every project's members, a name once
+        self.assertEqual(H.complete(["agent", "remove", "--project", "alpha", ""]), ["forge", "scribe"])
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "alpha", ""]))["forge"], "build,test")
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "beta", ""]))["forge"], "test")
         self.assertEqual(H.complete(["agent", "for", ""]), list(C.ABILITIES))
 
     def test_sessions_are_narrowed_by_what_the_verb_does(self):

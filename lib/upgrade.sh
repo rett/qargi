@@ -71,5 +71,5 @@ elif [ -n "$TAG" ]; then gw checkout --quiet --detach "$ref" || die "could not c
 else gw checkout --quiet -B "$BRANCH" "$ref" || die "could not check out $label"; fi
 "$root/install.sh" --user || die "the checkout moved but install.sh --user failed; run $root/install.sh --user yourself"
 echo "upgraded $root to $label $(g rev-parse --short HEAD) (approved: $APPROVED)"
-n=$(jq -r 'keys | join(" ")' "$MEMBERS_FILE" 2>/dev/null || true)
-[ -z "$n" ] || echo "members to refresh if the member definition changed: for m in $n; do qargi agent refresh \$m; done"
+n=$(jq -r '(.projects // {}) | to_entries[] | .key as $p | .value | keys[] | "qargi agent refresh " + . + " --project " + $p' "$MEMBERS_FILE" 2>/dev/null || true)
+[ -z "$n" ] || printf 'members to refresh if the member definition changed:\n%s\n' "$(sed 's/^/  /' <<<"$n")"
