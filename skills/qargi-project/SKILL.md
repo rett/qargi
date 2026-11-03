@@ -62,7 +62,7 @@ recommended; do not assume answers:
     (kept under the config directory, per role if the gates differ).
 
 To link a work tree (`project link`, in each checkout or worktree) or start from a repository (`project new`, `attach`, `adopt`),
-read `repository.md`. Or write the answers file and store it:
+load `repository.md`. Or write the answers file and store it:
 
 ```sh
 qargi project template NAME > answers.json   # edit with the answers

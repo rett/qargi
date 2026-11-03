@@ -31,7 +31,7 @@ note format, indexes and hygiene, and exits 1 on any FAIL.
 
 A store at an older version gets a plan that only adds what a note lacks and never edits a body; a new canon version means a
 new migration (`canon/CANON.md` § Changing the canon). The other verbs (`seed-role`, `import`, `promote`, `audit`, and
-`qargi memory split|copy|merge`) and how a new project's stores are seeded are in `curate.md`.
+`qargi memory split|copy|merge`) and how a new project's stores are seeded: load `curate.md`.
 
 ## Memory tiers
 
