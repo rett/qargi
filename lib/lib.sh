@@ -331,9 +331,13 @@ agent_prompt() { # role [project]
 # rendered prompt (what refresh-prompt would push); skill is the hash of the files that change most, the contract as the prompt carries it
 # (cloud_contract: contract/ and the cloud runtime's addenda) and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
 prompt_stamp() { # role project
-  local sha; sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
-  [ "${PIPESTATUS[0]}" = 0 ] || return 1
-  jq -nc --arg s "$sha" --arg k "$({ cloud_contract "$2"; cat "$(role_dir "$1" 2>/dev/null)/ROLE.md"; } 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+  # the prompt and the contract are rendered into variables first (a trailing x keeps the final newlines for the hash): a pipeline inside $(...)
+  # cannot report the status of its first stage, and the hash of a partial prompt (an addendum that cannot be read) must never be recorded
+  local p c sha k
+  p=$(agent_prompt "$1" "$2" && printf x) || return 1; p=${p%x}
+  c=$({ cloud_contract "$2" || exit 1; cat "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null; true; } 2>/dev/null && printf x) || return 1; c=${c%x}
+  sha=$(printf '%s' "$p" | sha256sum | cut -c1-16); k=$(printf '%s' "$c" | sha256sum | cut -c1-16)
+  jq -nc --arg s "$sha" --arg k "$k" '{sha: $s, skill: $k}'
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the

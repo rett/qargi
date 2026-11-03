@@ -261,12 +261,15 @@ refresh_prompt() {
       *) echo "the prompt of $n changed since it was last rendered; planning the refresh";;
     esac
   fi
-  need_asked; ant_ok
+  need_asked
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
   split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
+  # the prompt is rendered before any cloud call: one that cannot be rendered (an addendum that cannot be read) is never pushed in part
+  new=$(agent_prompt "$ROLE" "$PROJECT") || die "could not render the system prompt of $ROLE (a contract addendum of the project's cloud runtime cannot be read?); nothing was sent"
+  ant_ok
   ag=$(ant beta:agents retrieve --agent-id "$aid" </dev/null 2>/dev/null) || die "cannot read the agent"
-  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE" "$PROJECT")
+  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag")
   if [ "$ROLE" = lead ]; then   # a lead pins its members by version: point it at their current versions
     members=$(jq -c '[.multiagent.agents[]? | {id, version}]' <<<"$ag")
     for id in $(jq -r '.[].id' <<<"$members"); do
