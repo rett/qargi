@@ -14,9 +14,24 @@ ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 # top-level directories a copy of the tool does not need (the tests, the sample projects, generated completions and the manual page)
 NOT_COPIED="tests examples completions man"
 
-# 1. no test spells the list out
+# 1. no test spells the list out: neither as the word pair the list begins with, nor as a copy line (cp, rsync, copytree, copy2) of three or more of
+# the tool's top-level directories, which is a hand-written list that leaves the others out (hermetic.* and this test are the lists themselves)
 spelled=$(grep -lE "provision contract|\"provision\", \"contract\"" tests/*.sh tests/*.py 2>/dev/null | grep -v -e '^tests/hermetic\.' -e '^tests/test_tool_copy\.sh$' | tr '\n' ' ')
-[ -z "$spelled" ] && ok "no test lists the tool's directories itself" || no "these tests spell out the directories to copy (use copy_tool from tests/hermetic.sh): $spelled"
+by_hand=$(python3 -I - tests/*.sh tests/*.py <<'PY'
+import re, sys
+DIRS = "provision skills roles agents contract packs catalog lib bin".split()
+for path in sys.argv[1:]:
+    if re.match(r"tests/(hermetic\.|test_tool_copy\.sh$)", path):
+        continue
+    for n, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
+        if line.lstrip().startswith("#") or not re.search(r"(^|[^A-Za-z_])(cp|rsync|copytree|copy2?)\b", line):
+            continue
+        named = {d for d in DIRS if re.search(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])" % d, line)}
+        if len(named) >= 3:
+            print("%s:%d " % (path, n), end="")
+PY
+)
+[ -z "$spelled" ] && [ -z "$by_hand" ] && ok "no test lists the tool's directories itself" || no "these tests spell out the directories to copy (use copy_tool from tests/hermetic.sh): $spelled$by_hand"
 
 # 2. every top-level directory is copied or named as not needed
 missing=

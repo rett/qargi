@@ -159,7 +159,7 @@ run $F merge held1 agent/t3; rc=$?
 git -C "$R" worktree remove --force "$T/held-wt"
 
 # --- a marshal that is missing or fails is never a reason to stop a verb
-cp_tree() { rm -rf "$1"; mkdir -p "$1"; cp -r "$TOOL/bin" "$TOOL/lib" "$TOOL/VERSION" "$1/"; for d in canon roles methodologies; do [ ! -d "$TOOL/$d" ] || cp -r "$TOOL/$d" "$1/"; done; }
+cp_tree() { rm -rf "$1"; copy_tool "$TOOL" "$1"; }
 for kind in absent exit2; do
   cp_tree "$T/tree-$kind"
   if [ $kind = absent ]; then rm -f "$T/tree-$kind/lib/marshal.sh"
