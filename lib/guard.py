@@ -40,6 +40,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     resolved path relative to the roots above, never by the word `skills`.
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
 read-only role run there) is refused to a member, found like the skill verbs; list, show and check stay allowed.
+Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
+verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -109,7 +111,7 @@ EDIT_TOOLS = ("Edit", "Write", "NotebookEdit", "MultiEdit")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "packs_audit.py", "marshal_handoff.py", "release.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file)
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
@@ -655,6 +657,8 @@ def skill_verb(prog, rest, via_xargs=False):
         words = ["marshal"] + words
     if name == "feature.sh":
         words = ["feature"] + words
+    if name == "release.sh":
+        words = ["release"] + words
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
@@ -676,6 +680,8 @@ def skill_verb(prog, rest, via_xargs=False):
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
+    if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
+        return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))

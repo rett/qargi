@@ -49,6 +49,7 @@ run bash tests/test_flow.sh
 run bash tests/test_changelog_section.sh
 run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
+run bash tests/test_release_publish.sh
 run python3 tests/test_migrate.py
 run python3 tests/test_home.py
 run bash tests/test_install.sh

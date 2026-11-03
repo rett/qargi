@@ -224,6 +224,23 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_publish_to_a_member(self):
+        """release publish creates the GitHub release of a tag with the lead's gh; the verb, a verb held in a variable and the script run
+        directly are refused. The other release verbs (and a word in a quoted string) stay as they were."""
+        for form in ("qargi release publish 0.2.0", "qargi release publish 0.2.0 --plan 0123456789ab --approved go", "/opt/q/bin/qargi release publish 0.2.0",
+                     "sudo qargi release publish 0.2.0", "bash -c 'qargi release publish 0.2.0'", "env FOO=1 qargi release publish 0.2.0", "cd src && qargi release publish 0.2.0",
+                     "echo $(qargi release publish 0.2.0)", "qargi release publish 0.2.0 --project p", "qargi 'release' 'publish' 0.2.0", "eval 'qargi release publish 0.2.0'",
+                     "bash lib/release.sh publish 0.2.0", "./lib/release.sh publish 0.2.0 --plan 0123456789ab --approved go", "v=publish; qargi release $v 0.2.0",
+                     "qargi release ${V:-publish} 0.2.0", "qargi release --project p publish 0.2.0"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi guard:", r.stderr)
+            self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
+        for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
+                  "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_packs_seed_to_a_member(self):
         for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
             r = self.bash(form)
