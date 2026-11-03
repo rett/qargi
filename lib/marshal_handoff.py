@@ -10,7 +10,7 @@ this host), the feature(s) (tip, whether the whole-suite result applies to the t
 commits ahead of develop), the marshal record, the packs (check summary and the launch line), what to read first, and a fixed
 list of things a new session must not assume.
 
-The packs section is the project's provider's (models.provider of its answers, no default: none is exit 2): the skills directory,
+The packs section is the project's local runtime's (models.provider of its answers for the local surface, no default: none is exit 2): the skills directory,
 the render target of the check and the launch line come from its layout (lib/providers/NAME.json through lib/provider.py). A
 provider that lacks one of them is said so in the section ("provider NAME has no FACILITY: ..."); the rest of the note stands.
 
@@ -272,7 +272,7 @@ def collect(a, argv_name):
     except (OSError, ValueError):
         answers = {}
     present = os.path.isfile(answers_file)
-    prov = pv().project_provider(answers, a.project) if present else None       # no default: NoProvider ends the verb (exit 2)
+    prov = pv().provider_of(answers, "local", a.project) if present else None    # the render is the local surface's; no default: NoProvider ends the verb (exit 2)
     test_cmd = answers.get("test_command") or ""
     repo = a.repo if a.repo and os.path.isdir(a.repo) else ""
     if not present:

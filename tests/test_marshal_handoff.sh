@@ -186,6 +186,14 @@ H f1; rc=$?
 # --- packs and read first
 H f1
 grep -q "^render check (qargi packs check --target claude-code app): exit " "$T/o" && grep -q "no render of the project's packs on this host" "$T/o" && ok "packs: no render yet is said, and the check summary does not fail the note" || no "SPEC packs without render: $(sed -n '/== packs/,/== read/p' "$T/o")"
+# a project that names a runtime per surface (an object): the packs section is the local surface's
+jq '.models = {provider: {local: "claude-code", cloud: "claude-platform"}}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1; rc=$?
+[ $rc = 0 ] && grep -q "^render check (qargi packs check --target claude-code app): exit " "$T/o" && ok "packs: an object-form models.provider with different runtimes is described by its local runtime" || no "SPEC packs object-form provider: rc=$rc $(out)"
+jq '.models = {provider: {cloud: "claude-platform"}}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
+H f1; rc=$?
+[ $rc = 2 ] && [ "$(cat "$T/e")" = "qargi: project app has no local provider: set one with qargi project set app models.provider.local NAME" ] && [ ! -s "$T/o" ] && ok "packs: an object that names only a cloud runtime is refused with exit 2 and the fix" || no "SPEC packs cloud-only provider: rc=$rc $(out)"
+jq '.models = {provider: "claude"}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
 mkdir -p "$S/claude/app/.claude/skills"
 H f1; rc=$?
 [ $rc = 0 ] && grep -q "^launch (the checkout's .claude/skills is not our link): claude --add-dir $S/claude/app\$" "$T/o" && ok "packs: the exact launch line with --add-dir" || no "SPEC launch line: rc=$rc $(sed -n '/== packs/,/== read/p' "$T/o")"
@@ -233,7 +241,7 @@ setprov noskills; HX; rc=$?
 setprov notarget; mkdir -p "$S/notarget/app/.claude/skills"; HX; rc=$?
 [ $rc = 0 ] && sect | grep -q "^render check: not run (provider notarget has no packs render target: " && sect | grep -q "provider notarget has no session launch command: " && ok "a provider with no render target and no launch command: both are said, nothing is run" || no "notarget: rc=$rc $(sect)"
 setprov nosuch; HX; rc=$?
-[ $rc = 1 ] && grep -q "unknown provider 'nosuch'" "$T/e" && [ ! -s "$T/o" ] && ok "a provider with no descriptor is refused (exit 1)" || no "unknown provider: rc=$rc $(out)"
+[ $rc = 1 ] && grep -q "^qargi: no runtime or family 'nosuch' for the local surface; available: " "$T/e" && [ ! -s "$T/o" ] && ok "a provider with no descriptor is refused as an unknown runtime of the local surface (exit 1)" || no "unknown provider: rc=$rc $(out)"
 setprov ""; HX; rc=$?
 [ $rc = 2 ] && [ "$(cat "$T/e")" = "qargi: project app has no provider: set one with qargi project set app models.provider NAME" ] && [ ! -s "$T/o" ] && ok "no models.provider: the handoff is refused with exit 2 and the fix, and prints nothing" || no "no provider: rc=$rc $(out)"
 setprov claude

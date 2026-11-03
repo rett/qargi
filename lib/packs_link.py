@@ -58,7 +58,7 @@ def bind(inp):
     co = (answers.get("repo") or {}).get("path") or ""
     if (inp.get("checkout") or "") != co:
         die("the inputs name the checkout %r, not the project's repo.path %r; refusing" % (inp.get("checkout"), co))
-    if inp.get("provider") != provider.project_provider(answers, project):
+    if inp.get("provider") != provider.provider_of(answers, "local", project):
         die("the inputs name the provider %r, not the project's; refusing" % (inp.get("provider"),))
     inp["state"] = paths.state()
     return inp
