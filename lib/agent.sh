@@ -5,10 +5,15 @@
 # The members are recorded in ~/.qargi/config/agents.json with the hash of the file and of what it was rendered from: `list` and `models`
 # show STALE when the definition, the catalog or the body changed since (qargi agent refresh) and DRIFT when the file was edited by hand.
 #
-#   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]
+#   agent.sh add NAME [--abilities build,write,review,test] [--model M] [--effort E] (--project P | --user)
 #   agent.sh list
-#   agent.sh rename OLD NEW
-#   agent.sh refresh NAME      re-render a member from the current definition, keeping its name, abilities, model and effort
+#   agent.sh rename OLD NEW [--user]
+#   agent.sh refresh NAME [--user]      re-render a member from the current definition, keeping its name, abilities, model and effort
+#
+# Where a member's file goes. A project's member (--project) goes where the runtime's definition links the project's agents (resources.agents.link.project):
+# entry-symlinks, dir-symlink or copy: into the project's member render under ~/.qargi (state/render/P/RUNTIME.agents), which `qargi project link P
+# --resource agents` links into the checkout; none: straight into the checkout's agents directory (hidden from git), as it always was. Nothing is
+# ever written to a runtime's user-level directory (for Claude Code ~/.claude/agents) unless --user says so, on add, refresh and rename.
 #   agent.sh models [--project P] [--json]     the bases, the profiles (shipped and the project's), the members and what is wrong with them
 #   agent.sh remove NAME
 #   agent.sh for ROLE [--profile P] [--project P] [--json]     the member, model and effort for ROLE under a profile: dispatch spawns it
@@ -99,7 +104,7 @@ def render_legacy(prov, name, abilities, cls, model, effort):
     inputs = json.dumps({"adapter": ad, "request": req, "definition": P.definition_hash(prov), "content": sha}, sort_keys=True, separators=(",", ":"))
     return {"runtime": prov, "path": name + (ag.get("ext") or ".md"), "content": content, "sha256": sha,
             "inputs_hash": hashlib.sha256(inputs.encode("utf-8")).hexdigest(), "notes": [],
-            "agents": {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir")}}
+            "agents": {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir"), "link": ag.get("link")}}
 
 
 def render_member(prov, name, abilities, cls, model, effort):
@@ -136,7 +141,7 @@ def render_member(prov, name, abilities, cls, model, effort):
     except R.RenderError as e:
         raise Fail("the member cannot be rendered for %s: %s" % (rt, e))
     out["runtime"] = rt
-    out["agents"] = {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir")}
+    out["agents"] = {"project_dir": ag["project_dir"], "user_dir": ag.get("user_dir"), "link": ag.get("link")}
     return out
 
 
@@ -197,7 +202,7 @@ pdesc() { # provider -> its description as the loader gives it: tiers, aliases, 
 }
 
 verb=${1:-}; shift || true
-POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
+POS=() ABIL='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN='' USERLVL=''
 while [ $# -gt 0 ]; do
   case $1 in
     --abilities) ABIL=$2; shift 2;;
@@ -208,6 +213,7 @@ while [ $# -gt 0 ]; do
     --json) JSON=1; shift;;
     --surface) SURFACE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
+    --user) USERLVL=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
@@ -232,15 +238,39 @@ repo_path() { # project -> its local repository (dies when the answers name none
   echo "$rp"
 }
 
-agents_dir() { # project-or-empty rendered-json -> the directory the definition goes to (the runtime's agents directory: in the project's repository, or the user's)
+link_mode() { # rendered-json -> how the runtime's definition links the project's agents (entry-symlinks, dir-symlink, copy or none)
+  jq -r '.agents.link.project // "none"' <<<"$1"
+}
+
+agents_dir() { # project-or-empty rendered-json -> the directory the definition goes to
+  # a project's member: the project's member render when the definition links the project's agents (project link puts them in the checkout), else the checkout's
+  # agents directory; a user-level member (--user, no project): the runtime's user-level directory, which nothing else ever writes
   local d
   if [ -n "$1" ]; then
+    if [ "$(link_mode "$2")" != none ]; then python3 -I "$root/lib/project_link.py" members-dir "$1" "$(jq -r .runtime <<<"$2")"; return; fi
     d=$(jq -r '.agents.project_dir' <<<"$2"); echo "$(repo_path "$1")/$d"
   else
     d=$(jq -r '.agents.user_dir // empty' <<<"$2")
     [ -n "$d" ] || die "the runtime $(jq -r .runtime <<<"$2") keeps no user-level agents; give --project"
     echo "${d/#\~/$HOME}"
   fi
+}
+
+need_place() { # verb project-of-the-member-or-empty: a member of no project is a user-level one, and nothing writes there without --user (exit 2)
+  if [ -n "$USERLVL" ] && [ -n "$2" ]; then echo "qargi: --user is for a user-level member; this one belongs to project $2" >&2; exit 2; fi
+  if [ -z "$USERLVL" ] && [ -z "$2" ]; then
+    echo "qargi: $1 writes the definition of a member: give --project NAME (the project it belongs to; its definition goes where the runtime links the project's agents) or --user (a user-level member, in the runtime's own user-level directory)" >&2
+    exit 2
+  fi
+}
+
+link_note() { # project rendered-json file: a member in the project's member render is seen by the checkout once project link has linked it
+  local co d
+  [ "$(link_mode "$2")" != none ] || return 0
+  co=$(repo_path "$1" 2>/dev/null) || return 0
+  d=$(jq -r '.agents.project_dir' <<<"$2")
+  [ "$(readlink -f "$co/$d/$(basename "$3")" 2>/dev/null)" != "$(readlink -f "$3")" ] || return 0
+  echo "qargi: note: the checkout $co does not see this file yet: qargi project link $1 --resource agents (run it inside each worktree that should have it)" >&2
 }
 
 hide_in_git() { # repo file: keep a project-level definition out of the repository's commits
@@ -327,9 +357,10 @@ write_member() { # rendered-json file: say what the runtime could not express, t
 
 add() {
   local n=${POS[0]:-} eproj a list='' dir file seq first bc prov r ro ORIG_EFFORT=$EFFORT
-  [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] [--project P]"
-  # the provider is the project's (models.provider; no default): --project, else the project in effect here. Only --project puts the member in
-  # the project's repository; without it the member is a user-level one and the project in effect lends its provider for this run
+  [ -n "$n" ] || die "usage: qargi agent add NAME [--abilities build,write,review,test] [--model M] [--effort E] (--project P | --user)"
+  need_place "agent add" "$PROJ"
+  # the provider is the project's (models.provider; no default): --project, else the project in effect here. --project makes the member the
+  # project's (its file goes where the runtime links the project's agents); --user makes it a user-level one and the project in effect lends its provider for this run
   eproj=$(project_in_effect "$PROJ")
   prov=$(provider_for "$eproj" local) || exit $?
   valid_name "$n" "$prov"
@@ -358,13 +389,14 @@ add() {
   dir=$(agents_dir "$PROJ" "$r") || exit 1; file=$dir/$(jq -r .path <<<"$r")
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
   write_member "$r" "$file"
-  [ -z "$PROJ" ] || hide_in_git "$(repo_path "$PROJ")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
+  [ -z "$PROJ" ] || [ "$(link_mode "$r")" != none ] || hide_in_git "$(repo_path "$PROJ")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
   seq=$(jq '[.[].seq // 0] | max // 0 | . + 1' "$MEMBERS_FILE")
   json_update "$MEMBERS_FILE" '.[$n] = {abilities: ($a | split(",")), file: $f, model: $m, effort: (if $e == "" then null else $e end),
       project: (if $p == "" then null else $p end), created: $t, seq: $s, provider: $v, surface: "local", render: $r}' \
     --arg n "$n" --arg a "$list" --arg f "$file" --arg m "$MODEL" --arg e "$EFFORT" --arg p "$PROJ" --arg t "$(now)" --argjson s "$seq" \
     --arg v "$prov" --argjson r "$(member_record "$r")"
   echo "member $n ($list) at $file"
+  [ -z "$PROJ" ] || link_note "$PROJ" "$r" "$file"
 }
 
 # The profile resolver, in jq. Inputs ($d the table, $tiers and $aliases the provider's, $pf the project's answers or {}, $rc each role's class):
@@ -477,7 +509,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
     | while IFS=$'\t' read -r n b d s t fl; do printf '  %-11s %-9s %-52s %-10s %s\n' "$n" "$b" "$d" "$s" "${t:+$t }$fl"; done
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
   echo "members"
-  if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME)"; else
+  if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME --project P, or --user)"; else
     jq -r '.members[] | "  \(.name)\t\(.abilities | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
@@ -509,7 +541,7 @@ RESOLVEJQ="$RESOLVE_HEAD"'
       ([$E[] | select(.key == $p.base and (.value | (any((.abilities // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $b
       | (if $b != null then {m: $b, legacy: false}
          else (cands($role)[0] // (if $row != $role then cands($row)[0] else null end)) as $l | if $l != null then {m: $l, legacy: true} else null end end) as $sel
-      | if $sel == null then {code: 1, err: "no member serves the \($role) role: qargi agent add NAME --abilities \($role)"}
+      | if $sel == null then {code: 1, err: "no member serves the \($role) role: qargi agent add NAME --abilities \($role) (--project P | --user)"}
         else {code: 0, out: {role: $role, class: $rclass, profile: $pn,
           profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
           base: $p.base, member: $sel.m.key, member_scope: (if $sel.m.value.project != null then "project" else "user" end), legacy: $sel.legacy,
@@ -532,7 +564,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
     mem=$(jq -r .out.member <<<"$res"); mm=$(jq -r --arg m "$mem" '.[$m].model // ""' "$MEMBERS_FILE")
     want=$(jq -r '.out.model // .out.model_id // ""' <<<"$res")
     if [ -n "$mm" ] && [ -n "$want" ] && [ "$mm" != "$want" ] && [ "$mm" != "$(jq -r '.out.model_id // ""' <<<"$res")" ]; then
-      echo "qargi: the provider $prov cannot set the model per dispatch (per_dispatch_model_override is not supported on local), so member $mem (model $mm) cannot run the $(jq -r .out.profile <<<"$res") profile (model $want). Use one member per profile: qargi agent add NAME --abilities $role --model $want$([ -z "$proj" ] || echo " --project $proj"), or choose a profile with the model of the member" >&2
+      echo "qargi: the provider $prov cannot set the model per dispatch (per_dispatch_model_override is not supported on local), so member $mem (model $mm) cannot run the $(jq -r .out.profile <<<"$res") profile (model $want). Use one member per profile: qargi agent add NAME --abilities $role --model $want$([ -n "$proj" ] && echo " --project $proj" || echo " --user"), or choose a profile with the model of the member" >&2
       exit 2
     fi
   fi
@@ -629,12 +661,13 @@ case $verb in
         (.value.model // "-") + "/" + (.value.effort // "default"),
         (.value.file + (if ($st[.key] // []) | length > 0 then " (" + (($st[.key]) | join(", ")) + ")" else "" end))] | @tsv' "$MEMBERS_FILE" \
       | column -t -s "$(printf '\t')"
-    [ "$(jq length "$MEMBERS_FILE")" != 0 ] || echo "no members yet: qargi agent add NAME [--abilities build,write,review,test]";;
+    [ "$(jq length "$MEMBERS_FILE")" != 0 ] || echo "no members yet: qargi agent add NAME [--abilities build,write,review,test] (--project P | --user)";;
   rename)
     old=${POS[0]:-}; new=${POS[1]:-}
-    [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW"
+    [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW [--user]"
     rec=$(jq -ce --arg n "$old" '.[$n]' "$MEMBERS_FILE") || die "no member named $old (qargi agent list)"
     mproj=$(jq -r '.project // ""' <<<"$rec")
+    need_place "agent rename" "$mproj"
     prov=$(provider_for "$(project_in_effect "$mproj")" local) || exit $?
     valid_name "$new" "$prov"
     jq -e --arg n "$new" 'has($n)' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already"
@@ -643,21 +676,43 @@ case $verb in
     r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
     oldrel=$(jq -r '.render.path // ""' <<<"$rec"); base=$(dirname "$f")
     [ -z "$oldrel" ] || [ "${f%/"$oldrel"}" = "$f" ] || base=${f%/"$oldrel"}
+    # a project's member whose runtime links the project's agents belongs in the member render, wherever the old file was
+    [ -z "$mproj" ] || [ "$(link_mode "$r")" = none ] || base=$(agents_dir "$mproj" "$r") || exit 1
     nf=$base/$(jq -r .path <<<"$r")
     [ ! -e "$nf" ] || die "$nf exists already"
     write_member "$r" "$nf"
     [ ! -f "$f" ] || rm -f "$f"
-    [ -z "$mproj" ] || hide_in_git "$(repo_path "$mproj")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
+    [ -z "$mproj" ] || [ "$(link_mode "$r")" != none ] || hide_in_git "$(repo_path "$mproj")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
     json_update "$MEMBERS_FILE" '.[$new] = (.[$old] | .file = $f | .provider = $v | .surface = "local" | .render = $r) | del(.[$old])' --arg old "$old" --arg new "$new" --arg f "$nf" \
       --arg v "$prov" --argjson r "$(member_record "$r")"
-    echo "renamed member $old -> $new ($nf)";;
+    echo "renamed member $old -> $new ($nf)"
+    [ -z "$mproj" ] || link_note "$mproj" "$r" "$nf";;
   refresh)
-    n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME"
+    n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME [--user]"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
-    prov=$(provider_for "$(project_in_effect "$(jq -r '.project // ""' <<<"$rec")")" local) || exit $?
+    mproj=$(jq -r '.project // ""' <<<"$rec")
+    need_place "agent refresh" "$mproj"
+    prov=$(provider_for "$(project_in_effect "$mproj")" local) || exit $?
     r=$(render_member "$n" "$(jq -r '.abilities | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov") || exit 1
+    # a project's member whose runtime links the project's agents belongs in the member render: a file written to the checkout by an earlier version is moved there
+    # (the old file is removed only while it is what qargi wrote)
+    if [ -n "$mproj" ] && [ "$(link_mode "$r")" != none ]; then
+      nf=$(agents_dir "$mproj" "$r")/$(jq -r .path <<<"$r") || exit 1
+      if [ "$nf" != "$f" ]; then
+        [ ! -e "$nf" ] && [ ! -L "$nf" ] || die "$nf exists already"
+        write_member "$r" "$nf"
+        gone="the old file $f is gone"
+        if [ -f "$f" ] && [ ! -L "$f" ]; then
+          if [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$(jq -r '.render.hash // ""' <<<"$rec")" ]; then rm -f "$f"
+          else gone="the old file $f was edited by hand and is left where it is"; fi
+        fi
+        json_update "$MEMBERS_FILE" '.[$n] += {file: $f, provider: $v, surface: "local", render: $r}' --arg n "$n" --arg f "$nf" --arg v "$prov" --argjson r "$(member_record "$r")"
+        echo "refreshed member $n: now in the member render ($nf); $gone"
+        link_note "$mproj" "$r" "$nf"; exit 0
+      fi
+    fi
     # the file is the render's bytes: written again unless it is already those (a hand-edited file is replaced, and the output says so)
     drift=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
     [ -z "$want" ] || [ ! -f "$f" ] || [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$want" ] || drift=1
@@ -667,14 +722,16 @@ case $verb in
     fi
     write_member "$r" "$f"
     json_update "$MEMBERS_FILE" '.[$n] += {provider: $v, surface: "local", render: $r}' --arg n "$n" --arg v "$prov" --argjson r "$(member_record "$r")"
-    echo "refreshed member $n ($f); sessions started afterwards use it${drift:+; the edits made to the file by hand are gone}";;
+    echo "refreshed member $n ($f); sessions started afterwards use it${drift:+; the edits made to the file by hand are gone}"
+    [ -z "$mproj" ] || link_note "$mproj" "$r" "$f";;
   models) models;;
   remove)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent remove NAME"
     rec=$(jq -ce --arg n "$n" '.[$n]' "$MEMBERS_FILE") || die "no member named $n (qargi agent list)"
     f=$(jq -r .file <<<"$rec"); [ ! -f "$f" ] || rm -f "$f"
     json_update "$MEMBERS_FILE" 'del(.[$n])' --arg n "$n"
-    echo "removed member $n${f:+ ($f)}";;
+    echo "removed member $n${f:+ ($f)}"
+    case $f in *.agents/*) echo "qargi: note: a worktree that linked it still has a dangling link; qargi project link $(jq -r '.project // ""' <<<"$rec") --resource agents drops it" >&2;; esac;;
   for)
     a=${POS[0]:-}
     [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
