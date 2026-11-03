@@ -693,7 +693,7 @@ COMMANDS = {
             "check": verb("Check a run: numbered patches, messages, manifest, groups", [("RUN_DIR", "dir")],
                           [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
                           desc=("Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
-                                "A review run passes with a report.md that has a Findings section instead of patches.")),
+                                "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
                           desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
