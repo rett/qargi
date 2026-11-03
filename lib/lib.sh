@@ -303,28 +303,37 @@ prompt_root() {
   if [ -d "$lib/../provision/templates" ]; then echo "$lib/.."; else echo "$lib"; fi
 }
 
+# cloud_contract [PROJECT]: the member contract of a cloud prompt: contract.md and output-format.md, then the contract addenda of the runtime the
+# project uses on the cloud surface (resources.contract_addenda of its definition: its own rules about its surface, which the neutral contract
+# does not name). Without a project, or when none resolves a cloud runtime, there is no addendum: no runtime is ever assumed. A runtime whose
+# addenda cannot be read (a file missing, not text, a library pack changed since it was sealed) fails the prompt rather than leaving them out.
+cloud_contract() { # [project]
+  local ct prov; ct=$(prompt_root)/contract
+  cat "$ct/contract.md" "$ct/output-format.md" || return 1
+  prov=$(project_provider "${1:-}" cloud 2>/dev/null) || return 0
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" addenda "$prov" cloud
+}
+
 agent_prompt() { # role [project]
   local root; root=$(prompt_root)
-  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1 ct=$root/contract
+  local tpl=$root/provision/templates rs=$root/provision/role-seeds/$1
   # a base (worker, reviewer) is a role-neutral agent: the role text comes with each session, so the agent itself holds only a short fallback
   if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
-  # cloud-run.md is the cloud-only part of the contract; the provider definition will compose it later, so for now it is added here
-  [ "$1" = lead ] || cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md"
+  [ "$1" = lead ] || cloud_contract "${2:-}" || return 1
   local rd; if rd=$(role_dir "$1"); then echo; cat "$rd/ROLE.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
 }
 
 # The hashes that say whether a cloud agent's prompt is out of date, with no cloud call. sha is the hash of the whole
-# rendered prompt (what refresh-prompt would push); skill is the hash of the files that change most, the contract files (contract/)
-# and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
+# rendered prompt (what refresh-prompt would push); skill is the hash of the files that change most, the contract as the prompt carries it
+# (cloud_contract: contract/ and the cloud runtime's addenda) and the role text (roles/<role>/ROLE.md); the key keeps its name "skill" so recorded stamps stay valid. Prints {sha, skill}.
 prompt_stamp() { # role project
-  local ct sha; ct=$(prompt_root)/contract
-  sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
+  local sha; sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
   [ "${PIPESTATUS[0]}" = 0 ] || return 1
-  jq -nc --arg s "$sha" --arg k "$(cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+  jq -nc --arg s "$sha" --arg k "$({ cloud_contract "$2"; cat "$(role_dir "$1" 2>/dev/null)/ROLE.md"; } 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the

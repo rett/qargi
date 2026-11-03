@@ -374,6 +374,8 @@ def scaffold(kind, name, base):
         d["description"] = "%s, copied from %s: edit me" % (name, base)
         d.pop("adapter", None)
         d.pop("adapter_verbs", None)
+        if isinstance(d.get("resources"), dict):
+            d["resources"].pop("contract_addenda", None)             # the files it names are not copied
         for c in list((d.get("capabilities") or {})):
             d["capabilities"][c] = dict(d["capabilities"][c], verified_on=None)
         if isinstance(d.get("models"), dict) and "catalog" in d["models"]:
