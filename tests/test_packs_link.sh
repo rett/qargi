@@ -295,12 +295,15 @@ out=$($DA skill accept alpha $'mine\n' 2>&1) && no "a skill name with a trailing
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"
-  | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}] | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
-mkprov noskills '.layout.project_skills_dir = null'
-mkprov unverified '.capabilities.skills.local.verified_on = null'
-mkprov notarget '.layout.render_target = null'
+# shellcheck source=fakeprov.sh
+. "$ROOT/tests/fakeprov.sh"
+mkprov() { fake_runtime "$ROOT" "$TOOL" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }
+mkprov agentx '.resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render" | .resources.skills.user_dir = "~/.agent/skills"
+  | .resources.settings.files = [{scope:"user",path:"~/.agent/settings.json",format:"json"},{scope:"project-local",path:".agent/settings.local.json",format:"json"}]
+  | .resources.skills.exclusion = {form:"settings-key",files:["user","project-local"],pointer:"/skills_off",shape:"map",off:"hidden"}'
+mkprov noskills '.resources.skills |= del(.project_dir)'
+mkprov unverified '.capabilities.skills.verified_on = null'
+mkprov notarget '.session |= del(.render_target)'
 R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
 projp() { proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"; }
 projp beta agentx

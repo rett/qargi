@@ -26,11 +26,11 @@ jq -e '.bases == {worker:{abilities:["build","write","test"],class:"write"},revi
 jq -e '.profiles.build.base == "worker" and .profiles.write.base == "worker" and .profiles.test.base == "worker" and ([.profiles.review, .profiles.auditor, .profiles.advisor, .profiles.researcher] | all(.base == "reviewer"))' "$TABLE" >/dev/null && ok "build, write and test use the worker; the review profiles the reviewer" || no "profile bases"
 jq -e '[.profiles | to_entries[] | select(.value.opt_in == true) | .key] == ["researcher"] and .profiles.researcher.tier == "frontier" and ([.profiles | to_entries[] | select(.value.tier == "frontier") | .key] == ["researcher"])' "$TABLE" >/dev/null && ok "only the researcher is opt-in and on frontier" || no "opt-in"
 jq -e '.escalate == {build:"frontier",write:"frontier",test:"frontier",review:"frontier"}' "$TABLE" >/dev/null && ok "escalate names the tier to offer per role" || no "escalate"
-jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.provider == "claude" and (.tiers | keys | sort) == ($tiers | sort) and (.tiers | all(test("^claude-")))
-  and (.aliases == {fast:"haiku",balanced:"sonnet",deep:"opus",frontier:"fable"})
-  and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/claude.json" >/dev/null \
-  && ok "the claude provider file maps every tier the table uses to an id and to an alias" || no "provider file"
-jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t] != null and $c.aliases[$t] != null)' "$PROV/claude.json" >/dev/null && ok "every profile's tier is in both tiers and aliases" || no "tier coverage"
+jq -e --argjson tiers "$TIERS" --slurpfile d "$TABLE" '.family == "claude" and (.tiers | keys | sort) == ($tiers | sort) and (.tiers | all(.model | test("^claude-")))
+  and (.tiers | map_values(.alias)) == {fast:"haiku",balanced:"sonnet",deep:"opus",frontier:"fable"}
+  and ([$d[0].profiles[].tier] | unique | all(. as $t | $tiers | index($t)))' "$PROV/catalogs/claude.json" >/dev/null \
+  && ok "the claude catalog maps every tier the table uses to an id and to an alias" || no "catalog file"
+jq -e --slurpfile d "$TABLE" '. as $c | [$d[0].profiles[].tier] | unique | all(. as $t | $c.tiers[$t].model != null and $c.tiers[$t].alias != null)' "$PROV/catalogs/claude.json" >/dev/null && ok "every profile's tier has both a model and an alias" || no "tier coverage"
 [ "$(find "$PROV" -maxdepth 1 -name '*.json' -printf '%f\n' | LC_ALL=C sort)" = "$(printf 'adapter-schema.json\nclaude-code.json\nclaude-platform.json\nclaude.json\nschema-2.json\nschema.json')" ] && ok "claude (schema 1) and its split, claude-code and claude-platform, are the provider files (beside the schemas, which describe them)" || no "providers: $(ls "$PROV")"
 
 mline() { grep -c "^$2: $3\$" "$A/$1.md"; }
@@ -140,7 +140,7 @@ wm >/dev/null 2>&1 && ok "models with no member at all still exits 0" || no "no 
 
 # the provider: from the project's models.provider
 jq '.models = {provider:"claude"}' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
-$DA agent add pp --abilities review --project alpha >/dev/null 2>&1 && grep -q '^model: claude-haiku-5-5$' "$PA/pp.md" && ok "models.provider claude resolves through the provider file" || no "provider claude"
+$DA agent add pp --abilities review --project alpha >/dev/null 2>&1 && grep -q '^model: claude-haiku-5-5$' "$PA/pp.md" && ok "models.provider claude (the family name) resolves to claude-code and through its catalog" || no "provider claude"
 # a different provider, with a file of its own in a copy of the tree, resolves its own ids
 jq '.models.provider = "nope"' "$T/c/projects/alpha.json" > "$T/c/a.json" && mv "$T/c/a.json" "$T/c/projects/alpha.json"
 e=$($DA agent add pq --abilities build --project alpha 2>&1); rc=$?

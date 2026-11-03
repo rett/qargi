@@ -189,7 +189,9 @@ $DA project validate provless >/dev/null 2>&1 && echo "ok   the stored answers o
 # the hint about a repository's own skills names the provider's directory, and every provider's while the project has none
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
-jq '.provider = "agentx" | .adapter = null | .layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render"' lib/providers/claude.json > "$TOOL/lib/providers/agentx.json"
+# shellcheck source=fakeprov.sh
+. "$PWD/tests/fakeprov.sh"
+fake_runtime "$PWD" "$TOOL" agentx local '.adapter = null | .resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render"'
 FX=$TOOL/bin/qargi
 HR=$T/hrepo; git init -q -b main "$HR"; echo x > "$HR/README"; git -C "$HR" -c user.name=t -c user.email=t@example.net add -A; git -C "$HR" -c user.name=t -c user.email=t@example.net commit -q -m one
 mkdir -p "$HR/.agent/skills/one" "$HR/.claude/skills/two"; echo x > "$HR/.agent/skills/one/SKILL.md"; echo x > "$HR/.claude/skills/two/SKILL.md"

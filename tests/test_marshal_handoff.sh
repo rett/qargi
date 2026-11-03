@@ -216,10 +216,12 @@ rm -f "$R/CLAUDE.md"
 # template with an optional group; noskills has no project skills directory; notarget has no render target and no launch command.
 TOOL2=$T/tool2; mkdir -p "$TOOL2"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$TOOL/$d" ] || cp -r "$TOOL/$d" "$TOOL2/"; done
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$TOOL/lib/providers/claude.json" > "$TOOL2/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.session_launch = "agentx run --render {render}[ --extra {render}/extra.json]"'
-mkprov noskills '.layout.project_skills_dir = null'
-mkprov notarget '.layout.render_target = null | .layout.session_launch = null'
+# shellcheck source=fakeprov.sh
+. "$TOOL/tests/fakeprov.sh"
+mkprov() { fake_runtime "$TOOL" "$TOOL2" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }
+mkprov agentx '.resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render" | .session.launch = "agentx run --render {render}[ --extra {render}/extra.json]"'
+mkprov noskills '.resources.skills |= del(.project_dir)'
+mkprov notarget '.session |= del(.render_target, .launch)'
 setprov() { jq --arg v "$1" 'if $v == "" then del(.models) else .models = {provider: $v} end' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 HX() { python3 -I "$TOOL2/lib/marshal_handoff.py" --state "$S" --conf "$T/c" --project app --repo "$R" "$@" f1 >"$T/o" 2>"$T/e"; }
 sect() { sed -n '/^== packs/,/^== read first/p' "$T/o"; }

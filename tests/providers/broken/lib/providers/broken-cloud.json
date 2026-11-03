@@ -1,0 +1,112 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "broken-cloud",
+  "family": null,
+  "surface": "cloud",
+  "description": "A deliberately broken runtime for the cloud surface (the conformance fixture); see its adapter",
+  "models": {
+    "pattern": "^claude-[a-z0-9.-]+$",
+    "tiers": {
+      "fast": {
+        "model": "claude-haiku-5-5",
+        "alias": "haiku",
+        "verified_on": null,
+        "source": "carried from the earlier table; verify against the vendor model list"
+      },
+      "balanced": {
+        "model": "claude-sonnet-5-5",
+        "alias": "sonnet",
+        "verified_on": null,
+        "source": "carried from the earlier table; verify against the vendor model list"
+      },
+      "deep": {
+        "model": "claude-opus-5-5",
+        "alias": "opus",
+        "verified_on": null,
+        "source": "carried from the earlier table; verify against the vendor model list"
+      },
+      "frontier": {
+        "model": "claude-fable-5-1",
+        "alias": "fable",
+        "verified_on": null,
+        "source": "carried from the earlier table; verify against the vendor model list"
+      }
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  "capabilities": {
+    "per_dispatch_model_override": {
+      "value": "yes",
+      "verified_on": "2026-11-01",
+      "source": "scratch session: agent_with_overrides model_config",
+      "note": "a session created with a model override ran that model; the session record shows it"
+    },
+    "per_dispatch_effort_override": {
+      "value": "yes",
+      "verified_on": "2026-11-01",
+      "source": "scratch session: agent_with_overrides model_config",
+      "note": "the session record shows the overridden effort; send a full model object, a plain model string resets effort to the default"
+    },
+    "fixed_tool_allowlist_per_agent": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "tool configs in the provisioned agent"
+    },
+    "read_only_barrier": {
+      "value": "no",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "cloud review agents have the edit tool off but shell on and no hook"
+    },
+    "session_budget_ceiling": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/session.sh check_budget",
+      "note": "a session is stopped at the project's budget"
+    },
+    "memory_stores": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "recipes and reference stores attached at provisioning"
+    },
+    "skills": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "skills attached to the provisioned agent"
+    },
+    "mcp": {
+      "value": "yes",
+      "verified_on": "2026-10-31",
+      "source": "lib/provision.sh",
+      "note": "MCP servers in the provisioned agent"
+    }
+  },
+  "resources": {},
+  "agents": null,
+  "dispatch": {
+    "mode": "adapter"
+  },
+  "barrier": {
+    "kind": "none"
+  },
+  "adapter": "adapter",
+  "adapter_verbs": [
+    "resolve",
+    "provision",
+    "start-session",
+    "status",
+    "collect",
+    "stop",
+    "cost"
+  ]
+}
