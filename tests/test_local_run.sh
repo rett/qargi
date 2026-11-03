@@ -36,7 +36,7 @@ chmod 755 "$T/bin/fakellm"; export PATH=$T/bin:$PATH
 # the runtimes, in the library (no record: used as they are); the one with a barrier is verified for read_only_barrier
 LIB=$T/c/packs/providers
 mk() { # name definition-json -> the library definition
-  mkdir -p "$LIB/$1"; printf '%s\n' "$2" > "$LIB/$1/definition.json"; }
+  mkdir -p "$LIB/$1"; printf '%s\n' "$2" > "$LIB/$1/definition.json"; python3 -I tests/handseal.py "$LIB/$1"; }   # a library pack counts only once sealed
 M='{"pattern":"^fake-.+$","tiers":{"*":{"model":"fake-m-1","alias":null,"verified_on":null,"source":"test"}},"effort":{"low":"l","medium":"m","high":"h","xhigh":null,"max":null}}'
 ROCELL='{"value":"yes","verified_on":"2026-11-02","source":"test","note":"sandbox flags"}'
 mk fakecmd "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakecmd",family:null,surface:"local",models:$m,
@@ -205,6 +205,14 @@ bad fakeb8 '{"mode":"adapter"}'; tryrun
 [ "$rc" = 3 ] && ok "mode adapter is exit 3 (not run here)" || no "adapter mode: rc=$rc $out"
 bad fakeb9 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"stdin"},"timeout_s":0}'; tryrun
 [ "$rc" = 2 ] && grep -q 'timeout' <<<"$out" && ok "a timeout of 0 is refused" || no "timeout: rc=$rc $out"
+# a pack somebody put in the library by hand (no record: nobody read it, nobody sealed it) is not loaded, so its argv never runs
+mkdir -p "$LIB/handrun"
+jq -n --argjson m "$M" --arg f "$T/PWNED" '{schema:2,kind:"provider",provider:"handrun",family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["bash","-c",("touch " + $f)],prompt:{via:"stdin"},output:{format:"text"}}}' > "$LIB/handrun/definition.json"
+setprov handrun
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "provider 'handrun' has no record" <<<"$out" && grep -q 'qargi provider seal handrun' <<<"$out" && [ ! -e "$T/PWNED" ]; } \
+  && ok "a pack put in the library by hand is refused with the way in (seal it), and its command did not run" || no "hand-placed pack: rc=$rc $out"
 
 # --- the run itself ---------------------------------------------------------------------------------------------------------------------
 setprov fakecmd

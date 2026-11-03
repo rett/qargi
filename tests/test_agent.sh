@@ -113,6 +113,7 @@ jq -n '{schema:2, kind:"provider", provider:"faketoml", family:null, surface:"lo
     {from:"tools", to:"tools", tool_map:{shell:"sh", read:"cat", edit:"ed", write:"tee"}}, {from:"class", to:"mode"},
     {from:"body", to:"prompt"}]}},
   dispatch:{mode:"in-session"}, barrier:{kind:"none"}}' > "$LIB/definition.json"
+python3 -I tests/handseal.py "$LIB"                             # a library pack counts only once sealed
 git init -q "$T/repo-t"
 jq -n --arg p "$T/repo-t" '{schema:1,project:"tomlp",repo:{url:"https://github.com/example/tomlp",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"faketoml"},memory:{},budget_cents:500}' > "$T/c/projects/tomlp.json"
@@ -131,6 +132,7 @@ printf '# hand\n' >> "$F"
 $DA agent list | grep -q "tomler .*tomler.toml (DRIFT)$" && ok "faketoml: a hand edit is DRIFT" || no "faketoml drift: $($DA agent list | grep tomler)"
 $DA agent refresh tomler >/dev/null 2>&1; $DA agent list | grep 'tomler ' | grep -q 'DRIFT' && no "refresh kept DRIFT" || ok "faketoml: refresh clears it"
 jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/definition.json" > "$T/d.json" && mv "$T/d.json" "$LIB/definition.json"
+python3 -I tests/handseal.py "$LIB"                             # and the edit is sealed again: a changed definition, not a changed pack
 $DA agent list | grep -q "tomler .*tomler.toml (STALE)$" && ok "faketoml: a changed definition makes the member STALE" || no "faketoml stale: $($DA agent list | grep tomler)"
 $DA agent models --project tomlp --json | jq -e '[.members[] | select(.state == ["STALE"] and (.name | startswith("tomler")))] | length == 2' >/dev/null && ok "models: and so are the other members of that runtime" || no "models stale count"
 $DA agent refresh tomler >/dev/null 2>&1; [ "$(toml "$F" | jq -r .serves)" = "build test" ] && ok "faketoml: refresh renders the new definition" || no "faketoml refresh: $(toml "$F")"
@@ -144,12 +146,14 @@ $DA agent add toml-judge --abilities review --project tomlp >/dev/null 2>&1; [ $
 # a library runtime with no renderer and no adapter cannot serve members
 LIB2=$T/c/packs/providers/norender; mkdir -p "$LIB2"
 jq '.provider = "norender" | del(.renderers)' "$LIB/definition.json" > "$LIB2/definition.json"
+python3 -I tests/handseal.py "$LIB2"
 jq '.models.provider = "norender"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
 out=$($DA agent add nope1 --abilities build --project tomlp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "norender" <<<"$out" && grep -q "renderers.agent" <<<"$out" && [ ! -e "$T/repo-t/.fake/agents/nope1.toml" ]; } && ok "a runtime with no member renderer is refused, naming it, and nothing is made" || no "norender: rc=$rc $out"
 # the providers named in a refusal come from the loader: the library's too, and none of the schema files
 LIB3=$T/c/packs/providers/badcat; mkdir -p "$LIB3"
 jq '.provider = "badcat" | .models = {catalog: "nocat", use: "id"}' "$LIB/definition.json" > "$LIB3/definition.json"
+python3 -I tests/handseal.py "$LIB3"
 jq '.models.provider = "badcat"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
 out=$($DA agent add nope3 --abilities build --project tomlp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claude, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
@@ -170,6 +174,7 @@ $DA agent remove lvl2 >/dev/null 2>&1
 # the members of a project go to the runtime's member render when its definition links the project's agents (entry-symlinks here)
 LIB4=$T/c/packs/providers/fakelink; mkdir -p "$LIB4"
 jq '.provider = "fakelink" | .resources.agents.link = {project: "entry-symlinks", user: "none"}' "$LIB/definition.json" > "$LIB4/definition.json"
+python3 -I tests/handseal.py "$LIB4"
 git init -q "$T/repo-l"
 jq -n --arg p "$T/repo-l" '{schema:1,project:"linkp",repo:{url:"https://github.com/example/linkp",path:$p,long_lived:["main"]},
   roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"fakelink"},memory:{},budget_cents:500}' > "$T/c/projects/linkp.json"
@@ -273,6 +278,7 @@ imp() { local t; t=$($DA provider import "$1" | sed -n 's/^plan token: \([0-9a-f
 # locov: a runtime that cannot set the model per dispatch; ovl, an extension, provides the capability and counts once it is verified for locov
 LIBV=$T/c/packs/providers/locov; mkdir -p "$LIBV"
 jq '.provider = "locov" | .models.tiers = {fast: {model: "fake-s", alias: null, verified_on: null, source: "test"}, "*": {model: "fake-m", alias: null, verified_on: null, source: "test"}}' "$LIB/definition.json" > "$LIBV/definition.json"
+python3 -I tests/handseal.py "$LIBV"
 OVL=$T/ext/ovl; mkdir -p "$OVL"
 jq -n '{schema:2,kind:"extension",extension:"ovl",description:"per-dispatch model override of locov",extends:"locov",provides:["per_dispatch_model_override"],
   adds:{capabilities:{per_dispatch_model_override:{value:"yes",note:"n"}}}}' > "$OVL/definition.json"
@@ -296,6 +302,7 @@ $DA agent remove mem1 >/dev/null 2>&1
 # rnl has no member renderer; rnext gives it one. The members of a project that enabled it are rendered from the composed definition
 LIBR=$T/c/packs/providers/rnl; mkdir -p "$LIBR"
 jq '.provider = "rnl" | del(.renderers)' "$LIB/definition.json" > "$LIBR/definition.json"
+python3 -I tests/handseal.py "$LIBR"
 RNX=$T/ext/rnext; mkdir -p "$RNX"
 jq -n --slurpfile d "$LIB/definition.json" '{schema:2,kind:"extension",extension:"rnext",description:"a member renderer for rnl",extends:"rnl",provides:["agent_definitions"],
   adds:{capabilities:{agent_definitions:{value:"yes",note:"n"}},renderers:{agent:$d[0].renderers.agent}}}' > "$RNX/definition.json"

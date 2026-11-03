@@ -1309,6 +1309,10 @@ class ProviderHook(unittest.TestCase):
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "definition.json"), "w") as f:
             json.dump(runtime(name, **parts), f)
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+        import provider as P
+        with open(os.path.join(d, ".pack.json"), "w") as f:                         # sealed: a library pack counts only once it is
+            json.dump({"kind": "provider", "sealed": True, "sha256": P.tree_hash(d)}, f)
 
     def run_guard(self, args, payload):
         e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}

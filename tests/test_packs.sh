@@ -188,7 +188,8 @@ tok=$($DA tool import "$T/ct.json" --compatible fam | sed -n 's/^plan token: \([
 # matching: a runtime name or its family; a pack the provider is not on is skipped with a note, never attached silently
 for rt in "famcli:local" "famhost:cloud"; do n=${rt%%:*}; s=${rt##*:}; mkdir -p "$T/c/packs/providers/$n"
   jq -n --arg n "$n" --arg s "$s" '{schema:2,kind:"provider",provider:$n,family:"fam",surface:$s,models:{pattern:"^.+$",tiers:{"*":{model:"m",alias:"m",verified_on:"2026-11-02",source:"test"}},effort:null},
-    dispatch:{mode:"command",argv:[$n,"run"],prompt:{via:"stdin"},cwd:"{clone}",output:{format:"text"}},agents:null,resources:{},barrier:{kind:"none"}}' > "$T/c/packs/providers/$n/definition.json"; done
+    dispatch:{mode:"command",argv:[$n,"run"],prompt:{via:"stdin"},cwd:"{clone}",output:{format:"text"}},agents:null,resources:{},barrier:{kind:"none"}}' > "$T/c/packs/providers/$n/definition.json"
+  python3 -I tests/handseal.py "$T/c/packs/providers/$n"; done                  # a library pack counts only once sealed
 $DA skill unlink style --scope user >/dev/null; $DA skill unlink build-only --scope user-role --role build >/dev/null
 mkp m-any any; mkp m-fam fam; mkp m-cli famcli; mkp m-host famhost; mkp m-other elsewhere; mkp m-two "elsewhere,fam"
 jq -n '{schema:1,project:"mp",repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
