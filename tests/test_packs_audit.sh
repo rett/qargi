@@ -96,6 +96,30 @@ grep -q "note: cannot read $HOME/.claude/settings.json" <<<"$out" && ok "a malfo
 [ "$rc" = 0 ] && [ "$(st ex-user)" = unmanaged ] && [ "$(st ex-proj)" = excluded ] && ok "the other settings files still count, and the skill the broken one would hide is unmanaged" || no "malformed: rc=$rc $(line ex-user)"
 printf '{"skillOverrides": ["x"]}' > "$R/.claude/settings.json"
 chk | grep -q "note: cannot read $R/.claude/settings.json" && ok "a skillOverrides that is not an object is noted" || no "no note for bad overrides"
+# a file nested deeper than the parser can follow raises RecursionError, which is neither an OSError nor a ValueError: a note too, never a traceback
+python3 -I -c 'import sys; sys.stdout.write("[" * 200000)' > "$R/.claude/settings.json"
+out=$(chk); rc=$?
+grep -q "note: cannot read $R/.claude/settings.json" <<<"$out" && ! grep -q "Traceback" <<<"$out" && [ "$rc" = 0 ] && ok "a settings file nested too deeply is noted, not a traceback" || no "deep json: rc=$rc $out"
+# the same for a toml file and for any other error the parser raises: read_settings is given one by the exclusion of a provider
+python3 -I -c 'import sys; sys.stdout.write("a = " + "[" * 200000 + "]" * 200000 + "\n")' > "$T/deep.toml"
+printf '{"skillOverrides": {"x": "off"}}\n' > "$T/ok.json"
+python3 -I - "$ROOT" "$T/deep.toml" "$T/ok.json" <<'PY' && ok "read_settings notes a toml file nested too deeply, an unexpected parser error, and keeps reading the other files" || no "read_settings with a hostile file"
+import sys, json
+sys.path.insert(0, sys.argv[1] + "/lib")
+import packs_audit as A
+deep, good = sys.argv[2], sys.argv[3]
+A.exclusion = lambda inp: {"form": "settings-key", "pointer": "/skillOverrides", "off": "off", "files": ["user"]}
+A.listed_files = lambda inp, ex: [("user", deep, "toml")]
+A.exclusion_files = lambda inp, ex: [("user", deep, "toml"), ("project", good, "json")]
+off, notes = A.read_settings({"provider": "x"})
+assert off == {"x": good}, off
+assert len(notes) == 1 and notes[0].startswith("note: cannot read %s (" % deep), notes
+def boom(path, fmt):
+    raise KeyError("odd")
+A.read_doc = boom
+off, notes = A.read_settings({"provider": "x"})
+assert off == {} and len(notes) == 2 and all(n.startswith("note: cannot read ") for n in notes), (off, notes)
+PY
 chmod 000 "$R/.claude/settings.local.json"
 if [ -r "$R/.claude/settings.local.json" ]; then ok "(this user reads mode 000 files; the unreadable case is skipped)"
 else chk | grep -q "note: cannot read $R/.claude/settings.local.json" && ok "an unreadable settings file is noted" || no "no note for unreadable"; fi

@@ -349,8 +349,8 @@ def read_settings(inp):
             continue
         try:
             names = hidden_in(ex, read_doc(f, fmt), label)
-        except (OSError, ValueError) as e:
-            why = e.strerror if isinstance(e, OSError) and e.strerror else str(e).split("\n")[0]
+        except Exception as e:      # not only OSError and ValueError: a file nested too deeply for the parser is a RecursionError, and it is an audit, not a crash
+            why = e.strerror if isinstance(e, OSError) and e.strerror else (str(e).split("\n")[0] or type(e).__name__)
             notes.append("note: cannot read %s (%s): the skills it hides are unknown" % (f, why))
             continue
         for k in names:
