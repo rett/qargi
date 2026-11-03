@@ -114,6 +114,21 @@ class Render(unittest.TestCase):
         for t in C.TOPICS:
             self.assertTrue(H.show_topic(t))
 
+    def test_topics_name_only_commands_and_verbs_that_exist(self):
+        for t, (_, paras) in C.TOPICS.items():
+            for m in re.finditer(r"(?<![\w./~])qargi ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?", " ".join(paras)):
+                cmd, verb = m.groups()
+                if cmd == "ships":                      # prose: "the member definition qargi ships"
+                    continue
+                self.assertIn(cmd, C.COMMANDS, "topic %s names qargi %s" % (t, cmd))
+                if verb and verbs(cmd) and verb not in verbs(cmd):
+                    self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
+
+    def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
+        text = " ".join(C.TOPICS["approvals"][1])
+        for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
+            self.assertIn(needle, text)
+
     def test_cli_help_forms(self):
         home = tempfile.mkdtemp()                       # never the real home: some commands look at it
         self.addCleanup(shutil.rmtree, home, True)
