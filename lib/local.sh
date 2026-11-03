@@ -6,6 +6,9 @@
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
 #   local.sh verify RUN_DIR
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory
+#   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
+#                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
+#                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
 #
 # This stops every ordinary push (`git push`, `git push origin`, a pushurl, a remote added
 # from a config). It is not a sandbox against an agent that deliberately goes around it
@@ -327,5 +330,14 @@ WRAP
     case $t in */qargi-run.??????|"$RUN"/tmp) [ ! -d "$t" ] || rm -rf -- "$t";; esac
     rm -rf -- "$RUN"
     echo "cleaned $RUN${t:+ and $t}";;
-  *) die "usage: local.sh prepare|verify|clean ...";;
+  run)
+    # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
+    RUN=${1:-}; shift || true
+    [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || die "run needs a RUN dir made by prepare"
+    for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
+    RPJ=$(project_of "$(cat "$RUN/repo.path" 2>/dev/null || true)" "$(cat "$RUN/repo.url" 2>/dev/null || true)")
+    [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
+    RPROV=$(project_provider "$RPJ" local) || exit $?
+    exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
+  *) die "usage: local.sh prepare|verify|clean|run ...";;
 esac
