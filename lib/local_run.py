@@ -15,6 +15,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
   dispatch.class_argv  arguments added for the run's class: a list (read-only runs only) or {"read-only": [...], "write": [...]}. They go
                        before the first element that carries the prompt argument, or at the end. For sandbox flags a definition keeps out
                        of argv. The barrier kind `sandbox-args` needs them (or a class element in argv) for a read-only run.
+                       A read-only run is held by nothing else here: the kinds `hook` (no agent file carries the hook) and `adapter` (barrier-check is not
+                       called) are refused for a read-only run unless these arguments are there, or the project accepted no barrier.
   dispatch.prompt      {via: stdin|file|arg, file: "prompt.md"}: stdin reads the prompt file, file passes its path ({prompt_file}), arg
                        passes the text ({prompt_arg}, at most 120000 bytes). The file is a plain name inside RUN/prompt/, a directory of
                        its own: it can never be a control file of the run (refs.before, class, dispatch.json ...). The prompt is the neutral member body (agents/member.body.md) and
@@ -330,12 +332,15 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
                      "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
                      "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
                      % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
-        elif state in ("yes", "partial") and not P.accepted(project, "local") and P.barrier_claim_problem(doc):
-            # the definition claims a barrier it does not have (kind none, no read-only arguments): nothing in this run would hold the member
-            fail("the definition of %s claims a read-only barrier on local, but its barrier kind is none and its dispatch supplies no read-only arguments "
-                 "(class_argv, or a {\"class\": \"read-only\"} group in argv), so nothing holds the member and a read-only run is refused here.\n"
-                 "Fix the definition (set the barrier kind, or declare the capability not supported), or, on your own responsibility, record that you accept no "
-                 "barrier for the project:\n  %s" % (runtime, P.accept_command(runtime, "local", project)))
+        elif (doc.get("barrier") or {}).get("kind") in ("hook", "adapter") and state in ("yes", "partial") and not P.accepted(project, "local") and not has_class_args(disp):
+            # the runtime's own barrier is a hook (it lives in the member file of a runtime that loads agent files; a local run has none) or an adapter's
+            # barrier-check (a local run never calls it): nothing in this run applies it, so the capability that reads as held holds nothing here
+            kind = doc["barrier"]["kind"]
+            fail("the read-only barrier of %s on local is a %s, which a local run does not apply (%s) and its dispatch supplies no read-only arguments "
+                 "(class_argv, or a {\"class\": \"read-only\"} group in argv), so it would start this member without a barrier: a read-only run is refused here.\n"
+                 "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
+                 % (runtime, kind, "a local run has no agent file to carry the hook" if kind == "hook" else "a local run never calls the adapter's barrier-check",
+                    P.accept_command(runtime, "local", project)))
         elif (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
             fail("the barrier of %s is sandbox-args but its dispatch supplies no read-only arguments (class_argv, or a {\"class\": \"read-only\"} group in argv)" % runtime)
         note = text if state == "partial" else ""

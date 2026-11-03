@@ -162,15 +162,16 @@ out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
 
 # a runtime whose definition claims read_only_barrier (and the owner attested it) with barrier kind none and no read-only arguments in its
-# dispatch: nothing would hold the member, yet the capability reads as yes. A fail-open: the read-only run is refused like any barrier-less one
+# dispatch: nothing would hold the member, so the capability reads as no, however it was attested (a fail-closed answer): the read-only run is refused
+# like any barrier-less one, and the refusal says the claim has nothing behind it
 mk fakeclaim "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakeclaim",family:null,surface:"local",models:$m,
   capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
   dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
 verify_ro fakeclaim
 setprov fakeclaim; prep "$T/r" rv2c review; task
-[ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = yes ] && ok "fail-open claim: the attested claim reads as yes (that is the hole)" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
+[ "$(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)" = no ] && ok "fail-open claim: the attested claim with nothing behind it reads as no" || no "fail-open setup: $(python3 -I lib/provider.py effective fakeclaim local read_only_barrier 2>&1)"
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+{ [ "$rc" = 2 ] && grep -q 'fakeclaim' <<<"$out" && grep -q 'on local' <<<"$out" && grep -q 'barrier.kind is none' <<<"$out" && grep -q 'qargi provider accept fakeclaim --surface local --no-barrier --project rproj' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
   && ok "a read-only run of a runtime that claims a barrier it does not have is refused (exit 2) with the accept command" || no "fail-open claim, dry: rc=$rc $out"
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "fail-open claim, real: rc=$rc $out"
@@ -182,6 +183,57 @@ prep "$T/r" rv2d review; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "with the project's acceptance of no barrier the same read-only run goes on" || no "fail-open claim, accepted: rc=$rc $out"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+
+# arguments for another class, or an empty read-only list, hold no read-only member either: the same claim with nothing behind it
+for v in write empty; do
+  case $v in
+    write) CA='{"write":["--w"]}';;
+    empty) CA='{"read-only":[]}';;
+  esac
+  mk "fakeclaim$v" "$(jq -n --arg n "fakeclaim$v" --argjson ca "$CA" --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:$n,family:null,surface:"local",models:$m,
+    capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"none"},
+    dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],class_argv:$ca,prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+  verify_ro "fakeclaim$v"
+  setprov "fakeclaim$v"; prep "$T/r" "rv2$v" review; task
+  out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q "fakeclaim$v" <<<"$out" && grep -q "qargi provider accept fakeclaim$v --surface local --no-barrier" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+    && ok "a read-only run whose only class arguments are $v ones is refused: they hold no read-only member" || no "class arguments ($v): rc=$rc $out"
+done
+
+# a runtime whose own barrier is a hook or an adapter: the hook lives in a member file that a local run never writes (it has no agent file), and a local run
+# never calls the adapter's barrier-check, so nothing in the run applies the barrier its capability claims. The owner attested it, so the capability reads as yes
+HOOK='{"input":"json-stdin","tool_pointer":"/event/tool","command_pointer":"/event/args/cmd","cwd_pointer":"/workdir","path_pointers":{"write":["/event/args/target"],"read":["/event/args/target"]},
+  "tool_names":{"shell":["run_shell"],"write":["patch_file"],"read":["open_file"]},"deny":{"exit":2,"stream":"stderr"},"allow":{"exit":0}}'
+mk fakehook "$(jq -n --argjson m "$M" --argjson c "$ROCELL" --argjson h "$HOOK" '{schema:2,kind:"provider",provider:"fakehook",family:null,surface:"local",models:$m,
+  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"hook",hook:$h},
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+mk fakehookargs "$(jq -n --argjson m "$M" --argjson c "$ROCELL" --argjson h "$HOOK" '{schema:2,kind:"provider",provider:"fakehookargs",family:null,surface:"local",models:$m,
+  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"hook",hook:$h},
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],class_argv:{"read-only":["--ro"]},prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+mk fakeadapt "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakeadapt",family:null,surface:"local",models:$m,
+  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"adapter"},adapter:"adapter",adapter_verbs:["resolve","dispatch-local","barrier-check"],
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+for n in fakehook fakehookargs fakeadapt; do verify_ro "$n"; done
+for n in fakehook fakeadapt; do
+  setprov "$n"; prep "$T/r" "rv6$n" review; task
+  out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q "$n" <<<"$out" && grep -q 'on local' <<<"$out" && grep -q "qargi provider accept $n --surface local --no-barrier --project rproj" <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } \
+    && ok "a read-only run of $n, whose own barrier nothing in a local run applies, is refused (exit 2) with the accept command" || no "$n barrier, dry: rc=$rc $out"
+  out=$($DA local run "$RUN" 2>&1); rc=$?
+  { [ "$rc" = 2 ] && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "$n barrier, real: rc=$rc $out"
+  prep "$T/r" "w6$n"; task
+  out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+  [ "$rc" = 0 ] && ok "a write run of $n is not affected" || no "$n barrier, write: rc=$rc $out"
+  jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-02", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+  prep "$T/r" "rv6a$n" review; task
+  out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+  [ "$rc" = 0 ] && ok "with the project's acceptance of no barrier the same read-only run goes on" || no "$n barrier, accepted: rc=$rc $out"
+  jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+done
+# the read-only arguments a local run does apply are the barrier it has: a hook runtime that also declares them goes on
+setprov fakehookargs; prep "$T/r" rv6c review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '"--ro"' <<<"$out"; } && ok "a hook runtime whose dispatch carries read-only arguments: the run applies them and goes on" || no "hook with arguments: rc=$rc $out"
 setprov fakeobj
 
 # --- the project's extensions are part of the definition a run acts on (A2) ---------------------------------------------------------
