@@ -6,8 +6,8 @@
 # Usage: lib/conformance/run.sh NAME [--stub DIR] [--tool DIR]      (tests/conformance.sh prints its own name in the usage line)
 #   NAME       the provider (a runtime, for schema 2: claude-code, claude-platform); its descriptor is lib/providers/NAME.json
 #              and `adapter` in it names the adapter. A schema 2 definition serves one surface and its models may live in a
-#              catalog; the suite reads it through lib/provider.py load(), the view older readers get (surfaces, tier_detail,
-#              effort, adapter), so a schema 1 descriptor and a schema 2 definition are checked the same way. A descriptor
+#              catalog; the suite reads it through lib/provider.py summary() (surfaces, tier_detail, effort, adapter), so a
+#              definition whose models are inline and one that references a catalog are checked the same way. A descriptor
 #              with adapter null is skipped with a message (exit 0).
 #   --stub DIR the provider's test directory, default tests/providers/NAME. It holds `stub` (an executable that stands in
 #              for the vendor, exported to the adapter as $QARGI_TRANSPORT; see tests/providers/lib/stub.py), fixtures/
@@ -75,11 +75,11 @@ CORPUS=$HERE/barrier-corpus.jsonl
 W=$HERMETIC/work
 mkdir -p "$W/cwd" "$W/proj"
 cd "$W/cwd" || exit 2
-# the descriptor as load() shows it: schema 1 as it is, schema 2 in the shape of schema 1 (see lib/provider.py)
+# the descriptor as summary() shows it, on the first surface it lists (see lib/provider.py)
 VIEW=$W/view.json
 python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import provider as P
 try:
-    print(json.dumps(P.load(sys.argv[2], root=sys.argv[3])))
+    print(json.dumps(P.summary(sys.argv[2], P.surfaces_of(sys.argv[2], root=sys.argv[3])[0], root=sys.argv[3])))
 except P.ProviderError as e:
     sys.exit("conformance: %s" % e)' "$ROOT/lib" "$NAME" "$PROV" > "$VIEW" || exit 2
 SCHEMA_V=$(jq -r '.schema' "$DESC")
