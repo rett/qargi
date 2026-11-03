@@ -90,10 +90,10 @@ def run(doc, directory, name, entry, sealed=False, opts=None, rv=None):
 SAMPLES = (
     {"name": "conformance-member", "description": "a sample member: it renders and does nothing else", "abilities": ["build"], "class": "write", "tier": "balanced",
      "model": "balanced", "effort": "high", "tools": {"required": ["read"], "optional": ["shell", "edit", "write", "search_text", "search_files"]},
-     "body": "You are a sample member.\nDo the task and report.\n", "guard_command": "qargi __guard"},
+     "body": "You are a sample member.\nDo the task and report.\n", "guard_command": "qargi __guard", "barrier": {"class": "write", "guard_command": "qargi __guard"}},
     {"name": "conformance-reviewer", "description": "a sample reviewer: it reads and reports", "abilities": ["review"], "class": "read-only", "tier": "deep",
      "model": "deep", "effort": "high", "tools": {"required": ["read"], "optional": ["search_text", "search_files"]},
-     "body": "You review and write nothing.\n", "guard_command": "qargi __guard --class read-only"},
+     "body": "You review and write nothing.\n", "guard_command": "qargi __guard --class read-only", "barrier": {"class": "read-only", "guard_command": "qargi __guard --class read-only"}},
 )
 
 
