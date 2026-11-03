@@ -14,8 +14,19 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   validate(descriptor, name=None)      [("fail"|"warn", message), ...]; name is the file name the provider must carry
   cap(name, surface, capability)       "yes", "partial", "no" or "unverified" (the file says yes or partial, but with no
                                        verified_on date)
-  effective(name, surface, capability) what enforcement may rely on: "yes", "partial" or "no". Unverified counts as no, and so
-                                       does a surface the provider does not list.
+  effective(name, surface, capability, project=None)
+                                       what enforcement may rely on: "yes", "partial" or "no". Unverified counts as no, and so
+                                       does a surface the provider does not list. With a project, the runtime composed with the
+                                       extensions the project enabled (compose); cap() is the same with "unverified" kept.
+  compose(name, surface, project=None) the effective definition: the runtime plus the project's enabled extensions (models.extensions),
+                                       merged in name order, with {key: pack} provenance for every capability, resource, renderer,
+                                       dispatch variant, barrier and adapter verb. Two packs adding the same key, or an extension adding
+                                       what the runtime has, is Conflict (nothing is overridden). Extensions are per surface: one that is for
+                                       another runtime or surface, or whose requires do not hold, is ignored with its reason.
+  extension_hash(ext, base, surface)   what a capability an extension provides is verified against: the extension chained to its runtime.
+                                       A capability an extension provides counts only after `provider check` (or attest) of THAT extension
+                                       on that runtime; a change to the extension or a reseal of the runtime makes the record stale.
+  extension_base(ext, project=None)    (runtime, surface) an extension is composed onto, for check and attest
   accepted(project, surface)           the project's recorded acceptance of a surface with no read-only barrier, or None
   require_barrier(provider, surface, project)
                                        ("yes"|"partial"|"accepted"|"refused", text): may a read-only role run on this surface?
@@ -42,7 +53,9 @@ Every function that reads a definition takes root= (the shipped directory) and l
 beside this file and below the configuration directory. A test that names a root sees a library only when it names one too.
 
 Usage: provider.py list
-       provider.py show NAME [--json]
+       provider.py show NAME [--project P] [--json]
+                                         with a project: the runtime composed with the project's enabled extensions, with the pack that
+                                         provided each capability
        provider.py check NAME            exit 1 on a failure, 0 otherwise (warnings do not fail); the adapter, when the
                                          descriptor names one, must exist and be executable
        provider.py accept NAME --surface S --no-barrier [--project P] --asked W [--approved W] [--plan T]
@@ -50,9 +63,9 @@ Usage: provider.py list
        provider.py require-barrier PROVIDER SURFACE [--project P]
                                          exit 0 when a read-only role may run there (a partial barrier prints its note to
                                          stderr), 2 with the qargi provider accept command when it may not
-       provider.py effective PROVIDER SURFACE CAPABILITY
-                                         prints yes, partial or no (what enforcement may rely on); exit 1 when the provider
-                                         does not list the surface
+       provider.py effective PROVIDER SURFACE CAPABILITY [--project P]
+                                         prints yes, partial or no (what enforcement may rely on; with a project, as composed with its
+                                         enabled extensions); exit 1 when the provider does not list the surface, 2 on a conflict
        provider.py layout NAME [FIELD] [--would TEXT] [--home DIR]
                                          the layout as JSON, or one field (a string as it is, an object as JSON); a null
                                          field exits 3 with "provider NAME has no FACILITY: TEXT"
@@ -111,6 +124,10 @@ class Refused(ProviderError):
 
 class Clash(Refused):
     """The same name is defined twice, as a shipped file and in the pack library."""
+
+
+class Conflict(Refused):
+    """Two packs add the same thing to one runtime (or an extension adds what the runtime has): the composition is refused, never resolved."""
 
 
 class Drift(Refused):
@@ -993,8 +1010,9 @@ VERIFIERS = ("conformance", "attest")
 def definition_hash(name, root=None, library=None):
     """sha256 of the definition as it is now: its document and, when it references one, its catalog; for a sealed library pack also the
     content hash of the pack (its executables and every other file), and of the catalog's pack. A change to any of them changes the
-    hash, so a verification record made earlier no longer matches. (Extensions will join it when they exist.) ProviderError when the
-    catalog it references is missing."""
+    hash, so a verification record made earlier no longer matches. Extensions are not in it: a runtime's own records do not depend on the
+    extensions a project enables (an extension adds, never overrides); an extension's records chain to this hash (extension_hash).
+    ProviderError when the catalog it references is missing."""
     e = _entry(name, root, library)
     raw = _read(e)
     body = {"definition": raw}
@@ -1050,22 +1068,25 @@ def record_verification(name, records, state=None):
     return f
 
 
-def _backed(e, cell, capability, root, library, state):
+def _backed(e, cell, capability, root, library, state, base=None, surface=None):
     """Is the claim of a capability cell backed? A shipped definition says so with verified_on. A library definition has a record that
-    names a verifier and carries the hash of the definition as it is now."""
+    names a verifier and carries the hash of the definition as it is now; for an extension (base= the runtime it is composed onto, on
+    surface) the hash is the extension's, which chains to the runtime's."""
     if e["origin"] == "shipped":
         return bool(cell.get("verified_on"))
     rec = verification(e["name"], state).get(capability)
     if not isinstance(rec, dict) or rec.get("by") not in VERIFIERS or not isinstance(rec.get("hash"), str):
         return False
     try:
-        return rec["hash"] == definition_hash(e["name"], root, library)
+        return rec["hash"] == (extension_hash(e["name"], base, surface, root, library) if base else definition_hash(e["name"], root, library))
     except ProviderError:
         return False
 
 
-def cap(name, surface, capability, root=None, library=None, state=None):
-    """yes, partial, no or unverified for one capability on one surface. A yes or partial that is not verified is unverified."""
+def cap(name, surface, capability, root=None, library=None, state=None, project=None, conf=None):
+    """yes, partial, no or unverified for one capability on one surface. A yes or partial that is not verified is unverified. With a
+    project, the runtime is the one the project's enabled extensions are composed onto: a capability an extension provides is backed by
+    the verification of THAT extension (extension_hash), the others by the runtime's. A conflict between the packs is Conflict."""
     if surface not in SURFACES:
         raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
     if capability not in capabilities2():
@@ -1074,17 +1095,259 @@ def cap(name, surface, capability, root=None, library=None, state=None):
     doc = _docs(e).get(surface)
     if doc is None:
         return "no"
+    pack = name
+    if project:
+        comp = compose(name, surface, project, root=root, library=library, conf=conf)
+        doc, pack = comp["definition"], comp["provenance"].get("capabilities." + capability, name)
     cell = _dict(doc.get("capabilities")).get(capability)
     if not isinstance(cell, dict) or cell.get("value") not in ("yes", "partial", "no"):
         return "no"
-    if cell["value"] != "no" and not _backed(e, cell, capability, root, library, state):
-        return "unverified"
+    if cell["value"] != "no":
+        by = e if pack == name else _pick(pack, "extension", root, library)
+        if not _backed(by, cell, capability, root, library, state, None if pack == name else name, surface):
+            return "unverified"
     return cell["value"]
 
 
-def effective(name, surface, capability, root=None, library=None, state=None):
-    v = cap(name, surface, capability, root, library, state)
+def effective(name, surface, capability, root=None, library=None, state=None, project=None, conf=None):
+    """What enforcement may rely on: yes, partial or no (unverified counts as no). With project=, the runtime composed with the
+    project's enabled extensions (cap())."""
+    v = cap(name, surface, capability, root, library, state, project, conf)
     return "no" if v == "unverified" else v
+
+
+# ---- extensions: a runtime plus what the project enabled ------------------------------------------------------------------------
+
+def project_extensions(project, conf=None):
+    """models.extensions of the project's answers, sorted: the names of the extensions it enabled ([] for none, or no such project)."""
+    models = (project_answers(project, conf) or {}).get("models")
+    ex = models.get("extensions") if isinstance(models, dict) else None
+    return sorted({x for x in ex if isinstance(x, str) and x}) if isinstance(ex, list) else []
+
+
+def _extension(name, root, library):
+    """(entry, document) of an extension pack. Drift when it is unsealed or changed since it was sealed; Refused when there is none."""
+    e = _pick(name, "extension", root, library) if isinstance(name, str) and NAME_RE.match(name) and name not in NON_PROVIDERS else None
+    if e is None:
+        raise Refused("extension '%s' is enabled, but there is no such extension pack (qargi provider list); qargi provider disable PROJECT %s" % (name, name))
+    raw = _read(e)
+    bad = [m for lvl, m in validate_extension(raw, name) if lvl == "fail"]
+    if bad:
+        raise Refused("extension '%s' breaks its schema (%s); qargi provider check %s" % (name, bad[0], name))
+    return e, raw
+
+
+def extension_hash(ext, base, surface, root=None, library=None):
+    """sha256 an extension's verification record is bound to: the extension's document and, when it is a sealed library pack, the content
+    hash of the pack, chained to the hash of the runtime it is composed onto (definition_hash(base)) and the surface. Any change to the
+    extension or the runtime (a reseal, a new catalog) makes its records stale. ProviderError when the runtime does not load."""
+    e = _pick(ext, "extension", root, library)
+    if e is None:
+        raise ProviderError("no extension '%s'" % ext)
+    body = {"extension": _read(e), "base": definition_hash(base, root, library), "base_name": base, "surface": surface}
+    sealed = _sealed_hash(e)
+    if sealed:
+        body["pack"] = sealed
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def extension_backing(ext, capability, cell, base, surface, state=None):
+    """What stands behind a capability an extension provides on base, for show: its date (a shipped extension), the record, or the lack of one."""
+    x = _pick(ext, "extension", None, None)
+    if x is not None and x["origin"] == "shipped":
+        return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified, counts as no"
+    rec = verification(ext, state).get(capability)
+    if not isinstance(rec, dict):
+        return "no record, counts as no"
+    return "verified by %s" % rec["by"] if x is not None and _backed(x, cell, capability, None, None, state, base, surface) else "record is stale, counts as no"
+
+
+def _contract_verbs():
+    try:
+        with open(os.path.join(PROVIDERS, "adapter-schema.json")) as f:
+            return tuple(json.load(f)["verbs"])
+    except (OSError, ValueError, KeyError):
+        return ("resolve", "dispatch-local", "barrier-check", "provision", "start-session", "status", "collect", "stop", "cost")
+
+
+def _base_provenance(doc, name):
+    """{path: pack} of what the runtime itself has, that an extension may not take: a claimed capability (a cell that says no is a
+    runtime saying it does not have it, so an extension may provide it), a resource, a renderer, a dispatch variant, a barrier, an
+    adapter verb (the verbs it names, else every verb of the adapter contract)."""
+    prov = {}
+    for c, cl in _dict(doc.get("capabilities")).items():
+        if isinstance(cl, dict) and cl.get("value") in ("yes", "partial"):
+            prov["capabilities." + c] = name
+    for r, v in _dict(doc.get("resources")).items():
+        if v is not None:
+            prov["resources." + r] = name
+    for r in _dict(doc.get("renderers")):
+        prov["renderers." + r] = name
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    for v in _dict(disp.get("variants")):
+        prov["dispatch.variants." + v] = name
+    bar = doc.get("barrier")
+    if isinstance(bar, dict) and bar.get("kind") not in (None, "none"):
+        prov["barrier"] = name
+    if isinstance(doc.get("adapter"), str) and doc["adapter"]:
+        verbs = doc.get("adapter_verbs")
+        for v in (verbs if isinstance(verbs, list) else _contract_verbs()):
+            prov["adapter_verbs." + str(v)] = name
+    return prov
+
+
+def _version_tuple(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def _qargi_version():
+    try:
+        with open(os.path.join(TOOL, "VERSION")) as f:
+            return f.read().split()[0]
+    except (OSError, IndexError):
+        return None
+
+
+def _applies(doc, name, surface, base, root=None, library=None):
+    """(True, "") when the extension is for this runtime on this surface, else (False, why). It extends a runtime by name or a family; it
+    applies on one surface: its surface, else the only surface of the runtime it names (a family needs surface)."""
+    ex = doc["extends"]
+    if ex != name and ex != base.get("family"):
+        return False, "extends %s, not %s" % (ex, name)
+    s = doc.get("surface")
+    if s is None:
+        if ex != name:
+            return False, "extends the family %s and names no surface, so it applies to no runtime; add \"surface\"" % ex
+        served = surfaces_of(name, root, library)
+        if len(served) != 1:
+            return False, "extends %s, which serves %s, and names no surface; add \"surface\"" % (name, " and ".join(served))
+        s = served[0]
+    if s != surface:
+        return False, "extends %s on %s, not %s" % (ex, s, surface)
+    return True, ""
+
+
+def _unmet(doc, name, surface, base, root, library, state):
+    """Why the extension's requires do not hold on the runtime alone, or None."""
+    rq = doc.get("requires") if isinstance(doc.get("requires"), dict) else {}
+    for r in rq.get("resources") or []:
+        if _dict(base.get("resources")).get(r) is None:
+            return "needs the %s resource, which %s does not have" % (r, name)
+    for c in rq.get("capabilities") or []:
+        if effective(name, surface, c, root, library, state) == "no":
+            return "needs %s, which %s does not have verified" % (c, name)
+    q = rq.get("qargi")
+    if isinstance(q, str):
+        have = _qargi_version()
+        try:
+            if have is None or _version_tuple(have) < _version_tuple(q[2:]):
+                return "needs qargi %s (this is %s)" % (q, have or "of unknown version")
+        except ValueError:
+            return "needs qargi %s (this is %s)" % (q, have or "of unknown version")
+    return None
+
+
+def _claim(prov, path, pack, name):
+    if path in prov:
+        if prov[path] == name:
+            raise Conflict("extension %s adds %s, which the runtime %s already has; an extension never overrides (qargi provider disable PROJECT %s)" % (pack, path, name, pack))
+        raise Conflict("extensions %s and %s both add %s; neither overrides the other (qargi provider disable PROJECT one of them)" % (prov[path], pack, path))
+    prov[path] = pack
+
+
+def _merge(out, x, doc, prov, name):
+    """Add what extension x provides to the composition (out), claiming every key in prov first. Conflict leaves out half-built: the
+    caller drops it."""
+    d, adds = out["definition"], doc["adds"]
+    for c, cl in sorted(_dict(adds.get("capabilities")).items()):
+        _claim(prov, "capabilities." + c, x, name)
+        d.setdefault("capabilities", {})
+        d["capabilities"] = dict(_dict(d["capabilities"]), **{c: copy.deepcopy(cl)})
+    for r, v in sorted(_dict(adds.get("resources")).items()):
+        _claim(prov, "resources." + r, x, name)
+        d["resources"] = dict(_dict(d.get("resources")), **{r: copy.deepcopy(v)})
+    for r, v in sorted(_dict(adds.get("renderers")).items()):
+        _claim(prov, "renderers." + r, x, name)
+        d["renderers"] = dict(_dict(d.get("renderers")), **{r: copy.deepcopy(v)})
+    variants = _dict(_dict(adds.get("dispatch")).get("variants"))
+    if variants and not isinstance(d.get("dispatch"), dict):
+        raise Refused("extension %s adds dispatch variants, but the runtime %s has no dispatch" % (x, name))
+    for v, val in sorted(variants.items()):
+        _claim(prov, "dispatch.variants." + v, x, name)
+        d["dispatch"] = dict(d["dispatch"], variants=dict(_dict(d["dispatch"].get("variants")), **{v: copy.deepcopy(val)}))
+    if isinstance(adds.get("barrier"), dict):
+        _claim(prov, "barrier", x, name)
+        d["barrier"] = copy.deepcopy(adds["barrier"])
+    for v, path in sorted(_dict(adds.get("adapter_verbs")).items()):
+        _claim(prov, "adapter_verbs." + v, x, name)
+        out["definition"].setdefault("extension_verbs", {})[v] = {"pack": x, "path": path}
+
+
+def compose(name, surface, project=None, extensions=None, root=None, library=None, conf=None):
+    """The effective definition of a runtime on one surface: the definition plus the extensions the project enabled (models.extensions),
+    merged in name order. {definition: the merged schema 2 definition (a copy; extension_verbs: {VERB: {pack, path}} is added),
+    provenance: {path: pack} for what the runtime and the extensions provide (capabilities.CAP, resources.NAME, renderers.NAME,
+    dispatch.variants.NAME, barrier, adapter_verbs.VERB), extensions: [the ones merged], ignored: [{extension, why}]}.
+    Without a project (and without extensions=[...], used by check to compose one extension alone) it is the definition. An extension
+    that is for another runtime or surface, or whose requires do not hold, is ignored with its reason; the project must run the runtime
+    on that surface for any to apply. Two packs adding the same key, or an extension adding what the runtime has, is Conflict (a Refused):
+    nothing is overridden. An enabled extension that is missing is Refused, one that is unsealed or changed is Drift."""
+    base = definition(name, surface, root, library)
+    out = {"definition": copy.deepcopy(base), "provenance": _base_provenance(base, name), "extensions": [], "ignored": [], "runtime": name, "surface": surface}
+    if extensions is None:
+        extensions = project_extensions(project, conf) if project else []
+        bound = None
+        if extensions:
+            try:
+                bound = resolve_project(project_answers(project, conf) or {}, surface, project, root, library)[0]
+            except ProviderError:
+                bound = None
+        if bound != name:
+            out["ignored"] = [{"extension": x, "why": "project %s does not run %s on %s" % (project, name, surface)} for x in extensions]
+            extensions = []
+    prov = out["provenance"]
+    for x in sorted(set(extensions)):
+        e, doc = _extension(x, root, library)
+        ok, why = _applies(doc, name, surface, base, root, library)
+        if ok:
+            why = _unmet(doc, name, surface, base, root, library, None)
+            ok = why is None
+        if not ok:
+            out["ignored"].append({"extension": x, "why": why})
+            continue
+        _merge(out, x, doc, prov, name)
+        out["extensions"].append(x)
+    return out
+
+
+def extension_base(ext, project=None, root=None, library=None, conf=None):
+    """(runtime, surface) an extension is composed onto: with a project, the runtime the project runs on the extension's surface; without,
+    the runtime it names (a family or a runtime on several surfaces needs a project). Refused, saying why, when it applies to none."""
+    e, doc = _extension(ext, root, library)
+    ex, s = doc["extends"], doc.get("surface")
+    if project:
+        answers = project_answers(project, conf) or {}
+        why = []
+        for sf in ([s] if s else SURFACES):
+            try:
+                rt = resolve_project(answers, sf, project, root, library)[0]
+                base = definition(rt, sf, root, library)
+            except ProviderError:
+                continue
+            ok, w = _applies(doc, rt, sf, base, root, library)
+            if ok:
+                return rt, sf
+            why.append("%s runs %s on %s: %s" % (project, rt, sf, w))
+        raise Refused("extension '%s' applies to nothing in project %s%s" % (ext, project, " (" + "; ".join(why) + ")" if why else ""))
+    try:
+        base = definition(ex, s, root, library)
+    except ProviderError as err:
+        raise Refused("extension '%s' extends %s, which is not a runtime of one surface (%s); pass --project NAME to say which runtime to check it on" % (ext, ex, err))
+    sf = s or base["surface"]
+    ok, w = _applies(doc, ex, sf, base, root, library)
+    if not ok:
+        raise Refused("extension '%s' %s" % (ext, w))
+    return ex, sf
 
 
 # ---- the layout -------------------------------------------------------------------------------------------------------
@@ -1379,11 +1642,14 @@ def accept_command(provider, surface, project=None):
 
 def require_barrier(provider, surface, project=None, root=None, conf=None, library=None):
     """May a read-only role run on this surface of the provider? (state, text): state is yes, partial (text is the note),
-    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command)."""
-    v = effective(provider, surface, "read_only_barrier", root, library)
+    accepted (the project recorded that it accepts no barrier here) or refused (text says why and names the command). The barrier
+    is the runtime's composed with the project's enabled extensions (a barrier an extension provides counts once it is verified)."""
+    v = effective(provider, surface, "read_only_barrier", root, library, project=project, conf=conf)
     if v == "yes":
         return "yes", ""
     doc = _docs(_entry(provider, root, library)).get(surface)
+    if doc is not None and project:
+        doc = compose(provider, surface, project, root=root, library=library, conf=conf)["definition"]
     cell = _dict(_dict(doc and doc.get("capabilities")).get("read_only_barrier"))
     if v == "partial":
         return "partial", "%s has only a partial read-only barrier on %s: %s" % (provider, surface, cell.get("note") or "see qargi provider show %s" % provider)
@@ -1407,12 +1673,12 @@ def cmd_require_barrier(provider, surface, project):
     return 0
 
 
-def cmd_effective(provider, surface, capability):
+def cmd_effective(provider, surface, capability, project=None):
     if surface not in SURFACES:
         raise ProviderError("unknown surface '%s'; one of %s" % (surface, ", ".join(SURFACES)))
     if surface not in surfaces_of(provider):
         raise ProviderError("the provider %s does not list the surface %s" % (provider, surface))
-    print(effective(provider, surface, capability))
+    print(effective(provider, surface, capability, project=project))
     return 0
 
 
@@ -1501,8 +1767,32 @@ def _backing(name, surface, c, cell):
     return "verified by %s" % rec["by"]
 
 
-def _show2(name, e, doc):
+def _backing_comp(name, surface, c, cell, comp, project):
+    """_backing() for a composed capability: the runtime's own as before, an extension's by the record of THAT extension."""
+    pack = comp["provenance"].get("capabilities." + c, name)
+    if pack == name:
+        return _backing(name, surface, c, cell)
+    if cell.get("value") == "no":
+        return "-"
+    return extension_backing(pack, c, cell, name, surface)
+
+
+def _print_extensions(comp, project):
+    print("extensions of project %s" % project)
+    for x in comp["extensions"]:
+        prov = sorted(k for k, v in comp["provenance"].items() if v == x)
+        print("  %-14s applied (adds %s)" % (x, ", ".join(prov) or "nothing"))
+    for i in comp["ignored"]:
+        print("  %-14s ignored: %s" % (i["extension"], i["why"]))
+    if not comp["extensions"] and not comp["ignored"]:
+        print("  none enabled")
+
+
+def _show2(name, e, doc, project=None):
     s = doc["surface"]
+    comp = compose(name, s, project) if project else None
+    if comp:
+        doc = comp["definition"]
     m = _resolve_models(doc)
     print("%s  (%s, %s%s)" % (name, s, e["origin"], "; family %s" % doc["family"] if doc.get("family") else ""))
     if doc.get("description"):
@@ -1522,24 +1812,32 @@ def _show2(name, e, doc):
     else:
         for k, v in m["effort"].items():
             print("  %-7s %s" % (k, v if v is not None else "- (no control)"))
-    print("capabilities")
+    print("capabilities" + (" (composed for project %s; [pack] provided it)" % project if comp and (comp["extensions"] or comp["ignored"]) else ""))
     for c in capabilities2():
         cl = _dict(doc.get("capabilities")).get(c)
-        if isinstance(cl, dict):
+        if isinstance(cl, dict) and comp and (comp["extensions"] or comp["ignored"]):
+            print("  %-34s %-8s %-30s %-12s %s" % (c, cl.get("value"), _backing_comp(name, s, c, cl, comp, project), "[%s]" % comp["provenance"].get("capabilities." + c, name), cl.get("note", "")))
+        elif isinstance(cl, dict):
             print("  %-34s %-8s %-30s %s" % (c, cl.get("value"), _backing(name, s, c, cl), cl.get("note", "")))
+    if comp and (comp["extensions"] or comp["ignored"]):
+        _print_extensions(comp, project)
     return 0
 
 
-def cmd_show(name, as_json):
+def cmd_show(name, as_json, project=None):
     e, d, findings = findings_of(name)
     if any(lvl == "fail" for lvl, _ in findings):
         print("qargi: provider '%s' breaks the schema (qargi provider check %s)" % (name, name), file=sys.stderr)
         return 1
+    if as_json and project:
+        comps = {sf: compose(name, sf, project) for sf in surfaces_of(name)}
+        print(json.dumps(dict(next(iter(comps.values())), project=project) if len(comps) == 1 else {"project": project, "surfaces": comps}, indent=2))
+        return 0
     if as_json:
         print(json.dumps(d, indent=2))
         return 0
     if _is2(d):
-        return _show2(name, e, next(iter(_docs(e).values())))
+        return _show2(name, e, next(iter(_docs(e).values())), project)
     print("%s  (surfaces: %s)" % (name, ", ".join(d["surfaces"])))
     print("model pattern: %s" % d["model_pattern"])
     print("tiers")
@@ -1559,6 +1857,15 @@ def cmd_show(name, as_json):
                 print("    %-6s %-8s no entry" % (s, "no"))
                 continue
             print("    %-6s %-8s %-28s %s" % (s, cell["value"], _verified(cell), cell["note"]))
+    for sf in (surfaces_of(name) if project else ()):
+        comp = compose(name, sf, project)
+        if comp["extensions"] or comp["ignored"]:
+            print("composed for project %s on %s" % (project, sf))
+            for c, pack in sorted(comp["provenance"].items()):
+                if c.startswith("capabilities.") and pack != name:
+                    cl = comp["definition"]["capabilities"][c[13:]]
+                    print("  %-34s %-8s %-30s %-12s %s" % (c[13:], cl.get("value"), _backing_comp(name, sf, c[13:], cl, comp, project), "[%s]" % pack, cl.get("note", "")))
+            _print_extensions(comp, project)
     return 0
 
 
@@ -1678,7 +1985,7 @@ def cmd_of(args):
 
 
 def main(argv):
-    usage = ("usage: qargi provider list | show NAME [--json] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
+    usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
              "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
@@ -1693,10 +2000,13 @@ def main(argv):
         if verb == "list" and not rest:
             return cmd_list()
         pos = [a for a in rest if a != "--json"]
-        if verb == "show" and len(pos) == 1 and len(rest) - len(pos) <= 1:
+        project = None
+        if "--project" in pos and pos.index("--project") == len(pos) - 2:
+            project, pos = pos[-1], pos[:-2]
+        if verb == "show" and len(pos) == 1 and len(rest) - len(pos) - (2 if project else 0) <= 1:
             lib = _library_module()
-            rc = lib.show_pack(pos[0], "--json" in rest) if lib else None   # a library catalog or extension; a provider is shown below
-            return rc if rc is not None else cmd_show(pos[0], "--json" in rest)
+            rc = lib.show_pack(pos[0], "--json" in rest, project) if lib else None   # a library catalog or extension; a provider is shown below
+            return rc if rc is not None else cmd_show(pos[0], "--json" in rest, project)
         if verb in LIBRARY_VERBS or verb == "check":
             lib = _library_module()
             if lib is None and verb != "check":
@@ -1709,6 +2019,8 @@ def main(argv):
                 return cmd_check(rest[0])                              # a shipped definition (or no such name): the report this file has always made
         if verb == "effective" and len(rest) == 3:
             return cmd_effective(rest[0], rest[1], rest[2])
+        if verb == "effective" and len(rest) == 5 and rest[3] == "--project":
+            return cmd_effective(rest[0], rest[1], rest[2], rest[4])
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
             return cmd_require_barrier(rest[0], rest[1], rest[3] if len(rest) == 4 else None)
         if verb == "skills-dirs" and len(rest) <= 1:

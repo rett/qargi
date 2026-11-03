@@ -85,6 +85,30 @@ def run(doc, directory, name, entry, sealed=False, opts=None, rv=None):
     return res
 
 
+def run_extension(comp, ext, directory, opts=None):
+    """The cases for the capabilities an extension provides, on the composition of its runtime and this extension alone (provider.compose):
+    {case: result}. Only the cases of those capabilities run. A renderer runs from the pack that provides it (extension or runtime).
+    The guard and the adapter harness read a runtime by its name, not a composition, so what only they could show is skipped, and the
+    capability stays unverified until it is attested."""
+    doc, prov = comp["definition"], comp["provenance"]
+    mine = [c for c, pack in prov.items() if pack == ext and c.startswith("capabilities.")]
+    needed = {i for c in mine for i in CAP_CASES.get(c[13:], ())}
+    res = {}
+    for case, ids in ((render_agent, ("render-agent",)), (link_skills, ("link-skills",))):
+        if not needed & set(ids):
+            continue
+        pack = prov.get("renderers.agent", ext) if case is render_agent else ext
+        pe = P.entry_any(pack)
+        sealed = pe is not None and P.seal_state(pe)[0] == "sealed"
+        try:
+            res.update(case(doc, directory, pack, sealed, True))
+        except Exception as e:                                       # a case that breaks is a failure of the pack, not a crash of the verb
+            res[ids[0]] = result("fail", "%s: %s" % (type(e).__name__, e))
+    for i in sorted(needed & {"barrier-hook", "barrier-adapter", "adapter-cost"}):
+        res[i] = result("skip", "the guard and the adapter harness read a runtime by its name, not a composition; qargi provider attest records a check you ran")
+    return res
+
+
 # ---- render-agent -----------------------------------------------------------------------------------------------------------------
 
 SAMPLES = (

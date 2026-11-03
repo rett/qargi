@@ -13,9 +13,11 @@ audit log. The hashes of the executables are recorded with the pack and checked 
   seal NAME                         approve the pack as it is now, after you edited it; earlier verification records no longer match
   remove NAME                       refused while a project, an extension or a runtime refers to it
   enable | disable PROJECT EXT      switch an extension on or off for one project (models.extensions of its answers)
-  check NAME | DIR                  the review, the schema and the hermetic cases (lib/conformance/cases.py); for a sealed library pack
-                                    it writes the verification records of the capabilities whose cases all passed
-  attest NAME CAP ...               the plan and the record of a live check YOU ran; it runs nothing and spends nothing
+  check NAME | DIR [--project P]    the review, the schema and the hermetic cases (lib/conformance/cases.py); for a sealed library pack
+                                    it writes the verification records of the capabilities whose cases all passed. An extension is
+                                    checked composed onto its runtime (the project's, or the one it names), alone, and what it
+                                    provides is recorded bound to the extension and that runtime
+  attest NAME CAP [--project P] ... the plan and the record of a live check YOU ran; it runs nothing and spends nothing
 
 Trust: a pack with executables is code that runs with the user's rights. Import never enables or links it; enabling is its own plan. The
 guard refuses every verb here to a member (the lifecycle verbs write the library and the state), but it cannot contain an approved
@@ -634,6 +636,18 @@ def project_names(project):
     return out
 
 
+def project_runtimes(project):
+    """{surface: runtime} the project runs (a surface it names no provider for is left out)."""
+    out = {}
+    answers = P.project_answers(project) or {}
+    for sf in P.SURFACES:
+        try:
+            out[sf] = P.resolve_project(answers, sf, project)[0]
+        except P.ProviderError:
+            continue
+    return out
+
+
 def set_answer(project, path, value):
     sh = os.path.join(LIB, "project.sh")
     r = subprocess.run([sh, "set", project, path, json.dumps(value)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -672,6 +686,19 @@ def cmd_enable(verb, args):
         names = project_names(project)
         if doc.get("extends") not in names:
             raise Refusal("extension '%s' extends %s; project %s runs %s" % (ext, doc.get("extends"), project, ", ".join(sorted(names)) or "no provider"))
+        new = sorted(set(cur) | {ext})
+        applied, applied_why = [], []
+        for sf, rt in sorted(project_runtimes(project).items()):
+            try:
+                comp = P.compose(rt, sf, extensions=new)
+            except P.Conflict as err:
+                raise Refusal("%s; nothing was enabled" % err)
+            except P.ProviderError as err:
+                raise Failure("cannot compose %s on %s with %s: %s" % (rt, sf, ", ".join(new), err))
+            applied += [(sf, rt)] * (ext in comp["extensions"])
+            applied_why += [i["why"] for i in comp["ignored"] if i["extension"] == ext]
+        if not applied:
+            raise Refusal("extension '%s' applies to nothing in project %s: %s" % (ext, project, "; ".join(sorted(set(applied_why))) or "it is for no runtime of the project"))
         execs = R.executables(rv)
         tokparts = P.tree_hash(d)
         for ln in R.lines(rv, "extension %s for project %s" % (ext, project)):
@@ -681,8 +708,8 @@ def cmd_enable(verb, args):
         if ext in cur:
             print("nothing to do: %s is enabled for %s already" % (ext, project))
             return 0
-        new = sorted(set(cur) | {ext})
-        print("effect: models.extensions of project %s becomes %s; what it provides counts only after it is checked" % (project, json.dumps(new)))
+        print("applies to: %s" % ", ".join("%s on %s" % (rt, sf) for sf, rt in applied))
+        print("effect: models.extensions of project %s becomes %s; what it provides counts only after it is checked (qargi provider check %s --project %s)" % (project, json.dumps(new), ext, project))
     else:
         if ext not in cur:
             print("nothing to do: %s is not enabled for %s" % (ext, project))
@@ -746,10 +773,49 @@ def cmd_check(args):
         if name and state in ("sealed", "unrecorded"):
             P.record_verification(name, {})
         return 1
+    if kind == "extension":
+        return check_extension(doc, d, name, e, state, opts)
     if kind != "provider":
         print("a %s has no capabilities to verify" % kind)
         return 0
     results = cases.run(doc, d, name, e, sealed=(state == "sealed"), opts=opts, rv=rv)
+    return record_results(doc, results, name, state, lambda: P.definition_hash(name))
+
+
+def check_extension(doc, d, name, e, state, opts):
+    """check of an extension pack in the library: compose it alone onto its runtime (the project's, or the one it names), run the cases of
+    the capabilities it provides, and record those that passed bound to the extension and that runtime (provider.extension_hash)."""
+    from conformance import cases
+    if name is None or e is None:
+        print("an extension is checked composed onto its runtime, from the library: qargi provider import it first; nothing is recorded")
+        return 0
+    try:
+        base, surface = P.extension_base(name, opts.get("--project"))
+        comp = P.compose(base, surface, extensions=[name])
+    except P.Conflict as err:
+        print("fail: %s" % err)
+        print("nothing is verified while the pack fails")
+        if state in ("sealed", "unrecorded"):
+            P.record_verification(name, {})
+        return 1
+    except P.ProviderError as err:                                 # no runtime to compose it onto (a fresh scaffold, say): the pack is fine, nothing is verified
+        print("warn: %s" % err)
+        print("nothing is verified: there is no runtime to compose it onto")
+        return 0
+    if name not in comp["extensions"]:
+        print("warn: %s is not applied to %s on %s: %s" % (name, base, surface, "; ".join(i["why"] for i in comp["ignored"])))
+        print("nothing is verified: it does not apply there")
+        return 0
+    print("composed onto %s on %s%s" % (base, surface, " (project %s)" % opts["--project"] if opts.get("--project") else ""))
+    results = cases.run_extension(comp, name, d, opts)
+    mine = {c[13:]: comp["definition"]["capabilities"][c[13:]] for c, pack in comp["provenance"].items() if pack == name and c.startswith("capabilities.")}
+    return record_results({"capabilities": mine}, results, name, state, lambda: P.extension_hash(name, base, surface))
+
+
+def record_results(doc, results, name, state, hash_now):
+    """Print the cases and the verdict per claimed capability; for a sealed library pack record the verified ones (keeping the attested
+    records of the same content) under the hash hash_now() gives. Exit status: 1 when a case failed."""
+    from conformance import cases
     bad = 0
     for cid in sorted(results):
         r = results[cid]
@@ -768,8 +834,8 @@ def cmd_check(args):
     if state not in ("sealed", "unrecorded"):
         print("nothing recorded: %s; seal it (qargi provider seal %s) and check again" % ("the pack is " + state, name))
         return 1 if bad else 0
-    keep = {c: r for c, r in P.verification(name).items() if isinstance(r, dict) and r.get("by") == "attest" and r.get("hash") == P.definition_hash(name)}
-    h = P.definition_hash(name)
+    h = hash_now()
+    keep = {c: r for c, r in P.verification(name).items() if isinstance(r, dict) and r.get("by") == "attest" and r.get("hash") == h}
     recs = dict(keep)
     for cap, why in records.items():
         recs[cap] = {"hash": h, "by": "conformance", "at": now(), "note": why}
@@ -794,19 +860,27 @@ A free local check that makes no API call (an OS sandbox test, say) needs no spe
 
 
 def cmd_attest(args):
-    opts, pos = parse(args, ("--did", "--result", "--cost-cents", "--cleanup", "--note") + GATE)
+    opts, pos = parse(args, ("--did", "--result", "--cost-cents", "--cleanup", "--note", "--project") + GATE)
     if len(pos) != 2:
-        raise Usage("usage: qargi provider attest NAME CAP --asked WORDS --did TEXT --result pass|fail --cost-cents N --cleanup TEXT [--plan TOKEN --approved WORDS]\n" + ASK)
+        raise Usage("usage: qargi provider attest NAME CAP [--project P] --asked WORDS --did TEXT --result pass|fail --cost-cents N --cleanup TEXT [--plan TOKEN --approved WORDS]\n" + ASK)
     name, cap = pos
     e = library_entry(name)
-    if (e["kind"] or "provider") != "provider":
-        raise Failure("'%s' is a %s; only a provider has capabilities" % (name, e["kind"]))
+    if (e["kind"] or "provider") not in ("provider", "extension"):
+        raise Failure("'%s' is a %s; only a provider or an extension has capabilities" % (name, e["kind"]))
     if cap not in P.capabilities2():
         raise Failure("unknown capability '%s'; one of %s" % (cap, ", ".join(P.capabilities2())))
     state = P.seal_state(e)[0]
     if state not in ("sealed", "unrecorded"):
         raise Refusal("pack '%s' %s; seal it first, so that the attestation is bound to the content that was reviewed" % (name, P.seal_state(e)[1] or state))
-    doc = P.definition(name)
+    ext = e["kind"] == "extension"
+    if ext:
+        try:
+            base, surface = P.extension_base(name, opts.get("--project"))
+        except P.Refused as err:
+            raise Failure(str(err))
+        doc = {"capabilities": ((P._read(e).get("adds") or {}).get("capabilities") or {})}
+    else:
+        doc = P.definition(name)
     cell = (doc.get("capabilities") or {}).get(cap)
     if not isinstance(cell, dict) or cell.get("value") not in ("yes", "partial"):
         raise Failure("%s does not claim %s (its definition says %s); there is nothing to attest" % (name, cap, cell.get("value") if isinstance(cell, dict) else "nothing"))
@@ -824,8 +898,8 @@ def cmd_attest(args):
         raise Usage("--result is pass or fail")
     if not re.fullmatch(r"[0-9]{1,9}", opts["--cost-cents"]):
         raise Usage("--cost-cents is the whole number of cents the run cost (0 for a free local check)")
-    h = P.definition_hash(name)
-    print("attest %s %s on %s (content %s)" % (cap, "claimed " + cell["value"], name, h[:16]))
+    h = P.extension_hash(name, base, surface) if ext else P.definition_hash(name)
+    print("attest %s %s on %s%s (content %s)" % (cap, "claimed " + cell["value"], name, " composed onto %s on %s" % (base, surface) if ext else "", h[:16]))
     print("  asked:   %s" % opts["--asked"])
     print("  ran:     %s" % opts["--did"])
     print("  result:  %s; cost %s cents; cleanup: %s" % (opts["--result"], opts["--cost-cents"], opts["--cleanup"]))
@@ -864,7 +938,7 @@ def list_other_kinds():
             print("%-12s %-12s %s  (library%s)" % (n, kind, "-", "" if state in ("sealed", "unrecorded") else ", " + ("unsealed" if state == "unsealed" else "changed since sealed")))
 
 
-def show_pack(name, as_json):
+def show_pack(name, as_json, project=None):
     e = P.entry_any(name)
     if e is None or e["origin"] != "library" or P._kind(e) == "provider":
         return None
@@ -877,6 +951,15 @@ def show_pack(name, as_json):
     print("%s  (%s, library, %s)" % (name, e["kind"], state + (": " + why if why else "")))
     for ln in summary_lines(doc):
         print(ln)
+    if e["kind"] == "extension" and state in ("sealed", "unrecorded") and not [1 for lvl, _ in P.validate_extension(doc, name) if lvl == "fail"]:
+        try:
+            base, surface = P.extension_base(name, project)
+        except P.ProviderError as err:
+            print("composed onto: nothing (%s)" % err)
+            return 0
+        print("composed onto %s on %s%s" % (base, surface, " (project %s)" % project if project else ""))
+        for c, cl in sorted(((doc.get("adds") or {}).get("capabilities") or {}).items()):
+            print("  %-34s %-8s %s" % (c, cl["value"], "-" if cl["value"] == "no" else P.extension_backing(name, c, cl, base, surface)))
     return 0
 
 
