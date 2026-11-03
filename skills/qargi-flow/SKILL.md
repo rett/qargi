@@ -1,6 +1,6 @@
 ---
 name: qargi-flow
-description: The lead's git-flow process with the qargi commands - start and finish a feature, run tasks inside it, the one whole-suite run per feature, release, hotfix, resolve a merge conflict (exit 3), and who leads a feature (the marshal). Load it before `qargi feature`, `qargi release` or `qargi marshal`, or any merge into develop or master, when you lead or coordinate a project that follows the gitflow methodology. For the lead or a Claude Code session, never for a member.
+description: The lead's git-flow process with the qargi commands - start and finish a feature, run tasks inside it, the one whole-suite run per feature, release, hotfix, resolve a merge conflict (exit 3), and who leads a feature (the marshal). Load it before `qargi feature`, `qargi release` or `qargi marshal`, or any merge into develop or master, when you lead or coordinate a project that follows the gitflow methodology. For the lead session, never for a member.
 argument-hint: feature NAME | release VERSION | hotfix VERSION | status
 ---
 

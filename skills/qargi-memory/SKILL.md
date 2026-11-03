@@ -9,7 +9,7 @@ argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lin
 **Memory store** (`<project>-memory`): verified how-to facts and role history. **Reference store**
 (`<project>-reference`, agents read-only): curated rules, workflow, conventions and architecture in
 folders named for their scope (no numbered prefixes). Members propose notes, reference changes
-included, in their report; the lead files them (the reference store with `ant beta:memory-stores:memories`).
+included, in their report; the lead files them (the reference store through the cloud CLI).
 
 Both use one note format (canon 2): `# Title`, then `Kind`, `Applies to`, `Sources`, and for the
 runnable kinds (`setup gate pitfall sandbox`) also `Check` and `Verified`; an index row
@@ -71,5 +71,5 @@ repository: the tiers highest first with location and state, the README of the h
 has one, each tier's indexes and the notes they mark `always` for the role, then the reference
 store's. Each file is capped (4000 characters) and the whole (16000); what did not fit, was not
 UTF-8 or could not be reached is listed as `not loaded`: read it with `qargi memory get STORE_ID
-/path.md` or from the tier's directory. A missing `ant` marks the cloud tier unreachable, and a
+/path.md` or from the tier's directory. No cloud CLI marks the cloud tier unreachable, and a
 repo tier with uncommitted changes adds a warning.
