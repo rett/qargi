@@ -451,7 +451,7 @@ role_classes() { # -> {role: class} for every role (a role without a readable cl
 models() { # the bases, the profiles with the project's own merged in, the escalation and the registered members
   local proj=$PROJ pf prov pd tiers aliases rc out noeff=false st
   if [ -n "$proj" ]; then [ -f "$DA_CONF/projects/$proj.json" ] || die "no stored answers for $proj"
-  else proj=$(python3 -I "$root/lib/help.py" infer); fi
+  else proj=$(python3 -I "$root/lib/help.py" infer); fi   # no project at all is refused just below, by provider_for: the provider is the project's
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
   pd=$(pdesc "$prov" local) || exit 1
@@ -462,7 +462,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson st "$st" --argjson noeffort "$noeff" --arg prov "$prov" --arg proj "$proj" --arg pat "$(jq -r .model_pattern <<<"$pd")" "$PJQ"'
     def mclass: if ((.roles // []) | length) > 0 and all((.roles // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
-    | [($m[0].projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}] as $all
+    | [($m[0].projects // {}) | to_entries[] | select(.key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}] as $all
     | {provider: $prov, effort_control: ($noeffort | not), aliases: $aliases,
        bases: ($bases | with_entries(.key as $k | .value += {registered: ($all | any(.name == $k))}
          | .value += {flags: (if .value.registered then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
@@ -496,7 +496,7 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   jq -r '"  offer \(.escalate.build.tier) (\(.escalate.build.model)) for a hard task: only when asked"' <<<"$out"
   echo "members"
   if [ "$(jq '.members | length' <<<"$out")" = 0 ]; then echo "  none yet (qargi agent add NAME --project P)"; else
-    jq -r --arg proj "$proj" '.members[] | "  \(if $proj == "" then .project + "/" else "" end)\(.name)\t\(.roles | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
+    jq -r '.members[] | "  \(.name)\t\(.roles | join(","))\t\(.model // "-")/\(.effort // "default")\t\(.flags | map("! " + .) | join("; "))"' <<<"$out" \
       | while IFS=$'\t' read -r n a me note; do printf '  %-12s %-22s %-28s %s\n' "${n# }" "$a" "$me" "$note"; done
   fi
 }
