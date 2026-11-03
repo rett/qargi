@@ -1354,6 +1354,20 @@ class ProviderHook(unittest.TestCase):
         for w in words:
             self.assertIn(w, r.stderr)
 
+    def test_the_shipped_claude_code_definition_is_a_usable_hook(self):
+        # --provider claude-code reads the data the file ships; it must judge as the built-in default does, not refuse every call
+        def call(name, tool_input, *more):
+            return self.run_guard(["--provider", "claude-code", *more], {"tool_name": name, "tool_input": tool_input, "cwd": self.clone})
+        r = call("Bash", {"command": "git push origin main"})
+        self.assertEqual((r.returncode, r.stdout), (2, ""))
+        self.assertIn("Agents never push", r.stderr)
+        for name, tool_input in (("Bash", {"command": "ls -la"}), ("Edit", {"file_path": "src/a.go"}), ("Read", {"file_path": "src/a.go"}), ("Grep", {"path": "src"})):
+            r = call(name, tool_input)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), name)
+        r = call("Write", {"file_path": os.path.join(self.t, "e")}, "--class", "read-only")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("under the review ability", r.stderr)
+
     def test_a_provider_whose_hook_cannot_be_read_refuses_every_call(self):
         self.refused_before_judging(["--provider"], "--provider")
         self.refused_before_judging(["--provider", "nosuch"], "nosuch")
