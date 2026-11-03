@@ -622,7 +622,12 @@ COMMANDS = {
             "addenda": verb("Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface)", [("NAME", "none"), ("SURFACE", "none")],
                             desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
                                  "A file that is missing, is not text or leaves the directory is refused."),
-            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
+            "notes": verb("Print a note of the project's local runtime, or list the topics it has", [("TOPIC", "none", True)],
+                          [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
+                          desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
+                               "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
+                               "enabled extensions. A runtime or a topic it does not have is exit 1, naming both and listing the topics there are; a project with no local runtime is exit 2 (there is no default). Read-only."),
+            "model": verb("Print the model a runtime maps a tier to on a surface",[("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
