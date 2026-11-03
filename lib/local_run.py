@@ -16,7 +16,8 @@ made of comes from the definition's `dispatch` (schema 2, mode `command`); nothi
                        before the first element that carries the prompt argument, or at the end. For sandbox flags a definition keeps out
                        of argv. The barrier kind `sandbox-args` needs them (or a class element in argv) for a read-only run.
   dispatch.prompt      {via: stdin|file|arg, file: "prompt.md"}: stdin reads the prompt file, file passes its path ({prompt_file}), arg
-                       passes the text ({prompt_arg}, at most 120000 bytes). The prompt is the neutral member body (agents/member.body.md) and
+                       passes the text ({prompt_arg}, at most 120000 bytes). The file is a plain name inside RUN/prompt/, a directory of
+                       its own: it can never be a control file of the run (refs.before, class, dispatch.json ...). The prompt is the neutral member body (agents/member.body.md) and
                        the task block, with what qargi recorded about the run (class, paths); the runtime has no agent files to carry it.
   dispatch.cwd         "{clone}" (default) or a directory inside it.
   dispatch.env_pass    names of environment variables handed on (secrets travel by name, never in argv); GIT_* and QARGI_* are refused,
@@ -59,6 +60,7 @@ MAX_ARG = 120000          # one argument may not exceed 131072 bytes on Linux
 MAX_TASK = 1 << 20
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROMPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+PROMPT_DIR = "prompt"     # where the prompt file goes: a directory of the run for it alone, so no name can reach a control file of the run
 
 
 class Stop(Exception):
@@ -156,10 +158,10 @@ def has_class_args(disp):
     return bool(ca) or has(disp.get("argv") or [])
 
 
-def models_values(runtime, model, effort):
+def models_values(runtime, model, effort, project=None):
     """(model name, native effort or None, notes): --model is a tier or a model id of the runtime's pattern (default: the balanced tier);
     --effort is a level the runtime maps (dropped with a note when it has no such control)."""
-    ms = P.models_of(runtime, "local")
+    ms = P.models_of(runtime, "local", project=project)
     notes = []
     if model is None or model == "":
         model = "balanced"
@@ -266,7 +268,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     except OSError:
         pass
     tmp = tmp or os.path.join(run, "tmp")
-    doc = P.definition(runtime, "local")
+    comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
+    doc = comp["definition"]
     disp = doc.get("dispatch")
     if not isinstance(disp, dict) or not disp.get("mode"):
         fail("the runtime %s has no dispatch data, so it cannot be started by qargi local run" % runtime, 3)
@@ -312,7 +315,16 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         state, text = P.require_barrier(runtime, "local", project)
         if state == "refused":
             fail(text)
-        if (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
+        prov = comp["provenance"] or {}
+        by = next((x for x in (prov.get("barrier"), prov.get("capabilities.read_only_barrier")) if x not in (None, runtime)), None)
+        if by is not None:
+            # the barrier is an extension's: nothing in a local run applies it (an extension adds no class_argv), so it is no barrier here
+            if state in ("yes", "partial") and not P.accepted(project, "local"):
+                fail("the read-only barrier of %s on local is provided by the extension %s (barrier kind %s), and qargi local run applies only the barrier the runtime's own "
+                     "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
+                     "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
+                     % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
+        elif (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
             fail("the barrier of %s is sandbox-args but its dispatch supplies no read-only arguments (class_argv, or a {\"class\": \"read-only\"} group in argv)" % runtime)
         note = text if state == "partial" else ""
     else:
@@ -329,8 +341,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     prompt = compose_prompt(doc, task_text, cls, run, tmp)
     if via == "arg" and len(prompt.encode("utf-8")) > MAX_ARG:
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
-    mname, native, notes = models_values(runtime, model, effort)
-    pfile = os.path.join(run, pname)
+    mname, native, notes = models_values(runtime, model, effort, project)
+    pfile = os.path.join(run, PROMPT_DIR, pname)
     member = ""
     try:
         with open(os.path.join(run, "profile"), encoding="utf-8") as f:
@@ -396,10 +408,29 @@ def write_private(path, text):
         f.write(text)
 
 
+def write_prompt(run, path, text):
+    """Write the prompt file in RUN/prompt/ and nowhere else: the directory must be a real directory of the run (not a link out of it),
+    the file a new or regular one (not a link, not a pipe), so the prompt can never overwrite what qargi recorded about the run."""
+    d = os.path.join(run, PROMPT_DIR)
+    if os.path.islink(d) or (os.path.exists(d) and not os.path.isdir(d)):
+        fail("%s is not a plain directory of the run; the prompt file goes there and nowhere else" % d)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    if os.path.realpath(d) != os.path.join(os.path.realpath(run), PROMPT_DIR) or os.path.dirname(path) != d:
+        fail("the prompt file %s is not inside %s" % (path, d))
+    if os.path.lexists(path) and (os.path.islink(path) or not os.path.isfile(path)):
+        fail("%s is not a plain file; the prompt file replaces only a file of its own" % path)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    except OSError as e:
+        fail("cannot write the prompt file %s: %s" % (path, e.strerror or e))
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def run_it(plan, run):
     out = os.path.join(run, "out")
     os.makedirs(out, exist_ok=True)
-    write_private(plan["prompt_file"], plan["prompt"])
+    write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
     started = time.time()
     timed_out = False
