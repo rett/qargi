@@ -125,4 +125,18 @@ $DA instances show alpha-build 2>&1 | grep -q "STALE: the prompt rendered now di
 jq 'del(.["alpha-build"].prompt)' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
 bash -c ". '$PWD/lib/lib.sh'; prompt_record alpha-build; prompt_record alpha-ghost"
 jq -e '.["alpha-build"].prompt.sha != null and .["alpha-build"].prompt.at != null and (has("alpha-ghost") | not)' "$T/c/instances.json" >/dev/null && ok "prompt_record stores the hashes and does not create an entry" || no "prompt_record: $(cat "$T/c/instances.json")"
+
+# an addendum that cannot be read fails the prompt: refresh-prompt makes no cloud call and prints no plan, and the stamp is not a hash of what was left
+chmod 644 "$T/copy/lib/providers/claude-platform/cloud-run.md"; cp "$T/addendum.orig" "$T/copy/lib/providers/claude-platform/cloud-run.md"
+jq '.["alpha-build"].prompt = {sha: "0000000000000000", skill: "0000000000000000"}' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
+chmod 000 "$T/copy/lib/providers/claude-platform/cloud-run.md"
+n1=$(wc -l < "$FAKE/ant.log")
+out=$($DC instances refresh-prompt alpha-build --asked "t" 2>&1); rc=$?
+n2=$(wc -l < "$FAKE/ant.log")
+[ $rc != 0 ] && [ "$n1" = "$n2" ] && ! grep -q "plan token" <<<"$out" && grep -q "could not render the system prompt" <<<"$out" && ok "refresh-prompt with an unreadable addendum stops before any cloud call and plans nothing" || no "unreadable addendum: rc=$rc ant calls $n1/$n2 $out"
+out=$($DC instances show alpha-build 2>&1 | grep "PROMPT")
+grep -q "PROMPT: unknown" <<<"$out" && ok "the prompt state with an unreadable addendum is unknown, not stale" || no "show unreadable: $out"
+st=$(bash -c ". '$T/copy/lib/lib.sh'; prompt_stamp build alpha" 2>/dev/null); rc=$?
+[ $rc != 0 ] && [ -z "$st" ] && ok "prompt_stamp prints nothing and fails when the prompt cannot be rendered" || no "stamp: rc=$rc '$st'"
+chmod 644 "$T/copy/lib/providers/claude-platform/cloud-run.md"
 rm -rf "$T"; exit $fail
