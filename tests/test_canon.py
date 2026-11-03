@@ -88,6 +88,36 @@ class Canon(unittest.TestCase):
             m = C.parse_marker(by["/CANON.md"])
             self.assertEqual((m["canon"], m["kind"], m["project"], m["roles"]), (str(C.LATEST), kind, "demo", "build write"))
 
+    def test_interrupted_setup_resumes(self):
+        """The set-up writes its files in order and the marker last, so a run that stops part-way leaves a store with
+        set-up files and no marker. That store is still empty for the canon: a rerun creates what is missing, leaves
+        what is there as it is, and writes the marker last."""
+        for kind in ("memory", "reference"):
+            full = plan(kind, {})["ops"]
+            order = [o["path"] for o in full if o["op"] == "create"]
+            self.assertEqual(order[0], "/shared/INDEX.md")
+            for k in range(1, len(order)):               # every point the run could have stopped at
+                done = {o["path"]: "edited " + o["path"] for o in full[:k]}
+                p = plan(kind, done)
+                what = "%s, %d of %d files written" % (kind, k, len(order))
+                self.assertEqual(p["from_version"], "empty", what)
+                self.assertEqual([o["path"] for o in p["ops"]], order[k:] + ["/CANON.md"], what)
+                self.assertEqual(p["ops"][-1]["op"], "marker", what)
+                _, after = self.assertConverges(kind, done)
+                for path, content in done.items():
+                    self.assertEqual(after[path], content, "%s: %s is not overwritten" % (what, path))
+                self.assertEqual(sorted(after), sorted(order + ["/CANON.md"]), what)
+
+    def test_setup_files_that_do_not_follow_the_setup_order_are_unknown(self):
+        """Only what an interrupted set-up leaves counts as empty; a hand-made or older store without a marker does not."""
+        for kind in ("memory", "reference"):
+            for what, files in {"a note beside the set-up files": {"/shared/INDEX.md": "i", "/shared/a.md": "# a\n"},
+                                "set-up files that skip the shared index": {"/roles/build/INDEX.md": "i"},
+                                "the template and the readme without the indexes": {"/_template.md": "t", "/README.md": "r"},
+                                "a role the project does not have": {"/shared/INDEX.md": "i", "/roles/other/INDEX.md": "i"}}.items():
+                p = plan(kind, files)
+                self.assertEqual((p["from_version"], p["ops"]), ("unknown", []), "%s: %s" % (kind, what))
+
     def test_unknown_layout_is_reported(self):
         self.assertEqual(plan("memory", {"/stuff/x.md": "x"})["from_version"], "unknown")
 
