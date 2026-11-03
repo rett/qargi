@@ -173,7 +173,7 @@ rm -rf "$T/s/render/alpha/claude-code" "$T/r4/.claude"
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi
-QARGI_PROJECT=rproj $Q agent add pj-judge --abilities review >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add pj-forge --abilities build >/dev/null 2>&1
+QARGI_PROJECT=rproj $Q agent add pj-judge --user --abilities review >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add pj-forge --user --abilities build >/dev/null 2>&1
 out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 [ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=pj-judge' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
   && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"

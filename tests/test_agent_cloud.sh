@@ -111,7 +111,7 @@ echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --proj
 
 # --- local is unchanged: absent and --surface local give the same bytes, members and all
 export QARGI_PROJECT=alpha   # there is no default provider: the project in effect lends its models.provider to the user-level members
-$YES agent add builder --abilities build,test >/dev/null 2>&1; $YES agent add judge --abilities review >/dev/null 2>&1
+$YES agent add builder --user --abilities build,test >/dev/null 2>&1; $YES agent add judge --user --abilities review >/dev/null 2>&1
 for args in "build" "test" "review" "review --profile auditor" "build --profile review" "build --profile nosuch" "build --json"; do
   a=$($YES agent for $args 2>&1; echo "rc=$?"); b=$($YES agent for $args --surface local 2>&1; echo "rc=$?")
   [ "$a" = "$b" ] && ok "local: 'for $args' is the same with --surface local" || no "local differs for $args: [$a] vs [$b]"
