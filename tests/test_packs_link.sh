@@ -18,7 +18,7 @@ proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https:
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
   models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha "$R"
-D=$T/s/claude/alpha
+D=$T/s/render/alpha/claude
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
@@ -306,7 +306,7 @@ projp() { proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/proj
 projp beta agentx
 fl() { $FX packs link beta "$@"; }
 fu() { $FX packs unlink beta "$@"; }
-D2=$T/s/agentx/beta
+D2=$T/s/render/beta/agentx
 out=$(fl 2>&1); rc=$?
 [ "$rc" != 0 ] && grep -q "there is no render of beta yet" <<<"$out" && grep -q "packs apply --target agentx-render beta first" <<<"$out" && ! grep -q "claude" <<<"$out" && ok "another provider: the missing render is refused and the message names its render target" || no "agentx no-render: rc=$rc $out"
 mkdir -p "$D2/.agent/skills"; cp -r "$T/c/packs/skills/s-all" "$D2/.agent/skills/s-all"
@@ -337,7 +337,9 @@ out=$($FX packs check beta 2>&1); rc=$?
 out=$($FX packs apply --target none beta 2>&1); rc=$?
 [ "$rc" = 1 ] && grep -q "^qargi: --target is agentx-render (or managed-agents" <<<"$out" && ! grep -q claude <<<"$out" && ok "--target none names the provider's render target too" || no "target none message: rc=$rc $out"
 out=$($FX packs apply --target agentx-render beta 2>&1); rc=$?
-[ "$rc" = 3 ] && grep -q "^qargi: provider agentx has no packs renderer for target agentx-render: " <<<"$out" && ok "a render target nothing renders is refused with exit 3" || no "no renderer: rc=$rc $out"
+[ "$rc" = 0 ] && grep -q "^agentx-render target for beta -> $T/s/render/beta/agentx\$" <<<"$out" && grep -q "^plan token: " <<<"$out" && ok "there is one renderer for every runtime: another provider's render target plans a render under its own directories" || no "agentx apply plan: rc=$rc $out"
+out=$($FX packs apply --target claude-code gamma 2>&1); rc=$?
+[ "$rc" = 3 ] && [ "$out" = "qargi: provider noskills has no project skills directory: render the project's packs for a local session" ] && ok "a provider with no project skills directory: the render is refused with exit 3 and the degrade text" || no "noskills apply: rc=$rc $out"
 out=$($DA packs check --target claude-code alpha 2>&1); [ -n "$out" ] && ok "claude keeps answering to --target claude-code" || no "claude target"
 # there is no default provider: answers without models.provider are refused with exit 2 and the fix, by every verb that needs one
 jq 'del(.models)' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
@@ -352,7 +354,7 @@ for v in "packs link nosuchproj" "packs unlink nosuchproj" "packs check --target
 done
 jq '.models = {provider: "nosuch"}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 out=$($DA packs link alpha 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "unknown provider 'nosuch'" <<<"$out" && ok "a provider with no descriptor is refused like any unknown provider" || no "unknown provider: rc=$rc $out"
+[ "$rc" = 2 ] && grep -q "^qargi: no runtime or family 'nosuch' for the local surface; available: " <<<"$out" && ok "a provider with no descriptor is refused as an unknown runtime of the local surface (exit 2)" || no "unknown provider: rc=$rc $out"
 
 rm -rf "$T"
 exit $fail

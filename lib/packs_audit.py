@@ -60,6 +60,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marshal_refs  # noqa: E402  (in_member_run)
 import paths  # noqa: E402
+import packs_render  # noqa: E402  (render_dir)
 import provider  # noqa: E402
 
 NAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]*')   # used with fullmatch: a `$` would let a trailing newline through
@@ -130,7 +131,7 @@ def places(inp):
     co = inp.get("checkout") or ""
     if co and os.path.isabs(co) and os.path.isdir(co):
         out.append(("checkout", os.path.join(co, sk["project_dir"])))
-    out.append(("render", os.path.join(os.path.abspath(inp["state"]), inp["provider"], inp["project"], sk["project_dir"])))
+    out.append(("render", os.path.join(packs_render.render_dir(inp["state"], inp["project"], inp["provider"]), sk["project_dir"])))
     if inp.get("home") and sk.get("user_dir"):
         out.append(("user", expand(sk["user_dir"], inp)))
     return out
