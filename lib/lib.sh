@@ -310,7 +310,8 @@ agent_prompt() { # role [project]
   if is_base "$1"; then cat "$tpl/base-system.md"; return 0; fi
   sed "s/{{ROLE}}/$1/g" "$tpl/cloud-preamble.md"
   # the lead delegates and reports; the worker contract (patches, clones) is the members' own
-  [ "$1" = lead ] || cat "$ct/contract.md" "$ct/output-format.md"
+  # cloud-run.md is the cloud-only part of the contract; the provider definition will compose it later, so for now it is added here
+  [ "$1" = lead ] || cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md"
   local rd; if rd=$(role_dir "$1"); then echo; cat "$rd/ROLE.md"; fi
   [ ! -f "$rs/contract.md" ] || cat "$rs/contract.md"
   [ "$1" != lead ] || [ -z "${2:-}" ] || lead_teams_block "$2" || return 1
@@ -323,7 +324,7 @@ prompt_stamp() { # role project
   local ct sha; ct=$(prompt_root)/contract
   sha=$(agent_prompt "$1" "$2" | sha256sum | cut -c1-16)
   [ "${PIPESTATUS[0]}" = 0 ] || return 1
-  jq -nc --arg s "$sha" --arg k "$(cat "$ct/contract.md" "$ct/output-format.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
+  jq -nc --arg s "$sha" --arg k "$(cat "$ct/contract.md" "$ct/output-format.md" "$ct/cloud-run.md" "$(role_dir "$1" 2>/dev/null)/ROLE.md" 2>/dev/null | sha256sum | cut -c1-16)" '{sha: $s, skill: $k}'
 }
 
 # prompt_state INSTANCE: current | stale skill | stale prompt | unknown | none. Compares the prompt rendered now with the
