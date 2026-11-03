@@ -77,26 +77,8 @@ or `gitleaks detect --log-opts BASE_SHA..HEAD` on an older build) before the rep
 line; its pass is a hint, the coordinator scans again. Gates the profile marks
 as coordinator-only are reported "not run".
 
-# Output files (in OUT)
-OUT is the output directory the task block gives (a local run: `RUN_DIR/out`; with no OUT given, RUN_DIR itself is the
-output directory). RUN_DIR only names the run; `qargi review check` and `qargi local clean` read OUT.
-patches/NNNN-*.patch: one patch per commit, in order, from `git format-patch --binary
-BASE_SHA..HEAD` (never a single combined patch), series.md (each patch in order: subject, the
-change group it belongs to, why, which checks it passed), run.bundle
-(git bundle create run.bundle BASE_SHA..agent/<slug>), manifest.json, log.txt
-(every command with its exit status, in order). If OUT_PREFIX is given, start the name of every
-file you write to OUT with it (build--manifest.json): outputs are collected by base name and the
-members of a team share one directory.
-manifest.json keys: status (DONE|BLOCKED), blocked_reason, task, commit_advice[] {sha, subject,
-why_separate, depends_on[], builds_alone}, patch_groups[] {name, why, commits[]} (related commits
-grouped under the one change they implement, so a change is reviewed with its context),
-base {branch, sha}, branch, scope[], done {command, exit_code, output_tail},
-gates[] {name, command, result pass|fail|not run, exit_code, verdict_line
-verbatim}, commits[] {sha, subject}, touched_paths[] {path, reason},
-deviations[], noticed_not_acted_on[], artifacts[] {path, kind: report|suggestion|log|other} (deliverables
-that are not patches), usage_impact[] {kind: command|flag|output|config|file, before, after, where}
-(required when you change something a user sees or types), on_top_of {run, head_sha} and, per commit,
-for_group (when your work builds on another member's series), environment {tool versions, test_user}.
+# Output files
+The files you write to OUT, and their shapes, are in `output-format.md` (next to this file).
 
 # Final report (your last message)
 Line 1: DONE or BLOCKED. Then: the DONE check and each gate result quoted

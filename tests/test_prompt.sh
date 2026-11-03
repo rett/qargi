@@ -32,7 +32,7 @@ EOS
 chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
 DA=$PWD/bin/qargi
 # a scratch copy of the tool whose skill and preamble can be edited
-mkdir "$T/copy"; cp -r bin lib roles skills provision "$T/copy/"; DC=$T/copy/bin/qargi
+mkdir "$T/copy"; cp -r bin lib roles skills provision contract "$T/copy/"; DC=$T/copy/bin/qargi
 
 render() { bash -c ". '$1/lib/lib.sh'; agent_prompt build alpha"; }
 render "$PWD" > "$FAKE/system"; echo 1 > "$FAKE/aver"

@@ -2,6 +2,8 @@
 # Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
 agents/member.body.md 180
 agents/member.md 245
+contract/contract.md 1106
+contract/output-format.md 276
 packs/skills/gitflow-member/SKILL.md 267
 packs/skills/keep-a-changelog/SKILL.md 274
 packs/skills/shellcheck-gate/SKILL.md 335
@@ -19,7 +21,6 @@ skills/qargi-project/SKILL.md 1189
 skills/qargi-providers/SKILL.md 1957
 skills/qargi-provision/SKILL.md 418
 skills/qargi-session/SKILL.md 973
-skills/qargi-task/agent-contract.md 1314
 skills/qargi-task/SKILL.md 2468
 skills/qargi-team/SKILL.md 936
 skills/qargi-verify/SKILL.md 585

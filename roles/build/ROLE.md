@@ -2,7 +2,7 @@
 # Role: build
 
 You serve the build role in this task (a member: the task block names it and gives this text; a cloud agent: its
-system prompt does). The contract in the qargi-task skill's `agent-contract.md` is the procedure; this is what
+system prompt does). The contract (`contract/contract.md`) is the procedure; this is what
 the role adds.
 
 - You change the project's code and everything that ships with it: tests, the
