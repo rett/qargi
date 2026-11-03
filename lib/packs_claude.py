@@ -28,6 +28,7 @@ import tempfile
 from datetime import datetime, timezone
 
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+PROV_RE = re.compile(r'^[a-z][a-z0-9-]*$')
 TOOL_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
 SKIP = ".pack.json"
 
@@ -51,8 +52,11 @@ def roots(inp):
     project = inp["project"]
     if not NAME_RE.match(project) or ".." in project:
         die("not a project name: " + project)
+    runtime = inp.get("provider")
+    if not isinstance(runtime, str) or not PROV_RE.match(runtime):
+        die("not a provider name: %s" % (runtime,))
     state = os.path.realpath(inp["state"])
-    base = os.path.join(state, "claude")
+    base = os.path.join(state, runtime)
     if os.path.islink(base) or (os.path.exists(base) and not os.path.realpath(base).startswith(state + os.sep)):
         die("the output root resolves outside the state directory; refusing")
     if os.path.lexists(base) and not os.path.isdir(base):
@@ -283,7 +287,7 @@ def shadows(inp, packs):
     homes = [("~/.claude/skills", os.path.join(inp["home"], ".claude", "skills"))]
     if inp.get("checkout") and os.path.isabs(inp["checkout"]):
         homes.append(("the project checkout's .claude/skills", os.path.join(inp["checkout"], ".claude", "skills")))
-    render = os.path.realpath(os.path.join(inp["state"], "claude", inp["project"], ".claude", "skills")) if inp.get("state") and inp.get("project") else None
+    render = os.path.realpath(os.path.join(inp["state"], inp["provider"], inp["project"], ".claude", "skills")) if inp.get("state") and inp.get("project") and inp.get("provider") else None
     homes = [(lb, d) for lb, d in homes if render is None or os.path.realpath(d) != render]   # the checkout's skills directory linked to the render (packs link) is the render, not a competitor
     out = []
     for p in packs:

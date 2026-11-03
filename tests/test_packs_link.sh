@@ -352,7 +352,7 @@ for v in "packs link nosuchproj" "packs unlink nosuchproj" "packs check --target
 done
 jq '.models = {provider: "nosuch"}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 out=$($DA packs link alpha 2>&1); rc=$?
-[ "$rc" = 1 ] && grep -q "unknown provider 'nosuch'" <<<"$out" && ok "a provider with no descriptor is refused like any unknown provider" || no "unknown provider: rc=$rc $out"
+[ "$rc" = 2 ] && grep -q "^qargi: no runtime or family 'nosuch' for the local surface; available: " <<<"$out" && ok "a provider with no descriptor is refused as an unknown runtime of the local surface (exit 2)" || no "unknown provider: rc=$rc $out"
 
 rm -rf "$T"
 exit $fail

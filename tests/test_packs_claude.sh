@@ -138,4 +138,16 @@ rm -rf "$T/s/claude"   # the next case needs no render of alpha
 
 # --- the cloud path does not take the new route
 $DA packs apply nobody --asked x --target managed-agents >/dev/null 2>&1; [ ! -e "$T/s/claude/alpha" ] && ok "managed-agents still means the cloud path" || no "cloud route"
+# --- a project that names a runtime per surface (models.provider is an object): the render is the local surface's, and the cloud
+# runtime is not asked about (the verbs used to refuse an object that names two different runtimes)
+proj gamma; jq '.models.provider = {local: "claude-code", cloud: "claude-platform"}' "$T/c/projects/gamma.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/gamma.json"
+gtok=$($DA packs apply --target claude-code gamma 2>&1 | tok_of)
+[ -n "$gtok" ] && ok "an object-form models.provider with different runtimes: apply plans the local surface's render" || no "object-form plan: $($DA packs apply --target claude-code gamma 2>&1)"
+out=$($DA packs apply --target claude-code gamma --plan "$gtok" --approved test 2>&1); gd=$(sed -n 's/^applied: //p' <<<"$out")
+[ -n "$gd" ] && [ -f "$gd/MANIFEST.json" ] && grep -q "^launch: claude --add-dir $gd\$" <<<"$out" && ok "the render is made and the launch line is the local runtime's" || no "object-form apply: $out"
+out=$($DA packs check --target claude-code gamma 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "check passes for it" || no "object-form check (rc=$rc): $out"
+jq '.models.provider = {cloud: "claude-platform"}' "$T/c/projects/gamma.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/gamma.json"
+out=$($DA packs check --target claude-code gamma 2>&1); rc=$?
+[ "$rc" = 2 ] && [ "$out" = "qargi: project gamma has no local provider: set one with qargi project set gamma models.provider.local NAME" ] && ok "an object that names only a cloud runtime has no local provider: exit 2 and the fix" || no "cloud-only object (rc=$rc): $out"
 exit $fail

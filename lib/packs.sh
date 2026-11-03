@@ -71,8 +71,8 @@ COMPATPY=$(dirname "$(readlink -f "$0")")/packs_compat.py
 
 # The provider of a project serves a verb only when its descriptor says so (lib/provider.py layout, require-skills): a null layout
 # field or an unverified skills capability ends the verb here with exit 3 and "provider NAME has no FACILITY: WOULD".
-prov_of() { # project: sets PROV (the project's models.provider; there is no default, none is exit 2) and RDIR (<state>/PROVIDER, where its renders live)
-  PROV=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF") || exit $?; RDIR=$DA_STATE/$PROV
+prov_of() { # project: sets PROV (the runtime of the project's local surface, where a session loads the render; there is no default, none is exit 2) and RDIR (<state>/PROVIDER, where its renders live)
+  PROV=$(project_provider "$1" local) || exit $?; RDIR=$DA_STATE/$PROV
 }
 prov_need() { # project would field...: prov_of, then the refusals above
   local would=$2 f; prov_of "$1"; shift 2
@@ -299,7 +299,7 @@ cc_lock() { # project: exclusive lock for plan+swap on PROVIDER/.PROJECT.lock; t
 # only renderer is the Claude Code one (packs_claude.py, which writes under <state>/claude/PROJECT and so serves the claude provider).
 rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of the project's provider (or a description of it when that is not known)
   local rt='' pv
-  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
+  if [ -n "${1:-}" ] && pv=$(python3 -I "$PROVPY" of "$1" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null); then rt=$(python3 -I "$PROVPY" layout "$pv" render_target 2>/dev/null </dev/null) || rt=''; fi
   echo "--target is ${rt:-the render target of the provider of the project} (or managed-agents / none for a cloud instance); check needs --target ${rt:-that target}"
 }
 rt_main() { # verb: apply|check with --target
@@ -310,7 +310,7 @@ rt_main() { # verb: apply|check with --target
   rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
   [ "$TARGET" = "$rt" ] || die "--target is $rt for provider $PROV (or managed-agents / none for a cloud instance); check needs --target $rt"
   case $rt:$PROV in
-    claude-code:claude) cc_main "$1";;
+    claude-code:claude|claude-code:claude-code) cc_main "$1";;
     *) echo "qargi: provider $PROV has no packs renderer for target $rt: render the project's packs for a local session" >&2; exit 3;;
   esac
 }
@@ -555,7 +555,7 @@ if [ "$KIND" = packs ]; then
         seed_one "$n" "$hs"; echo "seeded skill $n (content $hs)"
       done
       for prj in $(printf '%s\n' $reached | sort -u); do
-        rt=$(python3 -I "$PROVPY" layout "$(python3 -I "$PROVPY" of "$prj" --conf "$DA_CONF" 2>/dev/null)" render_target 2>/dev/null) && echo "next: qargi packs apply --target $rt $prj"
+        rt=$(python3 -I "$PROVPY" layout "$(python3 -I "$PROVPY" of "$prj" --conf "$DA_CONF" --surface local 2>/dev/null)" render_target 2>/dev/null) && echo "next: qargi packs apply --target $rt $prj"
         [ ! -f "$REG" ] || jq -r --arg p "$prj" 'to_entries[] | select(.value.location=="cloud" and (.key | startswith($p + "-"))) | .key' "$REG" \
           | while read -r inst; do echo "next: qargi packs apply $inst"; done
       done
