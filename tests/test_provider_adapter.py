@@ -418,39 +418,39 @@ class AgentAdd(Tree):
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
             self.assertEqual(plain(f.read()), plain(sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write")))
-        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review")
+        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review", "--user")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.env["HOME"], ".claude", "agents", "judge.md")) as f:
             self.assertEqual(plain(f.read()), plain(sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only")))
 
     def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--user")[0], 0)
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         with open(conf) as f:
             m = json.load(f)
         m["forge"]["model"] = None
         with open(conf, "w") as f:
             json.dump(m, f)
-        rc, out = self.qargi("agent", "refresh", "forge")
+        rc, out = self.qargi("agent", "refresh", "forge", "--user")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.env["HOME"], ".claude", "agents", "forge.md")) as f:
             self.assertIn("\nmodel: sonnet\n", f.read())
 
     def test_the_reserved_names_come_from_the_descriptor(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "plan")[0], 1)
+        self.assertEqual(self.qargi("agent", "add", "plan", "--user")[0], 1)
         self.descriptor(lambda d: d["local"].update(reserved_names=["plan", "mine"]))
-        rc, out = self.qargi("agent", "add", "mine")
+        rc, out = self.qargi("agent", "add", "mine", "--user")
         self.assertNotEqual(rc, 0)
         self.assertIn("built-in", out)
-        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build")
+        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build", "--user")
         self.assertEqual(rc, 0, out)
 
     def test_a_pinned_model_is_one_that_matches_the_model_pattern(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5")[0], 0)
-        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5", "--user")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus", "--user")[0], 0)
         rc, out = self.qargi("agent", "models", "--json")
         self.assertEqual(rc, 0, out)
         pinned = {m["name"]: m["pinned"] for m in json.loads(out)["members"]}
