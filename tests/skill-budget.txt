@@ -1,7 +1,7 @@
 # Word ceilings of the texts a member or lead loads (see tests/test_skill_budget.sh). PATH MAX_WORDS, sorted.
 # Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
-agents/member.body.md 178
-agents/member.md 243
+agents/member.body.md 118
+agents/member.md 183
 contract/cloud-run.md 71
 contract/contract.md 678
 contract/output-format.md 276
@@ -10,10 +10,10 @@ packs/skills/keep-a-changelog/SKILL.md 274
 packs/skills/shellcheck-gate/SKILL.md 335
 provision/templates/base-system.md 89
 provision/templates/cloud-preamble.md 183
-roles/build/ROLE.md 227
-roles/review/ROLE.md 293
-roles/test/ROLE.md 264
-roles/write/ROLE.md 314
+roles/build/ROLE.md 144
+roles/review/ROLE.md 170
+roles/test/ROLE.md 169
+roles/write/ROLE.md 167
 skills/qargi-flow/SKILL.md 1789
 skills/qargi-instances/SKILL.md 1020
 skills/qargi-memory/SKILL.md 1493
