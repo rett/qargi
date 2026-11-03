@@ -7,15 +7,13 @@ scripts (DA_CONF, DA_STATE); keep the two in step.
   root            QARGI_HOME, else <tool root>/.qargi in a dev run (below), else ~/.qargi
 
 QARGI_CONF and QARGI_STATE win (tests use them); QARGI_HOME replaces the root. XDG_CONFIG_HOME and XDG_STATE_HOME are
-not used for qargi's own data (the ant CLI keeps its login under the former). They only help to find the earlier
-layout, ${XDG_CONFIG_HOME:-~/.config}/qargi and ${XDG_STATE_HOME:-~/.local/state}/qargi, which `qargi migrate home`
-copies from.
+not used for qargi's own data (the ant CLI keeps its login under the former).
 
 Installed and dev runs: `install.sh --user` records the tool root it installed in <live config>/install.json. A checkout
 whose real path differs from that record, run without QARGI_HOME, QARGI_CONF or QARGI_STATE, is a dev run: it keeps its
 data in <tool root>/.qargi (git-ignored), so a branch checkout never touches live data. With no record, or the same
 tool root, the run is the installed one and uses ~/.qargi. The "live" locations (live_root, live_conf) are the ones an
-installed run uses; the record is read from there, and `migrate home` uses them too.
+installed run uses; the record is read from there.
 Importing this module never creates anything.
 
   paths.py banner    in a dev run print the banner to stderr, else nothing; exit 0 (bin/qargi runs it before every command
@@ -69,14 +67,6 @@ def conf():
 
 def state():
     return os.environ.get("QARGI_STATE") or os.path.join(root(), "state")
-
-
-def legacy_conf():
-    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"), "qargi")
-
-
-def legacy_state():
-    return os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"), "qargi")
 
 
 def banner():
