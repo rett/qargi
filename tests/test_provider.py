@@ -1921,5 +1921,52 @@ class SealedPacks(V2Tree):
         P.record_verification("libcli", {}, state=self.state)                      # nothing to remove is not an error
 
 
+
+class Review(unittest.TestCase):
+    """lib/conformance/review.py on its own."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="review.")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        from conformance import review as R
+        self.R = R
+
+    def tree(self, files):
+        d = os.path.join(self.tmp, "t%d" % len(os.listdir(self.tmp)))
+        os.makedirs(d)
+        for rel, data in files.items():
+            p = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "wb") as f:
+                f.write(data if isinstance(data, bytes) else data.encode())
+        return d
+
+    def test_stage_copies_regular_files_keeps_only_the_executable_bit_and_leaves_git_out(self):
+        src = self.tree({"a.txt": "x", ".git/config": "y", "sub/run": "#!/bin/sh\n"})
+        os.chmod(os.path.join(src, "sub", "run"), 0o755)
+        os.chmod(os.path.join(src, "a.txt"), 0o666)
+        os.symlink("a.txt", os.path.join(src, "ln"))
+        dst = os.path.join(self.tmp, "staged")
+        bad = self.R.stage(src, dst)
+        self.assertEqual(bad, ["ln is a symbolic link, which a pack may not hold"])
+        self.assertFalse(os.path.exists(os.path.join(dst, ".git")))
+        self.assertFalse(os.path.exists(os.path.join(dst, "ln")))
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(dst, "a.txt")).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(dst, "sub", "run")).st_mode), 0o700)
+
+    def test_the_executables_of_a_definition_count_without_a_mode_or_shebang(self):
+        d = self.tree({"definition.json": "{}", "r/render": "print(1)\n", "plain.txt": "text\n"})
+        rv = self.R.scan(d, {"renderers": {"agent": {"engine": "command", "command": ["r/render"]}}})
+        self.assertEqual([e["path"] for e in rv["executables"]], ["r/render"])
+        self.assertEqual(rv["executables"][0]["why"], "the agent renderer")
+        self.assertTrue(any("no executable mode" in w for w in rv["warn"]))
+
+    def test_a_named_path_outside_the_pack_is_a_failure(self):
+        d = self.tree({"definition.json": "{}"})
+        rv = self.R.scan(d, {"adapter": "../evil"})
+        self.assertTrue(any("is not a path inside the pack" in m for m in rv["fail"]))
+
+
+
 if __name__ == "__main__":
     unittest.main()
