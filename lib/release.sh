@@ -11,8 +11,9 @@
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
-#   release.sh status VERSION [--hotfix]
-#   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts)
+#   release.sh status VERSION [--hotfix]    for an existing tag also warns: no GitHub release for it (gh release view, through
+#                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it
+#   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push
@@ -43,6 +44,38 @@ PY
 ) || exit 1
 if [ -n "$HOTFIX" ]; then BR=${HOT_PAT//\{version\}/$VER} BASE=master KIND=hotfix; else BR=${REL_PAT//\{version\}/$VER} BASE=develop KIND=release; fi
 RELPREFIX=${REL_PAT%%\{version\}*}
+GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
+repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
+# gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
+gh_release_state() {
+  local out rc=0
+  GHWHY=''
+  command -v "$GH" >/dev/null 2>&1 || { GHS=nogh; return 0; }
+  out=$("$GH" -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
+  if [ "$rc" = 0 ]; then GHS=found
+  elif grep -qi 'auth login\|not logged in\|authentication' <<<"$out"; then GHS=noauth
+  elif grep -qi 'release not found' <<<"$out"; then GHS=missing
+  else GHS=unchecked; GHWHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); fi
+  return 0
+}
+# tag_checks: for a tag VER that exists, warnings (never a failure) about what stops it from being a published release:
+# a tag workflow starts only if the tagged commit holds it, and a release must exist on GitHub for the tag
+tag_checks() {
+  local tc on
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  on=$BR; branch_exists "$BR" || on=$BASE
+  if g cat-file -e "$on:.github/workflows/release.yml" 2>/dev/null && ! g cat-file -e "$tc:.github/workflows/release.yml" 2>/dev/null; then
+    echo "warning: tag $VER (${tc:0:7}) lacks .github/workflows/release.yml, which $on has: pushing a tag starts the release workflow only when the tagged commit contains it. Publish the release with: qargi release publish $VER"
+  fi
+  g remote get-url origin >/dev/null 2>&1 || return 0   # a tag nobody could have pushed has no release to look for
+  gh_release_state "$VER"
+  case $GHS in
+    missing) echo "warning: tag $VER has no GitHub release. Publish it with: qargi release publish $VER";;
+    nogh) echo "note: gh is not installed, so whether GitHub has a release for tag $VER was not checked";;
+    noauth) echo "note: gh is not authenticated, so whether GitHub has a release for tag $VER was not checked (gh auth login)";;
+    unchecked) echo "note: could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer})";;
+  esac
+}
 open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPREFIX}*"; }   # the open release branches
 
 case $verb in
@@ -123,13 +156,15 @@ PY
     if [ -z "$h" ]; then
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: $(v=$(verified "$BASE"); if [ -z "$v" ]; then echo "not run"; elif [ "${v%% *}" = "$(sha_of "$BASE")" ]; then echo "${v##* } at this head"; else echo "${v##* } at an older head"; fi)"
       remote_report "$BASE"
+      tag_checks
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
     remote_report "$BR"; remote_report "$BASE"
-    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true;;
+    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
+    tag_checks;;
   verify)
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     on=$BR; branch_exists "$BR" || on=$BASE
@@ -138,7 +173,9 @@ PY
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     if run_suite; then res=pass; else res=fail; fi
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$on")"
-    echo "full suite: $res at $(g rev-parse --short "$on")"; [ "$res" = pass ];;
+    echo "full suite: $res at $(g rev-parse --short "$on")"
+    tag_checks
+    [ "$res" = pass ];;
   push)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
