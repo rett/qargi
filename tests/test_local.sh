@@ -74,6 +74,9 @@ blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out")
 [ "$(sed -n 's/^RUN_DIR=//p' <<<"$blk")" = "$P1" ] && [ "$(sed -n 's/^CLONE=//p' <<<"$blk")" = "$P1/clone" ] && [ "$(sed -n 's/^OUT=//p' <<<"$blk")" = "$P1/out" ] \
   && [ "$(sed -n 's/^GIT=//p' <<<"$blk")" = "$P1/git" ] && [ "$(sed -n 's/^TMP=//p' <<<"$blk")" = "$(cat "$P1/tmpdir")" ] \
   && [ "$(sed -n 's/^BASE_SHA=//p' <<<"$blk")" = "$(git -C "$T/r3" rev-parse develop)" ] && ok "the block holds RUN_DIR, CLONE, OUT, TMP, GIT and BASE_SHA" || no "block: $blk"
+CTD=$(sed -n 's/^CONTRACT=//p' <<<"$blk")
+[ -n "$CTD" ] && [ "$CTD" = "$(pwd -P)/contract" ] && [ -f "$CTD/contract.md" ] && [ -f "$CTD/output-format.md" ] && [ "$(grep -c '^CONTRACT=' <<<"$blk")" = 1 ] \
+  && ok "the block names the contract directory (CONTRACT=, holding contract.md and output-format.md)" || no "CONTRACT: '$CTD' in $blk"
 $LC -C "$T/r3" commit -q --allow-empty -m lead-move && git -C "$T/r3" branch agent/other
 [ "$(rc "$P1")" = 2 ] && ok "no passing verify yet: the strict comparison applies (exit 2)" || no "strict: a moved branch was accepted"
 out=$(mk p2); P2=$(runof <<<"$out")
@@ -158,7 +161,7 @@ out=$(mk4 w2); rcw=$?
 grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && grep -q 'SKILL.md' "$T/err" && grep -q 'fix: qargi packs apply --target claude-code alpha' "$T/err" && [ $rcw = 0 ] \
   && ok "a drifted render: a WARNING with the findings and the fix, and prepare still succeeds" || no "drift: $rcw $(cat "$T/err")"
 blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out"); W2=$(runof <<<"$out")
-[ "$(sed -n '1p' <<<"$blk")" = "RUN_DIR=$W2" ] && [ "$(wc -l <<<"$blk")" = 6 ] && ! grep -q WARNING <<<"$out" && ok "the paths block is intact and the warning is not in stdout" || no "block: $blk"
+[ "$(sed -n '1p' <<<"$blk")" = "RUN_DIR=$W2" ] && [ "$(wc -l <<<"$blk")" = 7 ] && ! grep -q WARNING <<<"$out" && ok "the paths block is intact and the warning is not in stdout" || no "block: $blk"
 rm -rf "$T/s/render/alpha/claude-code"; out=$(mk4 w3); [ ! -s "$T/err" ] && ok "no render again: no warning" || no "removed render: $(cat "$T/err")"
 # a project with no provider: the check cannot run (there is no default provider), and the note says so in one line, not "out of date"
 $Q packs apply --target claude-code alpha --plan "$($Q packs apply --target claude-code alpha | tokof)" --approved test >/dev/null
