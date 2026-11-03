@@ -322,6 +322,23 @@ EOF
   python3 -I -c "$src" "$1" "${2:-}" "$(dirname "$(readlink -f "$0")")"
 }
 
+# the keys no verb here stores: models.extensions and models.accept_no_barrier change what an agent may run on or accept a surface with no
+# read-only barrier, so they take a plan token and an approval (qargi provider enable|disable|accept, which store through lib/gated_answers.py).
+# Every route that writes a whole answers file (init, attach, new) checks them here: the keys of the file that differ from the stored ones
+# (none stored: the keys the file has; an empty list or object counts as absent), one per line
+gated_keys_changed() { # NEWFILE [STOREDFILE]
+  [ -f "${2:-}" ] || set -- "$1" /dev/null
+  jq -rn --slurpfile n "$1" --slurpfile s "$2" '
+    def norm: if . == null or . == [] or . == {} then null else . end;
+    def keys_of: if type == "object" and (.models | type) == "object" then .models else {} end;
+    ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
+    | ["extensions", "accept_no_barrier"][] | . as $k | select(($a[$k] | norm) != ($b[$k] | norm)) | "models." + $k'
+}
+gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
+  local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
+  [ -z "$bad" ] || { echo "qargi: the answers would add or change $bad, which no project verb stores: they change what an agent may run on or accept a surface with no read-only barrier, so they take a plan token and an approval (qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier); leave them as they are stored, or out of the file; nothing stored" >&2; return 1; }
+}
+
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
@@ -345,6 +362,7 @@ case $verb in
     [ "$(jq -r .project "$ans")" = "$n" ] || die "the answers are for project '$(jq -r .project "$ans")', not '$n'"
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
     [ ! -e "$PROJ_DIR/$n.json" ] || [ -n "$force" ] || die "project $n is already initialised (--force to replace)"
+    gated_refuse "$ans" "$PROJ_DIR/$n.json" || exit 1
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     no_provider "$PROJ_DIR/$n.json" || true
@@ -409,6 +427,7 @@ PY
       det=$(python3 -I "$lib/attach.py" detect "$dir" --name "$n" --methodology "$meth" "${PROVARGS[@]}") || exit 1
       f=$(mktemp); jq --arg u "$url" --arg d "$dep" '.answers | .repo.url = $u | if $d == "" then . else .deployment = $d end' <<<"$det" > "$f"
       out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the project was created but its answers are not valid; nothing stored (qargi project attach $dir --url URL)"; }
+      gated_refuse "$f" || { rm -f "$f"; exit 1; }
       mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"; mv "$f" "$PROJ_DIR/$n.json"; chmod 600 "$PROJ_DIR/$n.json"
       echo "project $n stored in $PROJ_DIR/$n.json"
       no_provider "$PROJ_DIR/$n.json" || true
@@ -510,6 +529,7 @@ PY
     need_plan "$tok"
     f=$(mktemp); jq . <<<"$ans" > "$f"
     out=$(validate "$f") || { echo "$out" >&2; rm -f "$f"; die "the answers are not valid; nothing stored"; }
+    gated_refuse "$f" "$sf" || { rm -f "$f"; exit 1; }
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
     mv "$f" "$sf"; chmod 600 "$sf"
     audit_log "project:attach" "$n"
