@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "qargi-provider-definition-2",
   "title": "A qargi provider definition or model catalog, schema 2",
-  "description": "A definition describes ONE runtime on ONE surface (local: a command-line runtime; cloud: a hosted one). A catalog describes the models of a family, shared by every runtime of that family. Shipped ones live in lib/providers/NAME.json and lib/providers/catalogs/FAMILY.json; the user's live in the pack library, QARGI_CONF/packs/providers/NAME/definition.json. lib/provider.py validates a document against the node of $defs named by its kind (provider or catalog) with the same stdlib subset as schema 1 (type, enum, const, pattern, required, properties, additionalProperties false, items, minItems, uniqueItems, $ref and the format date) and then checks what a schema cannot say: the name equals the file or directory name, a catalog reference names a catalog, every model matches the pattern, every tier resolves, the paths of the resources stay inside the checkout or the home. Sections whose consumers are built later (renderers, dispatch, barrier) are checked for their discriminator only; their other keys are not yet constrained. Schema 1 files still load: lib/provider.py upgrades them in memory.",
-  "kinds": {"provider": "#/$defs/provider", "catalog": "#/$defs/catalog"},
+  "description": "A definition describes ONE runtime on ONE surface (local: a command-line runtime; cloud: a hosted one). A catalog describes the models of a family, shared by every runtime of that family. An extension (a library pack only) adds capabilities and what backs them to ONE runtime on ONE surface: it never overrides anything the runtime or another enabled extension has, and what it provides counts only after `qargi provider check` of the extension (hash-bound to the extension and its runtime). Shipped ones live in lib/providers/NAME.json and lib/providers/catalogs/FAMILY.json; the user's live in the pack library, QARGI_CONF/packs/providers/NAME/definition.json. lib/provider.py validates a document against the node of $defs named by its kind (provider, catalog or extension) with the same stdlib subset as schema 1 (type, enum, const, pattern, required, properties, additionalProperties false, items, minItems, uniqueItems, $ref and the format date) and then checks what a schema cannot say: the name equals the file or directory name, a catalog reference names a catalog, every model matches the pattern, every tier resolves, the paths of the resources stay inside the checkout or the home. Sections whose consumers are built later (renderers, dispatch, barrier) are checked for their discriminator only; their other keys are not yet constrained. Schema 1 files still load: lib/provider.py upgrades them in memory.",
+  "kinds": {"provider": "#/$defs/provider", "catalog": "#/$defs/catalog", "extension": "#/$defs/extension"},
   "$defs": {
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"},
     "date": {"type": ["string", "null"], "format": "date", "description": "YYYY-MM-DD, or null when not verified"},
@@ -85,6 +85,50 @@
         },
         "adapter": {"type": ["string", "null"], "description": "an executable relative to the definition's directory (no .. and no absolute path); called as adapter VERB with a JSON request on stdin"},
         "adapter_verbs": {"type": "array", "items": {"type": "string"}, "description": "the verbs the adapter serves; absent means every verb of the adapter contract"}
+      }
+    },
+    "extension": {
+      "description": "What a project adds to a runtime, enabled per project (models.extensions of its answers). extends is a runtime name or a family name; the extension applies on ONE surface: surface, or the only surface of the runtime it names (an extension that names a family says its surface). Enabled extensions are merged onto the runtime in name order; a key that the runtime or another enabled extension already has is a conflict and the composition is refused, nothing is ever overridden. provides must equal the capability names of adds.capabilities. requires must hold on the runtime alone, or the extension is ignored with its reason shown.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "kind", "extension", "extends", "provides", "adds"],
+      "properties": {
+        "schema": {"const": 2},
+        "kind": {"const": "extension"},
+        "extension": {"$ref": "#/$defs/name"},
+        "description": {"type": "string"},
+        "extends": {"$ref": "#/$defs/name"},
+        "surface": {"enum": ["local", "cloud"]},
+        "provides": {"type": "array", "items": {"type": "string"}},
+        "requires": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {"type": "array", "items": {"type": "string"}, "description": "capabilities the runtime must have verified (yes or partial) without this extension"},
+            "resources": {"type": "array", "items": {"enum": ["skills", "agents", "instructions", "mcp", "settings", "memory"]}, "description": "resources the runtime must have"},
+            "qargi": {"type": "string", "pattern": "^>=[0-9]+(\\.[0-9]+){0,2}$", "description": "the least qargi version, like >=0.2.0"}
+          }
+        },
+        "adds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {"$ref": "#/$defs/provider/properties/capabilities"},
+            "resources": {"$ref": "#/$defs/provider/properties/resources"},
+            "renderers": {"type": "object", "description": "renderer name to renderer; a name the runtime already has is a conflict"},
+            "dispatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {"variants": {"type": "object", "description": "variant name to a dispatch variant; the runtime must have a dispatch"}}
+            },
+            "barrier": {
+              "type": "object",
+              "properties": {"kind": {"enum": ["hook", "sandbox-args", "adapter", "none"]}},
+              "description": "only for a runtime whose barrier is absent or none"
+            },
+            "adapter_verbs": {"type": "object", "description": "adapter verb to an executable inside the pack; a verb the runtime's adapter serves, or another extension adds, is a conflict"}
+          }
+        }
       }
     },
     "catalog": {

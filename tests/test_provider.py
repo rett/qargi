@@ -2802,6 +2802,39 @@ class RemoveEnable(LibraryBase):
         self.assertIn("FAIL: provides must equal the capability names of adds.capabilities", out)
 
 
+class ExtensionSchema(unittest.TestCase):
+    def good(self):
+        return {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "surface": "local", "provides": ["resume", "skills"],
+                "requires": {"capabilities": ["mcp"], "resources": ["agents"], "qargi": ">=0.2.0"},
+                "adds": {"capabilities": {"resume": cell("yes"), "skills": cell("yes")}, "resources": copy.deepcopy(SKILLS_RES), "renderers": {"agent": {"engine": "map"}},
+                         "dispatch": {"variants": {"fast": {"argv": ["x"]}}}, "barrier": {"kind": "hook"}, "adapter_verbs": {"resume": "verbs/resume"}}}
+
+    def test_the_whole_shape_is_valid_and_schema_2_json_has_the_node(self):
+        self.assertEqual(P.validate2(self.good(), "addon"), [])
+        sch = P.schema2()
+        self.assertIn("extension", sch["kinds"])
+        self.assertEqual(sorted(sch["$defs"]["extension"]["properties"]["adds"]["properties"]), ["adapter_verbs", "barrier", "capabilities", "dispatch", "renderers", "resources"])
+
+    def test_the_new_parts_are_checked(self):
+        for mutate, needle in ((lambda d: d.update(surface="moon"), "surface: 'moon' is not one of local, cloud"),
+                               (lambda d: d["adds"].update(color="red"), "adds.color: additional property is not allowed"),
+                               (lambda d: d["requires"].update(qargi="new"), "requires.qargi: 'new' does not match"),
+                               (lambda d: d["requires"].update(resources=["nosuch"]), "requires.resources[0]: 'nosuch' is not one of"),
+                               (lambda d: d["requires"].update(capabilities=["nosuch"]), "requires.capabilities: unknown capability 'nosuch'"),
+                               (lambda d: d["requires"].update(extra=1), "requires.extra: additional property is not allowed"),
+                               (lambda d: d["adds"]["resources"]["skills"].update(project_dir="../x"), "adds.resources.skills.project_dir"),
+                               (lambda d: d["adds"]["barrier"].update(kind="magic"), "adds.barrier.kind: 'magic' is not one of"),
+                               (lambda d: d["adds"]["capabilities"].update(nosuch=cell("yes")), "adds.capabilities.nosuch")):
+            d = self.good()
+            mutate(d)
+            self.assertTrue(any(needle in m for lvl, m in P.validate2(d, "addon") if lvl == "fail"), (needle, P.validate2(d, "addon")))
+
+    def test_an_old_shape_still_validates(self):
+        old = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "provides": ["resume"],
+               "adds": {"capabilities": {"resume": cell("yes")}, "adapter_verbs": {"resume": "verbs/resume"}}}
+        self.assertEqual(P.validate2(old, "addon"), [])
+
+
 class Migrate(LibraryBase):
     def test_the_write_form_stays_not_built_and_says_why(self):
         rc, out, err = self.q("migrate", "claude")
