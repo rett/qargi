@@ -16,7 +16,7 @@ Load when writing or editing a runtime definition.
   `entry-symlinks`, `copy` or `none`) and, for skills, how the runtime switches one off
   (`exclusion`; qargi only reads that setting). A resource left out is unsupported: the verb that
   needs it says `provider NAME has no FACILITY`.
-- **dispatch**: `mode` is `in-session` (the lead's session spawns the member with the Agent tool),
+- **dispatch**: `mode` is `in-session` (the lead's session spawns the member),
   `command` (a headless CLI, run by `qargi local run`) or `adapter`. A command is an `argv` ARRAY,
   never a shell string, with `{model}`, `{effort_native}`, `{clone}` and the like, `{"if": ...}`
   and `{"class": "read-only", ...}` groups, `class_argv`, `prompt` (`via` stdin, file or arg),

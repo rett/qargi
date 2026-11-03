@@ -5,7 +5,7 @@ Load when you link a work tree to the project's skills, agents and memory, or st
 **Link a work tree.** Run `qargi project link NAME [--resource skills,agents,memory]` inside a
 checkout or worktree (with no `--resource`, every one the runtime links and that exists). It
 prints one plan and token for all of them (`qargi help approvals`); applied, the project's skills, member files
-and memory (for Claude Code, the project's memory directory becomes a link into
+and memory (the runtime's memory directory becomes a link into
 `~/.qargi/memory/projects/NAME`) load from `~/.qargi` there, each placed the way the runtime
 says: a directory link, one link per entry, or a copy. A real directory in the way moves to
 `NAME.qargi-backup`, never deleted; `qargi project unlink NAME` undoes it. A worktree has its own

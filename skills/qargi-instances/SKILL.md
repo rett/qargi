@@ -1,6 +1,6 @@
 ---
 name: qargi-instances
-description: The workers a project dispatches to. Local members - add, refresh, list (STALE, DRIFT), profiles and tiers, and `qargi agent for ROLE [--profile P]` to pick member, model and effort. Cloud instances (Managed Agents deployments) - register, list, inspect, budget, refresh-prompt, normalize, remove. Load it to manage members, models, effort, dispatch or cloud instances.
+description: The workers a project dispatches to. Local members - add, refresh, list (STALE, DRIFT), profiles and tiers, and `qargi agent for ROLE [--profile P]` to pick member, model and effort. Cloud instances (cloud agents) - register, list, inspect, budget, refresh-prompt, normalize, remove. Load it to manage members, models, effort, dispatch or cloud instances.
 argument-hint: agent add|list|models|refresh|for ... | instances init|list|show|remove ...
 ---
 

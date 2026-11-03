@@ -1,14 +1,14 @@
 ---
 name: qargi-providers
-description: Add, review, verify and enable the runtimes qargi dispatches to (runtime, catalog and extension packs in the provider library), including a command-line or local model runtime defined with data only and no code. Plan, token and approval for every change, approval of each executable by name, what verification and attest mean, and which runtime a project uses on its local and cloud surface. For the lead or a Claude Code session, never for a member.
+description: Add, review, verify and enable the runtimes qargi dispatches to (runtime, catalog and extension packs in the provider library), including a command-line or local model runtime defined with data only and no code. Plan, token and approval for every change, approval of each executable by name, what verification and attest mean, and which runtime a project uses on its local and cloud surface. For the lead session, never for a member.
 argument-hint: provider list|show|check|new|import|seal|remove|enable|disable|attest|accept ... | project set P models.provider.local|cloud NAME
 ---
 
 # /qargi-providers
 
 A **runtime** is one way of running agents on one surface: `local` (on this machine) or
-`cloud` (hosted). Claude ships as two, `claude-code` (local) and `claude-platform` (cloud),
-which share the model catalog of the family `claude`. A runtime is **data**, a JSON
+`cloud` (hosted). Two ship: `claude-code` (local) and `claude-platform` (cloud),
+sharing the model catalog of the family `claude`. A runtime is **data**, a JSON
 definition, not code. Three kinds of pack share the provider library
 (`~/.qargi/config/packs/providers/NAME/`, never in a repository):
 
