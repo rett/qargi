@@ -266,5 +266,56 @@ $DA agent for build --profile odd --project alpha --json 2>/dev/null | jq -e '.m
 $DA agent for build --profile junk --project alpha >/dev/null 2>&1 && no "a malformed entry was usable" || ok "a malformed entry is ignored, not a crash"
 jq '.profiles = 5' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/alpha.json"
 [ "$($DA agent for build --project alpha)" = "worker haiku low build" ] && ok "profiles of the wrong type are ignored" || no "profiles=5"
+
+# --- extensions the project enabled: the decisions about the members and the member renderer read the runtime as composed with them
+for m in $($DA agent list | cut -d' ' -f1); do $DA agent remove "$m" >/dev/null 2>&1; done
+imp() { local t; t=$($DA provider import "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA provider import "$1" --plan "$t" --approved test >/dev/null 2>&1; }
+# locov: a runtime that cannot set the model per dispatch; ovl, an extension, provides the capability and counts once it is verified for locov
+LIBV=$T/c/packs/providers/locov; mkdir -p "$LIBV"
+jq '.provider = "locov" | .models.tiers = {fast: {model: "fake-s", alias: null, verified_on: null, source: "test"}, "*": {model: "fake-m", alias: null, verified_on: null, source: "test"}}' "$LIB/definition.json" > "$LIBV/definition.json"
+OVL=$T/ext/ovl; mkdir -p "$OVL"
+jq -n '{schema:2,kind:"extension",extension:"ovl",description:"per-dispatch model override of locov",extends:"locov",provides:["per_dispatch_model_override"],
+  adds:{capabilities:{per_dispatch_model_override:{value:"yes",note:"n"}}}}' > "$OVL/definition.json"
+imp "$OVL" || no "could not import ovl"
+git init -q "$T/repo-v"
+jq -n --arg p "$T/repo-v" '{schema:1,project:"locp",repo:{url:"https://github.com/example/locp",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},
+  profiles:{quick:{base:"worker",tier:"fast"}},models:{provider:"locov",extensions:["ovl"]},memory:{},budget_cents:500}' > "$T/c/projects/locp.json"
+$DA agent add mem1 --abilities build --project locp >/dev/null 2>&1 || no "add mem1: $($DA agent add mem1 --abilities build --project locp 2>&1)"
+e=$($DA agent for build --profile quick --project locp 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q "per_dispatch_model_override is not supported on local" <<<"$e"; } && ok "extension enabled but unverified: the member keeps its own model; another profile's model is refused (exit 2)" || no "ext unverified: rc=$rc $e"
+python3 -I - <<'PY'
+import sys; sys.path.insert(0, "lib")
+import provider as P
+P.record_verification("ovl", {"per_dispatch_model_override": {"hash": P.extension_hash("ovl", "locov", "local"), "by": "attest", "at": "2026-11-02", "note": "test"}})
+PY
+e=$($DA agent for build --profile quick --project locp 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "${e%% *}" = mem1 ]; } && ok "extension verified: the profile's model is dispatched to the member (the project's capability, not the runtime's alone)" || no "ext verified: rc=$rc $e"
+jq 'del(.models.extensions)' "$T/c/projects/locp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/locp.json"
+$DA agent for build --profile quick --project locp >/dev/null 2>&1; [ $? = 2 ] && ok "and a project that did not enable it is refused again" || no "ext disabled"
+$DA agent remove mem1 >/dev/null 2>&1
+# rnl has no member renderer; rnext gives it one. The members of a project that enabled it are rendered from the composed definition
+LIBR=$T/c/packs/providers/rnl; mkdir -p "$LIBR"
+jq '.provider = "rnl" | del(.renderers)' "$LIB/definition.json" > "$LIBR/definition.json"
+RNX=$T/ext/rnext; mkdir -p "$RNX"
+jq -n --slurpfile d "$LIB/definition.json" '{schema:2,kind:"extension",extension:"rnext",description:"a member renderer for rnl",extends:"rnl",provides:["agent_definitions"],
+  adds:{capabilities:{agent_definitions:{value:"yes",note:"n"}},renderers:{agent:$d[0].renderers.agent}}}' > "$RNX/definition.json"
+imp "$RNX" || no "could not import rnext"
+git init -q "$T/repo-r"
+jq -n --arg p "$T/repo-r" '{schema:1,project:"rnp",repo:{url:"https://github.com/example/rnp",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},
+  models:{provider:"rnl"},memory:{},budget_cents:500}' > "$T/c/projects/rnp.json"
+out=$($DA agent add rn1 --abilities build --project rnp 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "renderers.agent" <<<"$out"; } && ok "extension not enabled: a runtime with no member renderer cannot serve members" || no "rnl without extension: rc=$rc $out"
+jq '.models.extensions = ["rnext"]' "$T/c/projects/rnp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/rnp.json"
+out=$($DA agent add rn1 --abilities build --project rnp 2>&1); RF=$T/s/render/rnp/rnl.agents/rn1.toml; [ -f "$RF" ] || RF=$T/repo-r/.fake/agents/rn1.toml
+{ [ -f "$RF" ] && [ "$(toml "$RF" | jq -r .name)" = rn1 ]; } && ok "extension enabled: the member is rendered by the renderer the extension added" || no "rnl with extension: $out"
+$DA agent list | grep 'rn1 ' | grep -q '(' && no "rn1 flagged right after add: $($DA agent list | grep rn1)" || ok "and it is current"
+python3 -I - "$T/c/packs/providers/rnext" <<'PY'
+import json, os, sys
+p = os.path.join(sys.argv[1], "definition.json")
+d = json.load(open(p)); d["adds"]["renderers"]["agent"]["fields"].append({"from": "abilities", "to": "serves", "transform": [{"join": " "}]}); json.dump(d, open(p, "w"))
+PY
+$DA agent list | grep 'rn1 ' | grep -q 'STALE\|unsealed\|changed' && ok "a changed extension makes its member STALE" || no "extension changed: $($DA agent list | grep rn1)"
+jq 'del(.models.extensions)' "$T/c/projects/rnp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/rnp.json"
+$DA agent list | grep 'rn1 ' | grep -q 'STALE' && ok "and so does disabling it" || no "extension disabled: $($DA agent list | grep rn1)"
 rm -rf "$T"
 exit $fail
