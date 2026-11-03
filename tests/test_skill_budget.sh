@@ -16,8 +16,10 @@
 #     one of its verbs. Words that are placeholders (NAME, <x>, [x]), flags and quoted text end the example; `a|b` stands for
 #     both. A miss fails unless tests/skill-verbs-allowlist.txt lists it (`qargi X Y`, sorted); a stale entry fails too.
 #  4. Reference files. Every .md under skills/*/ other than SKILL.md is loaded on demand, so its first line must start with
-#     `Load when ` (the model decides from that line alone whether to read it), and the SKILL.md of its skill must name it
-#     (by its path inside the skill), or nothing would ever send a session there.
+#     `Load when ` (the model decides from that line alone whether to read it), and the SKILL.md of its skill must send a session
+#     there: its path inside the skill, as a markdown link or inside backticks, on a line that also says "load" (any case), or
+#     nothing would tell the session when to read it. A file under skills/ that is not .md is budgeted like the texts (it needs a
+#     line in tests/skill-budget.txt and must be text), so a script or a data file cannot be added unseen.
 #
 # Run: tests/test_skill_budget.sh          the check
 #      tests/test_skill_budget.sh --report  the same, and every text with its count, ceiling and slack (nothing is changed)
@@ -40,7 +42,7 @@ for f in "$BUDGET" "$DUPS" "$VERBS"; do
 done
 
 # the shipped texts
-mapfile -t TEXTS < <({ find skills packs/skills contract lib/providers -type f -name '*.md'; ls roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md; } 2>/dev/null | sort)
+mapfile -t TEXTS < <({ find skills -type f; find packs/skills contract lib/providers -type f -name '*.md'; ls roles/*/ROLE.md agents/member.md agents/member.body.md provision/templates/*.md; } 2>/dev/null | sort)
 [ "${#TEXTS[@]}" -gt 10 ] || no "found only ${#TEXTS[@]} texts: the lookup is broken"
 
 # 1. the budget
@@ -70,6 +72,9 @@ done
 # 4. the reference files of the skills
 nref=0 refbad=0
 while IFS= read -r f; do
+  if ! tr -d '\000' < "$f" | cmp -s - "$f"; then no "$f: a file under skills/ that is not .md must be text (it has a NUL byte)"; refbad=1; fi
+done < <(find skills -type f ! -name '*.md' | sort)
+while IFS= read -r f; do
   nref=$((nref + 1))
   rel=${f#skills/}; skill=${rel%%/*}; name=${rel#*/}
   first=$(head -n 1 "$f")
@@ -77,9 +82,10 @@ while IFS= read -r f; do
     'Load when '?*) ;;
     *) no "$f: the first line must start with 'Load when ' (it is: ${first:0:50})"; refbad=1;;
   esac
-  grep -qF -- "$name" "skills/$skill/SKILL.md" || { no "skills/$skill/SKILL.md does not name $name (name each reference file where it is needed)"; refbad=1; }
+  grep -i -- load "skills/$skill/SKILL.md" | grep -qF -e "\`$name\`" -e "]($name)" \
+    || { no "skills/$skill/SKILL.md does not send a session to $name (a line with 'load' that has \`$name\` in backticks or as a link target)"; refbad=1; }
 done < <(find skills -mindepth 2 -type f -name '*.md' ! -name SKILL.md | sort)
-[ "$refbad" != 0 ] || ok "all $nref reference files under skills/ start with 'Load when ' and are named in their SKILL.md"
+[ "$refbad" != 0 ] || ok "all $nref reference files under skills/ start with 'Load when ' and are loaded from their SKILL.md; no file under skills/ is binary"
 
 # 2 and 3, from the same texts
 python3 -I - "$DUPS" "$VERBS" "${TEXTS[@]}" <<'PY' || fail=1

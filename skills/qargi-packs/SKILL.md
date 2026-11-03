@@ -10,8 +10,7 @@ A **skill** is a directory with `SKILL.md`. A **tool** is a JSON file describing
 server with an explicit allowlist of its tools and a permission policy for each. Both live
 in one library under the config directory (never in a repository); a name is unique across
 skills and tools, so nothing can collide. Runtimes, model catalogs and extensions are packs of
-another kind (`/qargi-providers`). qargi ships seven skill packs (`packs/baseline.json`); see
-`seed.md` to store them.
+another kind (`/qargi-providers`). qargi ships seven skill packs (`packs/baseline.json`); load `seed.md` to store them.
 
 Only you, with the person present, change a pack: a member never does (`qargi help guard`; plan
 and token: `qargi help approvals`).

@@ -19,7 +19,7 @@ own clone, patches back, never push, no backlog.
 
 `/qargi-task "<task>" --done "<executable check>" [--role ROLE] [--instance NAME] [--base BRANCH] [--scope PATHS]`
 
-If the first argument is not a session verb (`send`, `start`, `status`, `watch`, `collect`, `stop`, `close`: cloud.md), it is a task: build the
+If the first argument is not a session verb (`send`, `start`, `status`, `watch`, `collect`, `stop`, `close`: load `cloud.md`), it is a task: build the
 task block (below) and dispatch it to the member that serves the task's role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build; take it from the
 user's words. Inside a feature, use `--base feature/NAME` and run `qargi marshal check NAME` first; `/qargi-flow` owns the rest.
 
@@ -51,10 +51,10 @@ A profile holds a repository's gates, rules and coordinator review steps, in `~/
    - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with the task block plus
      `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
      one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member `qargi agent list` shows `STALE` or `DRIFT` is out of date: tell the user, and `qargi agent refresh NAME` only with their go-ahead.
-   - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load local-run.md.
+   - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load `local-run.md`.
 3. When it reports, run `qargi local verify <RUN>` first: a change in the real repository's refs means stop and tell the user.
 4. Then `/qargi-verify` on `OUT`.
-5. Take-in (apply, merge, `qargi local clean`) is `/qargi-verify`'s one sequence.
+5. Take-in (apply, merge, `qargi local clean`) is `/qargi-verify`'s sequence.
 
 ## Parallel tasks
 
