@@ -131,7 +131,7 @@ COMMANDS = {
                                 "are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string.",
+                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
                         examples=["qargi project set acme roles.write.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
@@ -873,7 +873,7 @@ COMMANDS = {
                  "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
                  "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
                  "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
-                 "already is left out, and it stops at the first failure."),
+                 ),
         "scripts": ["migrate.py", "migrate_home.py"],
         "verbs": {
             "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
