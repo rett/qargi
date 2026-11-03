@@ -1840,6 +1840,20 @@ class SealedPacks(V2Tree):
             change()
             self.assertNotEqual(P.tree_hash(d), before)
 
+    def test_the_notes_of_a_pack_are_in_its_seal_and_in_the_hash_a_verification_is_bound_to(self):
+        doc = runtime("notep", notes={"spawn": "Start it."})
+        d = self.pack("notep", doc)
+        self.assertEqual(P.definition("notep", **self.kw())["notes"], {"spawn": "Start it."})
+        before = P.definition_hash("notep", **self.kw())
+        doc["notes"]["spawn"] = "Start it differently."                    # an edit of a note after the seal: the pack is not what was approved
+        with open(os.path.join(d, "definition.json"), "w") as f:
+            json.dump(doc, f)
+        self.assertEqual(self.sstate("notep"), "drift")
+        with self.assertRaises(P.Drift):
+            P.definition("notep", **self.kw())
+        self.pack("notep", doc)                                             # sealed again with the new note: a verification made before no longer matches
+        self.assertNotEqual(P.definition_hash("notep", **self.kw()), before)
+
     def test_a_sealed_pack_loads_an_unsealed_or_changed_one_is_drift_and_so_is_one_with_no_record(self):
         self.pack("sealedp")
         self.assertEqual(self.sstate("sealedp"), "sealed")
