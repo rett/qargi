@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-03T20:47:28Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-03T23:46:32Z",
- "finished_at": null,
+ "finished_at": "2026-11-03T23:48:45Z",
  "updated_by": "rett@arc",
- "rev": 10,
- "updated_at": "2026-11-03T23:46:32Z",
+ "rev": 11,
+ "updated_at": "2026-11-03T23:48:45Z",
  "feature": "skills-diet",
  "project": "qargi"
 }
