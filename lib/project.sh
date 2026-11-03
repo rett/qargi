@@ -92,14 +92,11 @@ bad = []
 Ds = []
 def _runtime(name, surface):
     try:
-        return provider.load(provider.resolve_runtime(name, surface))
+        return provider.summary(provider.resolve_runtime(name, surface), surface)
     except provider.ProviderError:
         return None
-if isinstance(pname, str) and pname.strip():
-    try:
-        Ds.append(provider.load(pname.strip()))
-    except provider.ProviderError:               # not a runtime: a family, which has a runtime on a surface
-        Ds.extend(d for d in (_runtime(pname.strip(), sf) for sf in provider.SURFACES) if d)
+if isinstance(pname, str) and pname.strip():       # a runtime or a family: the runtime each surface resolves it to
+    Ds.extend(d for d in (_runtime(pname.strip(), sf) for sf in provider.SURFACES) if d)
 elif isinstance(pname, dict):
     for sf, nm in pname.items():
         if sf not in provider.SURFACES:
@@ -109,7 +106,7 @@ elif isinstance(pname, dict):
         else:
             d = _runtime(nm.strip(), sf)
             if d: Ds.append(d)
-seen = set(); Ds = [d for d in Ds if not (d["provider"] in seen or seen.add(d["provider"]))]
+seen = set(); Ds = [d for d in Ds if not ((d["provider"], d["surface"]) in seen or seen.add((d["provider"], d["surface"])))]
 if Ds:
     _pats = [re.compile(d["model_pattern"]) for d in Ds]
     class _AnyOf:
