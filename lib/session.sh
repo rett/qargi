@@ -142,7 +142,7 @@ start_base() { # name: creates the session (or prints the request, with QARGI_DR
   [ "${#system}" -lt 100000 ] || die "the system prompt of the $BROLE role is ${#system} characters; a session takes fewer than 100000"
   sha=$(printf '%s' "$system" | sha256sum | cut -c1-16)
   prov=$(project_provider "$proj" cloud) || exit $?   # no default provider: a project with none for the cloud surface is refused (exit 2)
-  # the adapter is found by lib/provider.py, whatever the runtime is (shipped, schema 1 or 2, or a library pack: that one only as a sealed private copy)
+  # the adapter is found by lib/provider.py, whatever the runtime is (shipped, or a library pack: that one only as a sealed private copy)
   padapter=$QARGI_TOOL/lib/provider.py
   python3 -I "$padapter" adapter-run "$prov" cloud start-session --check || die "the provider '$prov' has no adapter that can build a session request"
   dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"

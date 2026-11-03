@@ -83,10 +83,10 @@ rm -rf "$T/c/roles/worker" "$T/c/roles/reviewer"
 
 # --- the barrier guard fires for <project>-reviewer (claude has no read-only barrier on cloud)
 refused() { # name rc output project
-  [ "$2" = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
+  [ "$2" = 2 ] && grep -q "qargi provider accept claude-platform --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
 }
 # delta names its provider (there is no default one to fall back to when a project has none)
-jq -n '{schema:1,project:"delta",repo:{url:"https://github.com/example/delta",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}},review:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/delta.json"
+jq -n '{schema:1,project:"delta",repo:{url:"https://github.com/example/delta",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}},review:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/delta.json"
 out=$($DA provision plan --project delta --role reviewer 2>&1); rc=$?
 refused "provision plan: the reviewer base is refused where cloud has no barrier" "$rc" "$out" delta
 out=$($DA provision apply --project delta --role reviewer --asked x --approved y --plan z 2>&1); rc=$?
@@ -95,7 +95,7 @@ $DA provision plan --project delta --role worker >/dev/null 2>&1 && ok "the work
 $DA provision plan --project delta --role review >/dev/null 2>&1; [ $? = 2 ] && ok "legacy review is still refused" || no "legacy review plan"
 
 git init -q -b main "$T/repo" && git -C "$T/repo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
-$DA project template gamma | jq --arg r "$T/repo" '.repo.url = "https://github.com/example/\(.project)" | .repo.path = $r | .models.provider = "claude"' > "$T/gamma.json"
+$DA project template gamma | jq --arg r "$T/repo" '.repo.url = "https://github.com/example/\(.project)" | .repo.path = $r | .models.provider = {local: "claude-code", cloud: "claude-platform"}' > "$T/gamma.json"
 $DA project init gamma --answers "$T/gamma.json" --force >/dev/null 2>&1 || no "init gamma"
 jq -n '{"gamma-reviewer":{location:"cloud",deployment_id:"depl_R",environment_id:"env_1",agent:{id:"agent_R",version_pinned:1}},
   "gamma-worker":{location:"cloud",deployment_id:"depl_W",environment_id:"env_1",agent:{id:"agent_W",version_pinned:1}}}' > "$T/c/instances.json"
@@ -116,8 +116,8 @@ out=$($DA provision apply gamma-reviewer --asked x --approved y --plan z 2>&1); 
 refused "provision apply with stored answers: the reviewer base is refused too" "$rc" "$out" gamma
 grep -q 'apply --yes' "$FAKE/ant.log" && no "ant apply ran for a refused reviewer" || ok "and ant apply never ran"
 $DA start gamma-worker --asked "build" >/dev/null 2>&1; grep -q 'deployments run --deployment-id depl_W' "$FAKE/ant.log" && ok "the worker base starts as before" || no "worker start"
-tok=$($DA provider accept claude --surface cloud --no-barrier --project gamma --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
-$DA provider accept claude --surface cloud --no-barrier --project gamma --asked "I accept it" --plan "$tok" --approved go >/dev/null 2>&1 || no "accept"
+tok=$($DA provider accept claude-platform --surface cloud --no-barrier --project gamma --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+$DA provider accept claude-platform --surface cloud --no-barrier --project gamma --asked "I accept it" --plan "$tok" --approved go >/dev/null 2>&1 || no "accept"
 : > "$FAKE/ant.log"
 $DA start gamma-reviewer --asked "start the review" >/dev/null 2>&1; grep -q 'deployments run --deployment-id depl_R' "$FAKE/ant.log" && ok "after the project accepts, the reviewer base starts" || no "reviewer start after accept"
 
@@ -178,7 +178,7 @@ for pair in sk-build:build sk-write:write sk-review:review sk-audit:audit; do
 done
 
 # --- <project>-worker: write class, with the web tools off only
-BAL=$(jq -r .tiers.balanced lib/providers/claude.json)
+BAL=$(jq -r .tiers.balanced.model lib/providers/catalogs/claude.json)
 out=$($DA provision plan --project gamma --role worker 2>&1); rc=$?
 [ $rc = 0 ] && grep -q '^plan token: [0-9a-f]\{12\}' <<<"$out" && ok "provision plan gamma-worker succeeds with stored answers and no roles.worker" || no "worker plan (rc=$rc): $(tail -3 <<<"$out")"
 A=$PD/gamma-worker/agents/gamma-worker
