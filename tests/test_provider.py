@@ -1760,6 +1760,7 @@ class ShippedClaude(unittest.TestCase):
             P.resolve_project({"models": {"provider": "claude-platform"}}, "local", "alpha", root=root)
 
 
+
 class SealedPacks(V2Tree):
     """A library pack is used only while it is what was sealed: tree_hash, the record, seal_state, Drift, exec_copy, definition_hash."""
 
@@ -1919,7 +1920,6 @@ class SealedPacks(V2Tree):
         P.record_verification("libcli", {}, state=self.state)
         self.assertFalse(os.path.exists(f))
         P.record_verification("libcli", {}, state=self.state)                      # nothing to remove is not an error
-
 
 
 # ---- the library verbs: new, import, seal, check, attest, remove, enable, disable ------------------------------------------------
@@ -2372,6 +2372,269 @@ class Scaffold(LibraryBase):
             self.assertEqual(self.q(*args)[0], 2, args)
 
 
+class CheckVerbs(LibraryBase):
+    """`provider check` on packs in each state."""
+
+    def test_check_of_an_unsealed_pack_judges_it_and_records_nothing(self):
+        self.apply("new", "mine")
+        rc, out, _ = self.q("check", "mine")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("UNSEALED", out)
+        self.assertIn("nothing recorded", out)
+        self.apply("seal", "mine")
+        self.assertEqual(self.q("check", "mine")[0], 0)
+
+    def test_every_template_and_every_kind_meets_its_own_schema_when_checked(self):
+        for i, args in enumerate((("--from", "minimal"), ("--from", "command"), ("--from", "hook-cli"), ("--from", "claude-code"), ("--kind", "catalog"),
+                                  ("--kind", "extension"))):
+            name = "t%d" % i
+            self.apply("new", name, *args)
+            self.apply("seal", name)
+            rc, out, err = self.q("check", name)
+            self.assertEqual(rc, 0, (args, out, err))
+            self.assertIn("0 failures", out)
+
+    def test_check_of_a_changed_pack_says_so_and_runs_nothing(self):
+        d = fake_runtime(adapter="adapter", adapter_verbs=["resolve"])
+        self.import_pack(self.source(doc=d, files={"adapter": "#!/usr/bin/env python3\nprint('{}')\n"}, execs=("adapter",)), exec_names="adapter")
+        with open(os.path.join(self.lib, "fakecli", "adapter"), "a") as f:
+            f.write("print('changed')\n")
+        rc, out, err = self.q("check", "fakecli")
+        self.assertIn("CHANGED since it was sealed", out)
+        self.assertIn("nothing recorded", out)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "fakecli", "verified.json")))
+
+    def test_an_attest_survives_a_check_on_the_same_content(self):
+        self.import_pack(self.source())
+        self.apply("attest", "fakecli", "mcp", "--asked", "ok", "--did", "ran it", "--result", "pass", "--cost-cents", "0", "--cleanup", "none needed")
+        self.q("check", "fakecli")
+        self.assertEqual((self.eff("fakecli", "mcp"), self.eff("fakecli", "skills")), ("yes", "yes"))
+
+
+
+
+
+class Verification(LibraryBase):
+    """verified.json is written only by check and attest, and counts only while its hash is the definition's hash."""
+
+    def setUp(self):
+        super().setUp()
+        self.import_pack(self.source())
+
+    def records(self):
+        with open(os.path.join(self.state, "providers", "fakecli", "verified.json")) as f:
+            return json.load(f)
+
+    def test_check_records_the_capabilities_whose_cases_pass_and_only_those(self):
+        self.assertEqual(self.eff("fakecli"), "no")                       # claimed, never checked
+        rc, out, err = self.q("check", "fakecli")
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("ok   link-skills", out)
+        self.assertIn("skills                             verified (cases link-skills)", out)
+        self.assertIn("mcp                                not verified: no hermetic case backs it", out)
+        self.assertIn("recorded 1 verification", out)
+        r = self.records()
+        self.assertEqual(list(r), ["skills"])
+        self.assertEqual((r["skills"]["by"], r["skills"]["hash"]), ("conformance", P.definition_hash("fakecli")))
+        self.assertEqual(self.eff("fakecli"), "yes")
+        self.assertEqual(self.eff("fakecli", "mcp"), "no")
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.state, "providers", "fakecli", "verified.json")).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.state, "providers", "fakecli")).st_mode), 0o700)
+
+    def test_a_record_counts_only_with_the_hash_of_the_content_as_it_is(self):
+        self.q("check", "fakecli")
+        self.assertEqual(self.eff("fakecli"), "yes")
+        # edit the definition and seal it again: the old record's hash no longer matches
+        p = os.path.join(self.lib, "fakecli", "definition.json")
+        d = jread(p)
+        d["description"] = "edited"
+        jwrite(p, d)
+        self.assertEqual(P.seal_state(P.entry_any("fakecli"))[0], "drift")
+        self.apply("seal", "fakecli")
+        self.assertEqual(self.eff("fakecli"), "no")
+        self.assertEqual(P.cap("fakecli", "local", "skills"), "unverified")
+        rc, out, _ = self.q("show", "fakecli")
+        self.assertIn("record is stale, counts as no", out)
+        self.assertEqual(self.q("check", "fakecli")[0], 0)
+        self.assertEqual(self.eff("fakecli"), "yes")
+
+    def test_a_record_written_by_hand_with_the_right_hash_is_a_record_but_a_wrong_hash_or_verifier_is_not(self):
+        os.makedirs(os.path.join(self.state, "providers", "fakecli"))
+        f = os.path.join(self.state, "providers", "fakecli", "verified.json")
+        for rec in ({"hash": "0" * 64, "by": "conformance"}, {"hash": P.definition_hash("fakecli"), "by": "me"}, {"hash": P.definition_hash("fakecli")}):
+            jwrite(f, {"skills": rec})
+            self.assertEqual(self.eff("fakecli"), "no", rec)
+
+    def test_an_invalid_definition_cannot_be_sealed_and_its_old_record_no_longer_counts(self):
+        self.q("check", "fakecli")
+        self.assertEqual(self.eff("fakecli"), "yes")
+        d = fake_runtime()
+        d["resources"] = {"skills": dict(SKILLS_RES["skills"], project_dir="../escape")}
+        self.assertNotEqual(P.validate2(d, "fakecli"), [])
+        jwrite(os.path.join(self.lib, "fakecli", "definition.json"), d)
+        rc, out, err = self.q("seal", "fakecli")
+        self.assertEqual(rc, 1)
+        self.assertIn("FAIL: resources.skills.project_dir", out)
+        rc, out, _ = self.q("check", "fakecli")
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: resources.skills.project_dir", out)
+        self.assertIn("nothing is verified while the pack fails", out)
+        with self.assertRaises(P.Drift):                              # the pack changed since it was sealed: nothing of it is used, so no record counts
+            self.eff("fakecli")
+
+    def test_check_of_a_directory_judges_it_and_records_nothing(self):
+        src = self.source("other")
+        rc, out, err = self.q("check", src)
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("a directory outside the library", out)
+        self.assertIn("a directory is not recorded", out)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "other")))
+        bad = self.source("bad", files={"x": b"\x00\x01"})
+        rc, out, _ = self.q("check", bad)
+        self.assertEqual(rc, 1)
+        self.assertIn("fail: x is binary", out)
+
+    def test_check_of_a_shipped_definition_is_the_report_it_has_always_been(self):
+        rc, out, _ = self.q("check", "claude-code")
+        self.assertEqual(rc, 0)
+        self.assertIn("claude-code: 0 failures, 2 warnings", out)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "claude-code")))
+        self.assertEqual(self.q("check", "nosuch")[0], 1)
+        self.assertIn("unknown provider 'nosuch'", self.q("check", "nosuch")[2])
+
+
+class Cases(LibraryBase):
+    """The hermetic cases, on definitions that bring different machinery."""
+
+    def check(self, name, expect=0):
+        rc, out, err = self.q("check", name)
+        self.assertEqual(rc, expect, (out, err))
+        return out
+
+    def test_a_command_renderer_runs_from_a_verified_copy_of_the_sealed_pack(self):
+        d = fake_runtime(renderers={"agent": {"engine": "command", "command": ["renderers/agent"], "path": "{name}.md", "format": "markdown-frontmatter"}},
+                         capabilities={"agent_definitions": {"value": "yes"}})
+        self.import_pack(self.source(doc=d, files={"renderers/agent": RENDERER}, execs=("renderers/agent",)), exec_names="renderers/agent")
+        out = self.check("fakecli")
+        self.assertIn("ok   render-agent: rendered twice, the same bytes, read back", out)
+        self.assertEqual(list(jread(os.path.join(self.state, "providers", "fakecli", "verified.json"))), ["agent_definitions"])
+
+    def test_a_command_renderer_does_not_run_while_the_pack_is_not_sealed(self):
+        d = fake_runtime(renderers={"agent": {"engine": "command", "command": ["renderers/agent"], "path": "{name}.md", "format": "markdown-frontmatter"}},
+                         capabilities={"agent_definitions": {"value": "yes"}})
+        marker = os.path.join(self.tmp, "ran")
+        script = RENDERER + "open(%r, 'w').write('x')\n" % marker
+        src = self.source(doc=d, files={"renderers/agent": script}, execs=("renderers/agent",))
+        out = self.check(src)
+        self.assertIn("skip render-agent: a command renderer runs only from a sealed library pack", out)
+        self.assertFalse(os.path.exists(marker))
+
+    def test_a_map_renderer_is_checked_without_running_any_pack_code(self):
+        spec = {"engine": "map", "format": "markdown-frontmatter", "path": "{name}.md", "body": "body",
+                "fields": [{"to": "name", "from": "name"}, {"to": "description", "from": "description"}, {"to": "model", "from": "model", "resolve": "model"}]}
+        d = fake_runtime(renderers={"agent": spec}, capabilities={"agent_definitions": {"value": "yes"}})
+        self.import_pack(self.source(doc=d))
+        out = self.check("fakecli")
+        self.assertIn("ok   render-agent", out)
+        self.assertIn("agent_definitions                  verified", out)
+
+    def test_a_broken_renderer_fails_the_case_and_the_check(self):
+        spec = {"engine": "map", "format": "json", "path": "{name}.json", "fields": [{"to": "x", "from": "no_such_field", "refuse_if_missing": True}]}
+        d = fake_runtime(renderers={"agent": spec}, capabilities={"agent_definitions": {"value": "yes"}})
+        self.import_pack(self.source(doc=d))
+        out = self.check("fakecli", expect=1)
+        self.assertIn("FAIL render-agent", out)
+        self.assertIn("not verified: failed: render-agent", out)
+
+    def test_the_link_case_covers_the_three_modes(self):
+        for mode in ("dir-symlink", "entry-symlinks", "copy"):
+            with self.subTest(mode):
+                name = "m" + mode.split("-")[0]
+                res = {"skills": dict(SKILLS_RES["skills"], link={"project": mode, "user": "none"})}
+                self.import_pack(self.source(name, fake_runtime(name, resources=res)))
+                out = self.check(name)
+                self.assertIn("ok   link-skills: %s linked and unlinked" % mode, out)
+
+    def test_a_hook_barrier_is_judged_through_the_guard_in_the_hooks_own_protocol(self):
+        hook = {"input": "json-stdin", "tool_pointer": "/event/tool", "command_pointer": "/event/args/cmd", "cwd_pointer": "/workdir",
+                "path_pointers": {"write": ["/event/args/target"], "read": ["/event/args/target"]},
+                "tool_names": {"shell": ["run_shell"], "write": ["patch_file"], "read": ["open_file"]},
+                "deny": {"exit": 0, "stdout": {"decision": "deny", "reason": "{reason}"}}, "allow": {"exit": 0}}
+        d = fake_runtime(name="fakemd", barrier={"kind": "hook", "hook": hook}, capabilities={"read_only_barrier": {"value": "yes"}}, resources={})
+        d["provider"] = "fakemd"
+        self.import_pack(self.source("fakemd", d))
+        out = self.check("fakemd")
+        self.assertRegex(out, r"ok   barrier-hook: \d+ corpus calls through the guard in the hook's own protocol")
+        self.assertIn("read_only_barrier                  verified (cases barrier-hook)", out)
+        self.assertEqual(P.effective("fakemd", "local", "read_only_barrier"), "yes")
+
+    def test_the_shipped_claude_code_hook_data_passes_its_own_corpus(self):
+        from conformance import cases
+        doc = P.definition("claude-code")
+        res = cases.barrier_hook(doc, None, "claude-code", False, True)["barrier-hook"]
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("corpus calls through the guard", res["notes"][0])
+
+    def test_a_guard_that_lets_a_call_through_fails_the_corpus(self):
+        from conformance import cases
+        doc = P.definition("claude-code")
+        allow_all = subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(cases.subprocess, "run", return_value=allow_all):
+            res = cases.barrier_hook(doc, None, "claude-code", False, True)["barrier-hook"]
+        self.assertEqual(res["status"], "fail")
+        self.assertRegex(res["notes"][0], r"\d+ of \d+ corpus calls went wrong")
+        deny_all = subprocess.CompletedProcess([], 2, "", "qargi guard: no")
+        with mock.patch.object(cases.subprocess, "run", return_value=deny_all):
+            res = cases.barrier_hook(doc, None, "claude-code", False, True)["barrier-hook"]
+        self.assertEqual(res["status"], "fail")                                  # a barrier that denies everything is not a read-only barrier either
+
+    def adapter_pack(self, name, adapter_text=None):
+        """A pack with the claude-code adapter and its stand-in transport, as a library pack named `name`."""
+        d = P.definition("claude-code")
+        d["provider"] = name
+        d["adapter"] = "adapter"
+        d["capabilities"] = {"read_only_barrier": {"value": "yes", "note": "n"}}
+        d["barrier"] = {"kind": "adapter"}
+        d["adapter_verbs"] = ["resolve", "dispatch-local", "barrier-check"]
+        d["family"] = None
+        d["models"] = {"catalog": "claude", "use": "alias"}
+        src = os.path.join(self.src, name)
+        os.makedirs(src)
+        jwrite(os.path.join(src, "definition.json"), d)
+        shutil.copy(os.path.join(LIB, "providers", "claude-code", "adapter"), os.path.join(src, "adapter"))
+        if adapter_text is not None:
+            fwrite(os.path.join(src, "adapter"), adapter_text)
+        os.chmod(os.path.join(src, "adapter"), 0o755)
+        shutil.copytree(os.path.join(HERE, "providers", "claude-code"), os.path.join(src, "conformance"), ignore=shutil.ignore_patterns("__pycache__"))
+        return src
+
+    def test_the_harness_runs_the_adapter_of_a_sealed_pack_against_its_stub_and_backs_the_barrier(self):
+        src = self.adapter_pack("mycode")
+        self.import_pack(src, exec_names="adapter,conformance/stub")
+        rc, out, err = self.q("check", "mycode")
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("ok   barrier-adapter: harness case 8", out)
+        self.assertIn("read_only_barrier                  verified (cases barrier-adapter)", out)
+        self.assertEqual(P.effective("mycode", "local", "read_only_barrier"), "yes")
+
+    def test_an_adapter_that_fails_the_harness_fails_the_check_and_verifies_nothing(self):
+        src = self.adapter_pack("badcode", "#!/bin/sh\necho '{\"decision\": \"allow\", \"reason\": \"\"}'\nexit 0\n")
+        self.import_pack(src, exec_names="adapter,conformance/stub")
+        rc, out, err = self.q("check", "badcode")
+        self.assertEqual(rc, 1, (out, err))
+        self.assertIn("FAIL barrier-adapter: the adapter fails the conformance harness", out)
+        self.assertEqual(P.effective("badcode", "local", "read_only_barrier"), "no")
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "badcode", "verified.json")))
+
+    def test_without_a_conformance_stub_the_adapter_is_not_run(self):
+        src = self.adapter_pack("nostub")
+        shutil.rmtree(os.path.join(src, "conformance"))
+        self.import_pack(src, exec_names="adapter")
+        out = self.check("nostub")
+        self.assertIn("skip barrier-adapter: the pack has no conformance/stub", out)
+        self.assertIn("could not run", out)
+
+
 class Attest(LibraryBase):
     def setUp(self):
         super().setUp()
@@ -2590,7 +2853,6 @@ class Review(unittest.TestCase):
         d = self.tree({"definition.json": "{}"})
         rv = self.R.scan(d, {"adapter": "../evil"})
         self.assertTrue(any("is not a path inside the pack" in m for m in rv["fail"]))
-
 
 
 if __name__ == "__main__":

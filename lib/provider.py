@@ -71,6 +71,7 @@ is refused all of them by the guard):
        provider.py new NAME [--kind provider|catalog|extension] [--from minimal|command|hook-cli|PROVIDER]    scaffold an unsealed pack
        provider.py import SOURCE [--name N] [--ref R] [--path SUB] [--plan T --approved W [--approve-exec a,b]]   a directory, one JSON file or an https git URL
        provider.py seal NAME [--plan T --approved W [--approve-exec a,b]]       approve the pack as it is now (after you edited it)
+       provider.py check NAME|DIR [--project P]    the review, the schema, the hermetic cases; records verified.json for a sealed library pack
        provider.py attest NAME CAP --asked W ...   the plan and the record of a live check you ran; it never runs or spends anything
        provider.py enable|disable PROJECT EXT [--plan T --approved W [--approve-exec a,b]]   an extension for one project
        provider.py remove NAME [--plan T --approved W]
@@ -1663,7 +1664,7 @@ def cmd_of(args):
 
 
 def main(argv):
-    usage = ("usage: qargi provider list | show NAME [--json] | check NAME | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
+    usage = ("usage: qargi provider list | show NAME [--json] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
              "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
@@ -1682,14 +1683,16 @@ def main(argv):
             lib = _library_module()
             rc = lib.show_pack(pos[0], "--json" in rest) if lib else None   # a library catalog or extension; a provider is shown below
             return rc if rc is not None else cmd_show(pos[0], "--json" in rest)
-        if verb in LIBRARY_VERBS:
+        if verb in LIBRARY_VERBS or verb == "check":
             lib = _library_module()
-            if lib is None:
+            if lib is None and verb != "check":
                 print("qargi: provider %s needs lib/conformance/, which is not beside this file" % verb, file=sys.stderr)
                 return 1
-            return lib.run(verb, rest)
-        if verb == "check" and len(rest) == 1:
-            return cmd_check(rest[0])
+            rc = lib.run(verb, rest) if lib else None
+            if rc is not None:
+                return rc
+            if verb == "check" and len(rest) == 1 and not rest[0].startswith("--"):
+                return cmd_check(rest[0])                              # a shipped definition (or no such name): the report this file has always made
         if verb == "effective" and len(rest) == 3:
             return cmd_effective(rest[0], rest[1], rest[2])
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
