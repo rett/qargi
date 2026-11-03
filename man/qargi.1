@@ -730,6 +730,13 @@ check that the adapter and the verb exist and print nothing else.
 .RE
 .RS
 .TP
+.BI "addenda " "NAME SURFACE"
+Print the texts a runtime's definition adds to the member contract of a cloud agent's prompt.
+.br
+resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. A file that is missing, is not text or leaves the directory is refused.
+.RE
+.RS
+.TP
 .BI "model " "NAME SURFACE TIER"
 Print the model a runtime maps a tier to on a surface.
 .RE

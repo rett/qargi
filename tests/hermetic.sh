@@ -16,3 +16,16 @@ unset _t
 export HOME=$HERMETIC/home QARGI_CONF=$HERMETIC/conf QARGI_STATE=$HERMETIC/state PATH=$HERMETIC/bin:$PATH
 export XDG_CONFIG_HOME=$HERMETIC/home/.config XDG_STATE_HOME=$HERMETIC/home/.local/state
 trap 'rm -rf "$HERMETIC"' EXIT
+
+# What a test copies to run a modified copy of the tool: the top-level directories and files below, whichever exist in the source. A new
+# top-level directory of the repository is added here once (tests/test_tool_copy.sh fails until it is, or is named there as not needed);
+# tests/hermetic.py reads this line.
+TOOL_DIRS="agents bin lib roles skills provision contract canon methodologies packs catalog VERSION"
+# copy_tool SRC DEST [NAME...]: copies the entries of TOOL_DIRS that exist in SRC (or only the NAMEs given) into DEST, made if missing.
+copy_tool() {
+  local src=$1 dest=$2 d; shift 2
+  local -a names=("$@")
+  [ ${#names[@]} -gt 0 ] || read -ra names <<<"$TOOL_DIRS"
+  mkdir -p "$dest"
+  for d in "${names[@]}"; do [ ! -e "$src/$d" ] || cp -r "$src/$d" "$dest/"; done
+}
