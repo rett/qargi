@@ -187,9 +187,9 @@ rm -rf "$T/s/render/alpha/claude-code" "$T/r4/.claude"
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi
-QARGI_PROJECT=rproj $Q agent add pj-judge --project rproj --abilities review >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add pj-forge --project rproj --abilities build >/dev/null 2>&1
+QARGI_PROJECT=rproj $Q agent add reviewer --project rproj >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add worker --project rproj >/dev/null 2>&1
 out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
-[ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=pj-judge' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
+[ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=reviewer' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
   && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"
 [ "$(jq -r 'select(.slug=="pf1") | .profile' "$T/s/local-runs.jsonl")" = advisor ] && ok "the run line carries the profile" || no "jsonl profile"
 n1=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)
