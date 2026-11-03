@@ -154,10 +154,10 @@ def has_class_args(disp):
     return bool(ca) or has(disp.get("argv") or [])
 
 
-def models_values(runtime, model, effort):
+def models_values(runtime, model, effort, project=None):
     """(model name, native effort or None, notes): --model is a tier or a model id of the runtime's pattern (default: the balanced tier);
     --effort is a level the runtime maps (dropped with a note when it has no such control)."""
-    ms = P.models_of(runtime, "local")
+    ms = P.models_of(runtime, "local", project=project)
     notes = []
     if model is None or model == "":
         model = "balanced"
@@ -261,7 +261,8 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     except OSError:
         pass
     tmp = tmp or os.path.join(run, "tmp")
-    doc = P.definition(runtime, "local")
+    comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
+    doc = comp["definition"]
     disp = doc.get("dispatch")
     if not isinstance(disp, dict) or not disp.get("mode"):
         fail("the runtime %s has no dispatch data, so it cannot be started by qargi local run" % runtime, 3)
@@ -307,7 +308,16 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         state, text = P.require_barrier(runtime, "local", project)
         if state == "refused":
             fail(text)
-        if (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
+        prov = comp["provenance"] or {}
+        by = next((x for x in (prov.get("barrier"), prov.get("capabilities.read_only_barrier")) if x not in (None, runtime)), None)
+        if by is not None:
+            # the barrier is an extension's: nothing in a local run applies it (an extension adds no class_argv), so it is no barrier here
+            if state in ("yes", "partial") and not P.accepted(project, "local"):
+                fail("the read-only barrier of %s on local is provided by the extension %s (barrier kind %s), and qargi local run applies only the barrier the runtime's own "
+                     "dispatch carries (class_argv, or a class group in argv), so it would start this member without it: a read-only run is refused here.\n"
+                     "Dispatch it where that barrier is applied, or, on your own responsibility, record that you accept no barrier for the project:\n  %s"
+                     % (runtime, by, (doc.get("barrier") or {}).get("kind"), P.accept_command(runtime, "local", project)))
+        elif (doc.get("barrier") or {}).get("kind") == "sandbox-args" and not has_class_args(disp):
             fail("the barrier of %s is sandbox-args but its dispatch supplies no read-only arguments (class_argv, or a {\"class\": \"read-only\"} group in argv)" % runtime)
         note = text if state == "partial" else ""
     else:
@@ -324,7 +334,7 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     prompt = compose_prompt(doc, task_text, cls, run, tmp)
     if via == "arg" and len(prompt.encode("utf-8")) > MAX_ARG:
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
-    mname, native, notes = models_values(runtime, model, effort)
+    mname, native, notes = models_values(runtime, model, effort, project)
     pfile = os.path.join(run, pname)
     member = ""
     try:

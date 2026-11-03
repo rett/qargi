@@ -479,11 +479,11 @@ def catalog(family, root=None, library=None):
     return raw
 
 
-def models_of(name, surface=None, root=None, library=None):
+def models_of(name, surface=None, root=None, library=None, project=None, conf=None):
     """The models of a runtime, resolved: {pattern, tiers: {TIER: {model, alias, verified_on, source}} for every tier, effort: {LEVEL:
     native or None} for every level, use: alias, id or None, catalog: the family or None}. A catalog reference is followed; a tier
-    not given takes '*'."""
-    return _resolve_models(definition(name, surface, root, library), root, library)
+    not given takes '*'. With a project, the definition is the runtime composed with the project's enabled extensions (composed())."""
+    return _resolve_models(composed(name, surface, project, root, library, conf), root, library)
 
 
 def _resolve_models(doc, root=None, library=None):
