@@ -23,3 +23,7 @@ skills/qargi-task/agent-contract.md 1314
 skills/qargi-task/SKILL.md 2468
 skills/qargi-team/SKILL.md 936
 skills/qargi-verify/SKILL.md 585
+packs/skills/review-findings/SKILL.md 119
+packs/skills/secrets-scan/SKILL.md 93
+packs/skills/docs-site-member/SKILL.md 112
+packs/skills/qargi-contributing/SKILL.md 111
