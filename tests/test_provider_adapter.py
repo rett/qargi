@@ -610,11 +610,11 @@ class Derived(Tree):
         with open(os.path.join(self.env["QARGI_CONF"], "projects", "zed.json"), "w") as f:
             json.dump(a, f)
         rc, out = self.qargi("provision", "plan", "--project", "zed", "--role", "build")
-        self.assertEqual(rc, 1)
-        self.assertIn("models.provider 'nope' has no descriptor", out)
+        self.assertEqual(rc, 2)                                           # a name that is no runtime or family is a refusal (exit 2), not a failure
+        self.assertIn("no runtime or family 'nope' for the cloud surface", out)
 
 FIXTURES = os.path.join(HERE, "providers", "claude-platform", "start-session")
-sys.path.insert(0, os.path.join(HERE, "providers", "lib"))
+sys.path.insert(0, os.path.join(HERE, "..", "lib", "conformance"))
 import validate  # noqa: E402
 
 with open(os.path.join(ROOT, "lib", "providers", "adapter-schema.json")) as _f:

@@ -30,6 +30,14 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   provider_of(answers, surface)        the runtime for one surface: models.provider is a name (runtime or family) or {local, cloud};
                                        a surface left unset is NoProvider (exit 2). resolve_runtime(name, surface) is the rule: a
                                        runtime of that name, else a family with exactly one runtime on the surface, else Refused
+  tree_hash(dir) / pack_record(dir) / seal_state(entry)
+                                       a library pack's content hash (every file but .pack.json), its record, and whether it is sealed,
+                                       unsealed (made by `provider new`, not yet sealed), changed since sealed (drift) or has no record
+                                       (a file the owner put there by hand). An unsealed or changed pack is not used (Drift, exit 2).
+  definitions_unsealed(name)           {surface: definition} without the seal check, for a reader that only needs to see what a definition names
+  exec_copy(name, rel)                 a private copy of a sealed library pack with the executable rel, after its hash and the pack's were
+                                       checked against the record and again on the copy; the only way qargi runs a library pack's code
+  verify_record / record_verification  the verified.json of a library definition: hash-bound to the definition (and the pack it is in)
 Every function that reads a definition takes root= (the shipped directory) and library= (the pack library) for tests; the defaults are
 beside this file and below the configuration directory. A test that names a root sees a library only when it names one too.
 
@@ -58,6 +66,15 @@ Usage: provider.py list
        provider.py migrate NAME --dry-run [--as local=X,cloud=Y]
                                          prints the schema 2 documents of a schema 1 descriptor (an object, or an array when it is split
                                          into a catalog and one runtime per surface); notes on stderr; writes nothing
+The library verbs (lib/conformance/library.py; every one that writes is a plan, a token and --approved, and leaves an audit line; a member
+is refused all of them by the guard):
+       provider.py new NAME [--kind provider|catalog|extension] [--from minimal|command|hook-cli|PROVIDER]    scaffold an unsealed pack
+       provider.py import SOURCE [--name N] [--ref R] [--path SUB] [--plan T --approved W [--approve-exec a,b]]   a directory, one JSON file or an https git URL
+       provider.py seal NAME [--plan T --approved W [--approve-exec a,b]]       approve the pack as it is now (after you edited it)
+       provider.py check NAME|DIR [--project P]    the review, the schema, the hermetic cases; records verified.json for a sealed library pack
+       provider.py attest NAME CAP --asked W ...   the plan and the record of a live check you ran; it never runs or spends anything
+       provider.py enable|disable PROJECT EXT [--plan T --approved W [--approve-exec a,b]]   an extension for one project
+       provider.py remove NAME [--plan T --approved W]
 Exit status 3 is the degrade refusal: the provider does not support what the verb needs; 2 is a project with no provider."""
 import copy
 import hashlib
@@ -72,6 +89,7 @@ TOOL = os.path.dirname(HERE)                      # the tool root: the checkout,
 PROVIDERS = os.path.join(HERE, "providers")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 SURFACES = ("local", "cloud")
+LIBRARY_VERBS = ("new", "import", "seal", "remove", "enable", "disable", "attest")
 TIERS = ("fast", "balanced", "deep", "frontier")
 
 
@@ -93,6 +111,10 @@ class Refused(ProviderError):
 
 class Clash(Refused):
     """The same name is defined twice, as a shipped file and in the pack library."""
+
+
+class Drift(Refused):
+    """A library pack that is not sealed, or whose files changed since it was sealed: it is not used until it is sealed again."""
 
 
 class Ambiguous(Refused):
@@ -202,6 +224,91 @@ def _scan(root, library):
     return found
 
 
+# ---- library packs: the content hash, the record, the seal ------------------------------------------------------------------
+
+RECORD = ".pack.json"
+
+
+def tree_hash(root):
+    """sha256 of the content of a pack directory: every file but the record, by relative path, with its executable bit and the sha256 of
+    its bytes (a symbolic link by its target), so that a changed byte, a new file, a removed one or a chmod +x all change it."""
+    rows = []
+    for dp, dns, fns in os.walk(root, followlinks=False):
+        for n in sorted(dns + fns):
+            p = os.path.join(dp, n)
+            rel = os.path.relpath(p, root)
+            if rel == RECORD:
+                continue
+            if os.path.islink(p):
+                rows.append("L %s %s" % (rel, os.readlink(p)))
+            elif os.path.isfile(p):
+                with open(p, "rb") as f:
+                    rows.append("F %s %s %s" % (rel, "x" if os.stat(p).st_mode & 0o111 else "-", hashlib.sha256(f.read()).hexdigest()))
+    return hashlib.sha256("\n".join(sorted(rows)).encode("utf-8")).hexdigest()
+
+
+def pack_record(directory):
+    """The record of a library pack (its .pack.json) as a dict, or None when there is none or it cannot be read."""
+    try:
+        with open(os.path.join(directory, RECORD)) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def seal_state(e):
+    """(state, why) of an entry: shipped; sealed (the record names the content hash and it is the hash now); unsealed (a record that says
+    so: `provider new` made it); drift (the content is not what was sealed); unrecorded (a library directory with no record: a file the
+    owner put there by hand, used as it is)."""
+    if e["origin"] != "library":
+        return "shipped", ""
+    rec = pack_record(os.path.dirname(e["file"]))
+    if rec is None:
+        if os.path.lexists(os.path.join(os.path.dirname(e["file"]), RECORD)):
+            return "drift", "has a record that cannot be read"
+        return "unrecorded", "has no record (put there by hand)"
+    if rec.get("sealed") is False or not isinstance(rec.get("sha256"), str):
+        return "unsealed", "is not sealed"
+    if rec["sha256"] != tree_hash(os.path.dirname(e["file"])):
+        return "drift", "changed since it was sealed"
+    return "sealed", ""
+
+
+def exec_copy(name, rel, root=None, library=None, tmp=None):
+    """(directory, path): a private copy (mode 0700, in tmp or the temporary directory) of the library pack NAME, and the executable rel in
+    it. The pack must be sealed with that executable approved: the content hash and the executable's hash are compared with the record
+    before the copy is made and again on the copy, so what runs is what was approved, whatever happens to the library meanwhile. The
+    caller removes the directory. Refused (Refused) for a pack that is not sealed, or an executable the record does not list."""
+    import shutil
+    import tempfile
+    e = entry_any(name, root, library)
+    if e is None or e["origin"] != "library":
+        raise Refused("'%s' is not a library pack; only a library pack's executables are checked this way (a shipped one is part of the tool)" % name)
+    src = os.path.dirname(e["file"])
+    state, why = seal_state(e)
+    rec = pack_record(src) or {}
+    if state != "sealed":
+        raise Drift("pack '%s' %s; its executables are not run" % (name, why or state))
+    want = (rec.get("executables") or {}).get(rel)
+    n = os.path.normpath(rel) if isinstance(rel, str) else ""
+    if not want or n != rel or rel.startswith(("/", "..")):
+        raise Refused("'%s' is not an executable approved for the pack '%s'" % (rel, name))
+    d = tempfile.mkdtemp(prefix="qargi-exec.", dir=tmp)
+    try:
+        dst = os.path.join(d, name)
+        shutil.copytree(src, dst, symlinks=True)
+        got = tree_hash(dst)
+        with open(os.path.join(dst, rel), "rb") as f:
+            gotx = hashlib.sha256(f.read()).hexdigest()
+        if got != rec["sha256"] or gotx != want:
+            raise Drift("pack '%s' changed while it was being copied; its executables are not run" % name)
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    return dst, os.path.join(dst, rel)
+
+
 def names(root=None, library=None):
     """The providers that have a definition: the shipped files (schema.json and schema-2.json describe them and are not one) and the
     library's. A name defined in both is listed once; using it is refused."""
@@ -214,6 +321,23 @@ def _pick(name, kind, root, library):
     if len({e["origin"] for e in es}) > 1:
         raise Clash("'%s' is defined twice (shipped and library); qargi provider remove %s, or rename it" % (name, name))
     es = [e for e in es if _kind(e) == kind]
+    if es and es[0]["origin"] == "library":
+        state, why = seal_state(es[0])
+        if state in ("unsealed", "drift"):
+            raise Drift("%s '%s' %s; qargi provider check %s, then qargi provider seal %s" % (kind, name, why, name, name))
+    return es[0] if es else None
+
+
+def entry_any(name, root=None, library=None):
+    """The one entry of this name whatever its kind (provider, catalog or extension), or None. A name defined both shipped and in the
+    library is Clash. The seal is not checked: this is for the verbs that manage packs."""
+    if not isinstance(name, str) or not NAME_RE.match(name) or name in NON_PROVIDERS:
+        return None
+    es = _scan(root, library).get(name, [])
+    if len({e["origin"] for e in es}) > 1:
+        raise Clash("'%s' is defined twice (shipped and library); qargi provider remove %s, or rename it" % (name, name))
+    if es:
+        _kind(es[0])
     return es[0] if es else None
 
 
@@ -276,6 +400,16 @@ def definition(name, surface=None, root=None, library=None):
     if surface not in docs:
         raise ProviderError("the provider %s does not list the surface %s" % (name, surface))
     return copy.deepcopy(docs[surface])
+
+
+def definitions_unsealed(name, root=None, library=None):
+    """{surface: schema 2 definition} of a provider WITHOUT looking at its seal: for a reader that must see what a definition names
+    (the directories the guard protects) even while the pack is unsealed or changed and so not used. Never use it to run or trust
+    anything. ProviderError when there is no such provider or it does not load."""
+    e = entry_any(name, root, library)
+    if e is None or _kind(e) != "provider":
+        raise ProviderError("unknown provider '%s'" % name)
+    return copy.deepcopy(_docs(e))
 
 
 def catalog(family, root=None, library=None):
@@ -760,12 +894,59 @@ def _resource_problems(res):
     return bad
 
 
+EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "provides", "requires", "adds")
+
+
+def validate_extension(d, name=None):
+    """The findings for an extension pack (schema 2, kind extension): what it needs to be stored and listed. Composing it into a runtime
+    (conflicts, provenance, what it provides) is the extension work's; this checks the shape the review shows. The name it carries is
+    `extension`."""
+    out = []
+    for k in d:
+        if k not in EXTENSION_KEYS:
+            out.append(("fail", "%s: additional property is not allowed" % k))
+    if d.get("schema") != 2 or type(d.get("schema")) is not int:
+        out.append(("fail", "schema: %s is not the supported version 2" % _show(d.get("schema"))))
+    nm = d.get("extension")
+    if not isinstance(nm, str) or not NAME_RE.match(nm) or len(nm) > 40:
+        out.append(("fail", "extension: %s is not a name (lower case letters, digits and -, starting with a letter, at most 40 characters)" % _show(nm)))
+    elif name is not None and nm != name:
+        out.append(("fail", "extension '%s' differs from the file name '%s'" % (nm, name)))
+    ex = d.get("extends")
+    if not isinstance(ex, str) or not NAME_RE.match(ex):
+        out.append(("fail", "extends: %s is not a runtime or family name" % _show(ex)))
+    caps = capabilities2()
+    pv = d.get("provides")
+    if not isinstance(pv, list) or not all(isinstance(c, str) for c in pv):
+        out.append(("fail", "provides: a list of capability names"))
+    else:
+        out += [("fail", "provides: unknown capability '%s'" % c) for c in pv if c not in caps]
+    adds = d.get("adds")
+    if not isinstance(adds, dict):
+        out.append(("fail", "adds: an object"))
+    else:
+        cells = adds.get("capabilities") if isinstance(adds.get("capabilities"), dict) else {}
+        if isinstance(pv, list) and sorted(set(pv)) != sorted(cells):
+            out.append(("fail", "provides must equal the capability names of adds.capabilities (%s)" % (", ".join(sorted(cells)) or "none")))
+        for c, cl in cells.items():
+            if not isinstance(cl, dict) or cl.get("value") not in ("yes", "partial", "no"):
+                out.append(("fail", "adds.capabilities.%s: a cell with value yes, partial or no" % c))
+        verbs = adds.get("adapter_verbs")
+        if verbs is not None and not (isinstance(verbs, dict) and all(isinstance(v, str) and _inside(v) for v in verbs.values())):
+            out.append(("fail", "adds.adapter_verbs: {VERB: a path inside the pack}"))
+    if d.get("requires") is not None and not isinstance(d["requires"], dict):
+        out.append(("fail", "requires: an object"))
+    return out
+
+
 def validate2(d, name=None):
     """validate() for a document of schema 2: the node of schema-2.json for its kind, then the rules a schema cannot state. name, when
-    given, is the file (or directory) name the definition must carry."""
+    given, is the file (or directory) name the definition must carry. An extension goes to validate_extension()."""
+    if isinstance(d, dict) and d.get("kind") == "extension":
+        return validate_extension(d, name)
     sch = schema2()
     raw = []
-    _check(d, {"type": "object", "required": ["schema", "kind"], "properties": {"schema": {"const": 2}, "kind": {"enum": list(KINDS)}}},
+    _check(d, {"type": "object", "required": ["schema", "kind"], "properties": {"schema": {"const": 2}, "kind": {"enum": list(KINDS) + ["extension"]}}},
            sch, "", raw)
     kind = d.get("kind")
     if kind not in KINDS:
@@ -796,15 +977,30 @@ VERIFIERS = ("conformance", "attest")
 
 
 def definition_hash(name, root=None, library=None):
-    """sha256 of the definition as it is now: its document and, when it references one, its catalog. A change to either changes the
+    """sha256 of the definition as it is now: its document and, when it references one, its catalog; for a sealed library pack also the
+    content hash of the pack (its executables and every other file), and of the catalog's pack. A change to any of them changes the
     hash, so a verification record made earlier no longer matches. (Extensions will join it when they exist.) ProviderError when the
     catalog it references is missing."""
     e = _entry(name, root, library)
     raw = _read(e)
     body = {"definition": raw}
+    sealed = _sealed_hash(e)
+    if sealed:
+        body["pack"] = sealed
     if isinstance(raw.get("models"), dict) and "catalog" in raw["models"]:
         body["catalog"] = catalog(raw["models"]["catalog"], root, library)
+        ce = _pick(raw["models"]["catalog"], "catalog", root, library)
+        if ce is not None and _sealed_hash(ce):
+            body["catalog_pack"] = _sealed_hash(ce)
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _sealed_hash(e):
+    """The content hash a sealed library entry's record names, else None (shipped, unrecorded: the document alone is what counts)."""
+    if e["origin"] != "library":
+        return None
+    rec = pack_record(os.path.dirname(e["file"])) or {}
+    return rec["sha256"] if rec.get("sealed") is not False and isinstance(rec.get("sha256"), str) else None
 
 
 def verification(name, state=None):
@@ -816,6 +1012,28 @@ def verification(name, state=None):
     except (OSError, ValueError):
         return {}
     return d if isinstance(d, dict) else {}
+
+
+def record_verification(name, records, state=None):
+    """Write STATE/providers/NAME/verified.json: {capability: {hash, by, at, note}}, atomically, the directory 0700 and the file 0600. Only
+    `provider check` (by conformance) and `provider attest` (by attest) call this; the loader trusts a record only when its hash is the
+    definition's hash now. An empty map removes the file."""
+    d = os.path.join(state or _state_dir(), "providers", name)
+    f = os.path.join(d, "verified.json")
+    if not records:
+        try:
+            os.unlink(f)
+        except OSError:
+            pass
+        return f
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    tmp = "%s.tmp.%d" % (f, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(records, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, f)
+    return f
 
 
 def _backed(e, cell, capability, root, library, state):
@@ -1225,6 +1443,17 @@ def findings_of(name, root=None, library=None):
     return e, raw, findings
 
 
+def _library_module():
+    """lib/conformance/library.py (the lifecycle of library packs), or None when this file is run without its neighbours."""
+    sys.path.insert(0, HERE)
+    sys.modules.setdefault("provider", sys.modules[__name__])      # the module the library imports is this one, also when this file is the script
+    try:
+        from conformance import library
+    except ImportError:
+        return None
+    return library
+
+
 def cmd_list():
     for n in names():
         try:
@@ -1233,7 +1462,12 @@ def cmd_list():
             print("%-12s %-12s %s" % (n, "-", "1 failure (%s)" % ex))
             continue
         surfaces = [raw["surface"]] if _is2(raw) and raw.get("surface") in SURFACES else _surfaces(raw)
-        print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), "  (library)" if e["origin"] == "library" else ""))
+        sealed = seal_state(e)[0]
+        note = "  (library%s)" % (", unsealed" if sealed == "unsealed" else ", changed since sealed" if sealed == "drift" else "") if e["origin"] == "library" else ""
+        print("%-12s %-12s %s%s" % (n, ",".join(surfaces) or "-", _state(findings), note))
+    lib = _library_module()
+    if lib:
+        lib.list_other_kinds()
     return 0
 
 
@@ -1382,7 +1616,8 @@ def cmd_migrate(args):
         return 2
     raw = _read(_entry(pos[0]))
     if not opts.get("dry"):
-        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form", file=sys.stderr)
+        print("qargi: provider migrate writes through a plan and your approval, which is not built yet; use --dry-run to see the schema 2 form. "
+              "There is nothing to write into the library: its definitions are schema 2 already, and a shipped schema 1 file is replaced by the release that ships it", file=sys.stderr)
         return 2
     docs, notes = migrate(raw, names or None)
     for n in notes:
@@ -1429,7 +1664,8 @@ def cmd_of(args):
 
 
 def main(argv):
-    usage = ("usage: qargi provider list | show NAME [--json] | check NAME | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
+    usage = ("usage: qargi provider list | show NAME [--json] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
+             "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
              "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] | require-skills NAME | launch NAME RENDER | of PROJECT [--surface S] | migrate NAME --dry-run")
     if not argv:
         print(usage, file=sys.stderr)
@@ -1444,9 +1680,19 @@ def main(argv):
             return cmd_list()
         pos = [a for a in rest if a != "--json"]
         if verb == "show" and len(pos) == 1 and len(rest) - len(pos) <= 1:
-            return cmd_show(pos[0], "--json" in rest)
-        if verb == "check" and len(rest) == 1:
-            return cmd_check(rest[0])
+            lib = _library_module()
+            rc = lib.show_pack(pos[0], "--json" in rest) if lib else None   # a library catalog or extension; a provider is shown below
+            return rc if rc is not None else cmd_show(pos[0], "--json" in rest)
+        if verb in LIBRARY_VERBS or verb == "check":
+            lib = _library_module()
+            if lib is None and verb != "check":
+                print("qargi: provider %s needs lib/conformance/, which is not beside this file" % verb, file=sys.stderr)
+                return 1
+            rc = lib.run(verb, rest) if lib else None
+            if rc is not None:
+                return rc
+            if verb == "check" and len(rest) == 1 and not rest[0].startswith("--"):
+                return cmd_check(rest[0])                              # a shipped definition (or no such name): the report this file has always made
         if verb == "effective" and len(rest) == 3:
             return cmd_effective(rest[0], rest[1], rest[2])
         if verb == "require-barrier" and len(rest) in (2, 4) and (len(rest) == 2 or rest[2] == "--project"):
