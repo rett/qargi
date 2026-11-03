@@ -137,7 +137,7 @@ recorded, not verified: it is not proof that a person agreed.
 
 ## Baseline packs
 
-qargi ships skills in `packs/` (`shellcheck-gate`, `keep-a-changelog`, `gitflow-member`), each
+qargi ships skills in `packs/` (listed in `packs/baseline.json`), each
 declared `compatible_providers: ["any"]`.
 `qargi packs seed [--install] [--plan TOKEN --approved "..."]` stores them in the library.
 Without `--approved` it prints one line per shipped pack and a plan token:
