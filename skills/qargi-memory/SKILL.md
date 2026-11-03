@@ -1,6 +1,6 @@
 ---
 name: qargi-memory
-description: Run the lead's maintenance of a qargi project's memory - lint or check a store against the canon, plan and apply a canon migration, import a foreign store, seed a role's skeleton, promote a note to shared, audit cross-role writes, split, copy or merge stores, and set up or move notes between the memory tiers (repo, cloud, project, shared, system). Covers the recipes store (<project>-memory) and the read-only reference store (<project>-reference). For the lead, never for a member.
+description: Run the lead's maintenance of a qargi project's memory - lint or check a store against the canon, plan and apply a canon migration, import a foreign store, seed a role's skeleton, promote a note to shared, audit cross-role writes, split, copy or merge stores, and set up or move notes between the memory tiers (repo, cloud, project, shared, system). Covers the recipes and reference stores. For the lead, never for a member.
 argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lint STORE_ID | split|merge|copy FROM TO | memory tiers|check|init|move|get
 ---
 
@@ -18,10 +18,9 @@ or plans. `_template.md` in each store is the shape to copy.
 
 ## The canon and the reconciler
 
-The versioned canon is in `canon/CANON.md` (version 2): `/CANON.md` marker, `/README.md`,
+The versioned canon is in `canon/CANON.md`: `/CANON.md` marker, `/README.md`,
 `shared/` for every role and `roles/<role>/` (with its `INDEX.md`) per role. An agent loads the
-README, `shared/INDEX.md` and its own role's index only. `/qargi-provision` creates and seeds the
-stores with it. `qargi canon check` (run by `qargi memory lint STORE_ID` too) verifies structure,
+README, `shared/INDEX.md` and its own role's index only. `qargi canon check` (run by `qargi memory lint STORE_ID` too) verifies structure,
 note format, indexes and hygiene, and exits 1 on any FAIL.
 
 | Verb | Command | Notes |
@@ -48,7 +47,7 @@ tier. A note lives in exactly one tier; `CANON.md`, `README.md`, `_template.md`,
 - `qargi memory tiers [--project P] [--json]` lists each tier with its location, state (missing,
   empty, present, unreachable) and note count. Reads only.
 - `qargi memory check [--project P]` runs the canon check on each existing tier and reports a note
-  path in two or more tiers as a FAIL. A missing, empty or unreachable tier is an INFO line.
+  path in two or more tiers as a FAIL; it exits 1 on any FAIL. A missing, empty or unreachable tier is an INFO line.
 - `qargi memory init TIER [--project P] [--plan TOKEN --approved "..."]` creates the tier `repo`,
   `project`, `shared` or `system` as an empty store. Without `--approved` it prints the plan, a
   token and, for `repo`, a warning. It refuses `cloud` (`qargi provision` creates that one), invalid
@@ -59,12 +58,12 @@ tier. A note lives in exactly one tier; `CANON.md`, `README.md`, `_template.md`,
   `.md`) or a prefix under `/shared/` or `/roles/<role>/` that selects notes only. Nothing is
   deleted: each copy records `copied from tier-FROM:PATH@hash` in `Sources:`, the original goes to
   `/_archive/<date>/` of the first tier, and the index row moves with the note. A tier whose notes
-  changed since the plan is refused (plan again), and so is a path held by a third tier, a note that
+  changed since the plan is refused, and so is a path held by a third tier, a note that
   already differs in the target and a missing tier. A move to or from the cloud tier writes the
-  target first and is not atomic across stores: if it stops half way, plan again.
+  target first and is not atomic across stores: if it stops half way, plan again. An unreachable third tier only warns that collisions with it were not checked.
 
 `shared/` is curated, written by promotion or by the person. qargi never commits the repo tier:
-`init` and `move` leave the files uncommitted for the lead to review and commit, or ignore.
+`init` and `move` leave the files uncommitted for the lead to review and commit.
 Dispatched agents see only the committed copy.
 
 The SessionStart hook (`qargi hook session-start`) composes the tiers inside a registered project's
