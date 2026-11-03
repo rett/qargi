@@ -194,12 +194,12 @@ jq '.models = {provider: {cloud: "claude-platform"}}' "$T/c/projects/app.json" >
 H f1; rc=$?
 [ $rc = 2 ] && [ "$(cat "$T/e")" = "qargi: project app has no local provider: set one with qargi project set app models.provider.local NAME" ] && [ ! -s "$T/o" ] && ok "packs: an object that names only a cloud runtime is refused with exit 2 and the fix" || no "SPEC packs cloud-only provider: rc=$rc $(out)"
 jq '.models = {provider: "claude"}' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"
-mkdir -p "$S/claude/app/.claude/skills"
+mkdir -p "$S/render/app/claude/.claude/skills"
 H f1; rc=$?
-[ $rc = 0 ] && grep -q "^launch (the checkout's .claude/skills is not our link): claude --add-dir $S/claude/app\$" "$T/o" && ok "packs: the exact launch line with --add-dir" || no "SPEC launch line: rc=$rc $(sed -n '/== packs/,/== read/p' "$T/o")"
-echo '{}' > "$S/claude/app/mcp.json"
-H f1; grep -q "claude --add-dir $S/claude/app --mcp-config $S/claude/app/mcp.json\$" "$T/o" && ok "packs: --mcp-config is part of the launch line when the render has one" || no "SPEC launch line with mcp: $(sed -n '/== packs/,/== read/p' "$T/o")"
-mkdir -p "$R/.claude"; ln -s "$S/claude/app/.claude/skills" "$R/.claude/skills"
+[ $rc = 0 ] && grep -q "^launch (the checkout's .claude/skills is not our link): claude --add-dir $S/render/app/claude\$" "$T/o" && ok "packs: the exact launch line with --add-dir" || no "SPEC launch line: rc=$rc $(sed -n '/== packs/,/== read/p' "$T/o")"
+echo '{}' > "$S/render/app/claude/mcp.json"
+H f1; grep -q "claude --add-dir $S/render/app/claude --mcp-config $S/render/app/claude/mcp.json\$" "$T/o" && ok "packs: --mcp-config is part of the launch line when the render has one" || no "SPEC launch line with mcp: $(sed -n '/== packs/,/== read/p' "$T/o")"
+mkdir -p "$R/.claude"; ln -s "$S/render/app/claude/.claude/skills" "$R/.claude/skills"
 H f1
 grep -q "launch: $R/.claude/skills is linked to the render" "$T/o" && grep -q "no flag" "$T/o" && grep -q "any OTHER worktree" "$T/o" && ok "packs: a linked checkout needs no flag, another worktree does" || no "SPEC linked: $(sed -n '/== packs/,/== read/p' "$T/o")"
 rm -rf "$R/.claude"
@@ -226,19 +226,19 @@ sect() { sed -n '/^== packs/,/^== read first/p' "$T/o"; }
 setprov agentx
 HX; rc=$?
 [ $rc = 0 ] && grep -q "^render check (qargi packs check --target agentx-render app): exit " "$T/o" && grep -q "until the owner runs qargi packs apply --target agentx-render app" "$T/o" && ok "another provider: the check and the fix name its render target" || no "agentx no render: rc=$rc $(sect)"
-mkdir -p "$S/agentx/app/.agent/skills"
+mkdir -p "$S/render/app/agentx/.agent/skills"
 HX
-grep -q "^launch (the checkout's .agent/skills is not our link): agentx run --render $S/agentx/app\$" "$T/o" && ok "another provider: the launch line is its template" || no "agentx launch: $(sect)"
-echo '{}' > "$S/agentx/app/extra.json"; HX
-grep -q "agentx run --render $S/agentx/app --extra $S/agentx/app/extra.json\$" "$T/o" && ok "another provider: an optional group of the template appears when its file exists" || no "agentx launch extra: $(sect)"
-mkdir -p "$R/.agent"; ln -s "$S/agentx/app/.agent/skills" "$R/.agent/skills"; HX
+grep -q "^launch (the checkout's .agent/skills is not our link): agentx run --render $S/render/app/agentx\$" "$T/o" && ok "another provider: the launch line is its template" || no "agentx launch: $(sect)"
+echo '{}' > "$S/render/app/agentx/extra.json"; HX
+grep -q "agentx run --render $S/render/app/agentx --extra $S/render/app/agentx/extra.json\$" "$T/o" && ok "another provider: an optional group of the template appears when its file exists" || no "agentx launch extra: $(sect)"
+mkdir -p "$R/.agent"; ln -s "$S/render/app/agentx/.agent/skills" "$R/.agent/skills"; HX
 grep -q "launch: $R/.agent/skills is linked to the render" "$T/o" && ok "another provider: its skills directory is the link that is recognised" || no "agentx linked: $(sect)"
 sect | grep -qi "claude" && no "another provider: the packs section names Claude Code: $(sect)" || ok "another provider: nothing in the packs section names Claude Code"
 HX --json; jq -e '.packs.provider == "agentx" and .packs.render_exists == true and .packs.linked == true and (.packs.launch | startswith("agentx run"))' "$T/o" >/dev/null && ok "another provider: --json carries the provider and the same facts" || no "agentx json: $(cat "$T/o")"
 rm -rf "$R/.agent"
 setprov noskills; HX; rc=$?
 [ $rc = 0 ] && sect | grep -q "^provider noskills has no project skills directory: describe the packs a session loads" && ok "a provider with no project skills directory: the packs section says so, the note still comes (exit 0)" || no "noskills: rc=$rc $(sect)"
-setprov notarget; mkdir -p "$S/notarget/app/.claude/skills"; HX; rc=$?
+setprov notarget; mkdir -p "$S/render/app/notarget/.claude/skills"; HX; rc=$?
 [ $rc = 0 ] && sect | grep -q "^render check: not run (provider notarget has no packs render target: " && sect | grep -q "provider notarget has no session launch command: " && ok "a provider with no render target and no launch command: both are said, nothing is run" || no "notarget: rc=$rc $(sect)"
 setprov nosuch; HX; rc=$?
 [ $rc = 1 ] && grep -q "^qargi: no runtime or family 'nosuch' for the local surface; available: " "$T/e" && [ ! -s "$T/o" ] && ok "a provider with no descriptor is refused as an unknown runtime of the local surface (exit 1)" || no "unknown provider: rc=$rc $(out)"

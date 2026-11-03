@@ -46,6 +46,7 @@ DO_NOT_ASSUME = (
 
 _MS = None
 _PV = None
+_RN = None
 
 
 def ms():
@@ -68,6 +69,16 @@ def pv():
         sys.modules["provider"] = _PV
         spec.loader.exec_module(_PV)
     return _PV
+
+
+def rn():
+    """lib/packs_render.py (where the render of a project for a runtime is), loaded by path."""
+    global _RN
+    if _RN is None:
+        spec = importlib.util.spec_from_file_location("packs_render", os.path.join(HERE, "packs_render.py"))
+        _RN = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_RN)
+    return _RN
 
 
 def clean(s):
@@ -216,7 +227,7 @@ def packs_facts(state, project, repo, qargi_bin, name):
     """The packs of the project as its provider (name) lays them out. A facility the provider lacks is recorded as the refusal
     text (unsupported, launch_why, check_why) and the rest is still described."""
     P = pv()
-    render = os.path.join(state, name, project)
+    render = rn().render_dir(state, project, name)
     p = {"provider": clean(name), "unsupported": None, "render_dir": clean(render), "render_exists": False, "skills_dir": "",
          "linked": False, "launch": None, "launch_why": "", "render_target": None, "check_why": "", "link_path": "",
          "check": {"exit": None, "first": [], "last": [], "omitted": 0}}
