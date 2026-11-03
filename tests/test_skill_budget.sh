@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The weight of the texts a member or a lead loads, and three ways it is held in place.
+# The weight of the texts a member or a lead loads, and four ways it is held in place.
 #
 # The texts: skills/**/*.md, contract/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md,
 # packs/skills/**/*.md and the contract addenda of the shipped runtimes (lib/providers/*/*.md, which a cloud agent's prompt or a local run's contract directory carries). Every word of them costs context in every session that loads them, so:
@@ -15,6 +15,9 @@
 #     command of lib/commands.py (the table tests/test_help.py checks against the scripts) and, when that command has verbs,
 #     one of its verbs. Words that are placeholders (NAME, <x>, [x]), flags and quoted text end the example; `a|b` stands for
 #     both. A miss fails unless tests/skill-verbs-allowlist.txt lists it (`qargi X Y`, sorted); a stale entry fails too.
+#  4. Reference files. Every .md under skills/*/ other than SKILL.md is loaded on demand, so its first line must start with
+#     `Load when ` (the model decides from that line alone whether to read it), and the SKILL.md of its skill must name it
+#     (by its path inside the skill), or nothing would ever send a session there.
 #
 # Run: tests/test_skill_budget.sh          the check
 #      tests/test_skill_budget.sh --report  the same, and every text with its count, ceiling and slack (nothing is changed)
@@ -63,6 +66,20 @@ for p in "${!ceil[@]}"; do
   [ "$found" = 1 ] || { no "stale entry in $BUDGET: $p is not one of the shipped texts (delete the line)"; stale=$((stale + 1)); }
 done
 [ $((bad + over + missing + stale)) != 0 ] || ok "all ${#TEXTS[@]} texts are listed, each with a ceiling equal to its word count"
+
+# 4. the reference files of the skills
+nref=0 refbad=0
+while IFS= read -r f; do
+  nref=$((nref + 1))
+  rel=${f#skills/}; skill=${rel%%/*}; name=${rel#*/}
+  first=$(head -n 1 "$f")
+  case $first in
+    'Load when '?*) ;;
+    *) no "$f: the first line must start with 'Load when ' (it is: ${first:0:50})"; refbad=1;;
+  esac
+  grep -qF -- "$name" "skills/$skill/SKILL.md" || { no "skills/$skill/SKILL.md does not name $name (name each reference file where it is needed)"; refbad=1; }
+done < <(find skills -mindepth 2 -type f -name '*.md' ! -name SKILL.md | sort)
+[ "$refbad" != 0 ] || ok "all $nref reference files under skills/ start with 'Load when ' and are named in their SKILL.md"
 
 # 2 and 3, from the same texts
 python3 -I - "$DUPS" "$VERBS" "${TEXTS[@]}" <<'PY' || fail=1
