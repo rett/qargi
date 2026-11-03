@@ -344,14 +344,20 @@ EOF
 # the keys no verb here stores: models.extensions and models.accept_no_barrier change what an agent may run on or accept a surface with no
 # read-only barrier, so they take a plan token and an approval (qargi provider enable|disable|accept, which store through lib/gated_answers.py).
 # Every route that writes a whole answers file (init, attach, new) checks them here: the keys of the file that differ from the stored ones
-# (none stored: the keys the file has; an empty list or object counts as absent), one per line
+# that add or change an entry (none stored: the keys the file has; an empty list or object counts as absent; dropping an entry is allowed), one per line
 gated_keys_changed() { # NEWFILE [STOREDFILE]
   [ -f "${2:-}" ] || set -- "$1" /dev/null
   jq -rn --slurpfile n "$1" --slurpfile s "$2" '
     def norm: if . == null or . == [] or . == {} then null else . end;
     def keys_of: if type == "object" and (.models | type) == "object" then .models else {} end;
+    # a file may keep or drop what is stored (that only narrows trust); it may not add or change an entry
+    def narrower($a; $b; $k): ($a[$k] | norm) as $x | ($b[$k] | norm) as $y
+      | if $x == null then true elif $y == null then false
+        elif ($x | type) == "array" then (($x - $y) | length) == 0
+        elif ($x | type) == "object" then ($x | to_entries | all(. as $e | $y[$e.key] == $e.value))
+        else $x == $y end;
     ($n[0] | keys_of) as $a | ($s[0] | keys_of) as $b
-    | ["extensions", "accept_no_barrier"][] | . as $k | select(($a[$k] | norm) != ($b[$k] | norm)) | "models." + $k'
+    | ["extensions", "accept_no_barrier"][] | . as $k | select(narrower($a; $b; $k) | not) | "models." + $k'
 }
 gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file would add or change a gated key
   local bad; bad=$(gated_keys_changed "$@" | paste -sd, | sed 's/,/, /g')
