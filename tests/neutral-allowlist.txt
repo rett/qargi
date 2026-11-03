@@ -1,0 +1,312 @@
+# The lines of lib/ (apart from lib/providers/) and bin/ that name the runtime qargi was first built for. tests/test_neutral.sh reads this
+# file: every hit of claude|anthropic|\bant\b|skilloverrides|\.claude|subagent must match an entry, and every entry must match a hit.
+# So this list can only shrink: when a line is made neutral (or moves into a runtime's definition under lib/providers/), delete its entry.
+#
+# FILE:PATTERN. FILE is a path from the repository root; PATTERN is an extended regular expression, case-sensitive, matched against the
+# text of the line; the first colon ends the file name. One entry per distinct construct; one comment per file and reason.
+#
+# End of phase 1 of open providers: only the entries of the cloud runtime (claude-platform: the `ant` CLI, its profiles and its
+# memory-store, session, agent and deployment calls) should be left. End of phase 2: none.
+
+# ======================================================================================================================================
+# THE CLOUD RUNTIME (claude-platform): the `ant` CLI is its transport; its profiles, workspaces and Managed Agents objects are its own
+# ======================================================================================================================================
+
+# lib/provision.sh: provisioning is `ant apply`; the lock file and the skill type are the cloud runtime's
+lib/provision.sh:ant (apply|beta:)
+lib/provision.sh:claude-lock\.json
+lib/provision.sh:type: anthropic
+
+# lib/session.sh: sessions are `ant beta:sessions`, the credential goes to ant on stdin
+lib/session.sh:ant beta:
+lib/session.sh:goes to ant on stdin
+
+# lib/registry.sh: instances are deployments, agents, environments and memory stores read and updated with `ant beta:`
+lib/registry.sh:ant beta:
+
+# lib/lib.sh: the store I/O, the sessions and the login check of the cloud runtime
+lib/lib.sh:the ant CLI keeps its login|\(the ant
+lib/lib.sh:ant beta:
+lib/lib.sh:ant auth status
+lib/lib.sh:workspace "\$\{ANTHROPIC_PROFILE
+lib/lib.sh:die "ant profile
+
+# lib/lead.sh and lib/cred.sh: the lead's vault and credentials, and the agent and deployment it is attached to
+lib/lead.sh:ant beta:
+lib/cred.sh:ant beta:
+
+# lib/canon.sh, lib/memory.sh, lib/collect.sh, lib/supervise.sh, lib/watch.sh: memory stores, files and sessions through `ant beta:`
+lib/canon.sh:ant beta:
+lib/memory.sh:ant beta:
+lib/collect.sh:ant beta:files
+lib/collect.sh:ant treats a piped stdin
+lib/supervise.sh:the cloud tool \(ant\)
+lib/supervise.sh:ant beta:sessions:events
+lib/watch.sh:ant beta:sessions retrieve
+lib/watch.sh:ant auth status
+
+# lib/tierwrite.sh, lib/hook.sh, lib/gitflow.sh: the cloud tier is reached with ant, and the binding's profile variable is dropped for a test
+lib/tierwrite.sh:reached with ant
+lib/hook.sh:command -v ant
+lib/gitflow.sh:env -u ANTHROPIC_PROFILE
+
+# lib/packs.sh: updating an existing cloud agent with its skills and tools
+lib/packs.sh:ant beta:
+lib/packs.sh:ant apply --yes
+lib/packs.sh:type:"anthropic"
+lib/packs.sh:anthropic skills:
+
+# lib/migrate.py: renaming the cloud objects of a project
+lib/migrate.py:def ant\(args
+lib/migrate.py:\["ant"\] \+ args
+lib/migrate.py:rc, out = ant\(
+lib/migrate.py:another tool \(ant, registry
+lib/migrate.py:"""ant prints a list
+lib/migrate.py:is ant logged in
+lib/migrate.py:ant beta:
+
+# lib/transfer.py: memory exported from and imported into a cloud store
+lib/transfer.py:\(ant, gpg\)
+lib/transfer.py:def ant\(args
+lib/transfer.py:"""Run the ant CLI
+lib/transfer.py:\["ant"\] \+ args
+lib/transfer.py:= ant\(
+lib/transfer.py:^ +ant\(\[
+lib/transfer.py:ant prints the notes
+lib/transfer.py:is ant logged in
+
+# lib/membackend.py: CloudBackend is a Managed Agents memory store through `ant`
+lib/membackend.py:through the `ant` CLI
+lib/membackend.py:only through `ant`
+lib/membackend.py:body `ant` prints
+lib/membackend.py:through `ant beta:
+lib/membackend.py:ant="ant"
+lib/membackend.py:self\.ant, self\.label
+lib/membackend.py:\[self\.ant, group\]
+lib/membackend.py:"ant %s %s failed
+lib/membackend.py:CloudBackend\(ref, ant\)
+
+# lib/tiers.py and lib/tiercontext.py: where a cloud tier is, read with ant (the --ant option names the executable)
+lib/tiers.py:--ant PATH
+lib/tiers.py:NO_ANT = "ant not installed
+lib/tiers.py:\bant="ant"
+lib/tiers.py:ant\)
+lib/tiers.py:ant, i = argv
+lib/tiers.py:o == '--ant'
+lib/tiercontext.py:replaces ant\.
+lib/tiercontext.py:ant \.\.\. list --view
+lib/tiercontext.py:NO_ANT = "ant is not installed"
+lib/tiercontext.py:def _ant_json
+lib/tiercontext.py:\[ant, "beta:
+lib/tiercontext.py:"ant failed
+lib/tiercontext.py:ant, deadline
+lib/tiercontext.py:shutil\.which\(ant\)
+lib/tiercontext.py:= _ant_json\(ant, \[
+lib/tiercontext.py:"--checkout", "--ant"\)
+lib/tiercontext.py:get\("--ant", "ant"\)
+lib/tiercontext.py:ant, time\.time
+
+# lib/cloud.py: qargi cloud binds a project to an ant profile and a workspace
+lib/cloud.py:which `ant` profile
+lib/cloud.py:exports ANTHROPIC_PROFILE
+lib/cloud.py:`ant` uses its active profile
+lib/cloud.py:runs `ant auth login`
+lib/cloud.py:`ant profile` read
+lib/cloud.py:ANT_NO_BROWSER =
+lib/cloud.py:def ant\(args
+lib/cloud.py:\["ant"\] \+ args
+lib/cloud.py:cannot run ant
+lib/cloud.py:r = ant\(\["profile"
+lib/cloud.py:`ant profile set` edits
+lib/cloud.py:ANTHROPIC_CONFIG_DIR
+lib/cloud.py:\(ant uses its active profile\)
+lib/cloud.py:read the ant profiles
+lib/cloud.py:ant profile set does not rebind
+lib/cloud.py:no binding \(ant's active profile\)
+lib/cloud.py:\["ant", "auth", "login"
+
+# bin/qargi: the project's cloud binding exports the profile variable for the command
+bin/qargi:ant runs under the project's profile
+bin/qargi:if \[ -n "\$\{ANTHROPIC_PROFILE
+bin/qargi:export ANTHROPIC_PROFILE=
+bin/qargi:echo "qargi: project .* uses ant profile
+
+# lib/project.sh: the cloud answer names an ant profile
+lib/project.sh:an ant profile name
+
+# lib/commands.py: the help of qargi cloud and the --force of the cloud apply
+lib/commands.py:Which ant profile
+lib/commands.py:an ant profile and the workspace
+lib/commands.py:then runs ant under that profile
+lib/commands.py:uses ant's
+lib/commands.py:runs ant auth login
+lib/commands.py:Bind a project to an ant profile
+lib/commands.py:the ant profile name
+lib/commands.py:reads the ant profile only
+lib/commands.py:\(ant apply --force\)
+
+# lib/conformance/hermetic.sh: the stubs that keep a check from reaching the real `ant` (cloud) and `claude` (local) tools
+lib/conformance/hermetic.sh:ANTHROPIC_\* or
+lib/conformance/hermetic.sh:first `ant` and
+lib/conformance/hermetic.sh:`claude` on PATH
+lib/conformance/hermetic.sh:ANTHROPIC_\*\|QARGI_
+lib/conformance/hermetic.sh:for _t in ant claude
+
+# ======================================================================================================================================
+# THE LOCAL RUNTIME (claude-code) that the core still names: its hook protocol, its directories, its help text. Each should move into
+# lib/providers/claude-code.json (or be worded neutrally); delete the entry when it does
+# ======================================================================================================================================
+
+# lib/guard.py: the PreToolUse hook protocol and the directories Claude Code loads (CLAUDE_HOOK is the same data claude-code.json ships)
+lib/guard.py:is CLAUDE_HOOK, used
+lib/guard.py:^CLAUDE_HOOK = \{
+lib/guard.py:CLAUDE_RESOURCE_DIRS
+lib/guard.py:protected ~/\.claude/agents
+lib/guard.py:the home: for Claude Code ~/\.claude/skills
+lib/guard.py:installed ones: \.claude/skills and \.claude/agents
+lib/guard.py:the claude/ and render/ directories of the state
+lib/guard.py:prepare` run directory, a project directory such as \.claude/skills
+lib/guard.py:Claude Code hooks documentation
+lib/guard.py:code\.claude\.com/docs/en/hooks
+lib/guard.py:Requires Claude Code v
+lib/guard.py:code\.claude\.com/docs/en/sub-agents
+lib/guard.py:then the subagent runs without this guard
+lib/guard.py:^# The directories of Claude Code
+lib/guard.py:and those of Claude Code\.
+lib/guard.py:# of Claude Code is kept here
+lib/guard.py:os\.path\.join\(home, "\.claude", "plugins"\)
+lib/guard.py:"anthropic"\)\)   # the ant profiles
+lib/guard.py:~/\.claude/skills/qargi-\* are links
+lib/guard.py:claude_render_roots\(P, home\)
+lib/guard.py:def claude_render_roots
+lib/guard.py:which Claude Code loads with --add-dir
+lib/guard.py:the claude/ one is what
+lib/guard.py:"""The claude/ directory of the state
+lib/guard.py:os\.path\.join\(st, "claude"\)
+lib/guard.py:as claude_render_roots does
+lib/guard.py:for the claude render and the marshal
+lib/guard.py:in claude_render_roots\(\)
+lib/guard.py:that Claude Code loads; it is managed
+lib/guard.py:so a \.claude/skills there is the work product
+lib/guard.py:\.claude/skills and \.claude/agents for Claude Code
+lib/guard.py:rm -rf \.claude, with \.claude/skills in it
+lib/guard.py:hook = CLAUDE_HOOK
+
+# lib/agent.sh: the member's user-level directory, the shipped descriptor's name and the plain hook test
+lib/agent.sh:for Claude Code ~/\.claude/agents
+lib/agent.sh:the shipped claude\.json
+lib/agent.sh:guard\.CLAUDE_HOOK
+
+# lib/packs.sh and lib/packs_render.py: the render directory an earlier version wrote under state/claude, and the target name claude-code
+lib/packs.sh:claude-code for Claude Code
+lib/packs.sh:state/claude/PROJECT
+lib/packs.sh:must be claude-code
+lib/packs.sh:packs-apply-claude-code
+lib/packs_render.py:`claude --add-dir DIR`
+lib/packs_render.py:Claude Code: \.claude/skills
+lib/packs_render.py:made under <state>/claude/<project>/
+lib/packs_render.py:make Claude Code load it
+lib/packs_render.py:<state>/claude/<project> to
+lib/packs_render.py:LEGACY = "claude"
+lib/packs_render.py:LEGACY_TARGET = "claude-code"
+lib/packs_render.py:under <state>/claude\. An action
+
+# lib/hook.sh and lib/supervise.py: the hook verbs of the runtime that has hooks (event names, the environment file)
+lib/hook.sh:Claude Code hooks
+lib/hook.sh:if \$CLAUDE_ENV_FILE is set
+lib/hook.sh:\$CLAUDE_ENV_FILE support
+lib/hook.sh:via CLAUDE_ENV_FILE
+lib/hook.sh:>> "\$CLAUDE_ENV_FILE"
+lib/hook.sh:\$\{CLAUDE_ENV_FILE:-\}
+lib/hook.sh:^  subagent-start\|
+lib/hook.sh:handlers \(subagent-start
+lib/supervise.py:a Claude Code hook
+lib/supervise.py:"subagent-start": "start"
+lib/supervise.py:verb == "subagent-stop"
+lib/supervise.py:cannot message a Claude Code subagent
+lib/supervise.py:SubagentStart
+lib/supervise.py:Claude Code settings\.json
+bin/qargi:hook:subagent-start
+
+# lib/commands.py: help text that names the local runtime
+lib/commands.py:Claude Code subagent on this machine
+lib/commands.py:claude-code renders for a local Claude Code session
+lib/commands.py:A member is a Claude Code subagent you name
+lib/commands.py:~/\.claude/skills and any \.claude/skills
+lib/commands.py:member as subagent_type
+lib/commands.py:A lead is a Claude Code session
+lib/commands.py:a local subagent definition file
+lib/commands.py:render for a local Claude Code session
+lib/commands.py:With --target claude-code it takes
+lib/commands.py:\(claude-code for this target\)
+lib/commands.py:`claude --add-dir
+lib/commands.py:Claude Code cannot enforce role scoping
+lib/commands.py:Skills render under \.claude/skills
+lib/commands.py:into ~/\.claude, and members
+lib/commands.py:Check a Claude Code render for drift
+lib/commands.py:Needs --target claude-code
+lib/commands.py:by ~/\.claude/skills or by the
+lib/commands.py:checkout's \.claude/skills
+lib/commands.py:for Claude Code \.claude/skills
+lib/commands.py:\(state/claude/PROJECT\)
+lib/commands.py:\(Claude Code\) is refused
+lib/commands.py:has a Claude Code render
+lib/commands.py:\(packs apply --target claude-code\)
+lib/commands.py:packs apply --target claude-code PROJECT
+lib/commands.py:The lead is this Claude Code session
+lib/commands.py:From Claude Code run them with
+lib/commands.py:"summary": "Claude Code hooks"
+lib/commands.py:"subagent-start": verb
+lib/commands.py:"subagent-stop": verb
+lib/commands.py:cannot message a local subagent
+lib/commands.py:your Claude Code settings\.json
+lib/commands.py:\(a Claude Code subagent\)
+lib/commands.py:This Claude Code session as lead
+lib/commands.py:and Anthropic's skills\. recommend
+lib/commands.py:Anthropic's skills"\)
+
+# lib/help.py, lib/lead.sh, lib/project.sh, lib/transfer.py, lib/discover.py: "from Claude Code run it with !" and the like
+lib/help.py:qargi\\\\-verify in Claude Code
+lib/lead.sh:from Claude Code: !
+lib/lead.sh:Releases stay with the Claude Code session
+lib/project.sh:Claude Code session leading may push
+lib/project.sh:providers/claude\.json
+lib/transfer.py:from Claude Code: !
+lib/discover.py:from Claude Code: !
+
+# lib/marshal_handoff.py and lib/attach.py: the instruction files of a repository (CLAUDE.md, AGENTS.md); they belong in the runtime's
+# resources.instructions
+lib/marshal_handoff.py:"CLAUDE\.md", "AGENTS\.md"
+lib/attach.py:"CLAUDE\.md", "AGENTS\.md"
+lib/tiercontext.py:nothing in them overrides the user or CLAUDE\.md
+
+# lib/migrate.py: where an earlier version put the members it made
+lib/migrate.py:"\.claude", "agents"
+
+# lib/conformance/run.sh: the usage names the shipped runtimes
+lib/conformance/run.sh:claude-code, claude-platform
+
+# lib/paths.py: the places an earlier version used; ant keeps its login under the XDG config directory
+lib/paths.py:the ant CLI keeps its login
+
+# ======================================================================================================================================
+# DATA, NOT CODE: neutral by purpose
+# ======================================================================================================================================
+
+# secret patterns that scrub or refuse a pack, a memory note or a canon note: the prefix of a vendor's API key is the thing looked for
+lib/packs.sh:sk-ant-
+lib/memory.sh:sk-ant-
+lib/canon.py:sk-ant-
+lib/conformance/review.py:sk-ant-
+
+# the catalog of skills a vendor publishes, for `qargi discover --online` (a catalog source in data, backlog item a)
+lib/discover.py:repository could not be listed
+lib/discover.py:anthropics/skills
+lib/discover.py:--online, the official MCP registry and Anthropic
+lib/discover.py:"""Entries from the official MCP registry and Anthropic
+lib/discover.py:anthropic-skills:" \+ d
+lib/discover.py:"source": "anthropic-skills"
+lib/discover.py:startswith\(\("mcp-registry:", "anthropic-skills:"\)\)
+lib/discover.py:anthropic-skills  %s
+lib/discover.py:Try --online to search
+lib/canon.py:executor \(canon\.sh\) applies the steps with `ant`
