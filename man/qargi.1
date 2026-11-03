@@ -387,16 +387,25 @@ the project the member belongs to (required): its models.provider renders it, an
 .RS
 .TP
 .B list
-List the members, their abilities and definitions.
+List the members of every project, their abilities and definitions.
+.br
+One row per member: PROJECT, NAME, ABILITIES, MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. Members are kept per project, so two projects can each have a worker.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+only the members of this project.
+.RE
 .RE
 .RS
 .TP
 .BI "rename " "OLD NEW"
 Rename a member and its definition.
+.br
+Within its project. The project is \-\-project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
 .RE
 .RE
 .RS
@@ -404,11 +413,11 @@ the project, instead of the one inferred from here.
 .BI "refresh " "NAME"
 Re\-render a member from the member definition qargi ships now.
 .br
-Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+The project is found as for rename. Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
 .RE
 .RE
 .RS
@@ -416,7 +425,7 @@ the project, instead of the one inferred from here.
 .B models
 Show the base members, the profiles with their resolved models and efforts, and each member.
 .br
-Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the base exists), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. Read\-only.
+Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the base exists), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. The members shown are those of \-\-project, else of the project in effect; with none in effect, every project's (shown as PROJECT/NAME). Read\-only.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -432,6 +441,13 @@ machine\-readable.
 .TP
 .BI "remove " "NAME"
 Delete a member's definition and its record.
+.br
+The project is found as for rename: \-\-project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2).
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
+.RE
 .RE
 .RS
 .TP

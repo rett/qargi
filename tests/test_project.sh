@@ -247,7 +247,7 @@ $DA project link lp --plan 000000000000 --approved x >/dev/null 2>&1 && no "appl
 # agents: a member of the project is rendered into the member render, and linking puts one link per member in the checkout
 out=$($DA agent add smith --abilities build --project lp 2>&1)
 { [ -f "$MD/smith.toml" ] && [ ! -e "$LR/.fake" ] && grep -q "project link lp --resource agents" <<<"$out"; } && ok "agent add --project: the file goes to the member render, not the checkout, and the note names the link verb" || no "agent add: $out $(ls -A "$LR")"
-jq -e --arg f "$MD/smith.toml" '.smith | .file == $f and .project == "lp"' "$T/c/agents.json" >/dev/null && ok "and the record says so" || no "record"
+jq -e --arg f "$MD/smith.toml" '.projects.lp.smith | .file == $f and has("project") == false' "$T/c/agents.json" >/dev/null && ok "and the record says so" || no "record"
 mkdir -p "$LR/.fake/agents"; echo mine > "$LR/.fake/agents/own.toml"                  # the user's own agent beside it
 out=$(lgo link lp 2>&1)
 { [ -L "$LR/.fake/agents/smith.toml" ] && [ "$(readlink "$LR/.fake/agents/smith.toml")" = "$MD/smith.toml" ] && [ -f "$LR/.fake/agents/own.toml" ] && [ ! -L "$LR/.fake/agents/own.toml" ] \
