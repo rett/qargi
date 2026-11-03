@@ -2,7 +2,7 @@
 """Canon planner: pure functions from a store's memories to a list of steps.
 
 Subcommands (all read JSON lines of {"id","path","content"} from --store and print JSON):
-  plan    --kind memory|reference --project P --roles build,write --default-role R --store F --seed D
+  plan    --kind memory|reference --project P --roles build,write --store F --seed D
   check   --kind K --project P --roles ... --store F   (structure, note format, indexes, hygiene)
   import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.
@@ -182,7 +182,7 @@ def role_lines(roles):
     return "\n".join("- `roles/%s/INDEX.md`: the %s role" % (r, r) for r in roles)
 
 
-def init(kind, mems, project, roles, default_role, seed, today):
+def init(kind, mems, project, roles, seed, today):
     """An empty store: the seed's README, template, shared index and one index per role. The marker follows (make_plan)."""
     subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
     ops = [{"op": "create", "path": "/shared/INDEX.md", "content": seed_text(seed, "INDEX.shared.%s.md" % kind, subs)}]
@@ -264,7 +264,7 @@ def maintain(kind, mems, project, roles, seed, today):
     return ops, sorted(set(notes))
 
 
-def make_plan(kind, mems, project, roles, default_role, seed, today):
+def make_plan(kind, mems, project, roles, seed, today):
     """The steps from a store's memories to the current canon: {from_version, to_version, why, ops, notes}."""
     state, why = detect(kind, mems)
     out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
@@ -275,7 +275,7 @@ def make_plan(kind, mems, project, roles, default_role, seed, today):
         out["ops"], out["notes"] = maintain(kind, mems, project, roles, seed, today)
     else:
         for step in CHAINS[state]:
-            ops, notes = step(kind, mems, project, roles, default_role, seed, today)
+            ops, notes = step(kind, mems, project, roles, seed, today)
             out["ops"] += ops
             out["notes"] += notes
         out["ops"].append({"op": "marker", "path": "/CANON.md", "content":
@@ -286,7 +286,7 @@ def make_plan(kind, mems, project, roles, default_role, seed, today):
 
 def cmd_plan(a):
     today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.default_role, a.seed, today)))
+    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.seed, today)))
     return 0
 
 
@@ -512,7 +512,6 @@ def main():
         s.add_argument("--store", required=True)
         s.add_argument("--today")
         if name == "plan":
-            s.add_argument("--default-role", required=True)
             s.add_argument("--seed", required=True)
     s = sub.add_parser("import")
     s.add_argument("--map", required=True, choices=["docs-v0"])

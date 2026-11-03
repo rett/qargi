@@ -31,7 +31,7 @@ def run(cmd, kind, files, roles="build,write"):
     st = write(files)
     args = [sys.executable, os.path.join(LIB, "canon.py"), cmd, "--kind", kind, "--project", "demo", "--roles", roles, "--store", st]
     if cmd == "plan":
-        args += ["--default-role", "build", "--seed", SEED, "--today", TODAY]
+        args += ["--seed", SEED, "--today", TODAY]
     r = subprocess.run(args, capture_output=True, text=True)
     os.unlink(st)
     return r

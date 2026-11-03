@@ -160,7 +160,7 @@ def plan_init(tier_name, project_arg, today):
             raise Refused("tier %s at %s overlaps tier %s at %s" % (tier_name, loc, o["tier"], o["location"]))
     roles = T._roles(a) or ["build"]
     pa, rcsv = T.check_args(tier_name, project, roles)
-    plan = M.migrate({}, C.LATEST, "memory", pa, rcsv.split(","), "build", seed_dir(), today)
+    plan = M.migrate({}, C.LATEST, "memory", pa, rcsv.split(","), seed_dir(), today)
     plan.update(verb="init", tier=tier_name, stores={"target": loc}, needs_ant=False, private={"target": tier_name in PRIVATE})
     if repo:
         plan["warning"] = repo_warning(repo, rel)
