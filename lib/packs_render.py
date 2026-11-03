@@ -8,11 +8,11 @@ Called by packs.sh, which gathers the facts only the shell knows (links, review,
 packs is what the project's provider can use; skipped are the enabled packs it cannot (their declaration, compatible_providers, does
 not match), left out of the render and said in the plan and the check.
 
-  packs_claude.py prep   INPUTS             validate the output root, create claude/ (the caller then takes the lock)
-  packs_claude.py plan   INPUTS TOKENFILE   stage the tree (a private directory), print the plan, write the plan
+  packs_render.py prep   INPUTS             validate the output root, create claude/ (the caller then takes the lock)
+  packs_render.py plan   INPUTS TOKENFILE   stage the tree (a private directory), print the plan, write the plan
                                             token and TOKENFILE.stage; nothing is replaced
-  packs_claude.py swap   INPUTS STAGEFILE TOKEN   install the staged tree if it is the one the token was made for
-  packs_claude.py check  INPUTS             read only; exit 1 on any finding
+  packs_render.py swap   INPUTS STAGEFILE TOKEN   install the staged tree if it is the one the token was made for
+  packs_render.py check  INPUTS             read only; exit 1 on any finding
 
 Layout under <state>/claude/<project>/: .claude/skills/<name>/..., mcp.json, settings.json, MANIFEST.json.
 """
@@ -580,7 +580,7 @@ def link_note(inp, live):
 
 def main():
     if len(sys.argv) < 3:
-        die("usage: packs_claude.py prep|plan|swap|check INPUTS [TOKENFILE | STAGEFILE TOKEN]")
+        die("usage: packs_render.py prep|plan|swap|check INPUTS [TOKENFILE | STAGEFILE TOKEN]")
     try:
         inp = load(sys.argv[2])
         verb = sys.argv[1]
