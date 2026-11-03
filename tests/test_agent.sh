@@ -136,14 +136,14 @@ out=$($DA agent add tomler2 --roles build --effort xhigh --project tomlp 2>&1); 
 { jq -e 'has("effort") | not' <<<"$tj" >/dev/null && grep -q "effort: omitted" <<<"$out"; } && ok "faketoml: an effort the runtime has no value for is left out, with a note" || no "xhigh: $out $tj"
 printf '# hand\n' >> "$F"
 $DA agent list | grep -q "tomler .*tomler.toml (DRIFT)$" && ok "faketoml: a hand edit is DRIFT" || no "faketoml drift: $($DA agent list | grep tomler)"
-$DA agent refresh tomler >/dev/null 2>&1; $DA agent list | grep 'tomler ' | grep -q 'DRIFT' && no "refresh kept DRIFT" || ok "faketoml: refresh clears it"
+$DA agent refresh tomler --project tomlp >/dev/null 2>&1; $DA agent list | grep 'tomler ' | grep -q 'DRIFT' && no "refresh kept DRIFT" || ok "faketoml: refresh clears it"
 jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/definition.json" > "$T/d.json" && mv "$T/d.json" "$LIB/definition.json"
 python3 -I tests/handseal.py "$LIB"                             # and the edit is sealed again: a changed definition, not a changed pack
 $DA agent list | grep -q "tomler .*tomler.toml (STALE)$" && ok "faketoml: a changed definition makes the member STALE" || no "faketoml stale: $($DA agent list | grep tomler)"
 $DA agent models --project tomlp --json | jq -e '[.members[] | select(.state == ["STALE"] and (.name | startswith("tomler")))] | length == 2' >/dev/null && ok "models: and so are the other members of that runtime" || no "models stale count"
-$DA agent refresh tomler >/dev/null 2>&1; [ "$(toml "$F" | jq -r .serves)" = "build test" ] && ok "faketoml: refresh renders the new definition" || no "faketoml refresh: $(toml "$F")"
+$DA agent refresh tomler --project tomlp >/dev/null 2>&1; [ "$(toml "$F" | jq -r .serves)" = "build test" ] && ok "faketoml: refresh renders the new definition" || no "faketoml refresh: $(toml "$F")"
 $DA agent list | grep 'tomler ' | grep -q 'STALE' && no "tomler still STALE" || ok "and the member is current again"
-$DA agent rename tomler smithy >/dev/null 2>&1; S=$T/repo-t/.fake/agents/smithy.toml
+$DA agent rename tomler smithy --project tomlp >/dev/null 2>&1; S=$T/repo-t/.fake/agents/smithy.toml
 { [ -f "$S" ] && [ ! -e "$F" ] && [ "$(toml "$S" | jq -r .name)" = smithy ]; } && ok "faketoml: rename renders the file again under the new name" || no "faketoml rename: $(ls "$T/repo-t/.fake/agents")"
 grep -qx '/.fake/agents/smithy.toml' "$T/repo-t/.git/info/exclude" && [ -z "$(git -C "$T/repo-t" status --porcelain)" ] && ok "and hides the new file from git" || no "rename exclude"
 $DA agent list | grep 'smithy ' | grep -q '(' && no "renamed member flagged: $($DA agent list | grep smithy)" || ok "and it is current under the new name"
@@ -182,7 +182,7 @@ out=$($DA agent add nope3 --roles build --project tomlp 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
 
 # where a member's file goes: a member belongs to a project, and its file goes where the runtime links the project's agents; there are no user-level members
-for m in $($DA agent list | awk '{print $2}'); do $DA agent remove "$m" >/dev/null 2>&1; done
+while read -r p m; do $DA agent remove "$m" --project "$p" >/dev/null 2>&1; done < <($DA agent list | awk '{print $1, $2}')
 rm -rf "$A"
 out=$($DA agent add bare 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q -- '--project NAME' <<<"$out" && ! grep -q -- '--user' <<<"$out" && [ ! -e "$A/bare.md" ] && ! has_member bare; } && ok "add without --project is refused (exit 2), says so, and writes nothing" || no "bare add: rc=$rc $out"
@@ -215,6 +215,14 @@ out=$($DA agent remove worker --project nowhere 2>&1); rc=$?; { [ $rc != 0 ] && 
 out=$(QARGI_PROJECT='' $DA agent remove worker --project alpha 2>&1); rc=$?
 { [ $rc = 0 ] && [ ! -e "$T/repo/.claude/agents/worker.md" ] && [ -f "$A/worker.md" ] && jq -e '(.projects.pbase | keys == ["worker"]) and (.projects.alpha // {} | length == 0)' "$T/c/agents.json" >/dev/null; } && ok "remove --project removes that project's member only" || no "remove --project: rc=$rc $out"
 [ "$(fm build --project pbase)" = worker ] && [ -z "$(fm build --project alpha)" ] && ok "and the other project still resolves its own" || no "for after remove"
+# inside a project that lacks NAME, a verb with no --project must not fall through to the one project that has it
+cp "$A/worker.md" "$T/worker.keep"; cp "$T/c/agents.json" "$T/agents.m3"
+for v in "rename worker carrier" "refresh worker" "remove worker"; do
+  out=$(QARGI_PROJECT=alpha $DA agent $v 2>&1); rc=$?
+  { [ $rc = 2 ] && grep -q 'alpha' <<<"$out" && grep -q -- '--project' <<<"$out" && cmp -s "$A/worker.md" "$T/worker.keep" && cmp -s "$T/c/agents.json" "$T/agents.m3"; } \
+    && ok "$v inside a project without worker: exit 2, asks for --project, touches nothing" || no "foreign $v: rc=$rc $out"
+done
+out=$(QARGI_PROJECT=alpha $DA agent refresh worker --project pbase 2>&1); rc=$?; [ $rc = 0 ] && ok "and naming the other project with --project still works" || no "explicit other project: rc=$rc $out"
 out=$(QARGI_PROJECT='' $DA agent remove worker 2>&1); rc=$?; { [ $rc = 0 ] && [ ! -e "$A/worker.md" ] && ! has_member worker; } && ok "a name held by one project needs no --project" || no "unique remove: rc=$rc $out"
 # a project is the key: a member with no project cannot exist, and the old flat file is refused, never converted
 cp "$T/c/agents.json" "$T/agents.keep"
@@ -247,18 +255,18 @@ jq -e --arg f "$MD/lk.toml" '.projects.linkp.lk | .file == $f and has("project")
 [ -z "$(git -C "$T/repo-l" status --porcelain)" ] && ! grep -qs fake "$T/repo-l/.git/info/exclude" && ok "linked runtime: the repository's exclude file is not touched (project link prints the hint)" || no "exclude touched"
 mkdir -p "$T/repo-l/.fake/agents"; ln -s "$MD/lk.toml" "$T/repo-l/.fake/agents/lk.toml"
 out=$($DA agent refresh lk --project linkp 2>&1); grep -q "is current" <<<"$out" && ! grep -q "does not see" <<<"$out" && ok "linked runtime: no note once the checkout has the link" || no "link note when linked: $out"
-$DA agent rename lk lk2 >/dev/null 2>&1; [ -f "$MD/lk2.toml" ] && [ ! -e "$MD/lk.toml" ] && jq -e '.projects.linkp.lk2.file == "'"$MD"'/lk2.toml"' "$T/c/agents.json" >/dev/null && ok "linked runtime: rename keeps the member in the render" || no "linked rename: $(ls "$MD")"
+$DA agent rename lk lk2 --project linkp >/dev/null 2>&1; [ -f "$MD/lk2.toml" ] && [ ! -e "$MD/lk.toml" ] && jq -e '.projects.linkp.lk2.file == "'"$MD"'/lk2.toml"' "$T/c/agents.json" >/dev/null && ok "linked runtime: rename keeps the member in the render" || no "linked rename: $(ls "$MD")"
 # a member an earlier version wrote into the checkout is moved to the render by refresh (the old file only while it is what qargi wrote)
 mkdir -p "$T/repo-l/.fake/agents"; rm -f "$T/repo-l/.fake/agents/lk.toml"
 $DA agent add old1 --roles build --project linkp >/dev/null 2>&1; $DA agent add old2 --roles build --project linkp >/dev/null 2>&1
 for m in old1 old2; do cp "$MD/$m.toml" "$T/repo-l/.fake/agents/$m.toml"; rm -f "$MD/$m.toml"; jq --arg m "$m" --arg f "$T/repo-l/.fake/agents/$m.toml" '.projects.linkp[$m].file = $f' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"; done
 echo '# by hand' >> "$T/repo-l/.fake/agents/old2.toml"
-out=$($DA agent refresh old1 2>&1)
+out=$($DA agent refresh old1 --project linkp 2>&1)
 { [ -f "$MD/old1.toml" ] && [ ! -e "$T/repo-l/.fake/agents/old1.toml" ] && jq -e '.projects.linkp.old1.file == "'"$MD"'/old1.toml"' "$T/c/agents.json" >/dev/null && grep -q "now in the member render" <<<"$out"; } && ok "refresh moves a member written into the checkout to the render and removes the unmodified old file" || no "refresh move: $out"
-out=$($DA agent refresh old2 2>&1)
+out=$($DA agent refresh old2 --project linkp 2>&1)
 { [ -f "$MD/old2.toml" ] && [ -f "$T/repo-l/.fake/agents/old2.toml" ] && grep -q "edited by hand and is left" <<<"$out"; } && ok "and leaves an old file that was edited by hand" || no "refresh move edited: $out"
-out=$($DA agent remove old1 2>&1); grep -q "project link linkp --resource agents" <<<"$out" && [ ! -e "$MD/old1.toml" ] && ok "remove deletes the render's file and says to run project link" || no "remove: $out"
-$DA agent remove old2 >/dev/null 2>&1; $DA agent remove lk2 >/dev/null 2>&1
+out=$($DA agent remove old1 --project linkp 2>&1); grep -q "project link linkp --resource agents" <<<"$out" && [ ! -e "$MD/old1.toml" ] && ok "remove deletes the render's file and says to run project link" || no "remove: $out"
+$DA agent remove old2 --project linkp >/dev/null 2>&1; $DA agent remove lk2 --project linkp >/dev/null 2>&1
 
 # a base name takes only the abilities of its class
 $DA agent add worker --project pbase --roles review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
@@ -275,7 +283,7 @@ $DA agent add reviewer --project pbase >/dev/null 2>&1 && jq -e '.projects.pbase
 $DA agent remove worker >/dev/null 2>&1; $DA agent remove reviewer >/dev/null 2>&1
 
 # profiles: only the base members resolve (worker for the write class, reviewer for the read-only one); a member of another name serves nobody
-for m in $($DA agent list | awk '{print $2}'); do $DA agent remove "$m" >/dev/null 2>&1; done
+while read -r p m; do $DA agent remove "$m" --project "$p" >/dev/null 2>&1; done < <($DA agent list | awk '{print $1, $2}')
 for pair in "tw:write" "ro:read-only"; do
   r=${pair%%:*}; c=${pair##*:}; mkdir -p "$T/c/roles/$r"
   jq -n --arg c "$c" '{class:$c}' > "$T/c/roles/$r/role.json"; echo "the $r role" > "$T/c/roles/$r/ROLE.md"
@@ -337,7 +345,7 @@ jq '.profiles = 5' "$T/c/projects/alpha.json" > "$T/a.json" && mv "$T/a.json" "$
 [ "$($DA agent for build --project alpha)" = "worker haiku low build" ] && ok "profiles of the wrong type are ignored" || no "profiles=5"
 
 # --- extensions the project enabled: the decisions about the members and the member renderer read the runtime as composed with them
-for m in $($DA agent list | awk '{print $2}'); do $DA agent remove "$m" >/dev/null 2>&1; done
+while read -r p m; do $DA agent remove "$m" --project "$p" >/dev/null 2>&1; done < <($DA agent list | awk '{print $1, $2}')
 imp() { local t; t=$($DA provider import "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA provider import "$1" --plan "$t" --approved test >/dev/null 2>&1; }
 # locov: a runtime that cannot set the model per dispatch; ovl, an extension, provides the capability and counts once it is verified for locov
 LIBV=$T/c/packs/providers/locov; mkdir -p "$LIBV"

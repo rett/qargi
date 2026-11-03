@@ -11,7 +11,8 @@
 #   agent.sh rename OLD NEW [--project P]
 #   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort
 #
-# NAME in rename, refresh and remove is looked up in --project, else the project in effect, else the one project that has it (two or more: exit 2).
+# NAME in rename, refresh and remove is looked up in --project, else the project in effect (exit 2 when it lacks NAME), else, with none in effect,
+# the one project that has it (two or more: exit 2).
 # Every member belongs to a project (there are no user-level members). Its file goes where the runtime's definition links the project's agents
 # (resources.agents.link.project): entry-symlinks, dir-symlink or copy: into the project's member render under ~/.qargi (state/render/P/RUNTIME.agents),
 # which `qargi project link P --resource agents` links into the checkout; none: straight into the checkout's agents directory (hidden from git).
@@ -236,8 +237,9 @@ need_project() { # verb project-or-empty: a member belongs to a project, and its
   [ -n "$2" ] || { echo "qargi: $1 writes the definition of a member: give --project NAME (the project it belongs to; its definition goes where the runtime links the project's agents)" >&2; exit 2; }
 }
 
-member_project() { # name -> the project whose member NAME is: --project, else the project in effect when it has NAME, else the one project that has it
-  # (a name two or more projects hold, with none named or in effect, is exit 2 and lists them)
+member_project() { # name -> the project whose member NAME is: --project, else the project in effect (which must have NAME), else the one project that has it
+  # when none is in effect (a name two or more projects hold, with none named or in effect, is exit 2 and lists them). A project in effect that lacks
+  # NAME is never skipped over: the verb would act on another project's member from inside this checkout
   local n=$1 held cur
   if [ -n "$PROJ" ]; then
     jq -e --arg p "$PROJ" --arg n "$n" '.projects[$p][$n] != null' "$MEMBERS_FILE" >/dev/null || die "no member named $n in project $PROJ (qargi agent list)"
@@ -246,7 +248,11 @@ member_project() { # name -> the project whose member NAME is: --project, else t
   held=$(jq -r --arg n "$n" '(.projects // {}) | to_entries[] | select(.value[$n] != null) | .key' "$MEMBERS_FILE")
   [ -n "$held" ] || die "no member named $n (qargi agent list)"
   cur=$(python3 -I "$root/lib/help.py" infer)
-  if [ -n "$cur" ] && grep -qx -- "$cur" <<<"$held"; then echo "$cur"; return 0; fi
+  if [ -n "$cur" ]; then
+    grep -qx -- "$cur" <<<"$held" && { echo "$cur"; return 0; }
+    echo "qargi: no member named $n in project $cur, the project in effect; it is a member of $(tr '\n' ' ' <<<"$held" | sed 's/ $//; s/ /, /g'): give --project NAME" >&2
+    exit 2
+  fi
   if [ "$(wc -l <<<"$held")" != 1 ]; then
     echo "qargi: $n is a member of more than one project ($(tr '\n' ' ' <<<"$held" | sed 's/ $//; s/ /, /g')): give --project NAME" >&2
     exit 2
