@@ -25,6 +25,12 @@
 #                                         on a new branch agent/adopt-M cut from the integration branch; never changes an existing
 #                                         branch or file, never pushes; refused (exit 2) when dirty, detached, empty, unattached
 #                                         or in a member run
+#   project.sh link|unlink NAME [--resource skills,agents,memory] [--plan T --approved W]
+#                                         link what the project uses, kept under ~/.qargi, into the checkout (skills, agents) and into the
+#                                         runtime's memory directory (memory), as the runtime's definition says (lib/project_link.py, on
+#                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
+#                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
+#                                         the same links and puts back what they replaced
 #   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
 #                                         change the exit status, so storing and the flows after it work as before)
 #
@@ -593,8 +599,30 @@ PY
     echo "$n: $path = $val (applies to the next provision; use 'instances budget' for a live deployment)"
     [ -z "$carry" ] || echo "note: models.provider was the single name '$carry'; it is now one name per surface, and the surface you did not set keeps '$carry'"
     case $path in models.provider|models.provider.*) no_provider "$PROJ_DIR/$n.json" "$n" || true;; esac;;
+  link|unlink)
+    # the project's resources, linked from where qargi keeps them: the plan first (one token for all), the change only for that plan. A link
+    # changes what a session loads, so the token is always needed (an approved caller has not approved this plan) and a member never applies
+    n=${1:-}; shift || true; valid_project "$n" || die "$verb needs a project name (lower-case letters and digits)"
+    res='' PLAN_ARG='' APPROVED=''
+    while [ $# -gt 0 ]; do
+      case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
+        --plan) PLAN_ARG=${2:-}; shift 2;; --approved) APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+    done
+    export PLAN_ARG; unset QARGI_NESTED
+    [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
+    PLK=$(dirname "$(readlink -f "$0")")/project_link.py
+    LW=$(mktemp -d); trap 'rm -rf "$LW"' EXIT
+    python3 -I "$PLK" plan "$verb" "$n" "$res" "$LW/token" || exit $?
+    [ -s "$LW/token" ] || exit 0       # nothing to do (already linked): no token
+    tok=$(cat "$LW/token")
+    if [ -z "$APPROVED" ]; then
+      echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0
+    fi
+    [ -n "$tok" ] && need_plan "$tok"
+    audit_log "project:$verb" "$n ${res:-all} $tok"
+    python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
   validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
-  *) die "usage: project.sh template|init|new|attach|adopt|set|show|list|validate ...";;
+  *) die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
 esac
