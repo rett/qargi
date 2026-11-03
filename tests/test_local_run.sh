@@ -74,7 +74,7 @@ want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-
 grep -q '^You are a qargi member: a task-scoped worker' <<<"$out" && grep -q '^TASK: change the thing' <<<"$out" && grep -q '^CLASS=write' <<<"$out" \
   && ok "dry run: the prompt is the member body and the task block, with the class qargi recorded" || no "dry prompt: $out"
 grep -q '{skills_dir}' <<<"$out" && no "the member body still has {skills_dir}" || ok "the member body's {skills_dir} is filled"
-[ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt.md" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
+[ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
 grep -q '^COMMAND=fakellm' <<<"$out" && grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^ENV_PASS=FAKE_KEY,FAKE_MODE' <<<"$out" && ok "dry run names the command, the prompt route and the environment passed (names only)" || no "dry fields: $out"
 
 out=$($DA local run "$RUN" --dry-run --effort high --model deep 2>&1); rc=$?
@@ -126,8 +126,29 @@ n=$(arg0 <<<"$out" | jq -r 'length'); p=$(arg0 <<<"$out" | jq -r '.[2]')
 out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q '^ARG\[You are a qargi member' "$OUT/transcript" && [ "$rc" = 0 ] && ok "and a real run passes it" || no "arg run: rc=$rc $out"
 setprov fakeobj; prep "$T/r" w4; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-[ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.')" = "$(jq -nc --arg f "$RUN/prompt.md" --arg o "$OUT" '["fakellm","-p",$f,"--out",$o]')" ] && ok "via file: {prompt_file} is the run's prompt.md, and a write run has no class group" || no "file via: rc=$rc $out"
-out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q "^ARG\[$RUN/prompt.md\]" "$OUT/transcript" && grep -q 'TASK: change the thing' "$RUN/prompt.md" && ok "a real run writes the prompt file" || no "file run: rc=$rc $out"
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.')" = "$(jq -nc --arg f "$RUN/prompt/prompt.md" --arg o "$OUT" '["fakellm","-p",$f,"--out",$o]')" ] && ok "via file: {prompt_file} is the run's prompt/prompt.md, and a write run has no class group" || no "file via: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q "^ARG\[$RUN/prompt/prompt.md\]" "$OUT/transcript" && grep -q "TASK: change the thing" "$RUN/prompt/prompt.md" && ok "a real run writes the prompt file" || no "file run: rc=$rc $out"
+
+# --- the prompt file stays in its own directory of the run, never over a control file of the run (A8) --------------------------------
+mk fakectl "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakectl",family:null,surface:"local",models:$m,
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","-p","{prompt_file}","--out","{out}"],prompt:{via:"file",file:"refs.before"},output:{format:"text"}}}')"
+setprov fakectl; prep "$T/r" w4b; task
+refs=$(cat "$RUN/refs.before"); cls=$(cat "$RUN/class" 2>/dev/null || true)
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$(cat "$RUN/refs.before")" = "$refs" ] && [ "$(cat "$RUN/class" 2>/dev/null || true)" = "$cls" ] && ! grep -q 'You are a qargi member' "$RUN/refs.before"; } \
+  && ok "prompt.file named refs.before: the run's refs.before is untouched" || no "prompt.file overwrote a control file: $(head -c 200 "$RUN/refs.before")"
+[ "$(sed -n 's/^ARG\[\(.*refs.before\)\]$/\1/p' "$OUT/transcript" 2>/dev/null | head -1)" = "$RUN/prompt/refs.before" ] && grep -q 'TASK: change the thing' "$RUN/prompt/refs.before" \
+  && ok "the prompt went to RUN/prompt/, the dedicated directory, under that name" || no "prompt dir: rc=$rc $out $(ls "$RUN" "$RUN/prompt" 2>&1)"
+$DA local verify "$RUN" >/dev/null 2>&1 && ok "verify still passes after that run" || no "verify after prompt.file run"
+prep "$T/r" w4c; task
+mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$RUN/prompt"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ -z "$(ls "$T/elsewhere")" ] && [ ! -e "$RUN/dispatch.json" ]; } && ok "a prompt directory that is a link elsewhere is refused and nothing is written through it" || no "prompt dir link: rc=$rc $out $(ls "$T/elsewhere")"
+rm -f "$RUN/prompt"; mkdir "$RUN/prompt"; ln -s "$RUN/refs.before" "$RUN/prompt/refs.before"; refs=$(cat "$RUN/refs.before")
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ "$(cat "$RUN/refs.before")" = "$refs" ] && [ ! -e "$RUN/dispatch.json" ]; } && ok "a prompt file that is a link to a control file is refused and the target is untouched" || no "prompt file link: rc=$rc $out"
+setprov fakeobj
 
 # --- a read-only run needs a barrier, or the project's acceptance --------------------------------------------------------------------
 setprov fakecmd; prep "$T/r" rv2 review; task
@@ -139,6 +160,53 @@ jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-02", reason: 
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q '"--ro"' <<<"$out" && ok "with the project's acceptance it goes on, and the class group adds its arguments" || no "accepted: rc=$rc $out"
 jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+
+# --- the project's extensions are part of the definition a run acts on (A2) ---------------------------------------------------------
+# fakenobar has a command dispatch and no barrier; sandext gives it a sandbox-args barrier and claims read_only_barrier, and the owner
+# attested it. The extension adds no read-only arguments (an extension cannot add class_argv), so nothing in a local run applies that
+# barrier: the capability is true of the composition but the run would start with full write access.
+mk fakenobar "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakenobar",family:null,surface:"local",models:$m,
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}","--out","{out}"],prompt:{via:"stdin"},cwd:"{clone}",timeout_s:60,output:{format:"text"}}}')"
+mk sandext "$(jq -n '{schema:2,kind:"extension",extension:"sandext",description:"a sandbox-args barrier",extends:"fakenobar",surface:"local",provides:["read_only_barrier"],
+  adds:{capabilities:{read_only_barrier:{value:"yes",note:"sandbox flags"}},barrier:{kind:"sandbox-args"}}}')"
+mk skillext "$(jq -n '{schema:2,kind:"extension",extension:"skillext",description:"a skills directory",extends:"fakenobar",surface:"local",provides:["skills"],
+  adds:{capabilities:{skills:{value:"yes",note:"n"}},resources:{skills:{project_dir:".ext/skills",items:"dir-per-item",entry:"SKILL.md",format:"skill-md",link:{project:"dir-symlink",user:"none"}}}}}')"
+attest_ext() { # EXT BASE -> the verification record of read_only_barrier, bound to the extension on the base
+  python3 -I - "$1" "$2" <<'PY'
+import sys; sys.path.insert(0, "lib")
+import provider as P
+x, b = sys.argv[1:3]
+P.record_verification(x, {"read_only_barrier": {"hash": P.extension_hash(x, b, "local"), "by": "attest", "at": "2026-11-02", "note": "test"}})
+PY
+}
+attest_ext sandext fakenobar
+jq '.models.provider = "fakenobar" | .models.extensions = ["sandext", "skillext"]' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+[ "$(python3 -I lib/provider.py effective fakenobar local read_only_barrier --project rproj 2>&1)" = yes ] && ok "extension barrier: the composition counts the attested barrier as yes" || no "extension barrier setup: $(python3 -I lib/provider.py effective fakenobar local read_only_barrier --project rproj 2>&1)"
+prep "$T/r" rv3 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'sandext' <<<"$out" && ! grep -q '^ARGV=' <<<"$out"; } && ok "a read-only run whose barrier an extension provides and a local run does not apply is refused (dry run)" || no "extension barrier, dry: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'sandext' <<<"$out" && [ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ]; } && ok "and a real one starts nothing" || no "extension barrier, real: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-02", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" rv4 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "with the project's own acceptance of no barrier the same run goes on" || no "extension barrier, accepted: rc=$rc $out"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+# an extension that claims the capability and adds no barrier at all is no barrier either
+mk capext "$(jq -n '{schema:2,kind:"extension",extension:"capext",description:"claims only",extends:"fakenobar",surface:"local",provides:["read_only_barrier"],
+  adds:{capabilities:{read_only_barrier:{value:"yes",note:"claim"}}}}')"
+attest_ext capext fakenobar
+jq '.models.extensions = ["capext"]' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" rv5 review; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'capext' <<<"$out"; } && ok "an extension that only claims read_only_barrier is refused the same way" || no "extension claim: rc=$rc $out"
+jq '.models.extensions = ["sandext", "skillext"]' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+prep "$T/r" w7; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '\.ext/skills' <<<"$out"; } && ok "a write run uses the composed definition: the member body names the skills directory an extension adds" || no "extension skills dir: rc=$rc $(grep -i skills <<<"$out" | head -3)"
+jq 'del(.models.extensions)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+setprov fakecmd
 
 # --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
 prep "$T/r2" c1; task
