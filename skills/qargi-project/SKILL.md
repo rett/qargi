@@ -60,7 +60,7 @@ recommended; do not assume answers:
    names and abilities, suggesting the two base members (`worker` for build, write and
    test; `reviewer` for review); specializations such as the auditor are profiles, not
    members (`qargi agent models`). Create each with `qargi agent add NAME --roles LIST --project NAME`, which
-   the project's local runtime renders; skip names that `qargi agent list` already shows. Where
+   the project's local runtime renders; skip names that `qargi agent list --project NAME` already shows. Where
    the file lands follows the runtime's definition: a directory or one link per entry
    of the project's member render (`project link`, below), or the checkout's own agents directory,
    hidden from git (Claude Code). Every member belongs to a project and `--project` is required:

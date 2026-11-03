@@ -32,7 +32,7 @@ Instance names are `<project>-<role>` with a role from the fixed list (`build`, 
 A member is written, not copied: qargi keeps one neutral member definition and the project's local
 runtime (`models.provider.local`) renders it into that runtime's own file, with the model and effort
 of the member's profile mapped through the runtime's catalog. The record is in
-`~/.qargi/config/agents.json` with the hash of the file and of what it was rendered from.
+`~/.qargi/config/agents.json` (members keyed by project, then name) with the hash of the file and of what it was rendered from.
 
 - Placement: `qargi agent add NAME --roles LIST --project P` writes where the runtime links
   project agents: the project's member render, `~/.qargi/state/render/P/RUNTIME.agents` (linked into a

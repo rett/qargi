@@ -32,7 +32,7 @@ only its own role's index, never another role's folder.
 |---|---|---|
 | check | `qargi canon check PROJECT [--kind K]` | Conformance and version report; exit 1 on any FAIL. |
 | seed-role | `qargi canon seed-role PROJECT --role R --approved "..."` | Writes the role's skeleton (`provision/role-seeds/R/`) into the stores without overwriting. |
-| plan | `qargi canon plan PROJECT [--kind K] [--default-role R]` | Every step needed to reach the current canon, from whichever version the store is at. Changes nothing. |
+| plan | `qargi canon plan PROJECT [--kind K]` | Every step needed to set up an empty store at the current canon. A store at an older canon is `unknown`: plan nothing, bring it in by hand or `canon import`. Changes nothing. |
 | apply | `qargi canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: renames keep identity and history, conflicts go to `/_conflicts/<date>/`, the marker is written last, a re-run resumes. Show the plan first. |
 | import | `qargi canon import PROJECT --from STORE --role R --map docs-v0 [--approved "..."]` | Merges a foreign store (the old documentation store layout) into `roles/<R>/` with relevant folder names (numbered prefixes removed, references rewritten); curated parts into the reference store, history into the memory store. The source is only read. |
 | promote | `qargi canon promote PROJECT --kind K --path /roles/R/... --approved "..."` | Moves a role's file to `shared/` when every role needs it. |
