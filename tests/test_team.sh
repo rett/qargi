@@ -57,6 +57,7 @@ bad "more than five revise rounds" '.teams["code-docs"].max_rounds=9'
 out=$($DA team brief alpha code-docs --task "Rename the verb" --done "make test" --base feature/x 2>&1)
 echo "$out" | grep -q "^TEAM: code-docs" && echo "$out" | grep -q "OUT_PREFIX: write--" && echo "$out" | grep -q "BASE: gh-pages" && echo "$out" | grep -q "SCOPE: site/" && echo "$out" | grep -q "DONE: make check-site" \
   && ok "the brief gives each member its base, scope, prefix and check" || no "brief: $out"
+echo "$out" | grep -q "^  OUT: /mnt/session/outputs" && ! echo "$out" | grep -q RUN_DIR && ok "each member entry gives OUT, the place the contract tells a member to write" || no "brief OUT: $out"
 echo "$out" | grep -A6 "role: review" | grep -q "BASE: feature/x" && ok "the review member reviews the build base" || no "review base"
 $DA team brief alpha code-docs --task t --done d >/dev/null 2>&1 && no "a brief without a base was made while the build base is @dispatcher" || ok "a brief needs --base while the build base is @dispatcher"
 $DA team brief alpha nosuch --task t --done d --base b >/dev/null 2>&1 && no "unknown team accepted" || ok "an unknown team is refused"
