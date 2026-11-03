@@ -650,7 +650,9 @@ def project_runtimes(project):
 
 def set_answer(project, path, value):
     sh = os.path.join(LIB, "project.sh")
-    r = subprocess.run([sh, "set", project, path, json.dumps(value)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    # project set refuses models.extensions and models.accept_no_barrier unless a gated verb (enable, disable) stores them after its own gate
+    r = subprocess.run([sh, "set", project, path, json.dumps(value)], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       env=dict(os.environ, QARGI_GATED_STORE="1"))
     if r.returncode != 0:
         raise Failure("could not record it in the answers of %s; nothing changed: %s" % (project, (r.stderr or r.stdout).strip()))
 
