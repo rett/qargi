@@ -57,7 +57,7 @@ def parse_marker(text):
 
 
 def detect(kind, mems):
-    """-> (state, why). state is LATEST (conforms), "draft" (a marker from an earlier
+    """-> (state, why). state is LATEST (conforms), "empty" (no memories: set up from the seed), "draft" (a marker from an earlier
     draft of this spec), "legacy" (the layout before the canon) or "unknown"."""
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
@@ -74,7 +74,7 @@ def detect(kind, mems):
         return "draft", "marker from an earlier draft of the canon (%d)" % n
     paths = list(mems)
     if not paths:
-        return "legacy", "empty store"
+        return "empty", "empty store: it is set up from the seed"
     if any(p.startswith(("/shared/", "/roles/")) for p in paths):
         return "legacy", "no marker but canon folders exist: an interrupted migration, resumed"
     if set(paths) <= {"/README.md", "/_template.md"}:
@@ -197,6 +197,18 @@ def seed_text(seed, name, subs):
 
 def role_lines(roles):
     return "\n".join("- `roles/%s/INDEX.md`: the %s role" % (r, r) for r in roles)
+
+
+def init(kind, mems, project, roles, default_role, seed, today):
+    """An empty store: the seed's README, template, shared index and one index per role. The marker follows (make_plan)."""
+    subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
+    ops = [{"op": "create", "path": "/shared/INDEX.md", "content": seed_text(seed, "INDEX.shared.%s.md" % kind, subs)}]
+    for r in roles:
+        ops.append({"op": "create", "path": "/roles/%s/INDEX.md" % r,
+                    "content": seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))})
+    ops.append({"op": "create", "path": "/_template.md", "content": slurp("%s/_template.%s.md" % (seed, kind))})
+    ops.append({"op": "create", "path": "/README.md", "content": seed_text(seed, "README.%s.md" % kind, subs)})
+    return ops, []
 
 
 def migrate_legacy(kind, mems, project, roles, default_role, seed, today):
@@ -393,7 +405,7 @@ def migrate_v2(kind, mems, project, roles, default_role, seed, today):
 
 
 # Each state reaches LATEST through an ordered chain of steps.
-CHAINS = {"legacy": [migrate_legacy, migrate_draft, migrate_v2], "draft": [migrate_draft, migrate_v2], 1: [migrate_v2]}
+CHAINS = {"empty": [init], "legacy": [migrate_legacy, migrate_draft, migrate_v2], "draft": [migrate_draft, migrate_v2], 1: [migrate_v2]}
 
 
 def maintain(kind, mems, project, roles, seed, today):
