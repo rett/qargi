@@ -30,7 +30,7 @@ DEFAULTS=$root/lib/model-defaults.json   # the one table: the bases (one per gua
 # renderer is that module's neighbour, lib/render.py. This program runs isolated; AGENT_PY holds it, apy runs it.
 AGENT_PY=$(cat <<'PYEOF'
 # The member renderer, run by lib/agent.sh as: python3 -I -c "$AGENT_PY" LIBDIR VERB ARGS...  (stdlib only, isolated)
-#   pdesc PROV                                        the provider as the loader shows it: tiers, aliases, effort, model_pattern, local.reserved_names, adapter
+#   pdesc PROV SURFACE                                the runtime on a surface, as provider.summary() gives it: tiers, aliases, effort, model_pattern, reserved_names, adapter
 #   names                                             the providers that have a definition, one per line
 #   render PROV NAME ABILITIES CLASS MODEL EFFORT [PROJECT]
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
@@ -187,8 +187,8 @@ def states(members_file, rc):
 def main(argv):
     verb, a = argv[2], argv[3:]
     try:
-        if verb == "pdesc" and len(a) == 1:
-            print(json.dumps(P.load(a[0])))
+        if verb == "pdesc" and len(a) == 2:
+            print(json.dumps(P.summary(a[0], a[1])))
         elif verb == "names" and not a:
             print("\n".join(P.names()))
         elif verb == "render" and len(a) in (6, 7):
@@ -208,10 +208,10 @@ PYEOF
 )
 apy() { python3 -I -c "$AGENT_PY" "$root/lib" "$@"; }
 PCACHE=$(mktemp -d); trap 'rm -rf "$PCACHE"' EXIT   # a provider is read once per run, however many subshells ask
-pdesc() { # provider -> its description as the loader gives it: tiers, aliases, effort, model_pattern, local.reserved_names, adapter
-  [ -s "$PCACHE/$1" ] || apy pdesc "$1" > "$PCACHE/$1.tmp" || return 1
-  [ -s "$PCACHE/$1" ] || mv "$PCACHE/$1.tmp" "$PCACHE/$1"
-  cat "$PCACHE/$1"
+pdesc() { # runtime surface -> its summary on that surface: tiers (ids), aliases, effort, model_pattern, reserved_names, adapter (lib/provider.py summary)
+  [ -s "$PCACHE/$1.$2" ] || apy pdesc "$1" "$2" > "$PCACHE/$1.$2.tmp" || return 1
+  [ -s "$PCACHE/$1.$2" ] || mv "$PCACHE/$1.$2.tmp" "$PCACHE/$1.$2"
+  cat "$PCACHE/$1.$2"
 }
 
 verb=${1:-}; shift || true
@@ -236,7 +236,7 @@ valid_name() { # name provider -> dies with the rule (the reserved names are the
   printf '%s' "$n" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#n}" -le 40 ] \
     || die "'$n' is not a member name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
   lc=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')
-  for b in $(pdesc "$p" | jq -r '.local.reserved_names[]'); do
+  for b in $(pdesc "$p" local | jq -r '.reserved_names[]'); do
     [ "$lc" != "$b" ] || die "'$n' is a built-in agent type of the provider; choose another name"
   done
   if [ "$n" = lead ] || valid_role "$n"; then die "'$n' is a role; name the member after itself, for example forge or scribe"; fi
@@ -319,16 +319,16 @@ project_answer() { # project ability field(model|effort) -> the project's valid 
 provider_for() { # project-or-empty surface -> the project's runtime on that surface (models.provider; no default, see project_provider); dies when it has no descriptor
   local p; p=$(project_provider "$1" "$2") || return $?   # exit 2 with the shared message: no project, no such project, no provider for the surface
   local err
-  err=$(pdesc "$p" 2>&1 >/dev/null) || die "models.provider '$p' cannot be loaded (${err#qargi: }); available: $(apy names | paste -sd, - | sed 's/,/, /g')"
+  err=$(pdesc "$p" "$2" 2>&1 >/dev/null) || die "models.provider '$p' cannot be loaded (${err#qargi: }); available: $(apy names | paste -sd, - | sed 's/,/, /g')"
   echo "$p"
 }
 
-no_effort() { # provider -> 0 when the provider has no effort control (every effort level is null in its definition)
-  pdesc "$1" | jq -e '[.effort[]] | all(. == null)' >/dev/null
+no_effort() { # provider surface -> 0 when the runtime has no effort control on that surface (every effort level is null in its definition)
+  pdesc "$1" "$2" | jq -e '[.effort[]] | all(. == null)' >/dev/null
 }
 
-tier_model() { # provider tier -> the provider's model id
-  pdesc "$1" | jq -r --arg t "$2" '.tiers[$t]'
+tier_model() { # provider tier -> the provider's model id on the local surface (members are local)
+  pdesc "$1" local | jq -r --arg t "$2" '.tiers[$t]'
 }
 
 adapter_run() { # provider surface verb < request -> the adapter's answer on stdout, its exit status; lib/provider.py finds it (a library pack's only as a sealed private copy)
@@ -352,7 +352,7 @@ member_class() { # roles-csv -> the guard class of a member: read-only when ever
 
 render_member() { # name abilities-csv model effort-or-empty provider [project] -> prints {runtime, path, content, sha256, inputs_hash, notes, agents} (the runtime's renderers.agent,
   local e=$4                                       # as composed with the extensions of the member's project, when it has one)
-  ! no_effort "$5" || e=''
+  ! no_effort "$5" local || e=''
   apy render "$5" "$1" "$2" "$(member_class "$2")" "$3" "$e" "${6:-}"
 }
 
@@ -389,7 +389,7 @@ add() {
   [ -z "$ro" ] || barrier_guard local "$PROJ"
   [ -n "$MODEL" ] || MODEL=$(default_for "$PROJ" "$first" model "$prov")
   [ -n "$EFFORT" ] || EFFORT=$(default_for "$PROJ" "$first" effort "$prov")
-  if no_effort "$prov"; then   # the provider cannot be told how hard to think: the member records none
+  if no_effort "$prov" local; then   # the provider cannot be told how hard to think: the member records none
     [ -z "$ORIG_EFFORT" ] || echo "qargi: note: effort ignored ($prov has no effort control)" >&2
     EFFORT=''
   fi
@@ -477,10 +477,10 @@ models() { # the bases, the profiles with the project's own merged in, the escal
   else proj=$(python3 -I "$root/lib/help.py" infer); fi
   pf=$(pf_json "$proj")
   prov=$(provider_for "$proj" local) || exit $?   # the members are local
-  pd=$(pdesc "$prov") || exit 1
+  pd=$(pdesc "$prov" local) || exit 1
   tiers=$(jq -c .tiers <<<"$pd"); aliases=$(jq -c '.aliases // {}' <<<"$pd")
   rc=$(role_classes)
-  ! no_effort "$prov" || noeff=true
+  ! no_effort "$prov" local || noeff=true
   st=$(member_states "$rc") || exit 1
   out=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$tiers" --argjson aliases "$aliases" --argjson rc "$rc" --argjson st "$st" --argjson noeffort "$noeff" --arg prov "$prov" --arg proj "$proj" --arg pat "$(jq -r .model_pattern <<<"$pd")" "$PJQ"'
     def mclass: if ((.roles // []) | length) > 0 and all((.roles // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
@@ -556,8 +556,8 @@ RESOLVEJQ="$RESOLVE_HEAD"'
 resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, or the reason on stderr (exit 1, or 2 for a refusal)
   local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false mem mm want ov
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" local) || exit $?
-  ! no_effort "$prov" || noeff=true
-  pd=$(pdesc "$prov") || exit 1
+  ! no_effort "$prov" local || noeff=true
+  pd=$(pdesc "$prov" local) || exit 1
   res=$(jq -n --slurpfile d "$DEFAULTS" --slurpfile m "$MEMBERS_FILE" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" \
     --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" --arg proj "$proj" "$PJQ$RESOLVEJQ") || die "could not resolve the profile"
@@ -596,8 +596,8 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   local inst='' legacy=true brec='' rec rm n why='' ov alt
   [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" cloud) || exit $?
-  ! no_effort "$prov" || noeff=true
-  pd=$(pdesc "$prov") || exit 1
+  ! no_effort "$prov" cloud || noeff=true
+  pd=$(pdesc "$prov" cloud) || exit 1
   res=$(jq -n --slurpfile d "$DEFAULTS" --argjson pf "$pf" --argjson tiers "$(jq -c .tiers <<<"$pd")" \
     --argjson aliases "$(jq -c '.aliases // {}' <<<"$pd")" --argjson rc "$(role_classes)" --argjson noeffort "$noeff" \
     --arg role "$role" --arg rclass "$(role_class "$role")" --arg prof "$prof" "$PJQ$CLOUDJQ") || die "could not resolve the profile"
@@ -683,7 +683,7 @@ case $verb in
     jq -e --arg p "$mproj" --arg n "$new" '.projects[$p][$n] != null' "$MEMBERS_FILE" >/dev/null && die "a member named $new exists already in project $mproj"
     f=$(jq -r .file <<<"$rec"); ab=$(jq -r '.roles | join(",")' <<<"$rec")
     # the file carries the name, so the member is rendered again under the new one, into the directory of the old file
-    r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
+    r=$(render_member "$new" "$ab" "$(jq -r --arg d "$(pdesc "$prov" local | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
     oldrel=$(jq -r '.render.path // ""' <<<"$rec"); base=$(dirname "$f")
     [ -z "$oldrel" ] || [ "${f%/"$oldrel"}" = "$f" ] || base=${f%/"$oldrel"}
     # a member whose runtime links the project's agents belongs in the member render, wherever the old file was
@@ -703,7 +703,7 @@ case $verb in
     rec=$(jq -ce --arg p "$mproj" --arg n "$n" '.projects[$p][$n]' "$MEMBERS_FILE")
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
     prov=$(provider_for "$mproj" local) || exit $?
-    r=$(render_member "$n" "$(jq -r '.roles | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
+    r=$(render_member "$n" "$(jq -r '.roles | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" local | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
     # a member whose runtime links the project's agents belongs in the member render: a file written to the checkout by an earlier version is moved there
     # (the old file is removed only while it is what qargi wrote)
