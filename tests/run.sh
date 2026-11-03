@@ -56,6 +56,7 @@ run bash tests/test_install.sh
 run python3 tests/test_migrate_home.py
 run bash tests/test_project.sh
 run bash tests/test_local.sh
+run bash tests/test_local_run.sh
 run bash tests/test_cred.sh
 run bash tests/test_packs.sh
 run bash tests/test_packs_seed.sh
