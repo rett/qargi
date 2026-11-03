@@ -6,7 +6,8 @@
 #
 #   project.sh template NAME              print an answers file with defaults (models.provider is there as an empty string: there is no
 #                                         default provider, so set it to a provider's name before the pack verbs, skill accept and
-#                                         marshal handoff can serve the project; `project validate` reports it while it is empty)
+#                                         marshal handoff can serve the project; `project validate` reports it while it is empty; a role's model
+#                                         is null: it takes its provider's tier once one is set)
 #   project.sh init NAME --answers FILE [--force]   validate and store
 #   project.sh set NAME PATH VALUE        change one answer, e.g. budget_cents 2500 or
 #                                         roles.write.effort high (VALUE is JSON, or a plain string). The provider has one runtime
@@ -92,14 +93,11 @@ bad = []
 Ds = []
 def _runtime(name, surface):
     try:
-        return provider.load(provider.resolve_runtime(name, surface))
+        return provider.summary(provider.resolve_runtime(name, surface), surface)
     except provider.ProviderError:
         return None
-if isinstance(pname, str) and pname.strip():
-    try:
-        Ds.append(provider.load(pname.strip()))
-    except provider.ProviderError:               # not a runtime: a family, which has a runtime on a surface
-        Ds.extend(d for d in (_runtime(pname.strip(), sf) for sf in provider.SURFACES) if d)
+if isinstance(pname, str) and pname.strip():       # a runtime or a family: the runtime each surface resolves it to
+    Ds.extend(d for d in (_runtime(pname.strip(), sf) for sf in provider.SURFACES) if d)
 elif isinstance(pname, dict):
     for sf, nm in pname.items():
         if sf not in provider.SURFACES:
@@ -109,7 +107,7 @@ elif isinstance(pname, dict):
         else:
             d = _runtime(nm.strip(), sf)
             if d: Ds.append(d)
-seen = set(); Ds = [d for d in Ds if not (d["provider"] in seen or seen.add(d["provider"]))]
+seen = set(); Ds = [d for d in Ds if not ((d["provider"], d["surface"]) in seen or seen.add((d["provider"], d["surface"])))]
 if Ds:
     _pats = [re.compile(d["model_pattern"]) for d in Ds]
     class _AnyOf:
@@ -367,13 +365,15 @@ gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file wou
 case $verb in
   template)
     n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
-    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" --slurpfile p "$(dirname "$(readlink -f "$0")")/providers/claude.json" \
-    '$p[0].tiers as $m | ($d[0].profiles | map_values(. + {model: $m[.tier]})) as $t | {
+    # no model and no provider: the template names no vendor. A role's model is its provider's tier (project set models.provider.local NAME)
+    # until you give one; the efforts are the table's, the same for every provider
+    jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
+    '$d[0].profiles as $t | {
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
-        build: {base: "@dispatcher", push: {mode: "none"}, model: $t.build.model, effort: $t.build.effort, apt: [], skills: []},
-        write: {base: "gh-pages", push: {mode: "none"}, model: $t.write.model, effort: $t.write.effort, apt: [], skills: ["pdf"]}
+        build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], skills: []},
+        write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], skills: ["pdf"]}
       },
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
@@ -391,7 +391,7 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     no_provider "$PROJ_DIR/$n.json" || true
-    jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model)/\(.value.effort)"' "$PROJ_DIR/$n.json";;
+    jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model // "provider tier")/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
     n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
