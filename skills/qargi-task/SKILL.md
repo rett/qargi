@@ -7,7 +7,7 @@ argument-hint: "<task>" --done "<check>" [--instance NAME] [--base B] [--scope P
 # /qargi-task (dispatch and session lifecycle)
 
 A **role** says what a task is for (`qargi role list`): build, write, review and test ship with
-qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` and `ROLE.md`). Its
+qargi; add your own in `~/.qargi/config/roles/NAME/`. Its
 **class** (write or read-only) is what the guard enforces; its text cannot change that. A **member** is a
 local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
 one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
@@ -21,7 +21,7 @@ own clone, patches back, never push, no backlog.
 
 If the first argument is not a session verb (`send`, `start`, `status`, `watch`, `collect`, `stop`, `close`: cloud.md), it is a task: build the
 task block (below) and dispatch it to the member that serves the task's role (`qargi agent for ROLE`, whose first word is the member). `--role` defaults to build; take it from the
-user's words (a review, tests, documentation, or a role they named). Inside a feature, use `--base feature/NAME` and run `qargi marshal check NAME` first; `/qargi-flow` owns the rest.
+user's words. Inside a feature, use `--base feature/NAME` and run `qargi marshal check NAME` first; `/qargi-flow` owns the rest.
 
 ## Hard rules
 
@@ -31,7 +31,7 @@ user's words (a review, tests, documentation, or a role they named). Inside a fe
 
 ## Task block
 
-ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_TEXT (locally the output of
+ROLE (`ROLE: build (class write)`; the class is `qargi role show ROLE`'s), ROLE_TEXT (locally
 `qargi role prompt ROLE`, inlined), TASK, DONE (executable check; if the user
 gave prose, get an executable form first), PROFILE (the text of the repository's profile, inlined), BASE (default:
 the dispatching session's branch; explicit if that is master or develop), base
@@ -46,7 +46,7 @@ A profile holds a repository's gates, rules and coordinator review steps, in `~/
 1. `qargi local prepare --repo <repo> --base <base> --slug <slug> --scratch <scratchpad> --role <role> [--profile <profile>]`
    makes the run: a clone on `agent/<slug>` of a bare copy with no remote, an output directory and a credential-less `git` wrapper. It prints `RUN`, `ROLE`, `CLASS`, `CLONE`, `OUT`, `TMP`, `GIT`,
    `BASE_SHA`, `PROFILE`, `MEMBER`, `MODEL` and `EFFORT`, then the TASK-BLOCK sections (`PATHS`, and `MEMORY` inside a registered project): paste them into the task block verbatim.
-   A warning about uncommitted memory means the executor sees only the committed copy.
+   A warning about uncommitted memory means the executor sees only the committed copy. For a private repository not checked out here, use `--repo-url URL --credential-file FILE` in place of `--repo`.
 2. Start the member as the project's local runtime says (`qargi provider show RUNTIME`).
    - **In-session runtime.** Take MEMBER, MODEL and EFFORT from step 1 (or `qargi agent for <role> [--profile NAME]`). Spawn it as `qargi provider notes spawn` says, with the task block plus
      `CLONE`, `OUT`, `GIT` and `BASE_SHA`. No member serves the role: ask the user to add
