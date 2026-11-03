@@ -1626,9 +1626,14 @@ class ShippedClaude(unittest.TestCase):
         self.assertEqual(P.launch_line("claude-code", "/r"), "claude --add-dir /r")
         self.assertEqual(P.definition("claude-code")["session"]["render_target"], "claude-code")
 
-    def test_claude_platform_has_no_local_resources(self):
+    def test_claude_platform_has_no_local_resources_only_its_contract_addendum(self):
         doc = P.definition("claude-platform")
-        self.assertEqual((doc["resources"], doc["agents"]), ({}, None))
+        self.assertEqual((doc["resources"], doc["agents"]), ({"contract_addenda": ["cloud-run.md"]}, None))
+        texts = P.contract_addenda("claude-platform", "cloud")
+        self.assertEqual(len(texts), 1)
+        self.assertTrue(texts[0].startswith("# In a cloud run\n"))
+        self.assertIn("OUT is /mnt/session/outputs", texts[0])
+        self.assertEqual(P.contract_addenda("claude-code", "local"), [])
         with self.assertRaises(P.Unsupported):
             P.require("claude-platform", "project_skills_dir", "link skills")
 
@@ -2372,6 +2377,13 @@ class Scaffold(LibraryBase):
         self.assertEqual((d["provider"], d["family"], d.get("adapter")), ("mycode", None, None))
         self.assertTrue(all(c["verified_on"] is None for c in d["capabilities"].values()))
         self.assertEqual(d["models"]["pattern"], P.catalog("claude")["pattern"])
+
+    def test_from_a_provider_does_not_copy_a_reference_to_files_it_does_not_copy(self):
+        self.apply("new", "mycloud", "--from", "claude-platform")
+        d = jread(os.path.join(self.lib, "mycloud", "definition.json"))
+        self.assertNotIn("contract_addenda", d["resources"])
+        self.apply("seal", "mycloud")
+        self.assertEqual(P.contract_addenda("mycloud", "cloud"), [])
 
     def test_usage_errors(self):
         for args in (("new",), ("new", "a", "--kind", "widget"), ("new", "a", "--from", "claude-code", "--kind", "catalog"), ("new", "a", "--bogus"), ("import",),

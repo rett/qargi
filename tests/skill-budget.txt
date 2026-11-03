@@ -2,9 +2,9 @@
 # Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
 agents/member.body.md 118
 agents/member.md 183
-contract/cloud-run.md 71
 contract/contract.md 678
 contract/output-format.md 276
+lib/providers/claude-platform/cloud-run.md 71
 packs/skills/gitflow-member/SKILL.md 267
 packs/skills/keep-a-changelog/SKILL.md 274
 packs/skills/shellcheck-gate/SKILL.md 335
