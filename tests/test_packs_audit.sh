@@ -330,11 +330,13 @@ chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/render" "$R" "$HOME")" ] && o
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = "~/.agent/skills" | .layout.render_target = "agentx-render"
-  | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project",path:".agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}]
-  | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
-mkprov nouser '.layout.project_skills_dir = ".agent/skills" | .layout.user_skills_dir = null | .layout.exclusion = null'
+# shellcheck source=fakeprov.sh
+. "$ROOT/tests/fakeprov.sh"
+mkprov() { fake_runtime "$ROOT" "$TOOL" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }
+mkprov agentx '.resources.skills.project_dir = ".agent/skills" | .resources.skills.user_dir = "~/.agent/skills" | .session.render_target = "agentx-render"
+  | .resources.settings.files = [{scope:"user",path:"~/.agent/settings.json",format:"json"},{scope:"project",path:".agent/settings.json",format:"json"},{scope:"project-local",path:".agent/settings.local.json",format:"json"}]
+  | .resources.skills.exclusion = {form:"settings-key",files:["user","project","project-local"],pointer:"/skills_off",shape:"map",off:"hidden"}'
+mkprov nouser '.resources.skills.project_dir = ".agent/skills" | .resources.skills |= del(.user_dir, .exclusion)'
 R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
 for pr in "beta agentx" "gamma nouser"; do set -- $pr
   proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"
@@ -372,10 +374,10 @@ out=$(fchk gamma)
 grep -qE "^ +unmanaged +cmine  \(checkout, " <<<"$out" && ! grep -q "umine2" <<<"$out" && grep -q "note: provider nouser has no user skills directory: user-level skills are not listed" <<<"$out" && ok "a provider with no user skills directory: no user place, and a note" || no "nouser: $out"
 ! grep -q "to hide it" <<<"$out" && ok "a provider with no exclusion: no line to switch a skill off" || no "nouser hide offer: $out"
 grep -q "note: provider nouser has no way to switch a skill off in a settings file" <<<"$out" && ! grep -qE "^ +excluded " <<<"$out" && ok "a provider with no exclusion: nothing is reported excluded, and a note" || no "nouser exclusion: $out"
-jq '.layout.project_skills_dir = null' "$TOOL/lib/providers/nouser.json" > "$T/p.tmp" && mv "$T/p.tmp" "$TOOL/lib/providers/nouser.json"
+jq '.resources.skills |= del(.project_dir)' "$TOOL/lib/providers/nouser.json" > "$T/p.tmp" && mv "$T/p.tmp" "$TOOL/lib/providers/nouser.json"
 out=$($FX skill accept gamma cmine 2>&1); rc=$?
 [ "$rc" = 3 ] && [ "$out" = "qargi: provider nouser has no project skills directory: audit the skills a session would load" ] && ok "a provider with no project skills directory: the audit is refused with exit 3 and the degrade text" || no "nouser audit: rc=$rc $out"
-mkprov noskills2 '.capabilities.skills.local.value = "no"'
+mkprov noskills2 '.capabilities.skills.value = "no"'
 proj delta "$R2"; jq '.models = {provider: "noskills2"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
 out=$($FX skill accept delta cmine 2>&1); rc=$?
 [ "$rc" = 3 ] && grep -q "^qargi: provider noskills2 has no skills support on the local surface: " <<<"$out" && ok "a provider without skills support: the audit is refused with exit 3" || no "noskills2: rc=$rc $out"
