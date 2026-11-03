@@ -20,9 +20,9 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE" "$T/secrets"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
+copy_tool "$SRC" "$TOOL"
 SHIPT=$T/ship; mkdir -p "$SHIPT"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
+copy_tool "$SRC" "$SHIPT"
 # the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
 jq '.capabilities.per_dispatch_model_override.verified_on = null
   | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"

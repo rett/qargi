@@ -1,0 +1,32 @@
+# Word ceilings of the texts a member or lead loads (see tests/test_skill_budget.sh). PATH MAX_WORDS, sorted.
+# Ceilings are exact: a text over its ceiling or under it fails. Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
+agents/member.body.md 118
+agents/member.md 183
+contract/contract.md 718
+contract/output-format.md 276
+lib/providers/claude-code/local-run.md 33
+lib/providers/claude-platform/cloud-run.md 61
+packs/skills/docs-site-member/SKILL.md 121
+packs/skills/gitflow-member/SKILL.md 267
+packs/skills/keep-a-changelog/SKILL.md 274
+packs/skills/qargi-contributing/SKILL.md 115
+packs/skills/review-findings/SKILL.md 136
+packs/skills/secrets-scan/SKILL.md 93
+packs/skills/shellcheck-gate/SKILL.md 335
+provision/templates/base-system.md 89
+provision/templates/cloud-preamble.md 139
+roles/build/ROLE.md 144
+roles/review/ROLE.md 170
+roles/test/ROLE.md 169
+roles/write/ROLE.md 167
+skills/qargi-flow/SKILL.md 1789
+skills/qargi-instances/SKILL.md 1020
+skills/qargi-memory/SKILL.md 1493
+skills/qargi-packs/SKILL.md 1795
+skills/qargi-project/SKILL.md 1189
+skills/qargi-providers/SKILL.md 1957
+skills/qargi-provision/SKILL.md 418
+skills/qargi-session/SKILL.md 973
+skills/qargi-task/SKILL.md 2462
+skills/qargi-team/SKILL.md 936
+skills/qargi-verify/SKILL.md 585

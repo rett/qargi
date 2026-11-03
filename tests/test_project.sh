@@ -188,7 +188,7 @@ grep -q '^finding: models.provider is not set' <<<"$out" && [ "$(jq -r '.models.
 $DA project validate provless >/dev/null 2>&1 && echo "ok   the stored answers of an attached project validate" || { echo "FAIL attached project does not validate"; fail=1; }
 # the hint about a repository's own skills names the provider's directory, and every provider's while the project has none
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$PWD/$d" ] || cp -r "$PWD/$d" "$TOOL/"; done
+copy_tool "$PWD" "$TOOL"
 # shellcheck source=fakeprov.sh
 . "$PWD/tests/fakeprov.sh"
 fake_runtime "$PWD" "$TOOL" agentx local '.adapter = null | .resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render"'

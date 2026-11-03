@@ -22,7 +22,7 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE" "$T/scr"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
+copy_tool "$SRC" "$TOOL"
 DA=$TOOL/bin/qargi
 # a fake provider: a family of two runtimes (fakeprov-local, fakeprov-cloud) built from the shipped claude-code and claude-platform
 # (tests/fakeprov.sh), with a catalog of its own (models, aliases, a pattern) and a reserved name of its own

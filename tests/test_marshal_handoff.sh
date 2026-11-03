@@ -215,7 +215,7 @@ rm -f "$R/CLAUDE.md"
 # A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills, has the render target agentx-render and a launch
 # template with an optional group; noskills has no project skills directory; notarget has no render target and no launch command.
 TOOL2=$T/tool2; mkdir -p "$TOOL2"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$TOOL/$d" ] || cp -r "$TOOL/$d" "$TOOL2/"; done
+copy_tool "$TOOL" "$TOOL2"
 # shellcheck source=fakeprov.sh
 . "$TOOL/tests/fakeprov.sh"
 mkprov() { fake_runtime "$TOOL" "$TOOL2" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }

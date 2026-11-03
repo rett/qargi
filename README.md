@@ -283,11 +283,15 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 
 ### Baseline packs
 
-qargi ships three skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
+qargi ships seven skills of its own in `packs/` (listed in `packs/baseline.json`, one `skills/NAME/SKILL.md` each), written to be portable:
 
 - `shellcheck-gate`: lint every shell file you add or change with shellcheck and quote the verdict among the gates.
 - `keep-a-changelog`: record each user-visible change under Unreleased in `CHANGELOG.md`, in the same commit.
 - `gitflow-member`: a member's part of a git-flow project (its own `agent/<slug>` branch, no merges, only the checks that cover its change).
+- `review-findings`: how a reviewer writes findings (severity order, `file:line`, one-sentence defect, failure scenario, `CONFIRMED` or `PLAUSIBLE`, no patches).
+- `secrets-scan`: run a secret scanner over your commits before the report, if one is installed, and quote its verdict among the gates; the lead scans again.
+- `docs-site-member`: work on a documentation branch that shares no history with the main branches, based on that branch and never merged into a long-lived one.
+- `qargi-contributing`: habits for a member who changes qargi itself (quoting, commit messages, sleep, stash, fail-first tests, shrink-only ceilings, targeted tests).
 
 Install and upgrade add the ones your library lacks with `qargi packs seed --install`, which needs no token and links nothing. `qargi packs seed` shows a plan (one line per pack: `add`, `update`, `current` or `kept`) and a plan token; `--plan TOKEN --approved "<your words>"` applies it, adding missing packs and replacing a copy you never edited when qargi ships a newer text. A copy you edited and sealed, or a pack of your own with the same name, is kept and never overwritten. To take the shipped version of an edited pack again, unlink it, remove it (`qargi skill remove NAME`) and seed.
 
