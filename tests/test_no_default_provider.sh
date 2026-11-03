@@ -329,6 +329,22 @@ out=$("$DA" project set sb models.provider.cloud 5 2>&1); rc=$?
 { [ "$rc" != 0 ] && grep -q 'models.provider.cloud: a provider or family name' <<<"$out"; } && ok "project set: a surface value that is not a name is refused" || no "set 5: rc=$rc $out"
 out=$("$DA" project set sb models.provider.cloud nosuchprov 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q "^finding: models.provider.cloud 'nosuchprov' cannot be used" <<<"$out"; } && ok "project set: a name with no definition is stored with a finding (as for the string form)" || no "set nosuch: rc=$rc $out"
+# a runtime that exists but does not serve the surface is refused (exit 2, nothing changed), as attach and new refuse it; the unset case and an
+# unknown name keep their finding
+cp "$T/c/projects/sb.json" "$T/sb.before"
+out=$("$DA" project set sb models.provider.cloud claude-code 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'claude-code does not serve the cloud surface (it serves local)' <<<"$out" && grep -q 'models.provider.cloud' <<<"$out" && cmp -s "$T/sb.before" "$T/c/projects/sb.json"; } \
+  && ok "project set: a runtime that does not serve the surface is refused, exit 2, nothing changed" || no "set claude-code on cloud: rc=$rc $out"
+out=$("$DA" project set sb models.provider.local claude-platform 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'claude-platform does not serve the local surface (it serves cloud)' <<<"$out" && cmp -s "$T/sb.before" "$T/c/projects/sb.json"; } \
+  && ok "project set: the same on the local surface" || no "set claude-platform on local: rc=$rc $out"
+storeo sc '"claude-code"'; cp "$T/c/projects/sc.json" "$T/sc.before"
+out=$("$DA" project set sc models.provider.cloud claude-code 2>&1); rc=$?
+{ [ "$rc" = 2 ] && cmp -s "$T/sc.before" "$T/c/projects/sc.json" && ! grep -q 'was the single name' <<<"$out"; } \
+  && ok "project set: refused before a single name is turned into the object" || no "set on string: rc=$rc $out"
+out=$("$DA" project set sc models.provider.local claude-code 2>&1); rc=$?
+{ [ "$rc" = 0 ] && jq -e '.models.provider.local == "claude-code"' "$T/c/projects/sc.json" >/dev/null; } && ok "project set: a runtime that serves the surface is stored" || no "set claude-code on local: rc=$rc $out"
+out=$("$DA" project set sc models.provider.cloud 2>&1); rc=$?; [ "$rc" != 0 ] && ok "project set: a surface with no value is still refused" || no "set no value: rc=$rc $out"
 
 # project validate: the model ids of the roles are checked against the runtimes of the surfaces named
 vo() { jq "$1" "$T/ob.json" > "$T/v.json"; "$DA" project validate "$T/v.json" 2>&1; }
