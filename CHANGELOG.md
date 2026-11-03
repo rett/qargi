@@ -66,6 +66,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `python3 lib/help.py man` keeps the .TH date of `man/qargi.1` (new `--keep-date FILE`), so regenerating the page after `release start` no longer undoes the date.
 - `qargi project set P deployment VALUE` says only what was set for a methodology deployment option; the "applies to the next provision" note stays for other values.
+- The `qargi-packs` skill loads in 767 words, from 1784: what you do on every use (compatible providers, links by scope, create, import and approve) stays in `SKILL.md`, and the rest is read when needed, in `apply.md` (render, apply, link, unmanaged skills) and `seed.md` (the baseline packs). Its section on who may change a skill is gone: `qargi help guard` and `qargi help approvals` say it once.
 
 ### Fixed
 - The member guard lets a member run `qargi provider addenda` (which only prints) and `qargi provider notes`; it had refused `addenda` as a verb that changes a definition. Every other provider verb that is not on its list of reading verbs is still refused.
