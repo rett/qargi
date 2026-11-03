@@ -14,7 +14,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-DEFAULT = os.path.normpath(os.path.join(HERE, "..", "..", "..", "lib", "providers", "adapter-schema.json"))
+DEFAULT = os.path.join(os.path.dirname(HERE), "providers", "adapter-schema.json")
 
 
 def _type_ok(v, t):

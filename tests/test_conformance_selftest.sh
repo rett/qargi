@@ -14,7 +14,7 @@ BROKEN=tests/providers/broken
 tree_before=$(git status --porcelain --untracked-files=no tests lib 2>/dev/null; git diff tests lib 2>/dev/null | cksum)
 
 # the validator: a good value passes, a bad one is named
-V="python3 -I tests/providers/lib/validate.py"
+V="python3 -I lib/conformance/validate.py"
 echo '{"decision":"allow","reason":""}' | $V barrier-check response >/dev/null && ok "validator accepts a good barrier-check response" || no "validator rejects a good response"
 e=$(echo '{"decision":"maybe","reason":1,"x":2}' | $V barrier-check response); rc=$?
 { [ $rc = 1 ] && grep -q 'decision' <<<"$e" && grep -q 'reason' <<<"$e" && grep -q 'additional property' <<<"$e"; } && ok "validator names an enum, a type and an extra property" || no "validator on a bad response: rc=$rc $e"
