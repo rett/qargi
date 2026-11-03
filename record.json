@@ -1,0 +1,21 @@
+{
+ "purpose": "",
+ "started": "2026-11-03T10:22:20Z",
+ "goal": "",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-03T10:22:20Z"
+ },
+ "renewed_at": "2026-11-03T10:22:20Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-03T10:22:20Z",
+ "feature": "retire-legacy",
+ "project": "qargi"
+}
