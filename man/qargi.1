@@ -504,6 +504,182 @@ Fails on a descriptor that breaks the schema, a name that differs from its file,
 .RE
 .RS
 .TP
+.BI "new " "NAME"
+Scaffold a provider, catalog or extension pack in the library.
+.br
+Plan, token, approval, as for a skill. The pack is stored unsealed and counts for nothing until sealed.
+.RS
+.TP
+.BI "\-\-kind " "KIND"
+provider, catalog or extension.
+.RE
+.RS
+.TP
+.BI "\-\-from " "NAME"
+start from this provider's definition.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "import " "SOURCE"
+Import a provider pack from a directory, a JSON file or an https git URL, after a review.
+.br
+The review lists files, executables (with hash and interpreter), URLs, network commands and secret findings. Binaries, archives, symlinks and secrets are refused; opaque blobs are flagged. A pack with executables also needs \-\-approve\-exec naming each. Stored sealed, never enabled; a shipped or existing name is refused.
+.RS
+.TP
+.BI "\-\-name " "NAME"
+store it under this name.
+.RE
+.RS
+.TP
+.BI "\-\-ref " "REF"
+the git ref to pin.
+.RE
+.RS
+.TP
+.BI "\-\-path " "SUB"
+a subdirectory of the source.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
+.RE
+.RE
+.RS
+.TP
+.BI "seal " "NAME"
+Record the current content of a library provider pack as approved.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name every executable the pack holds, separated by commas, to approve running them.
+.RE
+.RE
+.RS
+.TP
+.BI "remove " "NAME"
+Remove a library provider pack.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "enable " "NAME"
+Let projects use a library provider pack.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "disable " "NAME"
+Stop projects using a library provider pack.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "attest " "NAME CAPABILITY"
+Record a capability you verified by hand or by a paid run (never runs or spends anything itself).
+.br
+Asked each time: without the facts it prints what it needs and why. A failed result removes the earlier record.
+.RS
+.TP
+.BI "\-\-asked " "WORDS"
+your words asking for this spend check.
+.RE
+.RS
+.TP
+.BI "\-\-did " "TEXT"
+what was run, in your words.
+.RE
+.RS
+.TP
+.BI "\-\-result " "RESULT"
+the outcome.
+.RE
+.RS
+.TP
+.BI "\-\-cost\-cents " "N"
+what it cost, in cents.
+.RE
+.RS
+.TP
+.BI "\-\-cleanup " "TEXT"
+what was cleaned up afterwards.
+.RE
+.RS
+.TP
+.BI "\-\-note " "TEXT"
+anything else worth keeping.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
 .BI "migrate " "NAME"
 Print the schema 2 form of a schema 1 descriptor (read only).
 .br
@@ -1256,6 +1432,23 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 Undo packs link.
 .br
 Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token and approval as link; nothing else is deleted.
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.RS
+.TP
+.BI "migrate\-render " "[PROJECT]"
+Move an earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
+.br
+Prints the move and a plan token; with \-\-plan and \-\-approved it moves the directory, re\-points the checkout's skills link only when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"

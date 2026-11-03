@@ -262,7 +262,7 @@ Ten skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` disp
 
 Packs are enabled for a project by links (`qargi skill|tool link NAME --scope project ...`, see `/qargi-packs`). To use them in a Claude Code session on your machine, render them. `qargi packs apply --target claude-code PROJECT` prints a plan and a token; run it again with `--plan TOKEN --approved "<your words>"` to apply.
 
-The apply renders the union of the packs of all the project's roles into `~/.qargi/state/claude/PROJECT/` (`QARGI_HOME` or `QARGI_STATE` move it): the skills under `.claude/skills`, `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. It then prints the launch line that starts Claude Code with the render:
+The apply renders the union of the packs of all the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (`QARGI_HOME` or `QARGI_STATE` move it): the skills under `.claude/skills`, `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. It then prints the launch line that starts Claude Code with the render:
 
 ```
 claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
@@ -278,7 +278,7 @@ The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from it
 
 - Nothing is written into a repository or into `~/.claude`; the render lives in the state directory only.
 - Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
-- A member cannot change the render: the guard refuses its writes under `state/claude/`. Only you apply it.
+- A member cannot change the render: the guard refuses its writes under `state/render/`. Only you apply it.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
 
 ### Baseline packs

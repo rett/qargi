@@ -226,9 +226,9 @@ def git_clone(url, ref, tmp):
     os.makedirs(home, exist_ok=True)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": home, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
            "GIT_ASKPASS": "false", "GIT_SSH_COMMAND": "false"}
-    cmd = ["git", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "clone", "-q", "--depth", "1"]
+    cmd = ["git", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "clone", "-q", '--depth', "1"]
     if ref:
-        cmd += ["--branch", ref]
+        cmd += ['--branch', ref]
     dst = os.path.join(tmp, "repo")
     r = subprocess.run(cmd + [url, dst], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
     if r.returncode != 0:
@@ -336,12 +336,12 @@ def scaffold(kind, name, base):
     elif base == "command":
         d = {"schema": 2, "kind": "provider", "provider": name, "family": None, "surface": "local", "description": "%s: edit me" % name,
              "models": {"pattern": "^.+$", "tiers": {"*": dict(tier)}, "effort": None}, "capabilities": {}, "resources": {}, "agents": None,
-             "dispatch": {"mode": "command", "argv": ["my-llm", "run", "--model", "{model}"], "prompt": {"via": "stdin"}, "cwd": "{clone}",
+             "dispatch": {"mode": "command", "argv": ["my-llm", "run", '--model', "{model}"], "prompt": {"via": "stdin"}, "cwd": "{clone}",
                           "output": {"format": "text"}}, "barrier": {"kind": "none"}}
     elif base == "hook-cli":
         d = {"schema": 2, "kind": "provider", "provider": name, "family": None, "surface": "local", "description": "%s: edit me" % name,
              "models": {"pattern": "^.+$", "tiers": {"*": dict(tier)}, "effort": None}, "capabilities": {}, "resources": {}, "agents": None,
-             "dispatch": {"mode": "command", "argv": ["my-llm", "run", "--model", "{model}"], "prompt": {"via": "stdin"}, "cwd": "{clone}",
+             "dispatch": {"mode": "command", "argv": ["my-llm", "run", '--model', "{model}"], "prompt": {"via": "stdin"}, "cwd": "{clone}",
                           "output": {"format": "text"}},
              "barrier": {"kind": "hook", "hook": {"input": "json-stdin", "tool_pointer": "/tool", "command_pointer": "/args/command", "cwd_pointer": "/cwd",
                                                   "path_pointers": {"write": ["/args/path"], "read": ["/args/path"]},

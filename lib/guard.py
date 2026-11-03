@@ -373,7 +373,7 @@ def resource_dirs():
         skipped = []
         for name in provider.names():
             try:
-                defs = [provider.definition(name, surface) for surface in provider.surfaces_of(name)]
+                defs = list(provider.definitions_unsealed(name).values())   # unsealed or changed packs too: what they name stays protected
             except Exception as e:
                 skipped.append("%s (%s)" % (name, str(e).splitlines()[0][:100] if str(e) else type(e).__name__))
                 continue
@@ -417,6 +417,7 @@ def protected_roots():
         roots.add(installed)
     roots.update(claude_render_roots(P, home))
     roots.update(render_roots(P, home))
+    roots.update(providers_state_roots(P, home))
     roots.update(feature_roots(P, home))
     roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
@@ -444,6 +445,16 @@ def render_roots(P=None, home=None):
         import paths as P
     home = home or os.path.expanduser("~")
     return {os.path.realpath(os.path.join(st, "render")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def providers_state_roots(P=None, home=None):
+    """The providers/ directory of the state: the verification records (verified.json) that decide which capabilities of a library
+    runtime count. Written only by `provider check` and `provider attest`. Found as render_roots does."""
+    if P is None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import paths as P
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(st, "providers")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
 
 
 def feature_roots(P=None, home=None):
@@ -799,7 +810,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status, check and handoff without --write are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("packs", "migrate-render")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"
