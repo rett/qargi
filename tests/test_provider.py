@@ -811,6 +811,41 @@ class Schema2(unittest.TestCase):
         self.assertTrue(any("adds.resources.contract_addenda: an extension cannot add contract addenda" in m for lvl, m in P.validate2(ext, "addon") if lvl == "fail"),
                         P.validate2(ext, "addon"))
 
+    def test_notes_is_an_optional_object_of_topic_names_to_one_line_texts(self):
+        for ok in ({}, {"spawn": "Start a member with the Agent tool."}, {"a": "x", "b-2": "y", "z" * 32: "ü and 日本語 are text"},
+                   {"t%d" % i: "x" for i in range(16)}, {"edge": "x" * 2000}):
+            self.assertEqual(P.validate2(runtime(notes=ok), "mylocal"), [], list(ok)[:2])
+        self.assertEqual(P.validate2(runtime(surface="cloud", notes={"cloud-spawn": "x"}), "mylocal"), [])
+        self.one(runtime(notes=["spawn"]), 'notes: ["spawn"] is not of type object')
+        self.one(runtime(notes="text"), "notes: 'text' is not of type object")
+
+    def test_a_notes_topic_is_lower_case_letters_digits_and_dashes_of_at_most_32_characters(self):
+        for bad in ("", "Spawn", "1st", "-a", "a_b", "a b", "a.b", "z" * 33, "spawn\u00e9"):
+            self.one(runtime(notes={bad: "x"}), "notes: the topic name %s is not a name" % P._show(bad))
+
+    def test_a_notes_text_is_a_string_of_at_most_2000_characters(self):
+        self.one(runtime(notes={"spawn": 7}), "notes.spawn: 7 is not of type string")
+        self.one(runtime(notes={"spawn": None}), "notes.spawn: null is not of type string")
+        self.one(runtime(notes={"spawn": ""}), "notes.spawn: the text is empty")
+        self.one(runtime(notes={"spawn": "x" * 2001}), "notes.spawn: the text is longer than 2000 characters")
+
+    def test_a_notes_document_holds_at_most_16_topics(self):
+        self.one(runtime(notes={"t%d" % i: "x" for i in range(17)}), "notes: 17 topics are more than the 16 a definition may hold")
+
+    def test_a_notes_text_has_no_control_or_format_character(self):
+        for ch in ("\x1b", "\u202e", "\n", "\t", "\x00", "\x7f", "\x85"):                  # the rule every string of a definition has: one line of plain text
+            f = fails(runtime(notes={"spawn": "a%sb" % ch}), "mylocal")
+            self.assertEqual(len(f), 1, (ch, f))
+            self.assertIn("notes.spawn", f[0])
+            self.assertNotIn(ch, f[0])
+        for ch in ("\u200b", "\u2060", "\ufeff", "\u00ad", "\U000e0041", "\ue000", "\u0378"):  # the rest of the contract addenda rule: format, private-use, unassigned
+            self.one(runtime(notes={"spawn": "a%sb" % ch}), "notes.spawn: the text is not plain text (no control, format, private-use or unassigned characters)")
+
+    def test_an_extension_cannot_add_notes(self):
+        ext = {"schema": 2, "kind": "extension", "extension": "addon", "extends": "mycloud", "provides": [], "adds": {"notes": {"spawn": "x"}}}
+        f = [m for lvl, m in P.validate2(ext, "addon") if lvl == "fail"]
+        self.assertEqual(f, ["adds.notes: an extension cannot add notes (only a runtime's own definition has them)"])
+
     def test_every_violation_is_reported_not_only_the_first(self):
         self.assertGreaterEqual(len(fails(runtime(extra=1, surface="x", family="Bad"), "mylocal")), 3)
 
