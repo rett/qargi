@@ -34,7 +34,11 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer (the other answers stay open);
+    found like the skill verbs), and qargi project set of any models answer (the other answers stay open). A project verb the guard cannot read is
+    refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
+    link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
+    taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
+    provider enable|disable|accept (no environment variable or option opens project set to the two keys any more), is refused in any use;
   - setting QARGI_NESTED (it makes some verbs skip their plan-token check);
   - a write under a protected location: the pack library ($QARGI_CONF/packs, else $QARGI_HOME/config/packs, else
     ~/.qargi/config/packs; the earlier ~/.config/qargi/packs, also under $XDG_CONFIG_HOME, stays protected), the credentials
@@ -116,6 +120,8 @@ SUBST = re.compile(r"\$\(|`")                               # command substituti
 HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*[^;&|\n]*(?:\$\(|`)")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
+UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
+PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
 COPIERS = {"cp", "mv", "ln", "install", "rsync"}            # the last argument is the destination
@@ -127,7 +133,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -727,19 +733,83 @@ def bash_skill_refusal(command, here, depth):
         why = protected_write(toks, i, here) or key_read(toks, i, here)
         if why:
             return why
+    return unreadable_project_verb(command)
+
+
+def lex(seg):
+    """The words of a command segment as the shell would cut them, each with whether the shell expands it: [(word, bool)]. Quotes are taken off and a
+    backslash makes the next character plain; a variable or a substitution expands outside single quotes, a brace or a glob outside any quote."""
+    out, cur, expands, started, quote, k = [], [], False, False, "", 0
+    while k < len(seg):
+        c = seg[k]
+        if quote == "'":
+            if c == "'":
+                quote = ""
+            else:
+                cur.append(c)
+        elif c == "\\" and k + 1 < len(seg):
+            k += 1
+            if quote == '"' and seg[k] not in '$`"\\':
+                cur.append("\\")
+            cur.append(seg[k])
+        elif c == "'" and quote == "":
+            quote, started = "'", True
+        elif c == '"':
+            quote, started = ("" if quote else '"'), True
+        elif c in "$`":
+            cur.append(c)
+            expands = True
+        elif quote == "" and c in UNREADABLE:
+            cur.append(c)
+            expands = True
+        elif quote == "" and c.isspace():
+            if cur or started:
+                out.append(("".join(cur), expands))
+            cur, expands, started = [], False, False
+        else:
+            cur.append(c)
+        k += 1
+    if cur or started:
+        out.append(("".join(cur), expands))
+    return out
+
+
+def unreadable_project_verb(command):
+    """The reason a command runs a `project` verb the guard could not read, or None. The verbs are read from the words of each segment; a quote, a
+    substitution, xargs, a brace or a glob can hide which one it is or what it is given. A segment with the word project, one of PROJECT_VERBS after
+    it (or a word in the place of the verb that the shell expands), and any expansion in the segment, or xargs in front, is refused whatever it would
+    turn out to say. A segment that hands a string to a shell (sh -c, eval) is read again with every quote and backslash taken off, since the string
+    is cut into words once more there. This runs after the readable forms were judged (their reasons are the better ones), and does not look at a
+    program held in a variable (the limit of the whole guard)."""
+    for seg in SEGMENT.split(command.replace("\\\n", "")):
+        forms = [seg]
+        if any(os.path.basename(w) in SHELLS or w == "eval" for w, _ in lex(seg)):
+            forms.append(re.sub(r"[\\'\"]", "", seg))
+        for form in forms:
+            words = lex(form)
+            names = [re.sub(r"[)`;&]+$", "", w) for w, _ in words]
+            for k, w in enumerate(names):
+                if os.path.basename(w) not in ("project", "project.sh"):
+                    continue
+                rest = [(n, e) for n, (_, e) in zip(names[k + 1:], words[k + 1:]) if not n.startswith("-")]
+                named = [n for n, _ in rest[:3] if n in PROJECT_VERBS]
+                if (named or (rest and rest[0][1])) and (any(e for _, e in words) or any(os.path.basename(n) == "xargs" for n in names[:k])):
+                    return ("qargi project %s with a variable, a substitution, a brace, a glob or xargs in the command takes words the guard cannot read, and project set of a models answer, "
+                            "project init and project link are not available to an agent" % (named[0] if named else "(a verb the shell builds)"))
     return None
 
 
 def shell_string(prog, rest):
-    """The command text a shell is given to run (sh -c STRING, eval STRING), or None. The quotes are dropped, which
-    is conservative: the text is then read as plain words."""
+    """The command text a shell is given to run (sh -c STRING, eval STRING), or None. The quotes left in the string are dropped, which
+    is conservative: the text is then read as plain words, and a quote inside a word (pro''ject) joins it as the shell would. A `\\$` or
+    `\\`` is read as the expansion it would be for the inner shell (shlex keeps the backslash a double-quoted outer string had before it)."""
     if prog == "eval":
-        return " ".join(rest)
-    if prog in SHELLS:
-        for k, t in enumerate(rest):
-            if SHELL_C.match(t):
-                return " ".join(rest[k + 1:]).replace('"', " ").replace("'", " ")
-    return None
+        text = " ".join(rest)
+    elif prog in SHELLS:
+        text = next((" ".join(rest[k + 1:]) for k, t in enumerate(rest) if SHELL_C.match(t)), None)
+    else:
+        return None
+    return None if text is None else text.replace('"', "").replace("'", "").replace("\\$", "$").replace("\\`", "`")
 
 
 def own_script(path, here):
@@ -788,6 +858,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["local"] + words
     if name == "project.sh":
         words = ["project"] + words
+    if name == "gated_answers.py":                       # the store behind provider enable|disable|accept, with no gate of its own: any use of the script is the verbs
+        return "lib/gated_answers.py stores models.extensions and models.accept_no_barrier for the verbs that have a plan token (qargi provider enable, disable, accept) and is not available to an agent"
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
         if words[:1] != ["store"] and not any("$" in w or "`" in w for w in words):
             return None
@@ -809,12 +881,14 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi project %s changes what the checkout and the runtime's memory directory load (skills, agents, memory) and is not available to an agent" % verb
     if area == "project" and verb == "init":
         return "qargi project init stores a whole answers file (the models answers that choose the runtime and what counts as a barrier among them) and is not available to an agent"
-    if area == "project" and verb == "set" and len(words) > 3:
+    if area == "project" and verb == "set":
         # the models answers choose the runtime and what counts as a read-only barrier: they have gated verbs (provider enable, provider accept),
-        # and project set has no plan token, so a member may not set any of them (the owner may). The path is the second word after set
+        # and project set has no plan token, so a member may not set any of them (the owner may). The path is the second word after set. A path
+        # that is missing (a substitution split the command, or xargs brings the words), or that a variable, a substitution, a brace or a glob
+        # builds, is not read here and is refused
+        if via_xargs or len(words) <= 3 or any(c in words[3] for c in UNREADABLE):
+            return "qargi project set takes a path the guard cannot read here (it is missing, or comes from xargs, a variable, a substitution, a brace or a glob), and a models answer is not available to an agent"
         path = words[3]
-        if "$" in path or "`" in path:
-            return "qargi project set takes a path the guard cannot read here (it comes from a variable or a substitution), and a models answer is not available to an agent"
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
     if area == "provider" and verb == "accept":

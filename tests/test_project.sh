@@ -104,6 +104,26 @@ for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|pro
   { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
 done
 $DA project set demo models.provider.local claude >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
+# no environment variable opens project set to the gated keys: QARGI_GATED_STORE was one, honoured from any caller, and is gone
+cp $T/c/projects/demo.json $T/before.json
+for k in models.extensions models.accept_no_barrier.local; do
+  v='["x"]'; [ "$k" = models.accept_no_barrier.local ] && v='{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}'
+  for how in qargi script; do
+    if [ $how = qargi ]; then msg=$(QARGI_GATED_STORE=1 $DA project set demo "$k" "$v" 2>&1); else msg=$(QARGI_GATED_STORE=1 lib/project.sh set demo "$k" "$v" 2>&1); fi; rc=$?
+    { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   QARGI_GATED_STORE=1 opens nothing: $how project set $k is refused" || { echo "FAIL QARGI_GATED_STORE=1 $how project set $k (rc=$rc): $msg"; fail=1; }
+  done
+done
+# the store the gated verbs use (provider enable|disable|accept) takes only those two keys, and only what the answers' own validation accepts
+GA="python3 -I lib/gated_answers.py"; cp $T/c/projects/demo.json $T/before.json
+for kv in 'budget_cents|5' 'models.provider.local|"claude"' 'models|{}' 'roles.build.effort|"low"' 'models.accept_no_barrier.moon|{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}' \
+          'models.accept_no_barrier.local|{"by":"a"}'; do
+  IFS='|' read -r k v <<<"$kv"
+  msg=$($GA store demo "$k" "$v" 2>&1); rc=$?
+  { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   gated_answers stores nothing for $k=$v" || { echo "FAIL gated_answers $k=$v (rc=$rc): $msg"; fail=1; }
+done
+$GA store demo models.extensions '["x"]' >/dev/null 2>&1 && [ "$(jq -c .models.extensions $T/c/projects/demo.json)" = '["x"]' ] && [ "$(stat -c %a $T/c/projects/demo.json)" = 600 ] \
+  && echo "ok   gated_answers stores models.extensions" || { echo "FAIL gated_answers models.extensions"; fail=1; }
+cp $T/before.json $T/c/projects/demo.json
 # project init writes the whole answers file, so it is a route to the same keys: a file that carries models.extensions or models.accept_no_barrier is
 # refused when it would add or change them (a fresh init: when it has them at all); the file is stored only if it leaves them as they are
 GATEKEYS='.models.extensions=["x"]|.models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}'
