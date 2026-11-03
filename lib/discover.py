@@ -32,15 +32,16 @@ STATE = P.state()
 MEMBERS = os.path.join(CONF, "agents.json")   # the members you named (qargi agent add)
 
 
-def agent_files(role=None):
-    """The definitions of the members a tool reaches: the members that serve one ability, or all of them."""
+def agent_files(role=None, project=None):
+    """The definitions of the members a tool reaches: the members of one project, or of every project, that serve one role, or all of them."""
     try:
         with open(MEMBERS) as f:
-            members = json.load(f)
-    except (OSError, ValueError):
-        members = {}
-    files = [v.get("file", "") for _, v in sorted(members.items(), key=lambda kv: kv[1].get("seq", 0))
-             if not role or role in (v.get("abilities") or [])]
+            projects = (json.load(f).get("projects") or {})
+    except (OSError, ValueError, AttributeError):
+        projects = {}
+    members = [v for p, ms in projects.items() if not project or p == project for v in ms.values()]
+    files = [v.get("file", "") for v in sorted(members, key=lambda v: v.get("seq", 0))
+             if not role or role in (v.get("roles") or [])]
     return [f for f in files if f and os.path.exists(f)]
 
 
@@ -294,7 +295,7 @@ def already_has(e, project, role):
         have = set((answers.get("roles", {}).get(role) or {}).get("apt") or [])
         return all(p in have for p in (e.get("install") or {}).get("packages", []))
     if e["kind"] == "agent-tool":
-        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(role)
+        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(role, project)
         return bool(files) and all((e.get("install") or {}).get("tool") in (tools_line(f) or []) for f in files)
     return False
 
@@ -579,7 +580,7 @@ def cmd_install(args):
         return rc
     if kind == "agent-tool":
         tool = inst["tool"]
-        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"))
+        files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"), opts.get("project"))
         if not files:
             die("no member serves that ability yet: qargi agent add NAME --project P first")
         todo = [f for f in files if tool not in (tools_line(f) or [tool])]
