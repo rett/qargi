@@ -88,13 +88,20 @@
         "user": "none"
       }
     },
+    "mcp": {
+      "file": "mcp.json",
+      "format": "json",
+      "root_pointer": "/mcpServers",
+      "entry": {"type": "http", "url": "{url}"},
+      "permission_rule": "mcp__{server}__{tool}"
+    },
     "settings": {
       "files": [
         {"scope": "user", "path": "~/.claude/settings.json", "format": "json"},
         {"scope": "project", "path": ".claude/settings.json", "format": "json"},
         {"scope": "project-local", "path": ".claude/settings.local.json", "format": "json"}
       ],
-      "allow_pointer": null
+      "allow_pointer": "/permissions/allow"
     },
     "memory": {
       "user_dir": "~/.claude/projects/{checkout_key}/memory",
@@ -159,6 +166,14 @@
           }
         }
       ]
+    },
+    "packs": {
+      "label": "Claude Code",
+      "settings": {
+        "file": "settings.json",
+        "ask_pointer": "/permissions/ask",
+        "deny_pointer": "/permissions/deny"
+      }
     }
   },
   "dispatch": {
