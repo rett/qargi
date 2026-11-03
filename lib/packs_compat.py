@@ -28,7 +28,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+NAME_RE = re.compile(r"[a-z][a-z0-9-]{0,39}")      # used with fullmatch: "$" would also take a name followed by a newline
 SURFACES = ("local", "cloud")
 ANY = "any"
 
@@ -40,7 +40,7 @@ def problem(declared):
     if not isinstance(declared, list) or not declared:
         return "must be a non-empty list of runtime or family names, or [\"any\"]"
     for d in declared:
-        if not isinstance(d, str) or not NAME_RE.match(d):
+        if not isinstance(d, str) or not NAME_RE.fullmatch(d):
             return "%s is not a runtime or family name (lower case letters, digits and -, at most 40) or \"any\"" % json.dumps(d)
     if ANY in declared and len(declared) > 1:
         return "\"any\" stands alone; it cannot be listed with other names"

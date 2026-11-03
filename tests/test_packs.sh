@@ -135,6 +135,14 @@ for bad in "" "any,claude" "Claude" "a b" "1x" '[]' '{"a":1}' '["any","any2",3]'
   $DA skill new badc --compatible "$bad" >/dev/null 2>&1 && no "compatible_providers '$bad' accepted" || ok "compatible_providers '$bad' is refused"
 done
 [ ! -e "$T/c/packs/skills/badc" ] && ok "a refused declaration creates nothing" || no "badc created"
+# a trailing newline is not part of a name: "any\n" is not "any", and "a" and "a\n" are not one name written twice to slip past the duplicate check
+for bad in '["any\n"]' '["a\n"]' '["a","a\n"]' '["a\n","a"]' '["any","any\n"]'; do
+  python3 -I lib/packs_compat.py valid "$bad" >/dev/null 2>&1 && no "packs_compat valid took $bad" || ok "packs_compat valid refuses $bad"
+done
+for bad in $'any\n' $'a,a\n' $'a\n,b' '["any\n"]' '["a","a\n"]'; do
+  $DA skill new badc --compatible "$bad" >/dev/null 2>&1 && no "compatible_providers ${bad@Q} accepted" || ok "compatible_providers ${bad@Q} is refused"
+done
+[ ! -e "$T/c/packs/skills/badc" ] && ok "a declaration with a newline creates nothing" || no "badc created from a newline"
 $DA skill new decl --compatible "claude, fam ,claude" >/dev/null && [ "$(rec skill compatible_providers decl)" = '["claude","fam"]' ] && ok "a declaration is stored sorted, trimmed, without repeats" || no "decl record: $(rec skill compatible_providers decl)"
 sed -i "s/^description: .*/description: Use for decl./" "$T/c/packs/skills/decl/SKILL.md"
 $DA skill new decl2 --compatible '["fam","any-x"]' >/dev/null && [ "$(rec skill compatible_providers decl2)" = '["any-x","fam"]' ] && ok "a JSON array is accepted too" || no "decl2: $(rec skill compatible_providers decl2)"
