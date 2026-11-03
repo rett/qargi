@@ -5,6 +5,7 @@ fail, so a test that did not bring its own fake cannot reach the real tools. A t
 environment from os.environ and override any of it."""
 import atexit
 import os
+import re
 import shutil
 import tempfile
 
@@ -22,3 +23,7 @@ for _t in ("ant", "claude"):
 os.environ.update(HOME=os.path.join(ROOT, "home"), QARGI_CONF=os.path.join(ROOT, "conf"), QARGI_STATE=os.path.join(ROOT, "state"),
                   XDG_CONFIG_HOME=os.path.join(ROOT, "home", ".config"), XDG_STATE_HOME=os.path.join(ROOT, "home", ".local", "state"),
                   PATH=os.path.join(ROOT, "bin") + os.pathsep + os.environ.get("PATH", ""))
+
+# The directories and files a test copies to run a modified copy of the tool: the one list of tests/hermetic.sh (TOOL_DIRS).
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "hermetic.sh")) as _f:
+    TOOL_DIRS = tuple(re.search(r'^TOOL_DIRS="([^"]*)"', _f.read(), re.M).group(1).split())

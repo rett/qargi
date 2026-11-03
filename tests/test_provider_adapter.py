@@ -12,7 +12,7 @@ PROVIDERS = os.path.join(ROOT, "lib", "providers")
 CODE = os.path.join(PROVIDERS, "claude-code", "adapter")          # the local runtime
 PLATFORM = os.path.join(PROVIDERS, "claude-platform", "adapter")  # the cloud runtime
 TEMPLATE = os.path.join(ROOT, "agents", "member.md")
-TOOL = ("bin", "lib", "agents", "roles", "provision", "contract", "methodologies", "packs", "catalog", "canon", "skills", "VERSION")
+TOOL = hermetic.TOOL_DIRS                                          # what a copy of the tool holds (tests/hermetic.sh)
 
 with open(os.path.join(PROVIDERS, "catalogs", "claude.json")) as _f:
     CATALOG = json.load(_f)                                      # the models of both runtimes
