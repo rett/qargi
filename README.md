@@ -321,7 +321,7 @@ write to that record). Under review the guard refuses an edit outside the run's 
 directory and a Bash command that writes into the clone. Whatever the ability,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
-install`, `qargi packs apply`), the verbs that change a runtime (`qargi provider new|import|seal|remove|enable|disable|attest|accept|migrate`),
+install`, `qargi packs apply`), the verbs that change a runtime (`qargi provider new|import|seal|remove|enable|disable|attest|accept`),
 link a work tree (`qargi project link|unlink`, `qargi packs link|unlink`) or start a command runtime (`qargi local run`),
 and any write in the pack library, in `credentials/` or `install.json` of the
 configuration directory (not the rest of it), under `state/render`, and in the skills and agents
