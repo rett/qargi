@@ -10,7 +10,7 @@ git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@examp
 git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote.git" && git -C "$T/r" push -q origin main
 # a read-only role (or a profile) is looked up through the repository's project, and its models.provider (there is no default provider)
 mkdir -p "$T/c/projects"
-jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claude"},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
+jq -n --arg p "$T/r" '{schema:1,project:"rproj",repo:{url:"https://github.com/example/rproj",path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/rproj.json"
 eval "$(./bin/qargi local prepare --repo "$T/r" --base main --slug demo --scratch "$T" | sed '/^$/,$d' | sed 's/^/export /')"
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 [ "$($GIT -C "$CLONE" branch --show-current)" = agent/demo ] && ok "clone is on agent/demo" || no "branch"
@@ -20,9 +20,11 @@ $GIT -C "$CLONE" push origin agent/demo >/dev/null 2>&1 && no "git push origin s
 git -C "$CLONE" remote -v | grep -q "$T/r" && no "the clone knows the real repository" || ok "the clone does not know the real repository path"
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after a clean run" || no "verify clean"
 [ "$(cat "$RUN/ability")" = build ] && ok "the run records its ability (build by default)" || no "ability file"
-R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --ability review | sed -n '1,/^$/s/^RUN=//p')
-[ "$(cat "$R2/ability")" = review ] && ok "--ability review is recorded for the guard" || no "review ability"
-./bin/qargi local prepare --repo "$T/r" --base main --slug bad --scratch "$T" --ability deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --role review | sed -n '1,/^$/s/^RUN=//p')
+[ "$(cat "$R2/ability")" = review ] && ok "--role review is recorded for the guard" || no "review ability"
+./bin/qargi local prepare --repo "$T/r" --base main --slug bad --scratch "$T" --role deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug old --scratch "$T" --ability review 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "unknown option --ability" <<<"$out" && ok "--ability is gone: an unknown option" || no "--ability still accepted: $out"
 git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with plain git
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
 [ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
@@ -167,7 +169,7 @@ out=$(mk4 w4); rcw=$?
   && ok "no provider: one note line, the render check skipped, prepare still succeeds" || no "no provider: $rcw $(cat "$T/err")"
 out=$(mk4 w4b); [ "$(wc -l < "$T/err")" = 1 ] && ok "(and only one line)" || no "lines: $(cat "$T/err")"
 # the render is the local surface's: an object that names only a cloud runtime has no local provider, and the note names the surface
-jq '.models = {provider: {cloud: "claude"}}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
+jq '.models = {provider: {cloud: "claude-platform"}}' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"
 out=$(mk4 w4c); rcw=$?
 [ "$(cat "$T/err")" = "note: project alpha has no local provider (qargi project set alpha models.provider.local NAME); the render check was skipped" ] && [ $rcw = 0 ] \
   && ok "only a cloud provider: the note names the local surface and the command, the check is skipped" || no "cloud-only provider: $rcw $(cat "$T/err")"
@@ -187,9 +189,9 @@ rm -rf "$T/s/render/alpha/claude-code" "$T/r4/.claude"
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi
-QARGI_PROJECT=rproj $Q agent add pj-judge --project rproj --abilities review >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add pj-forge --project rproj --abilities build >/dev/null 2>&1
+QARGI_PROJECT=rproj $Q agent add reviewer --project rproj >/dev/null 2>&1; QARGI_PROJECT=rproj $Q agent add worker --project rproj >/dev/null 2>&1
 out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
-[ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=pj-judge' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
+[ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=reviewer' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
   && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"
 [ "$(jq -r 'select(.slug=="pf1") | .profile' "$T/s/local-runs.jsonl")" = advisor ] && ok "the run line carries the profile" || no "jsonl profile"
 n1=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)

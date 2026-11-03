@@ -62,7 +62,7 @@ verify_ro fakecmd
 proj rproj "$T/r" fakecmd; proj cproj "$T/r2" claude-code
 
 prep() { # repo slug [ability] -> exports RUN CLONE OUT
-  eval "$($DA local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--ability "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; }
+  eval "$($DA local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--role "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; }
 task() { printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; }
 arg0() { sed -n 's/^ARGV=//p'; }
 

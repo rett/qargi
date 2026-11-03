@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """A deliberately broken provider adapter: the fixture that proves tests/conformance.sh catches what it claims to catch.
+It serves two runtimes of schema 2, broken-local (the local surface) and broken-cloud (the cloud surface), through one file: the
+cloud one is a link to this adapter, and the runtime is the name of the directory the adapter is called from.
 It is correct unless $CONFORMANCE_BROKEN names a fault, one of
   push         barrier-check allows git push                                  (case 8)
   failopen     barrier-check answers allow to a request it cannot decide      (case 8, fail closed)
@@ -12,14 +14,14 @@ It is correct unless $CONFORMANCE_BROKEN names a fault, one of
   badmodel     resolve answers the wrong model for the deep tier              (case 2)
   nonote       an effort with no control gives null and no note               (case 2)
   nodef        the read-only definition carries no barrier                    (case 9)
-Unset or anything else: no fault. It serves resolve itself from its own descriptor, hands dispatch-local and barrier-check
+Unset or anything else: no fault. It serves resolve itself from its own definition, hands dispatch-local and barrier-check
 to the claude-code adapter of the checkout, and serves the cloud verbs through $QARGI_TRANSPORT. Never ship it."""
 import json
 import os
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.realpath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))                  # not resolved: broken-cloud/adapter is a link to this file
 NAME = os.path.basename(HERE)
 FAULT = os.environ.get("CONFORMANCE_BROKEN", "")
 TIERS = ("fast", "balanced", "deep", "frontier")
@@ -33,7 +35,7 @@ class Reply(Exception):
 
 def descriptor():
     with open(os.path.join(os.path.dirname(HERE), NAME + ".json")) as f:
-        return json.load(f)
+        return json.load(f)                                             # schema 2: surface, models (inline: tiers, effort)
 
 
 def real_adapter():
@@ -68,25 +70,25 @@ def need(req, key):
 def cloud(req):
     if req.get("surface") != "cloud":
         raise Reply(3, "served for the cloud surface only")
-    if "cloud" not in descriptor()["surfaces"]:
-        raise Reply(3, "the provider does not list the surface cloud")
+    if descriptor()["surface"] != "cloud":
+        raise Reply(3, "the runtime does not serve the surface cloud")
 
 
 def resolve(req):
     d = descriptor()
     if req.get("surface") not in ("local", "cloud"):
         raise Reply(1, "surface: local or cloud")
-    if req["surface"] not in d["surfaces"]:
+    if req["surface"] != d["surface"]:
         raise Reply(3, "%s does not list the surface '%s'" % (NAME, req["surface"]))
     if req.get("tier") not in TIERS:
         raise Reply(1, "tier: one of %s" % ", ".join(TIERS))
     effort = req.get("effort") or None
     if effort is not None and effort not in EFFORTS:
         raise Reply(1, "effort: one of %s" % ", ".join(EFFORTS))
-    row = d["tier_detail"][req["tier"]]
+    row = d["models"]["tiers"][req["tier"]]
     notes, native = [], None
     if effort:
-        native = d["effort"][effort]
+        native = d["models"]["effort"][effort]
         if native is None and FAULT != "nonote":
             notes.append("%s has no effort control; effort '%s' is not applied" % (NAME, effort))
     model = "claude-wrong-0" if FAULT == "badmodel" and req["tier"] == "deep" else row["model"]

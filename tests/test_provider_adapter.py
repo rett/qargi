@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The adapters of the claude runtimes: claude-code (local: resolve, dispatch-local, barrier-check) and claude-platform (cloud: resolve,
-start-session), the router that stands in for the schema 1 claude.json (lib/providers/claude/adapter), and the code that reaches them.
+start-session), and the code that reaches them.
 Hermetic: every changed definition lives in a copy of the tool tree in a temporary directory, never in the checkout.
 Run: python3 tests/test_provider_adapter.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
@@ -11,14 +11,14 @@ ROOT = os.path.realpath(os.path.join(HERE, ".."))
 PROVIDERS = os.path.join(ROOT, "lib", "providers")
 CODE = os.path.join(PROVIDERS, "claude-code", "adapter")          # the local runtime
 PLATFORM = os.path.join(PROVIDERS, "claude-platform", "adapter")  # the cloud runtime
-ROUTER = os.path.join(PROVIDERS, "claude", "adapter")             # what claude.json names while that file stays
 TEMPLATE = os.path.join(ROOT, "agents", "member.md")
 TOOL = ("bin", "lib", "agents", "roles", "provision", "methodologies", "packs", "catalog", "canon", "skills", "VERSION")
 
-with open(os.path.join(PROVIDERS, "claude.json")) as _f:
-    CLAUDE = json.load(_f)                                       # schema 1: what agent.sh, session.sh, provision.sh and project.sh read
 with open(os.path.join(PROVIDERS, "catalogs", "claude.json")) as _f:
-    CATALOG = json.load(_f)                                      # schema 2: the models of both runtimes
+    CATALOG = json.load(_f)                                      # the models of both runtimes
+
+
+BOTH = {"local": "claude-code", "cloud": "claude-platform"}     # what a project names to use the shipped runtimes
 
 
 def run(adapter, verb, req, env=None, raw=None):
@@ -56,14 +56,18 @@ class Tree(unittest.TestCase):
                 shutil.copy2(src, self.tool)
         self.code = os.path.join(self.tool, "lib", "providers", "claude-code", "adapter")
         self.platform = os.path.join(self.tool, "lib", "providers", "claude-platform", "adapter")
-        self.adapter = os.path.join(self.tool, "lib", "providers", "claude", "adapter")
 
-    def descriptor(self, mutate, name="claude"):
-        """Change the schema 1 descriptor (a copy of claude.json under another name when name is given)."""
-        d = json.loads(json.dumps(CLAUDE))
+    def runtime(self, name, mutate, base="claude-code"):
+        """A runtime of another name: a copy of the shipped claude-code (or claude-platform) definition, in no family, changed by mutate, with
+        a copy of its adapter directory (an adapter finds its definition by the name of its directory) unless mutate leaves it none."""
+        with open(os.path.join(PROVIDERS, base + ".json")) as f:
+            d = json.load(f)
+        d.update(provider=name, family=None)
         mutate(d)
         with open(os.path.join(self.tool, "lib", "providers", name + ".json"), "w") as f:
             json.dump(d, f)
+        if d.get("adapter"):
+            shutil.copytree(os.path.join(PROVIDERS, base), os.path.join(self.tool, "lib", "providers", name), symlinks=True)
 
     def catalog(self, mutate):
         """Change the claude catalog, the models of both runtimes."""
@@ -171,41 +175,6 @@ class Resolve(Tree):
         os.remove(os.path.join(self.tool, "lib", "providers", "catalogs", "claude.json"))
         self.assertEqual(run(self.code, "resolve", {"surface": "local", "tier": "fast"})[0], 1)
         self.assertEqual(run(self.platform, "resolve", {"surface": "cloud", "tier": "fast"})[0], 1)
-
-
-class Router(Tree):
-    """lib/providers/claude/adapter is what claude.json names while that file stays: it passes each request to the runtime that serves it."""
-
-    def test_each_verb_reaches_the_runtime_that_serves_it(self):
-        env = dict(os.environ)
-        for verb, req, want in (("resolve", {"surface": "local", "tier": "deep"}, run(CODE, "resolve", {"surface": "local", "tier": "deep"})),
-                                ("resolve", {"surface": "cloud", "tier": "deep"}, run(PLATFORM, "resolve", {"surface": "cloud", "tier": "deep"})),
-                                ("dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"},
-                                 run(CODE, "dispatch-local", {"member": "forge", "abilities": ["build"], "class": "write", "model": "sonnet", "effort": "high"})),
-                                ("start-session", fixture("worker.request"), run(PLATFORM, "start-session", fixture("worker.request"))),
-                                ("cost", {}, run(CODE, "cost", {}))):
-            with self.subTest(verb=verb, surface=req.get("surface")):
-                self.assertEqual(run(ROUTER, verb, req, env=env), want)
-
-    def test_a_refusal_keeps_its_exit_status_its_body_and_its_stderr(self):
-        req = fixture("refused/reviewer-no-acceptance.request")
-        direct = subprocess.run([PLATFORM, "start-session"], input=json.dumps(req), capture_output=True, text=True)
-        via = subprocess.run([ROUTER, "start-session"], input=json.dumps(req), capture_output=True, text=True)
-        self.assertEqual(direct.returncode, 2)
-        self.assertEqual((via.returncode, via.stdout, via.stderr), (direct.returncode, direct.stdout, direct.stderr))
-
-    def test_what_it_cannot_read_is_the_local_runtimes_bad_request(self):
-        for verb, raw in (("resolve", "not json"), ("barrier-check", "[]"), ("start-session", ""), ("frobnicate", "{}")):
-            with self.subTest(verb=verb):
-                self.assertEqual(run(ROUTER, verb, None, raw=raw)[0], 1)
-
-    def test_it_runs_isolated_from_any_directory(self):
-        env = dict(os.environ, PYTHONPATH=self.tmp)
-        with open(os.path.join(self.tmp, "json.py"), "w") as f:
-            f.write("raise SystemExit(99)\n")
-        r = subprocess.run([self.adapter, "resolve"], input='{"surface":"cloud","tier":"fast"}', capture_output=True, text=True, env=env, cwd=self.tmp)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)["model"], "claude-haiku-5-5")
 
 
 class Protocol(Tree):
@@ -373,7 +342,7 @@ class Barrier(unittest.TestCase):
 
 class AgentAdd(Tree):
     """qargi agent add reaches the definition through the adapter the descriptor of the project's provider names. There is no default
-    provider: alpha, the project every member belongs to, names claude unless a test says otherwise."""
+    provider: alpha, the project every member belongs to, names the shipped runtimes unless a test says otherwise."""
 
     def setUp(self):
         super().setUp()
@@ -384,7 +353,7 @@ class AgentAdd(Tree):
         self.repo = os.path.join(self.tmp, "repo")
         subprocess.run(["git", "init", "-q", self.repo], check=True)
 
-    def project(self, provider="claude"):
+    def project(self, provider=BOTH):
         p = {"schema": 1, "project": "alpha", "repo": {"url": "https://github.com/example/alpha", "path": self.repo, "long_lived": ["main"]},
              "roles": {"build": {"base": "main", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high"}}, "memory": {}, "budget_cents": 500}
         if provider:
@@ -396,17 +365,17 @@ class AgentAdd(Tree):
         r = subprocess.run([os.path.join(self.tool, "bin", "qargi")] + list(args), capture_output=True, text=True, env=self.env)
         return r.returncode, r.stdout + r.stderr
 
-    def test_a_provider_without_a_local_adapter_cannot_add_a_member(self):
-        self.descriptor(lambda d: d.update(provider="plain", adapter=None), name="plain")
+    def test_a_provider_without_a_member_renderer_cannot_add_a_member(self):
+        self.runtime("plain", lambda d: (d.update(adapter=None, adapter_verbs=None), d["renderers"].pop("agent")))
         self.project("plain")
-        rc, out = self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")
+        rc, out = self.qargi("agent", "add", "forge", "--roles", "build", "--project", "alpha")
         self.assertNotEqual(rc, 0)
         self.assertIn("provider 'plain' has no member renderer", out)
         self.assertFalse(os.path.exists(os.path.join(self.repo, ".claude", "agents", "forge.md")))
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         if os.path.exists(conf):
             with open(conf) as f:
-                self.assertNotIn("forge", json.load(f))
+                self.assertNotIn("forge", json.load(f).get("projects", {}).get("alpha", {}))
 
     def test_the_file_written_says_what_the_adapters_template_says(self):
         """The member file is made from the renderers.agent data of claude-code, no longer by the adapter's dispatch-local; the template
@@ -414,22 +383,22 @@ class AgentAdd(Tree):
         def plain(text):
             return re.sub(r'(?m)^( *(?:- )?[A-Za-z]+: )"(.*)"$', r"\1\2", text)
         self.project()
-        rc, out = self.qargi("agent", "add", "forge", "--abilities", "build,test", "--project", "alpha")
+        rc, out = self.qargi("agent", "add", "forge", "--roles", "build,test", "--project", "alpha")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.repo, ".claude", "agents", "forge.md")) as f:
             self.assertEqual(plain(f.read()), plain(sed_render("forge", ["build", "test"], "claude-sonnet-5-5", "high", "write")))
-        rc, out = self.qargi("agent", "add", "judge", "--abilities", "review", "--project", "alpha")
+        rc, out = self.qargi("agent", "add", "judge", "--roles", "review", "--project", "alpha")
         self.assertEqual(rc, 0, out)
         with open(os.path.join(self.repo, ".claude", "agents", "judge.md")) as f:
             self.assertEqual(plain(f.read()), plain(sed_render("judge", ["review"], "claude-opus-5-5", "high", "read-only")))
 
     def test_refresh_without_a_recorded_model_uses_the_balanced_alias_of_the_provider(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--project", "alpha")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--roles", "build", "--project", "alpha")[0], 0)
         conf = os.path.join(self.env["QARGI_CONF"], "agents.json")
         with open(conf) as f:
             m = json.load(f)
-        m["forge"]["model"] = None
+        m["projects"]["alpha"]["forge"]["model"] = None
         with open(conf, "w") as f:
             json.dump(m, f)
         rc, out = self.qargi("agent", "refresh", "forge")
@@ -440,22 +409,22 @@ class AgentAdd(Tree):
     def test_the_reserved_names_come_from_the_descriptor(self):
         self.project()
         self.assertEqual(self.qargi("agent", "add", "plan", "--project", "alpha")[0], 1)
-        self.descriptor(lambda d: d["local"].update(reserved_names=["plan", "mine"]))
+        self.definition("claude-code", lambda d: d["agents"].update(reserved_names=["plan", "mine"]))
         rc, out = self.qargi("agent", "add", "mine", "--project", "alpha")
         self.assertNotEqual(rc, 0)
         self.assertIn("built-in", out)
-        rc, out = self.qargi("agent", "add", "explore", "--abilities", "build", "--project", "alpha")
+        rc, out = self.qargi("agent", "add", "explore", "--roles", "build", "--project", "alpha")
         self.assertEqual(rc, 0, out)
 
     def test_a_pinned_model_is_one_that_matches_the_model_pattern(self):
         self.project()
-        self.assertEqual(self.qargi("agent", "add", "forge", "--abilities", "build", "--model", "claude-opus-5-5", "--project", "alpha")[0], 0)
-        self.assertEqual(self.qargi("agent", "add", "judge", "--abilities", "review", "--model", "opus", "--project", "alpha")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "forge", "--roles", "build", "--model", "claude-opus-5-5", "--project", "alpha")[0], 0)
+        self.assertEqual(self.qargi("agent", "add", "judge", "--roles", "review", "--model", "opus", "--project", "alpha")[0], 0)
         rc, out = self.qargi("agent", "models", "--json")
         self.assertEqual(rc, 0, out)
         pinned = {m["name"]: m["pinned"] for m in json.loads(out)["members"]}
         self.assertEqual(pinned, {"forge": True, "judge": False})
-        self.descriptor(lambda d: d.update(model_pattern="^zzz"))
+        self.catalog(lambda c: c.update(pattern="^zzz"))
         pinned = {m["name"]: m["pinned"] for m in json.loads(self.qargi("agent", "models", "--json")[1])["members"]}
         self.assertEqual(pinned, {"forge": False, "judge": False})
 
@@ -475,16 +444,15 @@ class Derived(Tree):
         self.env["PATH"] = os.path.join(self.tmp, "bin") + os.pathsep + self.env["PATH"]
 
     def other(self):
-        """A provider whose ids look nothing like the claude ones."""
-        def mutate(d):
-            d["provider"] = "zeta"
-            d["adapter"] = None
-            d["model_pattern"] = "^zeta-[0-9]+$"
-            d["aliases"] = {"fast": "z1", "balanced": "z2", "deep": "z3", "frontier": "z4"}
-            for i, t in enumerate(("fast", "balanced", "deep", "frontier"), 1):
-                d["tier_detail"][t].update(model="zeta-%d" % i, alias="z%d" % i)
-                d["tiers"][t] = "zeta-%d" % i
-        self.descriptor(mutate, name="zeta")
+        """A runtime (local) whose ids look nothing like the claude ones: its own catalog, the family zeta."""
+        cat = json.loads(json.dumps(CATALOG))
+        cat["family"] = "zeta"
+        cat["pattern"] = "^zeta-[0-9]+$"
+        for i, t in enumerate(("fast", "balanced", "deep", "frontier"), 1):
+            cat["tiers"][t].update(model="zeta-%d" % i, alias="z%d" % i)
+        with open(os.path.join(self.tool, "lib", "providers", "catalogs", "zeta.json"), "w") as f:
+            json.dump(cat, f)
+        self.runtime("zeta", lambda d: d.update(adapter=None, adapter_verbs=None, family="zeta", models={"catalog": "zeta", "use": "alias"}))
 
     def qargi(self, *args):
         r = subprocess.run([os.path.join(self.tool, "bin", "qargi")] + list(args), capture_output=True, text=True, env=self.env)
@@ -509,7 +477,7 @@ class Derived(Tree):
         return self.qargi("project", "validate", path)
 
     def test_validate_names_the_balanced_model_of_the_projects_provider_in_its_messages(self):
-        a, _ = self.answers("claude")
+        a, _ = self.answers(BOTH)
         self.assertEqual(self.validate(a)[0], 0)
         a["roles"]["build"]["model"] = "gpt"
         rc, out = self.validate(a)
@@ -529,6 +497,8 @@ class Derived(Tree):
     def test_validate_follows_the_model_pattern_and_aliases_of_the_projects_provider(self):
         self.other()
         a, _ = self.answers("zeta")
+        self.assertEqual(self.validate(a)[0], 0)                      # the template names no model: nothing to refuse
+        a["roles"]["build"]["model"] = "claude-sonnet-5-5"            # another family's id does not fit zeta's pattern
         rc, out = self.validate(a)
         self.assertEqual(rc, 1)
         self.assertIn("roles.build.model: a model id like zeta-2", out)
@@ -573,18 +543,15 @@ class Derived(Tree):
         a = detect()["answers"]
         self.assertNotIn("models", a)
         self.assertTrue(all("model" not in r for r in a["roles"].values()))
-        a = detect("--provider", "claude")["answers"]
-        self.assertEqual(a["models"], {"provider": "claude"})
+        a = detect("--provider-local", "claude-code", "--provider-cloud", "claude-platform")["answers"]
+        self.assertEqual(a["models"], {"provider": BOTH})
         models = {r["model"] for r in a["roles"].values()}
         self.assertEqual(models, {"claude-sonnet-5-5"})
-        def mutate(d):
-            d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
-            d["tiers"]["balanced"] = "claude-sonnet-9-9"
-        self.descriptor(mutate)
-        self.assertEqual({r["model"] for r in detect("--provider", "claude")["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
+        self.catalog(lambda c: c["tiers"]["balanced"].update(model="claude-sonnet-9-9"))
+        self.assertEqual({r["model"] for r in detect("--provider-local", "claude-code", "--provider-cloud", "claude-platform")["answers"]["roles"].values()}, {"claude-sonnet-9-9"})
 
     def test_provision_defaults_to_the_balanced_model_of_the_projects_provider(self):
-        a, _ = self.answers("claude")
+        a, _ = self.answers(BOTH)
         a["project"] = "zed"
         for r in a["roles"].values():
             r["model"] = ""
@@ -596,10 +563,7 @@ class Derived(Tree):
             with open(os.path.join(self.env["QARGI_STATE"], "provision", name, "agents", name, "agent.md")) as f:
                 return re.search(r"^  id: .*$", f.read(), re.M).group(0)
         self.assertIn("claude-sonnet-5-5", agent_model("zed-build"))
-        def mutate(d):
-            d["tier_detail"]["balanced"]["model"] = "claude-sonnet-9-9"
-            d["tiers"]["balanced"] = "claude-sonnet-9-9"
-        self.descriptor(mutate)
+        self.catalog(lambda c: c["tiers"]["balanced"].update(model="claude-sonnet-9-9"))
         self.assertIn("claude-sonnet-9-9", agent_model("zed-build"))
 
     def test_provision_names_a_project_provider_that_has_no_descriptor(self):

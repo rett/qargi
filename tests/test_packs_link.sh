@@ -16,9 +16,9 @@ DA=$ROOT/bin/qargi
 R=$T/repo
 proj() { jq -n --arg p "$1" --arg r "$2" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:$r,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha "$R"
-D=$T/s/render/alpha/claude
+D=$T/s/render/alpha/claude-code
 
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
@@ -68,7 +68,7 @@ grep -q "git does not ignore .claude/skills" <<<"$out" && grep -q "^    .claude/
 # a pack the project's provider cannot use is not in the render, so the link never reaches it; the plan says so
 $DA skill new s-skip --compatible elsewhere >/dev/null; sed -i "s/^description: .*/description: Use for s-skip./" "$T/c/packs/skills/s-skip/SKILL.md"; seal s-skip
 $DA skill link s-skip --scope project --project alpha >/dev/null
-out=$(lk); grep -q "^skipped skill s-skip: not compatible with claude (it declares elsewhere)" <<<"$out" && ok "the link plan says which pack the provider cannot use" || no "link plan skip note: $out"
+out=$(lk); grep -q "^skipped skill s-skip: not compatible with claude-code (it declares elsewhere)" <<<"$out" && ok "the link plan says which pack the provider cannot use" || no "link plan skip note: $out"
 $DA skill unlink s-skip --scope project --project alpha >/dev/null
 $DA skill remove s-skip >/dev/null
 out=$(lk); rc=$?
@@ -272,7 +272,7 @@ rm -rf "$S"
 PYL="python3 -I $ROOT/lib/packs_link.py"; DAA=$ROOT/bin/qargi
 mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"
 LEAD=$T/leadrepo; git init -q -b main "$LEAD"; echo x > "$LEAD/README"; $G -C "$LEAD" add -A; $G -C "$LEAD" commit -q -m one
-mkin() { jq -nc --arg co "$1" --arg st "$2" --arg h "$HOME" '{project:"alpha",provider:"claude",state:$st,home:$h,checkout:$co,packs:[],kids:[]}' > "$T/in.json"; }
+mkin() { jq -nc --arg co "$1" --arg st "$2" --arg h "$HOME" '{project:"alpha",provider:"claude-code",state:$st,home:$h,checkout:$co,packs:[],kids:[]}' > "$T/in.json"; }
 tok=$(lplan); [ -n "$tok" ] && [ ! -e "$R/.claude/skills" ] || no "setup: a plan in the same state"
 out=$(cd "$T/run/out" && "$DAA" packs link alpha --plan "$tok" --approved x 2>&1) && no "a member run applied packs link" || { grep -q "member run" <<<"$out" && ok "packs link refuses in a member run" || no "member link message: $out"; }
 [ ! -e "$R/.claude/skills" ] && [ ! -L "$R/.claude/skills" ] && ok "a refused apply in a member run changes nothing" || no "member run linked"
@@ -295,12 +295,15 @@ out=$($DA skill accept alpha $'mine\n' 2>&1) && no "a skill name with a trailing
 TOOL=$T/tool; mkdir -p "$TOOL"
 for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
-mkprov() { jq --arg n "$1" ".provider = \$n | .adapter = null | $2" "$ROOT/lib/providers/claude.json" > "$TOOL/lib/providers/$1.json"; }
-mkprov agentx '.layout.project_skills_dir = ".agent/skills" | .layout.render_target = "agentx-render" | .layout.user_skills_dir = "~/.agent/skills"
-  | .layout.settings_files = [{scope:"user",path:"~/.agent/settings.json"},{scope:"project-local",path:".agent/settings.local.json"}] | .layout.exclusion = {file_key:"skills_off", off_value:"hidden"}'
-mkprov noskills '.layout.project_skills_dir = null'
-mkprov unverified '.capabilities.skills.local.verified_on = null'
-mkprov notarget '.layout.render_target = null'
+# shellcheck source=fakeprov.sh
+. "$ROOT/tests/fakeprov.sh"
+mkprov() { fake_runtime "$ROOT" "$TOOL" "$1" local ".adapter = null | .renderers.packs.label = \"Agentx\" | $2"; }
+mkprov agentx '.resources.skills.project_dir = ".agent/skills" | .session.render_target = "agentx-render" | .resources.skills.user_dir = "~/.agent/skills"
+  | .resources.settings.files = [{scope:"user",path:"~/.agent/settings.json",format:"json"},{scope:"project-local",path:".agent/settings.local.json",format:"json"}]
+  | .resources.skills.exclusion = {form:"settings-key",files:["user","project-local"],pointer:"/skills_off",shape:"map",off:"hidden"}'
+mkprov noskills '.resources.skills |= del(.project_dir)'
+mkprov unverified '.capabilities.skills.verified_on = null'
+mkprov notarget '.session |= del(.render_target)'
 R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
 projp() { proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"; }
 projp beta agentx

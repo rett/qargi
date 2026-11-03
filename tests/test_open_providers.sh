@@ -121,7 +121,7 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
   "$DA" packs check --target "$target" "$p" >/dev/null 2>&1 && ok "$rt: and packs check passes" || no "$rt packs check"
 
   # a member: rendered in the runtime's own format, into the member render
-  out=$("$DA" agent add "$mem" --abilities build,test --project "$p" 2>&1); f=$MD/$mem$ext
+  out=$("$DA" agent add "$mem" --roles build,test --project "$p" 2>&1); f=$MD/$mem$ext
   [ -f "$f" ] && ok "$rt: agent add writes the member where the definition says ($rt.agents/$mem$ext)" || no "$rt agent add: $out"
   grep -q "note: tools: the optional tool 'monitor' has no native name and was dropped" <<<"$out" && ok "$rt: a tool the runtime cannot name is dropped with a note" || no "$rt tool note: $out"
   [ "$("$DA" provider model "$rt" local fast)" != "$("$DA" provider model "$rt" local deep)" ] && ok "$rt: the fast tier and the deep tier map to different models" || no "$rt tiers"
@@ -143,7 +143,7 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
       d=$(toml "$f")
       jq -e '.name == "'"$mem"'" and .model == "fc-main" and .effort == "m" and .mode == "write" and .tools == ["sh","cat","ed","tee"] and (.description | startswith("A qargi member")) and (.prompt | startswith("You are a qargi member"))' <<<"$d" >/dev/null \
         && ok "$rt: the file parses as TOML; the balanced tier is the model, effort goes through the runtime's table, tools are renamed, the body is the prompt" || no "$rt toml fields: $d"
-      out=$("$DA" agent add quick --abilities build --effort xhigh --project "$p" 2>&1); d=$(toml "$MD/quick$ext")
+      out=$("$DA" agent add quick --roles build --effort xhigh --project "$p" 2>&1); d=$(toml "$MD/quick$ext")
       { jq -e 'has("effort") | not' <<<"$d" >/dev/null && grep -q "effort: omitted" <<<"$out"; } && ok "$rt: an effort the runtime has no value for is left out, with a note" || no "$rt xhigh: $out $d"
       ;;
     .md)
@@ -152,20 +152,20 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
         && ok "$rt: the file parses as markdown with front matter; the balanced tier is the model, effort is dropped (no control), tools are renamed, the hook is the guard" || no "$rt md fields: $d"
       ;;
   esac
-  "$DA" agent list | grep "^$mem " | grep -q '(' && no "$rt: $mem flagged right after add: $("$DA" agent list | grep "^$mem ")" || ok "$rt: and the new member is current"
+  "$DA" agent list | grep " $mem " | grep -q '(' && no "$rt: $mem flagged right after add: $("$DA" agent list | grep " $mem ")" || ok "$rt: and the new member is current"
 
   # DRIFT: edited by hand
   printf '# edited by hand\n' >> "$f"
-  "$DA" agent list | grep -q "^$mem .*$mem$ext (DRIFT)\$" && ok "$rt: a hand edit of the file is DRIFT" || no "$rt drift: $("$DA" agent list | grep "^$mem ")"
-  "$DA" agent refresh "$mem" >/dev/null 2>&1; "$DA" agent list | grep "^$mem " | grep -q '(' && no "$rt: refresh kept the flag" || ok "$rt: refresh renders it again and clears the flag"
+  "$DA" agent list | grep -q "^$p  *$mem .*$mem$ext (DRIFT)\$" && ok "$rt: a hand edit of the file is DRIFT" || no "$rt drift: $("$DA" agent list | grep " $mem ")"
+  "$DA" agent refresh "$mem" >/dev/null 2>&1; "$DA" agent list | grep " $mem " | grep -q '(' && no "$rt: refresh kept the flag" || ok "$rt: refresh renders it again and clears the flag"
 
   # STALE: the definition changed and was sealed again
   jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/$rt/definition.json" > "$T/d.json" && cp "$T/d.json" "$LIB/$rt/definition.json"
   seal "$rt"
-  "$DA" agent list | grep -q "^$mem .*$mem$ext (STALE)\$" && ok "$rt: a definition changed and sealed again makes its members STALE" || no "$rt stale: $("$DA" agent list | grep "^$mem ")"
+  "$DA" agent list | grep -q "^$p  *$mem .*$mem$ext (STALE)\$" && ok "$rt: a definition changed and sealed again makes its members STALE" || no "$rt stale: $("$DA" agent list | grep " $mem ")"
   "$DA" agent models --project "$p" --json | jq -e '[.members[] | select(.name == "'"$mem"'")] | length == 1 and (.[0].state == ["STALE"])' >/dev/null && ok "$rt: agent models says so too" || no "$rt models stale"
   "$DA" agent refresh "$mem" >/dev/null 2>&1
-  { ! "$DA" agent list | grep "^$mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep "^$mem ")"
+  { ! "$DA" agent list | grep " $mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep " $mem ")"
   out=$("$DA" provider check "$rt" 2>&1); [ "$("$DA" provider effective "$rt" local skills)" = yes ] && ok "$rt: and check records the verification of the new content" || no "$rt recheck: $out"
 
   # the audit: a skill of the user's own in the main checkout is unmanaged until the runtime's exclusion hides it
@@ -201,7 +201,7 @@ out=$("$DA" local run "$RUN" --dry-run --effort max 2>&1)
 { ! grep -q -- '--effort' <<<"$(argv <<<"$out")"; } && grep -q '^NOTE=effort max is dropped' <<<"$out" && ok "fakecli: an effort it has no value for is dropped with a note" || no "fakecli max: $out"
 
 # a read-only member and run need a barrier or the project's acceptance
-out=$("$DA" agent add judge --abilities review --project "$P" 2>&1); rc=$?
+out=$("$DA" agent add judge --roles review --project "$P" 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q "no read-only barrier on local" <<<"$out" && grep -q "qargi provider accept fakecli --surface local --no-barrier --project $P" <<<"$out" && [ ! -e "$T/s/render/$P/fakecli.agents/judge.toml" ]; } && ok "fakecli: a read-only member is refused (exit 2) with the accept command, and nothing is written" || no "fakecli review refused: rc=$rc $out"
 out=$("$DA" local prepare --repo "$REPO" --base main --slug r0 --scratch "$T" --role review 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q "no read-only barrier on local" <<<"$out"; } && ok "fakecli: and local prepare will not start a read-only run" || no "fakecli review prepare: rc=$rc $out"
@@ -214,7 +214,7 @@ prep "$REPO" r1 review
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
 want=$(jq -nc --arg c "$CLONE" '["fakecli-bin","run","--model","fc-main","--cd",$c,"--sandbox","read-only"]')
 { [ $rc = 0 ] && [ "$(argv <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out"; } && ok "fakecli: after the acceptance the read-only run adds the class arguments (--sandbox read-only)" || no "fakecli ro argv: rc=$rc [$(argv <<<"$out")] want [$want]"
-out=$("$DA" agent add judge --abilities review --project "$P" 2>&1); rc=$?
+out=$("$DA" agent add judge --roles review --project "$P" 2>&1); rc=$?
 { [ $rc = 0 ] && [ -f "$T/s/render/$P/fakecli.agents/judge.toml" ]; } && jq -e '.mode == "read-only"' <<<"$(toml "$T/s/render/$P/fakecli.agents/judge.toml")" >/dev/null && ok "fakecli: and the read-only member is made, with its class in the file" || no "fakecli review after accept: rc=$rc $out"
 
 # --- dispatch of fakemd: in the lead's session, and the hook that holds a read-only member ---------------------------------------------
@@ -223,8 +223,9 @@ P=pfakemd; REPO=$T/r-fakemd
 prep "$REPO" m1
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q "dispatches in the lead's own session" <<<"$out" && grep -q "dispatch the member with the Agent tool" <<<"$out"; } && ok "fakemd: local run refuses a runtime that works in the session, and says to use the Agent tool" || no "fakemd local run: rc=$rc $out"
-"$DA" agent for build --project "$P" --json | jq -e '.member == "forge-md" and .model_id == "md-large" and .model == "large"' >/dev/null && ok "fakemd: agent for names the member and its model for the session to dispatch" || no "fakemd agent for: $("$DA" agent for build --project "$P" --json 2>&1)"
-out=$("$DA" agent add judge-md --abilities review --project "$P" 2>&1); rc=$?
+"$DA" agent add worker --roles build,test --project "$P" >/dev/null 2>&1
+"$DA" agent for build --project "$P" --json | jq -e '.member == "worker" and .model_id == "md-large" and .model == "large"' >/dev/null && ok "fakemd: agent for names the member and its model for the session to dispatch" || no "fakemd agent for: $("$DA" agent for build --project "$P" --json 2>&1)"
+out=$("$DA" agent add judge-md --roles review --project "$P" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$("$DA" provider effective fakemd local read_only_barrier)" = yes ]; } && ok "fakemd: its hook barrier was verified by check, so a read-only member needs no acceptance" || no "fakemd review: rc=$rc $out"
 jq -e '.hooks.before_tool == "qargi __guard --provider fakemd --class read-only"' <<<"$(mdfm "$T/s/render/$P/fakemd.agents/judge-md.md")" >/dev/null && ok "fakemd: and its hook line carries the class" || no "fakemd hook line: $(cat "$T/s/render/$P/fakemd.agents/judge-md.md")"
 out=$("$DA" provider check fakemd 2>&1)
@@ -268,7 +269,7 @@ enable() { local o t; o=$("$DA" provider enable "$X" "$1" 2>&1) || { echo "$o"; 
 out=$(enable hookbar)
 { jq -e '.models.extensions == ["hookbar"]' "$T/c/projects/$X.json" >/dev/null && grep -q "^enabled extension hookbar for project $X" <<<"$out"; } && ok "extensions: enable (plan, token, approval) puts hookbar in the project's answers" || no "enable hookbar: $out"
 [ "$(eff)" = no ] && ok "extensions: enabled but not checked, it counts as no" || no "hookbar before check: $(eff)"
-out=$("$DA" agent add judge-x --abilities review --project "$X" 2>&1); rc=$?
+out=$("$DA" agent add judge-x --roles review --project "$X" 2>&1); rc=$?
 [ $rc = 2 ] && ok "extensions: and a read-only member is still refused" || no "review before check: rc=$rc $out"
 out=$(enable hookbar2); rc=$?
 { [ $rc != 0 ] && grep -q "extensions hookbar and hookbar2 both add capabilities.read_only_barrier" <<<"$out" && jq -e '.models.extensions == ["hookbar"]' "$T/c/projects/$X.json" >/dev/null; } && ok "extensions: a second extension giving the same capability conflicts, naming both, and nothing is enabled" || no "conflict: rc=$rc $out"
@@ -291,7 +292,7 @@ else
   [ "$(eff)" = yes ] && ok "extensions: attested for exactly this content, the barrier counts for this project" || no "attest apply: $(eff)"
 fi
 [ "$("$DA" provider effective fakecli local read_only_barrier)" = no ] && ok "extensions: for a project that did not enable it (or without a project) the runtime alone still has none" || no "barrier leaked to the runtime"
-out=$("$DA" agent add judge-x --abilities review --project "$X" 2>&1); rc=$?
+out=$("$DA" agent add judge-x --roles review --project "$X" 2>&1); rc=$?
 { [ $rc = 0 ] && [ -f "$T/s/render/$X/fakecli.agents/judge-x.toml" ]; } && ok "extensions: and now a read-only member is made without an acceptance" || no "review after verify: rc=$rc $out"
 jq -e '.models.accept_no_barrier == null' "$T/c/projects/$X.json" >/dev/null && ok "extensions: the project never accepted a missing barrier" || no "accept recorded"
 jq '.description = "edited after the check"' "$LIB/hookbar/definition.json" > "$T/d.json" && cp "$T/d.json" "$LIB/hookbar/definition.json"; seal hookbar

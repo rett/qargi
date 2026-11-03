@@ -2,8 +2,8 @@
 # Reconcile a project's memory stores with the canon (canon/CANON.md).
 #
 #   canon.sh check   PROJECT [--kind memory|reference]
-#   canon.sh plan    PROJECT [--kind K] [--default-role R]
-#   canon.sh apply   PROJECT [--kind K] [--default-role R] --approved "<go-ahead>"
+#   canon.sh plan    PROJECT [--kind K]
+#   canon.sh apply   PROJECT [--kind K] --approved "<go-ahead>"
 #   canon.sh import  PROJECT --from STORE_ID --role R --map docs-v0 [--approved "<go-ahead>"]
 #   canon.sh seed-role PROJECT --role R|shared --approved "..."   write the role's baseline (provision/role-seeds/R/; "shared" seeds shared/) without overwriting
 #   canon.sh audit   PROJECT [--kind K]        who wrote under which role folder (read-only)
@@ -21,11 +21,10 @@ SEED=$here/../provision/canon-seed
 
 verb=${1:-}; shift || true
 PROJECT=${1:-}; shift || true
-KIND='' DEFAULT_ROLE=build PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
+KIND='' PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
     --kind) KIND=$2; shift 2;;
-    --default-role) DEFAULT_ROLE=$2; shift 2;;
     --approved) APPROVED=$2; shift 2;;
     --plan) PLAN_ARG=$2; shift 2;;
     --from) FROM=$2; shift 2;;
@@ -60,7 +59,7 @@ make_plan() { # kind -> prints plan json path
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
   local tmp; tmp=$(mktemp -d)
   dump "$store" > "$tmp/s.jsonl"
-  python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" --default-role "$DEFAULT_ROLE" \
+  python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" \
     --store "$tmp/s.jsonl" --seed "$SEED" --today "$TODAY" > "$tmp/plan.json" || die "planning failed for $k"
   if [ "$(jq -r .from_version "$tmp/plan.json")" = unknown ] && [ "$verb" = apply ]; then
     jq -r '.notes[]' "$tmp/plan.json" >&2; die "the $k store has an unrecognised layout; nothing was changed"

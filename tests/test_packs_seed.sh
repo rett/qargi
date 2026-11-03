@@ -30,7 +30,7 @@ tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 fresh() { rm -rf "$T/c" "$T/s"; export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s"; LIB=$T/c/packs; shipped; }
 proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  models:{provider:"claude"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
 # plan, then apply with the token it printed; OUT holds the output of the last seed call, RC its exit status
 plan() { OUT=$($DA packs seed 2>&1); RC=$?; TOK=$(tok_of <<<"$OUT"); }

@@ -6,8 +6,8 @@
 # Usage: lib/conformance/run.sh NAME [--stub DIR] [--tool DIR]      (tests/conformance.sh prints its own name in the usage line)
 #   NAME       the provider (a runtime, for schema 2: claude-code, claude-platform); its descriptor is lib/providers/NAME.json
 #              and `adapter` in it names the adapter. A schema 2 definition serves one surface and its models may live in a
-#              catalog; the suite reads it through lib/provider.py load(), the view older readers get (surfaces, tier_detail,
-#              effort, adapter), so a schema 1 descriptor and a schema 2 definition are checked the same way. A descriptor
+#              catalog; the suite reads it through lib/provider.py summary() (surfaces, tier_detail, effort, adapter), so a
+#              definition whose models are inline and one that references a catalog are checked the same way. A descriptor
 #              with adapter null is skipped with a message (exit 0).
 #   --stub DIR the provider's test directory, default tests/providers/NAME. It holds `stub` (an executable that stands in
 #              for the vendor, exported to the adapter as $QARGI_TRANSPORT; see tests/providers/lib/stub.py), fixtures/
@@ -37,10 +37,10 @@
 #      lacks a model, an effort or a system prompt, or has a system over 100000 characters, is exit 2 with an error body; a
 #      read-only role is exit 2 where the barrier is effectively no, unless the request accepts that
 # A case whose verb the adapter does not implement (exit 3) is skipped. A mutated copy of the tool tree (the descriptor
-# changed, the adapter run from the copy) tests what the descriptor of the provider cannot show on its own: an effort
-# with no control (changed where the models live: the catalog of a schema 2 definition that references one), a surface that is
-# not listed (a schema 1 descriptor of two surfaces; a schema 2 definition has one, and asking for the other is the case). An adapter must therefore find its descriptor and what it needs relative
-# to itself, as the adapter contract says.
+# changed, the adapter run from the copy) tests what the definition of the runtime cannot show on its own: an effort
+# with no control (changed where the models live: the catalog the definition references, or the definition itself), a surface that
+# is not listed (a definition serves one surface, and asking for the other is the case). An adapter must therefore find its
+# definition and what it needs relative to itself, as the adapter contract says.
 set -u
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(dirname "$(dirname "$HERE")")
@@ -75,14 +75,13 @@ CORPUS=$HERE/barrier-corpus.jsonl
 W=$HERMETIC/work
 mkdir -p "$W/cwd" "$W/proj"
 cd "$W/cwd" || exit 2
-# the descriptor as load() shows it: schema 1 as it is, schema 2 in the shape of schema 1 (see lib/provider.py)
+# the descriptor as summary() shows it, on the first surface it lists (see lib/provider.py)
 VIEW=$W/view.json
 python3 -I -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import provider as P
 try:
-    print(json.dumps(P.load(sys.argv[2], root=sys.argv[3])))
+    print(json.dumps(P.summary(sys.argv[2], P.surfaces_of(sys.argv[2], root=sys.argv[3])[0], root=sys.argv[3])))
 except P.ProviderError as e:
     sys.exit("conformance: %s" % e)' "$ROOT/lib" "$NAME" "$PROV" > "$VIEW" || exit 2
-SCHEMA_V=$(jq -r '.schema' "$DESC")
 AD_REL=$(jq -r '.adapter // empty' "$VIEW")
 if [ -z "$AD_REL" ]; then
   echo "skip [-] $NAME has no adapter (adapter is null in its descriptor); nothing to check"
@@ -166,7 +165,6 @@ mutate_file() {   # FILE-UNDER-lib/providers JQ-FILTER
 mutate() { mutate_file "$NAME.json" "$1"; }   # JQ-FILTER on the descriptor itself
 mutate_effort_none() {   # LEVEL: that effort level has no control, in the file that holds the effort map
   local cat
-  if [ "$SCHEMA_V" != 2 ]; then mutate ".effort.$1 = null"; return; fi
   cat=$(jq -r '.models.catalog // empty' "$DESC")
   if [ -n "$cat" ]; then mutate_file "catalogs/$cat.json" ".effort.$1 = null"; else mutate ".models.effort.$1 = null"; fi
 }
@@ -259,16 +257,6 @@ case3() {
     call resolve "$(jq -nc --arg s "$x" '{surface: $s, tier: "fast"}')"; ran; checked=$((checked + 1))
     [ "$RC" = 3 ] || problem "resolve on the unlisted surface $x: exit $RC, not 3: ${OUT:0:160}"
   done
-  if [ "$SCHEMA_V" != 2 ] && [ "$(echo "$SURFACES" | wc -l)" -gt 1 ]; then   # every surface is listed: take one away in a copy
-    x=$(echo "$SURFACES" | tail -1)
-    if mutate ".surfaces -= [\"$x\"] | del(.capabilities[][\"$x\"])"; then
-      call_mut resolve "$(jq -nc --arg s "$x" '{surface: $s, tier: "fast"}')"; ran; checked=$((checked + 1))
-      [ "$RC" = 3 ] || problem "resolve on a surface that a changed copy of the descriptor does not list ($x): exit $RC, not 3: ${OUT:0:160}"
-      call_mut resolve "$(jq -nc --arg s "$ONE" '{surface: $s, tier: "fast"}')"
-      [ "$RC" = 0 ] || problem "resolve on the surface that stays listed ($ONE) in the changed copy: exit $RC"
-      note "an unlisted surface on a changed copy"
-    else problem "internal: could not make a changed copy of the tool tree"; fi
-  fi
   [ "$checked" -gt 0 ] || nothing "nothing is effectively no and every surface is listed"
   note "$checked checked"
   finish 3 "unsupported is exit 3"

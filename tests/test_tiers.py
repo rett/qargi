@@ -25,7 +25,7 @@ def seed_files(project, roles="build,write"):
     st = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
     st.close()
     r = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "plan", "--kind", "memory", "--project", project, "--roles", roles,
-                        "--default-role", "build", "--seed", SEED, "--today", "2026-10-27", "--store", st.name], capture_output=True, text=True)
+                        "--seed", SEED, "--today", "2026-10-27", "--store", st.name], capture_output=True, text=True)
     os.unlink(st.name)
     plan = json.loads(r.stdout)
     out = C.simulate({}, plan["ops"])

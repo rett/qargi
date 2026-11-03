@@ -2,7 +2,7 @@
 """Canon planner: pure functions from a store's memories to a list of steps.
 
 Subcommands (all read JSON lines of {"id","path","content"} from --store and print JSON):
-  plan    --kind memory|reference --project P --roles build,write --default-role R --store F --seed D
+  plan    --kind memory|reference --project P --roles build,write --store F --seed D
   check   --kind K --project P --roles ... --store F   (structure, note format, indexes, hygiene)
   import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.
@@ -56,9 +56,16 @@ def parse_marker(text):
     return d
 
 
-def detect(kind, mems):
-    """-> (state, why). state is LATEST (conforms), "draft" (a marker from an earlier
-    draft of this spec), "legacy" (the layout before the canon) or "unknown"."""
+def setup_paths(roles):
+    """The files `init` creates, in the order it creates them (the marker follows)."""
+    return ["/shared/INDEX.md"] + ["/roles/%s/INDEX.md" % r for r in roles] + ["/_template.md", "/README.md"]
+
+
+def detect(kind, mems, roles=None):
+    """-> (state, why). state is LATEST (conforms), "empty" (no memories, or only the first files of a set-up that was
+    interrupted before it wrote the marker: it is set up from the seed) or "unknown" (a marker this qargi does not read,
+    or no marker). Layouts older than canon 2 are not migrated. Without `roles` a store with no marker is empty only
+    when it holds no memories."""
     if "/CANON.md" in mems:
         d = parse_marker(mems["/CANON.md"]["content"])
         try:
@@ -67,24 +74,14 @@ def detect(kind, mems):
             return "unknown", "unreadable /CANON.md"
         if n == LATEST:
             return LATEST, "marker"
-        if 1 <= n < LATEST:
-            return n, "canon version %d" % n
         if n > LATEST:
             return "unknown", "written by a newer qargi (canon %d); this one knows %d" % (n, LATEST)
-        return "draft", "marker from an earlier draft of the canon (%d)" % n
-    paths = list(mems)
-    if not paths:
-        return "legacy", "empty store"
-    if any(p.startswith(("/shared/", "/roles/")) for p in paths):
-        return "legacy", "no marker but canon folders exist: an interrupted migration, resumed"
-    if set(paths) <= {"/README.md", "/_template.md"}:
-        return "legacy", "only an index file"
-    if kind == "memory":
-        if any(p.startswith(("/sandbox/", "/repos/")) for p in paths):
-            return "legacy", "layout: sandbox/ and repos/ at the root"
-    else:
-        if any(re.match(r"/\d\d-[^/]+/", p) or re.match(r"/[a-z]+/[^/]+\.md", p) for p in paths):
-            return "legacy", "layout: folders at the root"
+        return "unknown", "canon version %d is older than the %d this qargi reads, and it no longer migrates it" % (n, LATEST)
+    if not mems:
+        return "empty", "empty store: it is set up from the seed"
+    order = setup_paths(roles) if roles else []
+    if sorted(mems) == sorted(order[:len(mems)]):
+        return "empty", "an interrupted set-up (no marker yet): it is finished from the seed"
     return "unknown", "no marker and no known layout"
 
 
@@ -179,10 +176,6 @@ def add_header(kind, p, content, project, today):
 LOAD_WHEN = re.compile(r"(?m)^(\|\s*Path\s*\|\s*Purpose\s*\|\s*)Load when(\s*\|)")
 
 
-def fix_index(content):
-    return LOAD_WHEN.sub(r"\1Load\2", content)
-
-
 def slurp(path):
     with open(path) as f:
         return f.read()
@@ -199,78 +192,16 @@ def role_lines(roles):
     return "\n".join("- `roles/%s/INDEX.md`: the %s role" % (r, r) for r in roles)
 
 
-def migrate_legacy(kind, mems, project, roles, default_role, seed, today):
-    ops, notes = [], []
-    taken = set(mems)
-    moved_to = {}
-
-    def dest_for(p):
-        if kind == "memory":
-            if p.startswith(("/sandbox/", "/repos/")):
-                return "/shared" + p
-        else:
-            if re.match(r"/\d\d-[^/]+/", p) or p.startswith("/tools/"):
-                return "/roles/%s%s" % (default_role, p)
-        return None
-
-    for p, m in sorted(mems.items()):
-        if p in ("/README.md", "/_template.md", "/CANON.md"):
-            continue
-        if p.startswith(("/shared/", "/roles/", "/_conflicts/")):
-            continue
-        d = dest_for(p)
-        if d is None:
-            notes.append("left in place, not part of any known layout: %s" % p)
-            continue
-        if d in taken:
-            d = "/_conflicts/%s%s" % (today, p)
-            notes.append("conflict: %s already exists; %s goes to %s" % (p, p, d))
-        taken.add(d)
-        moved_to[p] = d
-        ops.append({"op": "move", "id": m["id"], "from": p, "to": d})
-
+def init(kind, mems, project, roles, seed, today):
+    """An empty store: the seed's README, template, shared index and one index per role. The marker follows (make_plan).
+    A file already there is left as it is: a set-up that was interrupted is finished, not redone."""
     subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
-    old_readme = mems.get("/README.md")
-
-    if kind == "memory":
-        rows = []
-        if old_readme:
-            rows = [l for l in old_readme["content"].splitlines() if re.match(r"^\| (sandbox|repos)/", l)]
-        idx = seed_text(seed, "INDEX.shared.memory.md", subs)
-        if rows:
-            idx = idx.replace("| (none yet) | | |\n", "\n".join(rows) + "\n")
-        shared_index = ("/shared/INDEX.md", idx)
-    else:
-        shared_index = ("/shared/INDEX.md", seed_text(seed, "INDEX.shared.reference.md", subs))
-        if old_readme:
-            d = "/roles/%s/INDEX.md" % default_role
-            if d in taken:
-                d = "/_conflicts/%s/README.md" % today
-                notes.append("conflict: the old index goes to %s" % d)
-            taken.add(d)
-            ops.append({"op": "move", "id": old_readme["id"], "from": "/README.md", "to": d})
-
-    new = []
-    if shared_index[0] not in taken:
-        new.append(shared_index)
-        taken.add(shared_index[0])
+    text = {"/shared/INDEX.md": lambda: seed_text(seed, "INDEX.shared.%s.md" % kind, subs),
+            "/_template.md": lambda: slurp("%s/_template.%s.md" % (seed, kind)),
+            "/README.md": lambda: seed_text(seed, "README.%s.md" % kind, subs)}
     for r in roles:
-        p = "/roles/%s/INDEX.md" % r
-        if p not in taken:
-            new.append((p, seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))))
-            taken.add(p)
-    if "/_template.md" not in mems:
-        new.append(("/_template.md", slurp("%s/_template.%s.md" % (seed, kind))))
-    for p, c in new:
-        ops.append({"op": "create", "path": p, "content": c})
-
-    readme_content = seed_text(seed, "README.%s.md" % kind, subs)
-    if kind == "memory" and old_readme:
-        ops.append({"op": "update", "id": old_readme["id"], "path": "/README.md", "content": readme_content,
-                    "sha": old_readme.get("content_sha256", "")})
-    else:
-        ops.append({"op": "create", "path": "/README.md", "content": readme_content})
-    return ops, notes
+        text["/roles/%s/INDEX.md" % r] = lambda r=r: seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))
+    return [{"op": "create", "path": p, "content": text[p]()} for p in setup_paths(roles) if p not in mems], []
 
 
 NUM = re.compile(r"^\d\d-")
@@ -306,94 +237,8 @@ def simulate(mems, ops):
     return out
 
 
-def migrate_draft(kind, mems, project, roles, default_role, seed, today):
-    """Numbered prefixes (01-rules) become plain names (rules): folders are renamed and
-    the references to them inside the files of the same scope are rewritten."""
-    ops, notes = [], []
-    taken = set(mems)
-    scopes = ["/shared/"] + ["/roles/%s/" % r for r in roles]
-    moved = {}
-    for scope in scopes:
-        folders = {}
-        for p in mems:
-            if p.startswith(scope):
-                top = p[len(scope):].split("/")[0]
-                if "/" in p[len(scope):] and NUM.match(top):
-                    folders[top] = strip_num(top)
-        if not folders:
-            continue
-        for p, m in sorted(mems.items()):
-            if not p.startswith(scope):
-                continue
-            rest = p[len(scope):]
-            top = rest.split("/")[0]
-            if "/" in rest and top in folders:
-                d = scope + folders[top] + rest[len(top):]
-                if d in taken:
-                    d = "/_conflicts/%s%s" % (today, p)
-                    notes.append("conflict: %s already exists; %s goes to %s" % (scope + folders[top] + rest[len(top):], p, d))
-                taken.add(d)
-                moved[p] = d
-                ops.append({"op": "move", "id": m["id"], "from": p, "to": d})
-        for p, m in sorted(mems.items()):
-            if not p.startswith(scope):
-                continue
-            new = rewrite_refs(m["content"], folders)
-            if new != m["content"]:
-                ops.append({"op": "update", "id": m["id"], "path": moved.get(p, p), "content": new,
-                            "sha": m.get("content_sha256", "")})
-        notes.append("%s: %s" % (scope, ", ".join("%s -> %s" % kv for kv in sorted(folders.items()))))
-    # the root README is regenerated from the seed (it names the layout); a text that is
-    # not the seed's stays available under _conflicts
-    old = mems.get("/README.md")
-    if old:
-        subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
-        new = seed_text(seed, "README.%s.md" % kind, subs)
-        if new != old["content"]:
-            was = seed_text(seed, "v1/README.%s.md" % kind, subs)
-            keep = "/_conflicts/%s/README.md" % today
-            if old["content"] != was and keep not in mems:
-                ops.append({"op": "create", "path": keep, "content": old["content"]})
-                notes.append("the root README is replaced; the old text is kept at %s" % keep)
-            ops.append({"op": "update", "id": old["id"], "path": "/README.md", "content": new,
-                        "sha": old.get("content_sha256", "")})
-    return ops, notes
-
-
-def migrate_v2(kind, mems, project, roles, default_role, seed, today):
-    """Version 1 (structure only) to 2 (the note format): add what a note lacks, never edit a body."""
-    ops, notes = [], []
-    subs = {"{{PROJECT}}": project, "{{ROLES}}": role_lines(roles), "{{ROLE_LIST}}": " ".join(roles)}
-    for p, m in sorted(mems.items()):
-        c, new = m["content"], m["content"]
-        if is_note(p):
-            new, added = add_header(kind, p, c, project, today)
-            if "Kind" not in note_fields(new):
-                notes.append("kind not derivable from the path, set Kind: by hand: %s" % p)
-        elif p.endswith("/INDEX.md"):
-            new = fix_index(c)
-        if new != c:
-            ops.append({"op": "update", "id": m["id"], "path": p, "content": new, "sha": m.get("content_sha256", "")})
-    for name, v1, v2 in (("README.md", "%s/v1/README.%s.md" % (seed, kind), seed_text(seed, "README.%s.md" % kind, subs)),
-                         ("_template.md", "%s/v1/_template.md" % seed if kind == "memory" else None,
-                          slurp("%s/_template.%s.md" % (seed, kind)))):
-        cur = mems.get("/" + name)
-        if cur is None:
-            ops.append({"op": "create", "path": "/" + name, "content": v2})
-        elif cur["content"] != v2:
-            was = slurp(v1) if v1 else ""
-            for k_, v_ in subs.items():
-                was = was.replace(k_, v_)
-            keep = "/_conflicts/%s/%s" % (today, name)
-            if cur["content"] != was and keep not in mems:
-                ops.append({"op": "create", "path": keep, "content": cur["content"]})
-                notes.append("%s differed from the version 1 seed: the old text is kept at %s" % (name, keep))
-            ops.append({"op": "update", "id": cur["id"], "path": "/" + name, "content": v2, "sha": cur.get("content_sha256", "")})
-    return ops, notes
-
-
-# Each state reaches LATEST through an ordered chain of steps.
-CHAINS = {"legacy": [migrate_legacy, migrate_draft, migrate_v2], "draft": [migrate_draft, migrate_v2], 1: [migrate_v2]}
+# A state reaches LATEST through its steps: an empty store is set up; a store at LATEST is only maintained (below).
+CHAINS = {"empty": [init]}
 
 
 def maintain(kind, mems, project, roles, seed, today):
@@ -429,22 +274,20 @@ def maintain(kind, mems, project, roles, seed, today):
     return ops, sorted(set(notes))
 
 
-def make_plan(kind, mems, project, roles, default_role, seed, today):
+def make_plan(kind, mems, project, roles, seed, today):
     """The steps from a store's memories to the current canon: {from_version, to_version, why, ops, notes}."""
-    state, why = detect(kind, mems)
+    state, why = detect(kind, mems, roles)
     out = {"from_version": state, "to_version": LATEST, "why": why, "ops": [], "notes": []}
     if state == "unknown":
         out["notes"].append("layout unrecognised (%s): nothing can be planned" % why)
         return out
     if state == LATEST:
         out["ops"], out["notes"] = maintain(kind, mems, project, roles, seed, today)
-    if state != LATEST:
-        cur = mems
+    else:
         for step in CHAINS[state]:
-            ops, notes = step(kind, cur, project, roles, default_role, seed, today)
+            ops, notes = step(kind, mems, project, roles, seed, today)
             out["ops"] += ops
             out["notes"] += notes
-            cur = simulate(cur, ops)
         out["ops"].append({"op": "marker", "path": "/CANON.md", "content":
                            canon_marker(kind, project, roles, LATEST, state, today),
                            "id": mems.get("/CANON.md", {}).get("id", "")})
@@ -453,7 +296,7 @@ def make_plan(kind, mems, project, roles, default_role, seed, today):
 
 def cmd_plan(a):
     today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.default_role, a.seed, today)))
+    print(json.dumps(make_plan(a.kind, load(a.store), a.project, a.roles.split(","), a.seed, today)))
     return 0
 
 
@@ -544,7 +387,7 @@ def notes_check(kind, mems, roles, F, W):
 def cmd_check(a):
     mems = load(a.store)
     roles = a.roles.split(",")
-    ver, why = detect(a.kind, mems)
+    ver, why = detect(a.kind, mems, roles)
     fails, warns = [], []
     F = lambda p, s: fails.append("FAIL %s: %s" % (p, s))
     W = lambda p, s: warns.append("WARN %s: %s" % (p, s))
@@ -679,7 +522,6 @@ def main():
         s.add_argument("--store", required=True)
         s.add_argument("--today")
         if name == "plan":
-            s.add_argument("--default-role", required=True)
             s.add_argument("--seed", required=True)
     s = sub.add_parser("import")
     s.add_argument("--map", required=True, choices=["docs-v0"])

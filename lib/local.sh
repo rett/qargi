@@ -178,7 +178,7 @@ case $verb in
   prepare)
     REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build PROFILE=''
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --ability|--role) ABILITY=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --role) ABILITY=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"

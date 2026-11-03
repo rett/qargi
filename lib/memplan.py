@@ -302,13 +302,13 @@ def split(store, selector, target, move=False, today=None, label="source", fits=
     return plan
 
 
-def migrate(store, to_version, kind, project, roles, default_role, seed, today=None):
+def migrate(store, to_version, kind, project, roles, seed, today=None):
     """The canon's own plan for a store (canon.make_plan), with the digests it was computed from.
     Only the current canon version is a target. -> plan with a "target" (the store itself) and notes"""
     if to_version != C.LATEST:
         raise ValueError("this qargi migrates to canon %d only" % C.LATEST)
     today = today or today_utc()
-    p = C.make_plan(kind, store, project, roles, default_role, seed, today)
+    p = C.make_plan(kind, store, project, roles, seed, today)
     byid = {m["id"]: path for path, m in store.items() if m.get("id")}
     expect, ops = {}, []
     for op in p["ops"]:

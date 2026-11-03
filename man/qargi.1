@@ -15,7 +15,7 @@ Every command takes \fB\-\-help\fR. A command that changes shared resources prin
 .SH CONCEPTS
 Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
 .PP
-Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-abilities build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
+Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-roles build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
 Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
@@ -60,7 +60,7 @@ The answers are the repository, its long\-lived branches, the roles that exist (
 .BI "template " "NAME"
 Print an answers file with defaults.
 .br
-Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not.
+Edit it, then store it with init. models.provider is empty and must be set (the provider the project's agents run on; there is no default); project validate reports it while it is not. No role names a model: it takes the provider's tier once one is set.
 .RE
 .RS
 .TP
@@ -365,8 +365,8 @@ Create a member under a name you choose.
 A member belongs to a project, and the definition is rendered by the provider of that project. Refuses a name that exists, a name that is not kebab\-case, the name of a built\-in agent type of that provider, no \-\-project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user\-level directory.
 .RS
 .TP
-.BI "\-\-abilities " "LIST"
-comma\-separated abilities it serves (default build,write,review,test).
+.BI "\-\-roles " "LIST"
+comma\-separated roles it serves (default build,write,review,test).
 .RE
 .RS
 .TP
@@ -387,16 +387,25 @@ the project the member belongs to (required): its models.provider renders it, an
 .RS
 .TP
 .B list
-List the members, their abilities and definitions.
+List the members of every project, their abilities and definitions.
+.br
+One row per member: PROJECT, NAME, ABILITIES, MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. Members are kept per project, so two projects can each have a worker.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+only the members of this project.
+.RE
 .RE
 .RS
 .TP
 .BI "rename " "OLD NEW"
 Rename a member and its definition.
+.br
+Within its project. The project is \-\-project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
 .RE
 .RE
 .RS
@@ -404,11 +413,11 @@ the project, instead of the one inferred from here.
 .BI "refresh " "NAME"
 Re\-render a member from the member definition qargi ships now.
 .br
-Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+The project is found as for rename. Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
 .RE
 .RE
 .RS
@@ -416,7 +425,7 @@ the project, instead of the one inferred from here.
 .B models
 Show the base members, the profiles with their resolved models and efforts, and each member.
 .br
-Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the base exists), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. Read\-only.
+Two base members, one per guard class: worker (build, write, test; may write) and reviewer (review; read\-only). Everything else is a profile {base, tier, effort, purpose} resolved at dispatch: the shipped ones are in lib/model\-defaults.json (build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. The frontier tier (researcher) is opt\-in. Problems are flagged on their row, never fatal: a member that is not a base (nothing dispatches it), a missing base, a refused project profile, a mixed\-class member, a tier with no alias, a frontier member outside researcher. A project is needed, because its models.provider decides the models: \-\-project, else the one in effect (with none, exit 2). The members shown are that project's (`agent list` shows all projects'). Read\-only.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -432,13 +441,20 @@ machine\-readable.
 .TP
 .BI "remove " "NAME"
 Delete a member's definition and its record.
+.br
+The project is found as for rename: \-\-project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2).
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project the member belongs to (default: the one in effect when it has the member, else the only project that has it).
+.RE
 .RE
 .RS
 .TP
 .BI "for " "ROLE"
 Print how to dispatch a role: the base member, the model alias and the effort.
 .br
-The base member is the one the profile names (worker for build, write and test, reviewer for review) when it is registered; otherwise the first registered member of the role's class (shown as legacy). A read\-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type.
+The base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read\-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -557,7 +573,7 @@ the plan token printed without it.
 .BI "check " "NAME|DIR"
 Validate a definition (a library name or a directory) and say what degrades.
 .br
-Fails on a descriptor that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles therefore cannot be served (for example review where the read\-only barrier is not supported).
+Fails on a definition that breaks the schema, a name that differs from its file, a missing tier or an unknown capability. Warns on a verified date that is missing and says which capabilities count as not supported because of it, and which roles therefore cannot be served (for example review where the read\-only barrier is not supported).
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -762,23 +778,6 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
-.RS
-.TP
-.BI "migrate " "NAME"
-Print the schema 2 form of a schema 1 descriptor (read only).
-.br
-One surface prints one runtime document; two surfaces print a shared catalog of models and one runtime per surface. Notes go to stderr. The written form (a plan and your approval) is not built yet, so without \-\-dry\-run it exits 2.
-.RS
-.TP
-.B \-\-dry\-run
-required for now: print the documents and write nothing.
-.RE
-.RS
-.TP
-.BI "\-\-as " "SURFACES"
-name the runtime of each surface, for a descriptor that serves both: local=NAME,cloud=NAME.
 .RE
 .RE
 .TP
@@ -2581,11 +2580,6 @@ the task's role, written to RUN/ability with its class in RUN/class; a read\-onl
 .BI "\-\-profile " "NAME"
 the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT.
 .RE
-.RS
-.TP
-.BI "\-\-ability " "ABILITY"
-the earlier name of \-\-role.
-.RE
 .RE
 .RS
 .TP
@@ -2985,7 +2979,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi canon
 Bring a project's two memory stores to the standard layout and keep them there.
 .PP
-The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an index with a Load column). plan and apply move a store from any older version without losing a note.
+The canon fixes the layout and the note format of both stores (shared/ and roles/<role>/, a header on every note, an index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed.
 .RS
 .TP
 .BI "check " "[PROJECT]"
@@ -3004,11 +2998,6 @@ Print every step needed to reach the current canon (changes nothing).
 .TP
 .BI "\-\-kind " "KIND"
 which store: memory or reference (default: both).
-.RE
-.RS
-.TP
-.BI "\-\-default\-role " "ROLE"
-where an old reference store's files go.
 .RE
 .RE
 .RS
@@ -3029,11 +3018,6 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RS
-.TP
-.BI "\-\-default\-role " "ROLE"
-as for plan.
 .RE
 .RE
 .RS
@@ -3323,32 +3307,12 @@ the password is the first line of this file.
 .B \-\-dry\-run
 print the plan and stop; changes nothing.
 .RE
-.TP
-.B qargi migrate
-Copy the data of the earlier XDG directories to ~/.qargi.
-.PP
-home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and $XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). Until it has run, every other command stops and tells you to run it. Without \-\-approved it prints the plan, with every directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites old absolute paths (a project's credential file, local\-runs.jsonl; the records audit.log, supervisor.log and run\-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token and your go\-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run (a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. 
-.RS
-.TP
-.B home
-Plan, then copy, the data from the XDG directories to ~/.qargi.
-.RS
-.TP
-.BI "\-\-plan " "TOKEN"
-the plan token printed by the same command without \-\-approved.
-.RE
-.RS
-.TP
-.BI "\-\-approved " "WORDS"
-your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
 .SS Other
 .TP
 .B qargi upgrade
 Move the installed tool to a newer branch or tag of its origin.
 .PP
-Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). A member or agent cannot use it.
+Works on the root\-owned checkout install.sh recorded (for example /opt/qargi). Without \-\-approved it fetches the target, shows the commits and files that would change and prints a plan token. With \-\-plan TOKEN \-\-approved "..." it applies exactly that: a branch on the current branch moves forward only (fast\-forward), another branch is checked out at its tip, a tag is checked out detached; install.sh \-\-user then runs as you and the members to refresh are listed. The git commands that write into the checkout run through sudo (QARGI_SUDO names another command). When the members file (~/.qargi/config/agents.json) is not in the current shape, which every agent verb refuses, the plan and the end of the upgrade say so and how to redo it; nothing is changed for that. A member or agent cannot use it.
 .RS
 .TP
 .BI "\-\-branch " "BRANCH"
