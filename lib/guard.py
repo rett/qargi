@@ -128,6 +128,12 @@ SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marsha
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
 OWN_ONLY = ("linker.py", "render.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+# Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
+# lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
+# resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
+# (`ln -s .../linker.py x && python3 x`), and an import can be spelled in too many ways (importlib, __import__, string joins) to read from
+# the command text; a half check would suggest a guarantee the guard does not give. Like the rest of the shell reading it is a heuristic
+# against a mistake, not a wall against a member that works to get round it; the local verify of the patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "check", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
@@ -347,21 +353,32 @@ def conf_dirs(P, home):
 
 
 _RESOURCE_DIRS = []
+# The directories of Claude Code, the runtime qargi was built for. They are held whatever the library says: a definition of that name that
+# clashes with the shipped one (or is broken) is skipped below, and its directories must not drop out of the protection with it.
+CLAUDE_RESOURCE_DIRS = ((".claude", "skills"), (".claude", "agents")), ("~/.claude/skills", "~/.claude/agents")
 
 
 def resource_dirs():
     """(project, user): the skills and agents directories that the resources of every provider definition name (the shipped ones and the
-    library's, every surface). project: tuples of path components (".claude/skills" is (".claude", "skills")), found anywhere in a path;
-    user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below ~/) is left out. Read once
-    per call of the hook. A definition that cannot be read is an error, so the call is refused: with no list of what to protect, the
-    guard cannot say that a write is safe."""
+    library's, every surface), and those of Claude Code. project: tuples of path components (".claude/skills" is (".claude", "skills")),
+    found anywhere in a path; user: real directories below the home. A path that cannot be one (absolute, with .., a user path not below
+    ~/) is left out. Read once per call of the hook. A definition that does not load (unreadable, a name clash, a name that disagrees with
+    its directory) is skipped with one note on standard error: its directories are unknown, but one broken file of the library must not
+    make the guard refuse every write, and the roots of the definitions that do load stay (the roots only add up)."""
     if not _RESOURCE_DIRS:
         provider = _provider()
         home = os.path.expanduser("~")
-        project, user = [], []
+        project = [tuple(c) for c in CLAUDE_RESOURCE_DIRS[0]]
+        user = [os.path.join(home, u[2:]) for u in CLAUDE_RESOURCE_DIRS[1]]
+        skipped = []
         for name in provider.names():
-            for surface in provider.surfaces_of(name):
-                res = provider.definition(name, surface).get("resources")
+            try:
+                defs = [provider.definition(name, surface) for surface in provider.surfaces_of(name)]
+            except Exception as e:
+                skipped.append("%s (%s)" % (name, str(e).splitlines()[0][:100] if str(e) else type(e).__name__))
+                continue
+            for doc in defs:
+                res = doc.get("resources")
                 for kind in ("skills", "agents"):
                     r = res.get(kind) if isinstance(res, dict) else None
                     r = r if isinstance(r, dict) else {}
@@ -371,6 +388,8 @@ def resource_dirs():
                         project.append(comps)
                     if isinstance(u, str) and u.startswith("~/") and len(u) > 2 and os.path.join(home, u[2:]) not in user:
                         user.append(os.path.join(home, u[2:]))
+        if skipped:
+            print("qargi guard: provider definitions skipped, their skills and agents directories are not protected: %s" % "; ".join(skipped), file=sys.stderr)
         _RESOURCE_DIRS.append((project, user))
     return _RESOURCE_DIRS[0]
 
@@ -860,6 +879,7 @@ def tar_targets(rest):
 #                  no list is not judged
 #   deny           how a refusal is given back: {"exit": N, "stream": "stderr"|"stdout"} prints the reason there, or {"exit": 0,
 #                  "stdout": {...}} prints that JSON with "{reason}" replaced in every string; allow: {"exit": N}, the answer to a call that passes
+# The data must be complete: tool_names.shell is listed, and every kind that lists a tool has a pointer for its path (hook_problem).
 # The text of a refusal belongs to the decisions: the protocol only carries it.
 
 Call = collections.namedtuple("Call", "kind name command path cwd")    # kind: shell, write, read, search or None; name: the runtime's name of the tool
@@ -985,6 +1005,13 @@ def hook_problem(h):
     for n in sorted(set(seen)):
         if seen.count(n) > 1:
             return "barrier.hook.tool_names: the tool %s is listed twice" % n
+    # Complete, not only well formed: data that names a tool but not what to read from it would pass its calls unjudged (a write tool with
+    # no path pointers names no path, so the write is allowed; a hook with no shell tool judges no command).
+    if not names.get("shell"):
+        return "barrier.hook.tool_names.shell must list the tool that runs a command (without it no command is judged)"
+    for kind in ("write", "read", "search"):
+        if names.get(kind) and not path_pointers(h, kind):
+            return "barrier.hook.path_pointers must give at least one pointer for %s (tool_names lists %s)" % (kind, ", ".join(names[kind]))
     deny = h.get("deny")
     if not (isinstance(deny, dict) and _is_exit(deny.get("exit")) and (("stdout" in deny) != ("stream" in deny))
             and set(deny) <= {"exit", "stream", "stdout"} and (deny.get("stream") in ("stderr", "stdout") if "stream" in deny else isinstance(deny["stdout"], dict))):

@@ -561,6 +561,23 @@ PY
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
+    # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before
+    case $path in models.provider.local|models.provider.cloud)
+      sname=$(jq -r 'select(type == "string")' <<<"$val") || sname=''
+      [ -z "$sname" ] || python3 -I - "${path#models.provider.}" "$sname" "$(dirname "$(readlink -f "$0")")" <<'PY' || exit $?
+import sys
+sys.path.insert(0, sys.argv[3])
+import provider as P
+try:
+    P.resolve_runtime(sys.argv[2].strip(), sys.argv[1])
+except P.NotServed as e:
+    print("qargi: models.provider.%s: %s; nothing changed" % (sys.argv[1], e), file=sys.stderr)
+    sys.exit(2)
+except P.ProviderError:
+    pass
+PY
+    ;; esac
     # models.provider.local|cloud sets one surface of the object form. When models.provider is still a single name (or blank), the object is made
     # first: the surface being set takes the new name, the other keeps the name it had (the same name resolves per surface exactly as before, so
     # nothing else changes) or stays unset when there was none
