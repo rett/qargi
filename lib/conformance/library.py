@@ -13,13 +13,17 @@ audit log. The hashes of the executables are recorded with the pack and checked 
   seal NAME                         approve the pack as it is now, after you edited it; earlier verification records no longer match
   remove NAME                       refused while a project, an extension or a runtime refers to it
   enable | disable PROJECT EXT      switch an extension on or off for one project (models.extensions of its answers)
+  check NAME | DIR                  the review, the schema and the hermetic cases (lib/conformance/cases.py); for a sealed library pack
+                                    it writes the verification records of the capabilities whose cases all passed
   attest NAME CAP ...               the plan and the record of a live check YOU ran; it runs nothing and spends nothing
 
 Trust: a pack with executables is code that runs with the user's rights. Import never enables or links it; enabling is its own plan. The
 guard refuses every verb here to a member (the lifecycle verbs write the library and the state), but it cannot contain an approved
 executable: it can read what it is given, reach the network and write where the user can."""
+import contextlib
 import getpass
 import hashlib
+import io
 import json
 import os
 import re
@@ -694,6 +698,86 @@ def cmd_enable(verb, args):
     return 0
 
 
+# ---- check -----------------------------------------------------------------------------------------------------------------------
+
+def check_target(target):
+    """(directory, name or None, entry or None) of what `check` was asked about: a path to a pack directory, or a pack name."""
+    if "/" in target or (os.path.isdir(target) and P.entry_any(target) is None):
+        if not os.path.isdir(target):
+            raise Failure("no such directory: %s" % target)
+        d = os.path.realpath(target)
+        return d, None, None
+    e = P.entry_any(target)
+    if e is None:
+        return None, target, None                                  # no such pack: provider.py's own report says so
+    return os.path.dirname(e["file"]) if e["origin"] == "library" else None, target, e
+
+
+def cmd_check(args):
+    from conformance import cases
+    opts, pos = parse(args, ("--project",))
+    if len(pos) != 1:
+        raise Usage("usage: qargi provider check NAME|DIR [--project P]")
+    d, name, e = check_target(pos[0])
+    if e is None and d is None or e is not None and e["origin"] == "shipped":
+        return None                                                # a shipped definition, or none: the report provider.py has always made
+    doc = read_definition(d)
+    label = name or os.path.basename(d)
+    kind = doc.get("kind")
+    state = P.seal_state(e)[0] if e is not None else "directory"
+    rv = R.scan(d, doc)
+    fails, warns = doc_findings(doc, name if name else name_of(doc))
+    fails = rv["fail"] + fails
+    warns = rv["warn"] + warns
+    print("%s: %s pack, %s; %s, %s" % (label, kind, {"sealed": "sealed", "unsealed": "UNSEALED", "drift": "CHANGED since it was sealed", "unrecorded": "no record (put there by hand)",
+                                                      "directory": "a directory outside the library"}[state],
+                                       P._count(len(fails), "failure"), P._count(len(warns), "warning")))
+    for m in fails:
+        print("fail: %s" % m)
+    for m in warns:
+        print("warn: %s" % m)
+    print("review: %d files, %d executable%s, %d flagged construct%s, %d network mention%s, secret findings %s" % (
+        rv["count"], len(rv["executables"]), "" if len(rv["executables"]) == 1 else "s", len(rv["flags"]), "" if len(rv["flags"]) == 1 else "s",
+        len(rv["network"]), "" if len(rv["network"]) == 1 else "s", "found" if rv["secrets"] else "none"))
+    if rv["executables"]:
+        print("executables: %s" % ", ".join(sorted(R.executables(rv))))
+    if fails:
+        print("nothing is verified while the pack fails")
+        if name and state in ("sealed", "unrecorded"):
+            P.record_verification(name, {})
+        return 1
+    if kind != "provider":
+        print("a %s has no capabilities to verify" % kind)
+        return 0
+    results = cases.run(doc, d, name, e, sealed=(state == "sealed"), opts=opts, rv=rv)
+    bad = 0
+    for cid in sorted(results):
+        r = results[cid]
+        print("%-4s %s%s" % ({"pass": "ok", "fail": "FAIL", "skip": "skip", "na": "-"}[r["status"]], cid, ": " + "; ".join(r["notes"]) if r["notes"] else ""))
+        bad += r["status"] == "fail"
+    verdicts = cases.verdicts(doc, results)
+    records = {}
+    for cap in sorted(verdicts):
+        ok, why = verdicts[cap]
+        print("%-34s %s" % (cap, "verified (%s)" % why if ok else "not verified: %s" % why))
+        if ok:
+            records[cap] = why
+    if name is None:
+        print("a directory is not recorded: put the pack in the library (qargi provider import) to have a verification recorded")
+        return 1 if bad else 0
+    if state not in ("sealed", "unrecorded"):
+        print("nothing recorded: %s; seal it (qargi provider seal %s) and check again" % ("the pack is " + state, name))
+        return 1 if bad else 0
+    keep = {c: r for c, r in P.verification(name).items() if isinstance(r, dict) and r.get("by") == "attest" and r.get("hash") == P.definition_hash(name)}
+    h = P.definition_hash(name)
+    recs = dict(keep)
+    for cap, why in records.items():
+        recs[cap] = {"hash": h, "by": "conformance", "at": now(), "note": why}
+    P.record_verification(name, recs)
+    print("recorded %d verification%s in %s" % (len(records), "" if len(records) == 1 else "s", os.path.join(P._state_dir(), "providers", name, "verified.json")))
+    return 1 if bad else 0
+
+
 # ---- attest ----------------------------------------------------------------------------------------------------------------------
 
 ASK = """attest is asked EACH TIME: a live check is never pre-approved for a runtime, and this verb never runs or spends anything. It records a
@@ -811,6 +895,8 @@ def run(verb, rest):
             return cmd_enable(verb, rest)
         if verb == "attest":
             return cmd_attest(rest)
+        if verb == "check":
+            return cmd_check(rest)
     except Usage as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -821,3 +907,13 @@ def run(verb, rest):
         print("qargi: %s" % e, file=sys.stderr)
         return 1
     raise ValueError(verb)
+
+
+def quiet(fn, *a, **k):
+    """fn(*a, **k) with standard output and error captured: (result or the SystemExit code, output)."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        try:
+            return fn(*a, **k), out.getvalue()
+        except SystemExit as e:
+            return e.code, out.getvalue()
