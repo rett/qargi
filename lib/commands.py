@@ -615,10 +615,12 @@ COMMANDS = {
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
                                  "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir")],
-                          [opt("--discard", "also clean a run whose output holds no manifest")],
+                          [opt("--discard", "also clean a run whose output holds no manifest, or whose commits were never merged (dropped on purpose)")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no "
-                                "manifest (collect first) and one whose repository refs changed (that is evidence).")),
+                                "manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
+                                "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
+                                "finished work is not deleted by mistake.")),
         },
     },
     "review": {
