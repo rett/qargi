@@ -75,4 +75,20 @@ bad=''; for s in $CURRENT; do ! grep -qx -F "/.claude/skills/$s" "$X" || bad="$b
 left=''; for s in $CURRENT; do [ ! -e "$P/.claude/skills/$s" ] && [ ! -L "$P/.claude/skills/$s" ] || left="$left $s"; done
 [ -z "$left" ] && ok "project uninstall removes the skills" || no "project skills left:$left"
 
+# --- --copy: a skill is copied as a whole directory, so its reference files come with SKILL.md ---
+# (a skill loads its reference files only when its SKILL.md tells it to, so a copy without them would break that skill)
+refs=$(cd "$ROOT/skills" && find . -type f ! -name SKILL.md | sed 's#^\./##' | sort)
+[ -n "$refs" ] && ok "some skills have reference files beside SKILL.md ($(echo "$refs" | tr '\n' ' '))" || no "no skill has a reference file: the copy checks below prove nothing"
+bash "$INSTALL" --user --copy --force >/dev/null 2>&1; rc=$?
+miss=''; for s in $CURRENT; do
+  [ ! -L "$S/$s" ] && [ -d "$S/$s" ] || { miss="$miss $s(not a copy)"; continue; }
+  while IFS= read -r f; do cmp -s "$ROOT/skills/$f" "$S/$f" || miss="$miss $f"; done < <(cd "$ROOT/skills" && find "$s" -type f)
+done
+[ "$rc" = 0 ] && [ -z "$miss" ] && ok "install --user --copy copies every file of every skill, reference files included" || no "user copy: rc=$rc missing or different:$miss"
+P2=$T/proj2; mkdir -p "$P2"; git init -q "$P2"
+bash "$INSTALL" --project "$P2" --copy >/dev/null 2>&1; rc=$?
+miss=''; for r in $refs; do cmp -s "$ROOT/skills/$r" "$P2/.claude/skills/$r" || miss="$miss $r"; done
+[ "$rc" = 0 ] && [ -z "$miss" ] && ok "install --project --copy copies the reference files too" || no "project copy: rc=$rc missing or different:$miss"
+bash "$INSTALL" --user --uninstall --force >/dev/null 2>&1; bash "$INSTALL" --project "$P2" --uninstall --force >/dev/null 2>&1
+
 [ "$fail" = 0 ] && echo "test_install: all passed" || { echo "test_install: FAILED"; exit 1; }
