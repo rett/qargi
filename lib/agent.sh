@@ -427,13 +427,13 @@ def pclean: if type == "object" then
 def pprofiles: (($pf.profiles // {}) | if type == "object" then . else {} end)
   | with_entries(select((.key | test("^[a-z][a-z0-9-]{0,30}$")) and .key != "lead") | .value |= pclean)
   | with_entries(select(.value != null));
-def legacy($n): (if $n == "lead" then $pf.lead else (($pf.roles // {}) | .[$n]?) end)
+def role_answers($n): (if $n == "lead" then $pf.lead else (($pf.roles // {}) | .[$n]?) end)
   | if type == "object" then {model: (if (.model | okmod) then .model else null end), effort: (if (.effort | okeff) then .effort else null end)} else {model: null, effort: null} end;
 def profiles:
   $d[0].profiles as $sh | pprofiles as $pp | $d[0].bases as $bases
   | [($sh | keys_unsorted[]), (($pp | keys_unsorted) - ($sh | keys_unsorted))[]][] as $n
   | $sh[$n] as $s | $pp[$n] as $p
-  | (if $p == null then legacy($n) else {model: null, effort: null} end) as $lg
+  | (if $p == null then role_answers($n) else {model: null, effort: null} end) as $lg
   | (($s // {}) + ($p // {})) as $m
   | ($m.base // null) as $base
   | (if $p.model then {k: "m", v: $p.model} elif $p.tier then {k: "t", v: $p.tier} elif $lg.model then {k: "m", v: $lg.model}
@@ -486,21 +486,19 @@ models() { # the bases, the profiles with the project's own merged in, the escal
     def mclass: if ((.roles // []) | length) > 0 and all((.roles // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
     ($d[0].bases) as $bases
     | [($m[0].projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}] as $all
-    | ([$all[] | mclass] | unique) as $have
-    | def baseof($c): [$bases | to_entries[] | select(.value.class == $c) | .key][0];
-    {provider: $prov, effort_control: ($noeffort | not), aliases: $aliases,
+    | {provider: $prov, effort_control: ($noeffort | not), aliases: $aliases,
        bases: ($bases | with_entries(.key as $k | .value += {registered: ($all | any(.name == $k))}
-         | .value += {flags: (if .value.registered or (.value.class | IN($have[])) then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
+         | .value += {flags: (if .value.registered then [] else ["no \($k): \(.value.abilities | join(",")) profiles cannot dispatch"] end)})),
        profiles: ([profiles | .flags = ([if .refused then "refused: \(.refused)" else empty end,
            if .tier != null and ($aliases[.tier] // null) == null then "tier \(.tier) has no alias" else empty end,
            if .tier == null and .model_id != null then "model \(.model_id) has no alias; the definition of the member applies" else empty end]) | {key: .name, value: .}] | from_entries),
        escalate: ($d[0].escalate | with_entries(.value = {tier: .value, model: $tiers[.value]})),
-       members: [$all | sort_by(.seq // 0)[] | .name as $k | .project as $mp | mclass as $c | baseof($c) as $bn | .roles as $ab | ($mp + "/" + $k) as $sk
+       members: [$all | sort_by(.seq // 0)[] | .name as $k | .project as $mp | mclass as $c | .roles as $ab | ($mp + "/" + $k) as $sk
          | {name: $k, roles: $ab, class: $c, model: (.model // null),
          effort: (.effort // null), project: $mp, state: ($st[$sk] // []),
          pinned: ((.model // "") | test($pat)),
          frontier: (((.model // "") == $tiers.frontier) or ((.model // "") == $aliases.frontier)),
-         flags: ([if ($bases | has($k) | not) and $bn != null then (if ($all | any(.project == $mp and .name == $bn)) then "legacy: retire after \($bn) exists" else "legacy (in use: no \($bn))" end) else empty end,
+         flags: ([if ($bases | has($k) | not) then "not a base (\($bases | keys | join(", "))): dispatch uses only the bases, so nothing starts this member" else empty end,
            if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
            if ($st[$sk] // []) | index("MISSING") then "definition file missing" else empty end,
            if ($st[$sk] // []) | index("STALE") then "STALE: rendered from an older definition, catalog or body, or from none on record (qargi agent refresh \($k))" else empty end,
@@ -544,17 +542,14 @@ RESOLVE_HEAD='
       else null end;'
 RESOLVEJQ="$RESOLVE_HEAD"'
   def mclass: if ((.roles // []) | length) > 0 and all((.roles // [])[]; $rc[.] == "read-only") then "read-only" else "write" end;
-  def serves($a): any((.roles // [])[]; . == $a);
   (if $proj == "" then [] else (($m[0].projects // {})[$proj] // {}) | to_entries | sort_by(.value.seq // 0) end) as $E
-  | def cands($a): [$E[] | select(.value | serves($a) and mclass == $rclass)];
-    refusal // (
-      ([$E[] | select(.key == $p.base and (.value | (any((.roles // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $b
-      | (if $b != null then {m: $b, legacy: false}
-         else (cands($role)[0] // (if $row != $role then cands($row)[0] else null end)) as $l | if $l != null then {m: $l, legacy: true} else null end end) as $sel
-      | if $sel == null then {code: 1, err: "no member of project \($proj) serves the \($role) role: qargi agent add NAME --abilities \($role) --project \($proj)"}
+  | refusal // (
+      # only the base the profile names serves, and only when it belongs to the project and is of the right class
+      ([$E[] | select(.key == $p.base and (.value | (any((.roles // [])[]; $rc[.] == $rclass)) and mclass == $p.class))][0]) as $sel
+      | if $sel == null then {code: 1, err: "no member of project \($proj) serves the \($role) role: the \($p.base) base is not registered for it (qargi agent add \($p.base) --project \($proj))"}
         else {code: 0, out: {role: $role, class: $rclass, profile: $pn,
           profile_source: (if $want == null then "class-fallback" elif $p.source == "project" then "project" else "shipped" end),
-          base: $p.base, member: $sel.m.key, legacy: $sel.legacy,
+          base: $p.base, member: $sel.key,
           tier: $p.tier, model: $p.model, model_id: $p.model_id, effort: $p.effort, opt_in: $p.opt_in, purpose: $p.purpose}} end
     )'
 
@@ -574,7 +569,7 @@ resolve_for() { # role profile-or-empty project-or-empty -> prints the answer, o
     mem=$(jq -r .out.member <<<"$res"); mm=$(jq -r --arg p "$proj" --arg m "$mem" '.projects[$p][$m].model // ""' "$MEMBERS_FILE")
     want=$(jq -r '.out.model // .out.model_id // ""' <<<"$res")
     if [ -n "$mm" ] && [ -n "$want" ] && [ "$mm" != "$want" ] && [ "$mm" != "$(jq -r '.out.model_id // ""' <<<"$res")" ]; then
-      echo "qargi: the provider $prov cannot set the model per dispatch (per_dispatch_model_override is not supported on local), so member $mem (model $mm) cannot run the $(jq -r .out.profile <<<"$res") profile (model $want). Use one member per profile: qargi agent add NAME --abilities $role --model $want --project $proj, or choose a profile with the model of the member" >&2
+      echo "qargi: the provider $prov cannot set the model per dispatch (per_dispatch_model_override is not supported on local), so member $mem (model $mm) cannot run the $(jq -r .out.profile <<<"$res") profile (model $want). Give the $mem base that model (qargi agent remove $mem --project $proj, then qargi agent add $mem --model $want --project $proj), or choose a profile with the model of the member" >&2
       exit 2
     fi
   fi

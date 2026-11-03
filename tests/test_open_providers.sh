@@ -223,7 +223,8 @@ P=pfakemd; REPO=$T/r-fakemd
 prep "$REPO" m1
 out=$("$DA" local run "$RUN" --dry-run 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q "dispatches in the lead's own session" <<<"$out" && grep -q "dispatch the member with the Agent tool" <<<"$out"; } && ok "fakemd: local run refuses a runtime that works in the session, and says to use the Agent tool" || no "fakemd local run: rc=$rc $out"
-"$DA" agent for build --project "$P" --json | jq -e '.member == "forge-md" and .model_id == "md-large" and .model == "large"' >/dev/null && ok "fakemd: agent for names the member and its model for the session to dispatch" || no "fakemd agent for: $("$DA" agent for build --project "$P" --json 2>&1)"
+"$DA" agent add worker --abilities build,test --project "$P" >/dev/null 2>&1
+"$DA" agent for build --project "$P" --json | jq -e '.member == "worker" and .model_id == "md-large" and .model == "large"' >/dev/null && ok "fakemd: agent for names the member and its model for the session to dispatch" || no "fakemd agent for: $("$DA" agent for build --project "$P" --json 2>&1)"
 out=$("$DA" agent add judge-md --abilities review --project "$P" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$("$DA" provider effective fakemd local read_only_barrier)" = yes ]; } && ok "fakemd: its hook barrier was verified by check, so a read-only member needs no acceptance" || no "fakemd review: rc=$rc $out"
 jq -e '.hooks.before_tool == "qargi __guard --provider fakemd --class read-only"' <<<"$(mdfm "$T/s/render/$P/fakemd.agents/judge-md.md")" >/dev/null && ok "fakemd: and its hook line carries the class" || no "fakemd hook line: $(cat "$T/s/render/$P/fakemd.agents/judge-md.md")"

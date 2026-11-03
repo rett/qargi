@@ -170,6 +170,7 @@ grep -q 'effort: ignored (nobarrier has no effort control)' <<<"$out" && ok "age
 "$DA" agent models --project gamma 2>&1 | grep -q 'effort: ignored' && no "claude has effort control but the note is printed" || ok "and says nothing for a provider that has it"
 "$DA" agent models --project alpha --json | jq -e '.effort_control == false and ([.profiles[].effort] | all(. == null))' >/dev/null && ok "--json: effort_control false and no profile carries an effort" || no "models json"
 "$DA" agent models --project gamma --json | jq -e '.effort_control == true and .profiles.build.effort == "high"' >/dev/null && ok "--json: claude keeps its efforts" || no "models json claude"
+"$DA" agent add worker --abilities build --project alpha >/dev/null 2>&1 || no "worker (alpha) not added"
 out=$("$DA" agent for build --project alpha 2>&1); [ "$(awk '{print $3}' <<<"$out")" = default ] && ok "agent for: the effort resolves to the member's default" || no "for effort: $out"
 "$DA" agent for build --project alpha --json | jq -e '.effort == null' >/dev/null && ok "agent for --json: effort is null" || no "for json"
 [ "$(jq -r '.projects.alpha.forge.effort' "$T/c/agents.json")" = null ] && ok "a member added on that provider records no effort" || no "member effort: $(jq -c .projects.alpha.forge "$T/c/agents.json")"
@@ -184,9 +185,9 @@ out=$("$DA" agent add forge2 --abilities build --effort high --project alpha 2>&
 out=$("$DA" agent for build --project beta 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q '^worker sonnet' <<<"$out"; } && ok "a profile with the member's own model resolves" || no "own model: rc=$rc $out"
 out=$("$DA" agent for build --profile big --project beta 2>&1); rc=$?
-{ [ "$rc" = 2 ] && grep -q 'nomodel' <<<"$out" && grep -q 'one member per profile' <<<"$out" && grep -q 'agent add' <<<"$out" && grep -q 'opus' <<<"$out"; } \
-  && ok "a profile with another model is refused (exit 2) and one member per profile is suggested" || no "model override: rc=$rc $out"
-"$DA" agent add worker2 --abilities build --model sonnet --project gamma >/dev/null 2>&1
+{ [ "$rc" = 2 ] && grep -q 'nomodel' <<<"$out" && grep -q 'agent add worker --model opus --project beta' <<<"$out"; } \
+  && ok "a profile with another model is refused (exit 2) and the worker with that model is suggested" || no "model override: rc=$rc $out"
+"$DA" agent add worker --abilities build --model sonnet --project gamma >/dev/null 2>&1
 out=$("$DA" agent for build --profile big --project gamma 2>&1); rc=$?
 { [ "$rc" = 0 ] && grep -q ' opus ' <<<"$out"; } && ok "claude can override the model per dispatch: the same profile resolves" || no "claude override: rc=$rc $out"
 
