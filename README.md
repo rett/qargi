@@ -188,6 +188,8 @@ refusal changes nothing.
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
    merges into master, tags, merges back into develop and pushes. `release status` and `release
    verify` work as for features.
+   Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
+   `qargi release publish TAG` creates the release from the changelog section (plan and token).
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).

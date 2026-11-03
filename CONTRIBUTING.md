@@ -13,6 +13,9 @@
   `CHANGELOG.md` update is its first commit, then `qargi release verify
   <version>` and `qargi release finish <version>`. Fixes to a released version
   use `qargi release start <version> --hotfix`.
+- Pushing the tag publishes the GitHub release: `.github/workflows/release.yml` takes the version's section of `CHANGELOG.md` as the notes and attaches the
+  source archive of the tag and its checksum. Only a tag on `master`'s history counts, and an existing release is left alone. A tag pushed before the
+  workflow existed is published by running the workflow by hand with that tag.
 - Tags are the bare version number, for example `0.1.0`.
 
 ## Layout
