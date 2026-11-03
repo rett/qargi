@@ -74,7 +74,7 @@ want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-
 grep -q '^You are a qargi member: a task-scoped worker' <<<"$out" && grep -q '^TASK: change the thing' <<<"$out" && grep -q '^CLASS=write' <<<"$out" \
   && ok "dry run: the prompt is the member body and the task block, with the class qargi recorded" || no "dry prompt: $out"
 grep -q '{skills_dir}' <<<"$out" && no "the member body still has {skills_dir}" || ok "the member body's {skills_dir} is filled"
-[ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt.md" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
+[ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
 grep -q '^COMMAND=fakellm' <<<"$out" && grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^ENV_PASS=FAKE_KEY,FAKE_MODE' <<<"$out" && ok "dry run names the command, the prompt route and the environment passed (names only)" || no "dry fields: $out"
 
 out=$($DA local run "$RUN" --dry-run --effort high --model deep 2>&1); rc=$?
@@ -126,8 +126,29 @@ n=$(arg0 <<<"$out" | jq -r 'length'); p=$(arg0 <<<"$out" | jq -r '.[2]')
 out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q '^ARG\[You are a qargi member' "$OUT/transcript" && [ "$rc" = 0 ] && ok "and a real run passes it" || no "arg run: rc=$rc $out"
 setprov fakeobj; prep "$T/r" w4; task
 out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
-[ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.')" = "$(jq -nc --arg f "$RUN/prompt.md" --arg o "$OUT" '["fakellm","-p",$f,"--out",$o]')" ] && ok "via file: {prompt_file} is the run's prompt.md, and a write run has no class group" || no "file via: rc=$rc $out"
-out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q "^ARG\[$RUN/prompt.md\]" "$OUT/transcript" && grep -q "TASK: change the thing" "$RUN/prompt.md" && ok "a real run writes the prompt file" || no "file run: rc=$rc $out"
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.')" = "$(jq -nc --arg f "$RUN/prompt/prompt.md" --arg o "$OUT" '["fakellm","-p",$f,"--out",$o]')" ] && ok "via file: {prompt_file} is the run's prompt/prompt.md, and a write run has no class group" || no "file via: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q "^ARG\[$RUN/prompt/prompt.md\]" "$OUT/transcript" && grep -q "TASK: change the thing" "$RUN/prompt/prompt.md" && ok "a real run writes the prompt file" || no "file run: rc=$rc $out"
+
+# --- the prompt file stays in its own directory of the run, never over a control file of the run (A8) --------------------------------
+mk fakectl "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakectl",family:null,surface:"local",models:$m,
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","-p","{prompt_file}","--out","{out}"],prompt:{via:"file",file:"refs.before"},output:{format:"text"}}}')"
+setprov fakectl; prep "$T/r" w4b; task
+refs=$(cat "$RUN/refs.before"); cls=$(cat "$RUN/class" 2>/dev/null || true)
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$(cat "$RUN/refs.before")" = "$refs" ] && [ "$(cat "$RUN/class" 2>/dev/null || true)" = "$cls" ] && ! grep -q 'You are a qargi member' "$RUN/refs.before"; } \
+  && ok "prompt.file named refs.before: the run's refs.before is untouched" || no "prompt.file overwrote a control file: $(head -c 200 "$RUN/refs.before")"
+[ "$(sed -n 's/^ARG\[\(.*refs.before\)\]$/\1/p' "$OUT/transcript" 2>/dev/null | head -1)" = "$RUN/prompt/refs.before" ] && grep -q 'TASK: change the thing' "$RUN/prompt/refs.before" \
+  && ok "the prompt went to RUN/prompt/, the dedicated directory, under that name" || no "prompt dir: rc=$rc $out $(ls "$RUN" "$RUN/prompt" 2>&1)"
+$DA local verify "$RUN" >/dev/null 2>&1 && ok "verify still passes after that run" || no "verify after prompt.file run"
+prep "$T/r" w4c; task
+mkdir -p "$T/elsewhere"; ln -s "$T/elsewhere" "$RUN/prompt"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ -z "$(ls "$T/elsewhere")" ] && [ ! -e "$RUN/dispatch.json" ]; } && ok "a prompt directory that is a link elsewhere is refused and nothing is written through it" || no "prompt dir link: rc=$rc $out $(ls "$T/elsewhere")"
+rm -f "$RUN/prompt"; mkdir "$RUN/prompt"; ln -s "$RUN/refs.before" "$RUN/prompt/refs.before"; refs=$(cat "$RUN/refs.before")
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ "$(cat "$RUN/refs.before")" = "$refs" ] && [ ! -e "$RUN/dispatch.json" ]; } && ok "a prompt file that is a link to a control file is refused and the target is untouched" || no "prompt file link: rc=$rc $out"
+setprov fakeobj
 
 # --- a read-only run needs a barrier, or the project's acceptance --------------------------------------------------------------------
 setprov fakecmd; prep "$T/r" rv2 review; task
