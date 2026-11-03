@@ -145,6 +145,23 @@ grep -qx '/.fake/agents/smithy.toml' "$T/repo-t/.git/info/exclude" && [ -z "$(gi
 $DA agent list | grep 'smithy ' | grep -q '(' && no "renamed member flagged: $($DA agent list | grep smithy)" || ok "and it is current under the new name"
 # a read-only member needs a barrier on a runtime that has none (the project must accept it), as ever
 $DA agent add toml-judge --abilities review --project tomlp >/dev/null 2>&1; [ $? = 2 ] && ok "faketoml: a reviewing member is refused where the runtime has no barrier" || no "faketoml review"
+# a runtime that claims read_only_barrier, attested, with barrier kind none and no read-only arguments has no barrier either: a reviewing member is refused
+LIBC=$T/c/packs/providers/claimtoml; mkdir -p "$LIBC"
+jq '.provider = "claimtoml" | .capabilities = {read_only_barrier: {value:"yes", verified_on:"2026-11-02", source:"test", note:"claim"}}' "$LIB/definition.json" > "$LIBC/definition.json"
+python3 -I tests/handseal.py "$LIBC"
+python3 -I - <<'PY'
+import sys; sys.path.insert(0, "lib")
+import provider as P
+P.record_verification("claimtoml", {"read_only_barrier": {"hash": P.definition_hash("claimtoml"), "by": "attest", "at": "2026-11-02", "note": "test"}})
+PY
+git init -q "$T/repo-c"
+jq -n --arg p "$T/repo-c" '{schema:1,project:"claimp",repo:{url:"https://github.com/example/claimp",path:$p,long_lived:["main"]},
+  roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:"claimtoml"},memory:{},budget_cents:500}' > "$T/c/projects/claimp.json"
+out=$($DA agent add claim-judge --abilities review --project claimp 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'claimtoml' <<<"$out" && grep -q 'barrier.kind is none' <<<"$out" && [ ! -e "$T/repo-c/.fake/agents/claim-judge.toml" ]; } \
+  && ok "a reviewing member is refused where the runtime only claims a barrier (attested, kind none): it names the claim, and nothing is made" || no "claimtoml review: rc=$rc $out"
+out=$($DA agent add claim-builder --abilities build --project claimp 2>&1); rc=$?
+{ [ $rc = 0 ] && [ -f "$T/repo-c/.fake/agents/claim-builder.toml" ]; } && ok "and a building member of that runtime is not affected" || no "claimtoml build: rc=$rc $out"
 # a library runtime with no renderer and no adapter cannot serve members
 LIB2=$T/c/packs/providers/norender; mkdir -p "$LIB2"
 jq '.provider = "norender" | del(.renderers)' "$LIB/definition.json" > "$LIB2/definition.json"
@@ -158,7 +175,7 @@ jq '.provider = "badcat" | .models = {catalog: "nocat", use: "id"}' "$LIB/defini
 python3 -I tests/handseal.py "$LIB3"
 jq '.models.provider = "badcat"' "$T/c/projects/tomlp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/tomlp.json"
 out=$($DA agent add nope3 --abilities build --project tomlp 2>&1); rc=$?
-{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claude, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
+{ [ $rc != 0 ] && grep -q "no catalog 'nocat'" <<<"$out" && grep -q 'available: badcat, claimtoml, claude, claude-code, claude-platform, faketoml, norender$' <<<"$out"; } && ok "a definition that cannot be loaded is refused with the reason and the providers there are (the library's too, no schema file)" || no "available: rc=$rc $out"
 
 # where a member's file goes: a member belongs to a project, and its file goes where the runtime links the project's agents; there are no user-level members
 for m in $($DA agent list | cut -d' ' -f1); do $DA agent remove "$m" >/dev/null 2>&1; done
