@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# qargi local run: the command line of a member is made from the data of the project's local runtime, and a fake CLI stands in for
+# the real one (nothing here spends or reaches a network). Run: tests/test_local_run.sh
+set -u
+cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
+T=$(mktemp -d); fail=0
+export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
+mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
+ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+DA=./bin/qargi
+LC="git -c user.name=t -c user.email=t@example.net"
+git init -q -b main "$T/r" && $LC -C "$T/r" commit -q --allow-empty -m one
+git init -q -b main "$T/r2" && $LC -C "$T/r2" commit -q --allow-empty -m one
+proj() { jq -n --arg n "$1" --arg p "$2" --arg v "$3" '{schema:1,project:$n,repo:{url:("https://github.com/example/" + $n),path:$p,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{},budget_cents:500}' > "$T/c/projects/$1.json"; }
+setprov() { jq --arg v "$1" '.models.provider = $v' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"; }
+
+# the fake CLI, on PATH: it shows what it was given and writes a report where --out says
+cat > "$T/bin/fakellm" <<'SH'
+#!/usr/bin/env bash
+out=''
+for a in "$@"; do printf 'ARG[%s]\n' "$a"; done
+while [ $# -gt 0 ]; do [ "$1" = --out ] && out=$2; shift; done
+echo "PWD=$PWD"; echo "HOME=$HOME"; echo "KEY=${FAKE_KEY-unset}"; echo "OTHER=${OTHER_SECRET-unset}"; echo "GITCFG=${GIT_CONFIG_GLOBAL-unset}"; echo "GITWRAP=${GIT-unset}"
+echo "STDIN-BEGIN"; if [ -t 0 ]; then echo "(tty)"; else cat; fi; echo "STDIN-END"
+[ -z "$out" ] || echo "report of the fake" > "$out/report.md"
+case ${FAKE_MODE-} in
+  exit3) exit 3;; exit5) exit 5;;
+  sleep) sleep 3571 & wait;;
+esac
+exit 0
+SH
+chmod 755 "$T/bin/fakellm"; export PATH=$T/bin:$PATH
+
+# the runtimes, in the library (no record: used as they are); the one with a barrier is verified for read_only_barrier
+LIB=$T/c/packs/providers
+mk() { # name definition-json -> the library definition
+  mkdir -p "$LIB/$1"; printf '%s\n' "$2" > "$LIB/$1/definition.json"; }
+M='{"pattern":"^fake-.+$","tiers":{"*":{"model":"fake-m-1","alias":null,"verified_on":null,"source":"test"}},"effort":{"low":"l","medium":"m","high":"h","xhigh":null,"max":null}}'
+ROCELL='{"value":"yes","verified_on":"2026-11-02","source":"test","note":"sandbox flags"}'
+mk fakecmd "$(jq -n --argjson m "$M" --argjson c "$ROCELL" '{schema:2,kind:"provider",provider:"fakecmd",family:null,surface:"local",models:$m,
+  capabilities:{read_only_barrier:$c},agents:null,resources:{},barrier:{kind:"sandbox-args"},
+  dispatch:{mode:"command",argv:["fakellm","run","--model","{model}",{"if":"effort","then":["--effort","{effort}"]},"--clone","{clone}","--out","{out}"],
+    class_argv:{"read-only":["--sandbox","read-only"]},prompt:{via:"stdin"},cwd:"{clone}",env_pass:["FAKE_KEY","FAKE_MODE"],timeout_s:60,
+    output:{format:"text"},exit:{"0":"ok","3":"refused","*":"failed"}}}')"
+mk fakearg "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakearg",family:null,surface:"local",models:$m,
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","-p","{prompt_arg}","--out","{out}"],prompt:{via:"arg"},cwd:"{clone}",output:{format:"text"}}}')"
+mk fakeobj "$(jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakeobj",family:null,surface:"local",models:$m,
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["fakellm","-p","{prompt_file}",{"class":"read-only","then":["--ro"]},"--out","{out}"],prompt:{via:"file"},output:{format:"text"}}}')"
+verify_ro() { # NAME -> the verification record of read_only_barrier for the definition as it is now
+  python3 -I - "$1" <<'PY'
+import sys; sys.path.insert(0, "lib")
+import provider as P
+n = sys.argv[1]
+P.record_verification(n, {"read_only_barrier": {"hash": P.definition_hash(n), "by": "attest", "at": "2026-11-02", "note": "test"}})
+PY
+}
+verify_ro fakecmd
+proj rproj "$T/r" fakecmd; proj cproj "$T/r2" claude-code
+
+prep() { # repo slug [ability] -> exports RUN CLONE OUT
+  eval "$($DA local prepare --repo "$1" --base main --slug "$2" --scratch "$T" ${3:+--ability "$3"} | sed '/^$/,$d' | sed 's/^/export /')"; }
+task() { printf 'TASK: change the thing\nDONE: it is changed\n' > "$RUN/task.md"; }
+arg0() { sed -n 's/^ARGV=//p'; }
+
+# --- dry run: the exact argv and the prompt, nothing written -----------------------------------------------------------------------
+prep "$T/r" w1; task
+out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o]')
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && ok "dry run: the argv is the data's, with the placeholders filled" || no "dry argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+grep -q '^You are a qargi member: a task-scoped worker' <<<"$out" && grep -q '^TASK: change the thing' <<<"$out" && grep -q '^CLASS=write' <<<"$out" \
+  && ok "dry run: the prompt is the member body and the task block, with the class qargi recorded" || no "dry prompt: $out"
+grep -q '{skills_dir}' <<<"$out" && no "the member body still has {skills_dir}" || ok "the member body's {skills_dir} is filled"
+[ ! -e "$RUN/dispatch.json" ] && [ ! -e "$OUT/transcript" ] && [ ! -e "$RUN/prompt.md" ] && ok "dry run writes nothing" || no "dry run wrote: $(ls "$RUN" "$OUT")"
+grep -q '^COMMAND=fakellm' <<<"$out" && grep -q '^PROMPT_VIA=stdin' <<<"$out" && grep -q '^ENV_PASS=FAKE_KEY,FAKE_MODE' <<<"$out" && ok "dry run names the command, the prompt route and the environment passed (names only)" || no "dry fields: $out"
+
+out=$($DA local run "$RUN" --dry-run --effort high --model deep 2>&1); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--effort","h","--clone",$c,"--out",$o]')
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && ok "--effort high gives the runtime's native effort in its {if} group" || no "effort argv: [$(arg0 <<<"$out")] $out"
+out=$($DA local run "$RUN" --dry-run --effort max 2>&1)
+{ ! grep -q -- '--effort' <<<"$(arg0 <<<"$out")"; } && grep -q '^NOTE=effort max is dropped' <<<"$out" && ok "an effort the runtime has no control for is dropped with a note" || no "max effort: $out"
+out=$($DA local run "$RUN" --dry-run --model fake-m-9 2>&1); grep -q '"--model","fake-m-9"' <<<"$out" && ok "--model takes a model of the runtime's pattern" || no "model id: $out"
+out=$($DA local run "$RUN" --dry-run --model other 2>&1); rc=$?; [ "$rc" != 0 ] && grep -q 'neither a tier' <<<"$out" && ok "a model outside the pattern is refused" || no "bad model: rc=$rc $out"
+
+# --- the read-only class adds the definition's class arguments ---------------------------------------------------------------------
+prep "$T/r" rv review; task
+out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
+want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o,"--sandbox","read-only"]')
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out" && ok "read-only: class_argv (the sandbox arguments) is in the argv" || no "ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
+
+# --- a real run with the fake CLI --------------------------------------------------------------------------------------------------
+prep "$T/r" w2; task
+export OTHER_SECRET=leak GIT_AUTH_TOKEN=leak2
+out=$(FAKE_KEY=k1 $DA local run "$RUN" 2>"$T/err"); rc=$?
+tr=$OUT/transcript
+[ "$rc" = 0 ] && grep -q '^OUTCOME=ok' <<<"$out" && [ -f "$tr" ] && ok "a real run: exit 0, outcome ok, the transcript is in OUT" || no "real run: rc=$rc $out $(cat "$T/err")"
+grep -q '^ARG\[run\]' "$tr" && grep -q '^ARG\[--model\]' "$tr" && grep -q '^ARG\[fake-m-1\]' "$tr" && grep -q "^ARG\[$CLONE\]" "$tr" && ok "the fake CLI got the argv as separate arguments" || no "transcript args: $(head -20 "$tr")"
+[ "$(cat "$OUT/report.md" 2>/dev/null)" = "report of the fake" ] && ok "what the CLI wrote to OUT is there" || no "no report in OUT"
+grep -q "^PWD=$CLONE\$" "$tr" && ok "it ran in the clone" || no "cwd: $(grep PWD "$tr")"
+grep -q '^STDIN-BEGIN' "$tr" && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$tr" | grep -q 'TASK: change the thing' && sed -n '/^STDIN-BEGIN/,/^STDIN-END/p' "$tr" | grep -q 'You are a qargi member' \
+  && ok "the prompt came on its standard input" || no "stdin: $(sed -n '/STDIN-BEGIN/,$p' "$tr" | head)"
+grep -q '^KEY=k1$' "$tr" && grep -q '^OTHER=unset$' "$tr" && ok "only env_pass names reach it (FAKE_KEY did, OTHER_SECRET did not)" || no "env: $(grep -E 'KEY|OTHER' "$tr")"
+grep -q "^HOME=$RUN/home\$" "$tr" && grep -q '^GITCFG=/dev/null$' "$tr" && grep -q "^GITWRAP=$RUN/git\$" "$tr" && ok "it has the git wrapper's environment (no home, no global git configuration)" || no "git env: $(grep -E 'HOME|GIT' "$tr")"
+[ "$(jq -r .outcome "$RUN/dispatch.json")" = ok ] && [ "$(jq -r '.argv | join(" ")' "$RUN/dispatch.json")" = "fakellm run --model fake-m-1 --clone $CLONE --out $OUT" ] && ! grep -q 'k1' "$RUN/dispatch.json" \
+  && ok "dispatch.json records the argv and the outcome, not an environment value" || no "dispatch.json: $(cat "$RUN/dispatch.json")"
+$DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || no "verify after run"
+out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"
+out=$(FAKE_KEY=k2 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 0 ] && grep -q '^KEY=k2$' "$tr" && ok "--again runs it again and replaces the transcript" || no "again: rc=$rc $out"
+
+# --- the exit status maps to an outcome; a timeout is bounded ---------------------------------------------------------------------
+out=$(FAKE_MODE=exit3 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q '^OUTCOME=refused' <<<"$out" && ok "dispatch.exit maps status 3 to refused (exit 2)" || no "exit3: rc=$rc $out"
+out=$(FAKE_MODE=exit5 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q '^OUTCOME=failed' <<<"$out" && ok "any other status is failed (exit 1)" || no "exit5: rc=$rc $out"
+s0=$SECONDS
+out=$(FAKE_MODE="sleep" $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?
+{ [ "$rc" = 1 ] && grep -q 'timed out after 1s' <<<"$out" && [ $((SECONDS - s0)) -lt 20 ] && [ "$(jq -r .timed_out "$RUN/dispatch.json")" = true ]; } && ok "a run past the bound is stopped and reported" || no "timeout: rc=$rc $out"
+pgrep -f 'sleep 3571' >/dev/null && { no "a child of the timed-out run is still alive"; pkill -f 'sleep 3571'; } || ok "the whole process group was killed"
+
+# --- the prompt as an argument, or as a file ----------------------------------------------------------------------------------------
+setprov fakearg; prep "$T/r" w3; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+n=$(arg0 <<<"$out" | jq -r 'length'); p=$(arg0 <<<"$out" | jq -r '.[2]')
+{ [ "$rc" = 0 ] && [ "$n" = 5 ] && [ "$(arg0 <<<"$out" | jq -r '.[1]')" = -p ] && [[ $p == "You are a qargi member"* ]] && [[ $p == *"TASK: change the thing"* ]]; } && ok "via arg: the whole prompt is one argument" || no "arg via: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q '^ARG\[You are a qargi member' "$OUT/transcript" && [ "$rc" = 0 ] && ok "and a real run passes it" || no "arg run: rc=$rc $out"
+setprov fakeobj; prep "$T/r" w4; task
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(arg0 <<<"$out" | jq -c '.')" = "$(jq -nc --arg f "$RUN/prompt.md" --arg o "$OUT" '["fakellm","-p",$f,"--out",$o]')" ] && ok "via file: {prompt_file} is the run's prompt.md, and a write run has no class group" || no "file via: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?; grep -q "^ARG\[$RUN/prompt.md\]" "$OUT/transcript" && grep -q 'TASK: change the thing' "$RUN/prompt.md" && ok "a real run writes the prompt file" || no "file run: rc=$rc $out"
+
+# --- a read-only run needs a barrier, or the project's acceptance --------------------------------------------------------------------
+setprov fakecmd; prep "$T/r" rv2 review; task
+setprov fakeobj
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'has no read-only barrier on local' <<<"$out" && grep -q 'qargi provider accept fakeobj --surface local --no-barrier --project rproj' <<<"$out"; } \
+  && ok "read-only on a runtime with no barrier: refused, with the accept command" || no "no barrier: rc=$rc $out"
+jq '.models.accept_no_barrier = {local: {by: "owner", at: "2026-11-02", reason: "test"}}' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q '"--ro"' <<<"$out" && ok "with the project's acceptance it goes on, and the class group adds its arguments" || no "accepted: rc=$rc $out"
+jq 'del(.models.accept_no_barrier)' "$T/c/projects/rproj.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/rproj.json"
+
+# --- an in-session runtime is not started here ----------------------------------------------------------------------------------------
+prep "$T/r2" c1; task
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'dispatch the member with the Agent tool' <<<"$out" && grep -q 'claude-code' <<<"$out" && [ ! -e "$RUN/dispatch.json" ]; } && ok "claude-code (in-session): refused, dispatch with the Agent tool" || no "in-session: rc=$rc $out"
+out=$($DA local run "$RUN" --dry-run 2>&1); [ $? = 2 ] && ok "and the dry run refuses too" || no "in-session dry: $out"
+
+# --- the sealed pack executable runs from the exec copy only after approval -------------------------------------------------------------
+setprov fakecmd
+mkdir -p "$LIB/fakepack/bin"
+cat > "$LIB/fakepack/bin/pack-llm" <<'SH'
+#!/usr/bin/env bash
+echo "SELF=$0"; echo "DIR=$(dirname "$(readlink -f "$0")")"; cat >/dev/null
+exit 0
+SH
+chmod 755 "$LIB/fakepack/bin/pack-llm"
+jq -n --argjson m "$M" '{schema:2,kind:"provider",provider:"fakepack",family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"command",argv:["bin/pack-llm","--model","{model}"],prompt:{via:"stdin"},output:{format:"text"}}}' > "$LIB/fakepack/definition.json"
+seal() { # NAME approved-executables-json -> the pack record
+  python3 -I - "$LIB/$1" "$2" <<'PY'
+import sys, json, hashlib, os; sys.path.insert(0, "lib")
+import provider as P
+d, ex = sys.argv[1], json.loads(sys.argv[2])
+rec = {"kind": "provider", "sealed": True, "sha256": P.tree_hash(d), "approved": True, "source": "test",
+       "executables": {r: hashlib.sha256(open(os.path.join(d, r), "rb").read()).hexdigest() for r in ex}}
+json.dump(rec, open(os.path.join(d, ".pack.json"), "w"))
+PY
+}
+setprov fakepack; prep "$T/r" w5; task
+seal fakepack '[]'
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q "not an executable approved for the pack 'fakepack'" <<<"$out" && [ ! -e "$OUT/transcript" ]; } && ok "a pack executable the record does not approve is not run" || no "unapproved: rc=$rc $out"
+seal fakepack '["bin/pack-llm"]'
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -q '^COMMAND=<sealed copy of pack fakepack>/bin/pack-llm' <<<"$out"; } && ok "dry run on an approved pack executable names the sealed copy and checks it" || no "pack dry: rc=$rc $out"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && grep -Eq "^SELF=$T/tmp/qargi-exec\..+/fakepack/bin/pack-llm\$" "$OUT/transcript"; } && ok "approved: it ran from the private exec copy, not from the library" || no "pack run: rc=$rc $out $(cat "$OUT/transcript" 2>/dev/null)"
+[ -z "$(ls -d "$T"/tmp/qargi-exec.* 2>/dev/null)" ] && ok "the copy is removed afterwards" || no "exec copy left: $(ls "$T/tmp")"
+echo '# changed after the seal' >> "$LIB/fakepack/bin/pack-llm"
+out=$($DA local run "$RUN" --again 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'changed since it was sealed' <<<"$out"; } && ok "a pack changed since it was sealed is not run (drift)" || no "drift: rc=$rc $out"
+
+# --- refusals of the definition itself --------------------------------------------------------------------------------------------
+bad() { # NAME dispatch-json: a runtime with this dispatch, project set to it
+  mk "$1" "$(jq -n --arg n "$1" --argjson m "$M" --argjson d "$2" '{schema:2,kind:"provider",provider:$n,family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:$d}')"
+  setprov "$1"; }
+prep "$T/r" w6; task
+tryrun() { out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; }
+bad fakeb1 '{"mode":"command","argv":["fakellm","{bogus}"],"prompt":{"via":"stdin"}}'; tryrun
+[ "$rc" = 2 ] && grep -q 'unknown placeholder {bogus}' <<<"$out" && ok "an unknown placeholder is refused" || no "bogus: rc=$rc $out"
+bad fakeb2 '{"mode":"command","argv":"fakellm run","prompt":{"via":"stdin"}}'; tryrun
+[ "$rc" = 2 ] && grep -q 'never a shell string' <<<"$out" && ok "a shell string for the argv is refused" || no "string argv: rc=$rc $out"
+bad fakeb3 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"stdin"},"env_pass":["GIT_DIR"]}'; tryrun
+[ "$rc" = 2 ] && grep -q 'names GIT_DIR' <<<"$out" && ok "env_pass may not replace the git wrapper's variables" || no "env_pass: rc=$rc $out"
+bad fakeb4 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"arg"}}'; tryrun
+[ "$rc" = 2 ] && grep -q 'has no {prompt_arg}' <<<"$out" && ok "a prompt route the argv does not use is refused" || no "via mismatch: rc=$rc $out"
+bad fakeb5 '{"mode":"command","argv":["no-such-cli-here","x"],"prompt":{"via":"stdin"}}'; tryrun
+[ "$rc" = 3 ] && grep -q 'not on PATH' <<<"$out" && ok "a command that is not on PATH is exit 3" || no "no cli: rc=$rc $out"
+bad fakeb6 '{"mode":"command","argv":["/bin/echo","x"],"prompt":{"via":"stdin"}}'; tryrun
+[ "$rc" = 2 ] && grep -q "not a path inside the definition's directory" <<<"$out" && ok "an absolute command path is refused" || no "abs: rc=$rc $out"
+bad fakeb7 '{"mode":"command","argv":["fakellm","{agent_file}"],"prompt":{"via":"stdin"}}'; tryrun
+[ "$rc" = 3 ] && grep -q 'does not provide' <<<"$out" && ok "{agent_file} is not available to a runtime with no agent files" || no "agent_file: rc=$rc $out"
+bad fakeb8 '{"mode":"adapter"}'; tryrun
+[ "$rc" = 3 ] && ok "mode adapter is exit 3 (not run here)" || no "adapter mode: rc=$rc $out"
+bad fakeb9 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"stdin"},"timeout_s":0}'; tryrun
+[ "$rc" = 2 ] && grep -q 'timeout' <<<"$out" && ok "a timeout of 0 is refused" || no "timeout: rc=$rc $out"
+
+# --- the run itself ---------------------------------------------------------------------------------------------------------------------
+setprov fakecmd
+rm -f "$RUN/task.md"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q 'no task block' <<<"$out" && ok "no task block: stated, exit 1" || no "no task: rc=$rc $out"
+echo 'TASK: x' > "$T/other-task.md"
+out=$($DA local run "$RUN" --dry-run --task "$T/other-task.md" 2>&1); rc=$?; [ "$rc" = 0 ] && grep -q '^TASK: x' <<<"$out" && ok "--task FILE names the task block" || no "--task: rc=$rc $out"
+out=$($DA local run "$T" --dry-run 2>&1); rc=$?; [ "$rc" != 0 ] && grep -q 'RUN dir made by prepare' <<<"$out" && ok "a directory prepare did not make is refused" || no "not a run: rc=$rc $out"
+out=$($DA local run "$RUN" --dry-run --project other 2>&1); rc=$?; [ "$rc" != 0 ] && ok "the project is not an option" || no "--project accepted: $out"
+rm -f "$T/c/projects/rproj.json"
+out=$($DA local run "$RUN" --dry-run --task "$T/other-task.md" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'no stored project has the repository' <<<"$out" && ok "a run whose repository belongs to no stored project is refused" || no "no project: rc=$rc $out"
+
+rm -rf "$T"
+exit $fail
