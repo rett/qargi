@@ -860,6 +860,7 @@ def tar_targets(rest):
 #                  no list is not judged
 #   deny           how a refusal is given back: {"exit": N, "stream": "stderr"|"stdout"} prints the reason there, or {"exit": 0,
 #                  "stdout": {...}} prints that JSON with "{reason}" replaced in every string; allow: {"exit": N}, the answer to a call that passes
+# The data must be complete: tool_names.shell is listed, and every kind that lists a tool has a pointer for its path (hook_problem).
 # The text of a refusal belongs to the decisions: the protocol only carries it.
 
 Call = collections.namedtuple("Call", "kind name command path cwd")    # kind: shell, write, read, search or None; name: the runtime's name of the tool
@@ -985,6 +986,13 @@ def hook_problem(h):
     for n in sorted(set(seen)):
         if seen.count(n) > 1:
             return "barrier.hook.tool_names: the tool %s is listed twice" % n
+    # Complete, not only well formed: data that names a tool but not what to read from it would pass its calls unjudged (a write tool with
+    # no path pointers names no path, so the write is allowed; a hook with no shell tool judges no command).
+    if not names.get("shell"):
+        return "barrier.hook.tool_names.shell must list the tool that runs a command (without it no command is judged)"
+    for kind in ("write", "read", "search"):
+        if names.get(kind) and not path_pointers(h, kind):
+            return "barrier.hook.path_pointers must give at least one pointer for %s (tool_names lists %s)" % (kind, ", ".join(names[kind]))
     deny = h.get("deny")
     if not (isinstance(deny, dict) and _is_exit(deny.get("exit")) and (("stdout" in deny) != ("stream" in deny))
             and set(deny) <= {"exit", "stream", "stdout"} and (deny.get("stream") in ("stderr", "stdout") if "stream" in deny else isinstance(deny["stdout"], dict))):

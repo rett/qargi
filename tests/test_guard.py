@@ -1398,6 +1398,38 @@ class ProviderHook(unittest.TestCase):
             self.refused_before_judging(["--provider", name], name, word)
 
 
+    def test_hook_data_that_would_let_a_call_through_unjudged_is_refused(self):
+        # incomplete data must not become "nothing to judge": a write tool with no path pointers reads no path (so the write is allowed),
+        # and a hook with no shell tool judges no command. Each of these is refused before any call is judged, whatever the call is.
+        no_pp = {k: v for k, v in FAKEMD_HOOK.items() if k != "path_pointers"}
+        lib = os.path.join(self.conf, "packs/skills/s/SKILL.md")
+        bad_hooks = (("nopp", no_pp, "path_pointers"),
+                     ("emptypp", {**FAKEMD_HOOK, "path_pointers": []}, "path_pointers"),
+                     ("emptymap", {**FAKEMD_HOOK, "path_pointers": {}}, "path_pointers"),
+                     ("nowrite", {**FAKEMD_HOOK, "path_pointers": {"read": ["/event/args/target"]}}, "path_pointers"),
+                     ("emptywrite", {**FAKEMD_HOOK, "path_pointers": {"write": [], "read": ["/event/args/target"]}}, "path_pointers"),
+                     ("noread", {**FAKEMD_HOOK, "path_pointers": {"write": ["/event/args/target"]}}, "path_pointers"),
+                     ("noshell", {**FAKEMD_HOOK, "tool_names": {k: v for k, v in FAKEMD_HOOK["tool_names"].items() if k != "shell"}}, "shell"),
+                     ("emptyshell", {**FAKEMD_HOOK, "tool_names": {**FAKEMD_HOOK["tool_names"], "shell": []}}, "shell"),
+                     ("notools", {**FAKEMD_HOOK, "tool_names": {}}, "shell"))
+        for name, bad, word in bad_hooks:
+            self.define(name, barrier={"kind": "hook", "hook": bad})
+            self.refused_before_judging(["--provider", name], name, word)
+            r = self.run_guard(["--provider", name], {"event": {"tool": "patch_file", "args": {"target": lib}}, "workdir": self.clone})
+            self.assertEqual(r.returncode, 2, (name, r))
+            self.assertIn("hook protocol", r.stderr)
+
+    def test_hook_data_that_names_no_tool_of_a_kind_needs_no_pointers_for_it(self):
+        # the shell tool is required; a kind with no tools (here: no write and no search tool) needs no path pointers of its own
+        hook = {**FAKEMD_HOOK, "tool_names": {"shell": ["run_shell"], "read": ["open_file"]}, "path_pointers": {"read": ["/event/args/target"]}}
+        self.define("readonly-ish", barrier={"kind": "hook", "hook": hook})
+        r = self.run_guard(["--provider", "readonly-ish"], {"event": {"tool": "run_shell", "args": {"cmd": "git push"}}, "workdir": self.clone})
+        self.assertEqual(r.returncode, 0, r)
+        self.assertIn("Agents never push", self.denied_md(r))
+        self.define("search-via-read", barrier={"kind": "hook", "hook": {**hook, "tool_names": {**hook["tool_names"], "search": ["grep_tree"]}}})
+        self.assertEqual(self.run_guard(["--provider", "search-via-read"], {"event": {"tool": "grep_tree", "args": {"target": "src"}}, "workdir": self.clone}).returncode, 0)
+
+
 class ProviderRoots(unittest.TestCase):
     """The skills and agents directories the guard protects are the ones the provider definitions name (resources.skills and
     resources.agents: project_dir and user_dir), whatever runtime they belong to."""
