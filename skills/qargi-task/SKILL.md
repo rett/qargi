@@ -12,7 +12,7 @@ qargi, and you can add your own (`~/.qargi/config/roles/NAME/` with `role.json` 
 local agent you named and gave roles (`qargi agent add`), written by the project's local runtime from
 one member definition (`/qargi-instances`); an **instance** is a registered cloud agent of
 one role (see `/qargi-instances`). All
-of them obey the contract in `agent-contract.md` (this directory): one task,
+of them obey the contract in `contract/contract.md`: one task,
 own clone, patches back, never push, no backlog. The CLI is `qargi` on
 PATH; related skills: `/qargi-instances` (register, list), `/qargi-provision`
 (create cloud resources), `/qargi-memory` (memory stores), `/qargi-verify`
@@ -164,8 +164,8 @@ The local agent gets no way to push, and you check afterwards that it did not.
 4. Then `/qargi-verify` on `OUT`.
 5. When the series is merged (or rejected) and you hold what you need, `qargi local clean <RUN>` removes the run:
    the clone, the bare copy, the output and the run's private TMP directory (on /dev/shm), so nothing is left behind.
-   It refuses a run with no collected manifest (`--discard` for one that produced none) and one whose repository refs
-   changed, and one whose commits were never applied and merged (`--discard` drops them on purpose). Never chain it after `review apply` or `feature merge` in a loop without stopping on the first failure. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
+   It refuses an unmerged run (commits never applied and merged; `--discard` drops them on purpose), one whose
+   repository refs changed, and one with no collected manifest (`--discard` for one that produced none). Never chain it after `review apply` or `feature merge` in a loop without stopping on the first failure. Never delete files in /dev/shm by pattern: only a run's own TMP is yours to remove.
 
 ## Features and releases
 

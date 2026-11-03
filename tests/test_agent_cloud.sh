@@ -20,9 +20,9 @@ trap 'rm -rf "$T" "$HERMETIC"' EXIT
 # the tool, copied: the verified descriptors live in the copy only. claude: both overrides verified. effunver: the model override
 # verified, the effort override not. SHIP is a copy with neither verified.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
+for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
 SHIPT=$T/ship; mkdir -p "$SHIPT"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
+for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
 # the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
 jq '.capabilities.per_dispatch_model_override.verified_on = null
   | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"

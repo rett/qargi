@@ -32,10 +32,17 @@ EOS
 chmod 755 "$T/bin/ant"; export PATH=$T/bin:$PATH
 DA=$PWD/bin/qargi
 # a scratch copy of the tool whose skill and preamble can be edited
-mkdir "$T/copy"; cp -r bin lib roles skills provision "$T/copy/"; DC=$T/copy/bin/qargi
+mkdir "$T/copy"; cp -r bin lib roles skills provision contract "$T/copy/"; DC=$T/copy/bin/qargi
 
 render() { bash -c ". '$1/lib/lib.sh'; agent_prompt build alpha"; }
 render "$PWD" > "$FAKE/system"; echo 1 > "$FAKE/aver"
+# what a cloud agent's prompt is made of: the contract, the output format, the cloud-only part, then the role; the lead gets none of them
+RB=$(render "$PWD"); RL=$(bash -c ". '$PWD/lib/lib.sh'; agent_prompt lead alpha" 2>/dev/null)
+for k in "You are a qargi agent" "# Output files" "# In a cloud run" "# Role: build"; do
+  grep -qF "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
+done
+grep -qF "# In a cloud run" <<<"$RL" && no "the lead got the cloud-only part" || ok "the lead's prompt has no cloud-only part"
+grep -q "RUN_DIR" contract/contract.md contract/output-format.md && no "the contract names RUN_DIR" || ok "the contract and the output format do not name RUN_DIR as a place"
 # an old registry entry (no prompt hash) and a local one
 jq -n '{"alpha-build":{location:"cloud",deployment_id:"depl_B",environment_id:"env_1",agent:{id:"agent_B",version_pinned:1,model:"claude-sonnet-5-5",effort:"high"}},
         "alpha-local":{location:"local",local:{agent_file:"/nonexistent/a.md",sha256:"x",model:"m",effort:null}}}' > "$T/c/instances.json"

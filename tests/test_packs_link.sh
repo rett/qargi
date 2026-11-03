@@ -293,7 +293,7 @@ out=$($DA skill accept alpha $'mine\n' 2>&1) && no "a skill name with a trailing
 # A copy of the tool holds the fake providers, so the shipped descriptors are never changed. agentx keeps its skills in .agent/skills,
 # has its own render target, and no renderer: the render is made by hand.
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
+for d in agents bin lib roles skills provision contract canon methodologies VERSION; do [ ! -e "$ROOT/$d" ] || cp -r "$ROOT/$d" "$TOOL/"; done
 FX=$TOOL/bin/qargi
 # shellcheck source=fakeprov.sh
 . "$ROOT/tests/fakeprov.sh"
