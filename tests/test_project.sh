@@ -104,6 +104,63 @@ for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|pro
   { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
 done
 $DA project set demo models.provider.local claude >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
+# no environment variable opens project set to the gated keys: QARGI_GATED_STORE was one, honoured from any caller, and is gone
+cp $T/c/projects/demo.json $T/before.json
+for k in models.extensions models.accept_no_barrier.local; do
+  v='["x"]'; [ "$k" = models.accept_no_barrier.local ] && v='{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}'
+  for how in qargi script; do
+    if [ $how = qargi ]; then msg=$(QARGI_GATED_STORE=1 $DA project set demo "$k" "$v" 2>&1); else msg=$(QARGI_GATED_STORE=1 lib/project.sh set demo "$k" "$v" 2>&1); fi; rc=$?
+    { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   QARGI_GATED_STORE=1 opens nothing: $how project set $k is refused" || { echo "FAIL QARGI_GATED_STORE=1 $how project set $k (rc=$rc): $msg"; fail=1; }
+  done
+done
+# the store the gated verbs use (provider enable|disable|accept) takes only those two keys, and only what the answers' own validation accepts
+GA="python3 -I lib/gated_answers.py"; cp $T/c/projects/demo.json $T/before.json
+for kv in 'budget_cents|5' 'models.provider.local|"claude"' 'models|{}' 'roles.build.effort|"low"' 'models.accept_no_barrier.moon|{"by":"a","at":"2026-11-02T00:00:00Z","reason":"r"}' \
+          'models.accept_no_barrier.local|{"by":"a"}'; do
+  IFS='|' read -r k v <<<"$kv"
+  msg=$($GA store demo "$k" "$v" 2>&1); rc=$?
+  { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   gated_answers stores nothing for $k=$v" || { echo "FAIL gated_answers $k=$v (rc=$rc): $msg"; fail=1; }
+done
+$GA store demo models.extensions '["x"]' >/dev/null 2>&1 && [ "$(jq -c .models.extensions $T/c/projects/demo.json)" = '["x"]' ] && [ "$(stat -c %a $T/c/projects/demo.json)" = 600 ] \
+  && echo "ok   gated_answers stores models.extensions" || { echo "FAIL gated_answers models.extensions"; fail=1; }
+cp $T/before.json $T/c/projects/demo.json
+# project init writes the whole answers file, so it is a route to the same keys: a file that carries models.extensions or models.accept_no_barrier is
+# refused when it would add or change them (a fresh init: when it has them at all); the file is stored only if it leaves them as they are
+GATEKEYS='.models.extensions=["x"]|.models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}'
+for f in '.models.extensions=["x"]' '.models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}'; do
+  jq "$f | .project=\"fresh\"" <<<"$base" > $T/g.json
+  msg=$($DA project init fresh --answers $T/g.json 2>&1); rc=$?
+  { [ $rc != 0 ] && [ ! -e $T/c/projects/fresh.json ] && grep -q "qargi provider" <<<"$msg"; } && echo "ok   init of a new project refuses $f and names the verbs" || { echo "FAIL fresh init $f (rc=$rc): $msg"; fail=1; }
+done
+jq '.models.extensions=[] | .models.accept_no_barrier={} | .project="fresh"' <<<"$base" > $T/g.json
+$DA project init fresh --answers $T/g.json >/dev/null 2>&1 && echo "ok   init takes empty gated keys (a project whose extensions were all disabled)" || { echo "FAIL init refused empty gated keys"; fail=1; }
+rm -f $T/c/projects/fresh.json
+cp $T/c/projects/demo.json $T/before.json
+for f in '.models.extensions=["x"]' '.models.accept_no_barrier={local:{by:"a",at:"2026-11-02T00:00:00Z",reason:"r"}}'; do
+  jq "$f | .project=\"demo\"" <<<"$base" > $T/g.json
+  msg=$($DA project init demo --answers $T/g.json --force 2>&1); rc=$?
+  { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json && grep -q "qargi provider" <<<"$msg"; } && echo "ok   init --force refuses to add $f" || { echo "FAIL init --force $f (rc=$rc): $msg"; fail=1; }
+done
+# once the stored answers hold them (a gated verb put them there), a file that keeps them as they are is fine, and one that changes or drops them is not
+jq "$GATEKEYS" $T/c/projects/demo.json > $T/g.json && mv $T/g.json $T/c/projects/demo.json; cp $T/c/projects/demo.json $T/before.json
+jq '.budget_cents = 777' $T/before.json > $T/g.json
+$DA project init demo --answers $T/g.json --force >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 777 ] && [ "$(jq -c .models.extensions $T/c/projects/demo.json)" = '["x"]' ] \
+  && echo "ok   init --force with the gated keys unchanged stores the rest" || { echo "FAIL init --force with the gated keys unchanged"; fail=1; }
+cp $T/c/projects/demo.json $T/before.json
+for f in '.models.extensions=["x","y"]' 'del(.models.extensions)' '.models.accept_no_barrier.local.reason="other"' 'del(.models.accept_no_barrier)'; do
+  jq "$f" $T/before.json > $T/g.json
+  msg=$($DA project init demo --answers $T/g.json --force 2>&1); rc=$?
+  { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   init --force refuses to change the stored keys ($f)" || { echo "FAIL init --force $f (rc=$rc): $msg"; fail=1; }
+done
+# attach --force keeps the stored keys as they are (it replaces only what it detects)
+AF=$T/afrepo; git init -q -b main "$AF"; echo x > "$AF/README"; git -C "$AF" -c user.name=t -c user.email=t@example.net add -A; git -C "$AF" -c user.name=t -c user.email=t@example.net commit -q -m one
+out=$($DA project attach "$AF" --name afp --url https://github.com/example/afp 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA project attach "$AF" --name afp --url https://github.com/example/afp --plan "$tok" --approved go >/dev/null 2>&1
+jq "$GATEKEYS" $T/c/projects/afp.json > $T/g.json && mv $T/g.json $T/c/projects/afp.json; cp $T/c/projects/afp.json $T/before.json
+out=$($DA project attach "$AF" --name afp --url https://github.com/example/afp --force 2>&1); tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA project attach "$AF" --name afp --url https://github.com/example/afp --force --plan "$tok" --approved go >/dev/null 2>&1
+{ [ "$(jq -c .models.extensions $T/c/projects/afp.json)" = '["x"]' ] && [ "$(jq -c .models.accept_no_barrier $T/c/projects/afp.json)" = "$(jq -c .models.accept_no_barrier $T/before.json)" ]; } \
+  && echo "ok   attach --force keeps the stored gated keys as they are" || { echo "FAIL attach --force changed the gated keys"; fail=1; }
 # attach does not guess a provider and stores none; it says so, in the plan and after storing, and the stored answers still validate
 AR=$T/arepo; git init -q -b main "$AR"; echo x > "$AR/README"; git -C "$AR" -c user.name=t -c user.email=t@example.net add -A
 git -C "$AR" -c user.name=t -c user.email=t@example.net commit -q -m one
