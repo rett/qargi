@@ -31,4 +31,4 @@ skills/qargi-task/SKILL.md 818
 skills/qargi-task/cloud.md 767
 skills/qargi-task/local-run.md 197
 skills/qargi-team/SKILL.md 935
-skills/qargi-verify/SKILL.md 585
+skills/qargi-verify/SKILL.md 557
