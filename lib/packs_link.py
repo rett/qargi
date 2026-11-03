@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Link a project's repository to the render of its packs for the project's provider.
 
-`qargi packs apply --target T PROJECT` renders the project's skills under <state>/PROVIDER/PROJECT/<skills dir>, where T is the
+`qargi packs apply --target T PROJECT` renders the project's skills under <state>/render/PROJECT/PROVIDER/<skills dir>, where T is the
 render target and <skills dir> the project skills directory of the provider's layout (lib/providers/NAME.json, read through
 lib/provider.py; nothing here names a provider). Loading them needed the provider's launch command. `packs link` instead makes
 CHECKOUT/<skills dir> a symbolic link to that directory, so a session opened in the checkout loads the packs by itself;
@@ -35,6 +35,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import linker  # noqa: E402
 import packs_audit  # noqa: E402  (strict_hash)
+import packs_render  # noqa: E402  (render_dir)
 import paths  # noqa: E402
 import provider  # noqa: E402
 
@@ -74,7 +75,7 @@ def render_path(inp):
     project = inp["project"]
     if not NAME_RE.fullmatch(project) or ".." in project:
         die("not a project name: " + project)
-    return os.path.join(os.path.abspath(inp["state"]), inp["provider"], project, skills_dir(inp))
+    return os.path.join(packs_render.render_dir(inp["state"], project, inp["provider"]), skills_dir(inp))
 
 
 class SkillsLink(linker.Link):

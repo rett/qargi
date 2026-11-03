@@ -321,8 +321,8 @@ out=$(echo '{}' > "$T/empty.json"; python3 -I "$ROOT/lib/packs_audit.py" target 
 out=$(python3 -I "$ROOT/lib/packs_audit.py" store accept "$ACC" project alpha $'mine\n' aaaaaaaaaaaaaaaa x y z 2>&1) && no "store accepted a name with a trailing newline" || { grep -q "not a skill name" <<<"$out" && [ ! -e "$ACC" ] && ok "store refuses it too" || no "newline name (store): $out"; }
 
 # --- the audit reads: nothing it reports on changed
-before=$(snap "$T/c" "$T/s/claude" "$R" "$HOME")
-chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/claude" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
+before=$(snap "$T/c" "$T/s/render" "$R" "$HOME")
+chk >/dev/null; [ "$before" = "$(snap "$T/c" "$T/s/render" "$R" "$HOME")" ] && ok "plain check is read only" || no "check wrote something"
 
 # --- a provider with another layout: the places, the settings files and the exclusion key come from its descriptor
 # A copy of the tool holds the fake providers. agentx keeps skills in .agent/skills and ~/.agent/skills, reads three settings files
@@ -338,7 +338,7 @@ mkprov nouser '.layout.project_skills_dir = ".agent/skills" | .layout.user_skill
 R2=$T/repo2; git init -q -b main "$R2"; echo x > "$R2/README"; $G -C "$R2" add -A; $G -C "$R2" commit -q -m one
 for pr in "beta agentx" "gamma nouser"; do set -- $pr
   proj "$1" "$R2"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"
-  mk "$T/s/$2/$1/.agent/skills" rendered
+  mk "$T/s/render/$1/$2/.agent/skills" rendered
 done
 mk "$R2/.agent/skills" cmine; mk "$HOME/.agent/skills" umine2; mk "$R2/.claude/skills" claude-checkout; mk "$HOME/.claude/skills" claude-user
 mk "$R2/.agent/skills" hid-a; mk "$R2/.agent/skills" hid-b; mk "$R2/.agent/skills" hid-c; mk "$R2/.agent/skills" off-wrongvalue
@@ -407,7 +407,7 @@ printf '{"skills": [{"path": "s/sk-b/SKILL.md", "enabled": false}, {"path": "s/u
 printf '{"denied": ["sk-c", "usk", 7]}\n' > "$R3/.dl/deny.json"
 for pr in "ptk tomlkey" "pcl cfglist" "pcu cfguser" "pdl denyl" "pno noform" "pad adapterform" "pyf yamlform"; do set -- $pr
   proj "$1" "$R3"; jq --arg v "$2" '.models = {provider: $v}' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"
-  mkdir -p "$T/s/$2/$1/.sk/skills"
+  mkdir -p "$T/s/render/$1/$2/.sk/skills"
 done
 printf 'off: [a]\n' > "$R3/.yf/settings.yaml"
 cfg_before=$(snap "$R3/.tk" "$R3/.cl" "$R3/.dl" "$R3/.yf" "$HOME/.tk" "$HOME/.cu")
