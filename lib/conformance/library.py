@@ -40,6 +40,7 @@ LIB = os.path.dirname(HERE)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
 import provider as P  # noqa: E402                         (lib/provider.py puts itself in sys.modules under this name when it is the script)
+import gated_answers as GA  # noqa: E402
 from conformance import review as R  # noqa: E402
 
 _print = print
@@ -660,12 +661,12 @@ def project_runtimes(project):
 
 
 def set_answer(project, path, value):
-    sh = os.path.join(LIB, "project.sh")
-    # project set refuses models.extensions and models.accept_no_barrier unless a gated verb (enable, disable) stores them after its own gate
-    r = subprocess.run([sh, "set", project, path, json.dumps(value)], capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       env=dict(os.environ, QARGI_GATED_STORE="1"))
-    if r.returncode != 0:
-        raise Failure("could not record it in the answers of %s; nothing changed: %s" % (project, (r.stderr or r.stdout).strip()))
+    # project set and project init refuse models.extensions and models.accept_no_barrier for every caller: the gated verbs (enable, disable)
+    # store them after their own gate, through lib/gated_answers.py, which is no verb and has no switch a caller can set
+    try:
+        GA.store(project, path, value)
+    except GA.Refused as err:
+        raise Failure("could not record it in the answers of %s; nothing changed: %s" % (project, err))
 
 
 def cmd_enable(verb, args):

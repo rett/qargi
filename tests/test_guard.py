@@ -262,12 +262,45 @@ class Skills(unittest.TestCase):
         for form in ("qargi project init p --answers /tmp/a.json --force", "/opt/q/bin/qargi project init p --answers /tmp/a.json", "sudo qargi project init p --answers a.json",
                      "cd src && qargi project init p --answers a.json --force", "bash -c 'qargi project init p --answers a.json --force'", "env FOO=1 qargi project init p --answers a.json",
                      "echo $(qargi project init p --answers a.json)", "./lib/project.sh init p --answers a.json", "bash lib/project.sh init p --answers a.json --force",
-                     "qargi project --x init p --answers a.json"):
+                     "qargi project --x init p --answers a.json", "qargi pro''ject in\\it p --answers a.json", "qargi project $(echo init) p --answers a.json"):
             r = guard(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("qargi guard:", r.stderr, form)
         for c in ("qargi project show p", "qargi project template p", "qargi project validate /tmp/a.json", "echo qargi project init p"):
             self.assertEqual(guard(c).returncode, 0, c)
+
+    def test_refuses_the_forms_of_project_set_the_guard_cannot_read(self):
+        """The path of a project set is read from the words of the command. A form that hides it (a quote inside the verb, a substitution that
+        splits the command, xargs, a brace or a glob, a missing path) is refused, whatever the path would turn out to be; one that states it
+        stays as it was (the path decides)."""
+        for c in ("QARGI_GATED_STORE=1 qargi pro''ject set demo $(echo models.extensions) '[\"x\"]'", "qargi project s\\et demo $(echo models.provider.local) evil",
+                  "echo demo models.extensions '[\"x\"]' | QARGI_GATED_STORE=1 xargs qargi project set", "echo models.extensions | xargs qargi project set demo",
+                  "xargs -n3 qargi project set < args", "QARGI_GATED_STORE=1 qargi project set demo {models.extensions,'[\"x\"]'}",
+                  "qargi project set demo model?.extensions x", "qargi project set demo models.ext* x", "qargi project set demo models.extension[s] x",
+                  "qargi project set demo {models.extensions,x}", "qargi project set", "qargi project set demo", "qargi project set demo $K v", "qargi project set demo budget_cents \"$N\"",
+                  "qargi $(echo project) set demo models.extensions x", "qargi project $(echo set) demo models.extensions x", "qargi project $V demo models.extensions x",
+                  "bash -c 'qargi project set demo $(echo models.extensions) x'", "sh -c \"qargi pro''ject set demo \\$(echo models.extensions) x\"",
+                  "xargs sh -c 'qargi project set \"$@\"' _ < args", "eval qargi project set demo '$(echo models.extensions)' x", "qargi project link $(echo p)",
+                  "qargi project $(echo link) p", "QARGI_GATED_STORE=1 qargi project set demo models.extensions '[\"x\"]'"):
+            r = guard(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("qargi guard:", r.stderr, c)
+        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p test_command 'ls *.py'",
+                  "qargi project set p test_command 'echo $HOME'", "qargi project show $P", "qargi project list | xargs echo", "echo qargi project set p models.extensions x",
+                  "grep -n 'project set' README.md", "bash -c 'qargi project show p'"):
+            r = guard(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_the_script_that_stores_the_gated_answers(self):
+        """lib/gated_answers.py stores models.extensions and models.accept_no_barrier for the verbs that passed a plan token; it has no gate of its
+        own, so a member may not run it, however it is named."""
+        for c in ("python3 -I lib/gated_answers.py store p models.extensions '[\"x\"]'", "./lib/gated_answers.py store p models.extensions '[]'",
+                  "cd lib && python3 gated_answers.py store p models.extensions '[]'", "/opt/q/lib/gated_answers.py store p models.extensions x", "bash -c 'python3 lib/gated_answers.py store p models.extensions x'",
+                  "sudo python3 lib/gated_answers.py"):
+            r = guard(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("gated_answers.py", r.stderr, c)
+        self.assertEqual(guard("cat lib/gated_answers.py").returncode, 0)
 
     def test_refuses_local_run_to_a_member(self):
         """qargi local run starts a process (a vendor CLI) with an environment the definition names: the lead's call. Refused as the verb and as
