@@ -1800,6 +1800,8 @@ class ProviderVerbs(unittest.TestCase):
         for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider effective claude local skills",
                   "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
                   "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
+                  "qargi provider notes", "qargi provider notes spawn", "qargi provider notes spawn --project p", "qargi provider notes --project p",
+                  "python3 -I lib/provider.py notes spawn", "bash -c 'qargi provider notes spawn'", "qargi provider addenda claude-platform cloud", "python3 -I lib/provider.py addenda claude-code local",
                   "echo qargi provider seal x", "grep -n 'provider attest' lib/provider.py", "cat provider.sh"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
