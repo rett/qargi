@@ -93,14 +93,7 @@ The local agent gets no way to push, and you check afterwards that it did not.
      one (`qargi agent add NAME --roles <role> --project P`), never use another agent type. A member that
      `qargi agent list` shows `STALE` or `DRIFT` runs from an out-of-date or hand-edited file: tell the user, and `qargi agent refresh NAME`
      only with their go-ahead. The agent must run every git command through `GIT`. No opinions on the solution.
-   - **Command runtime** (a headless CLI; there is no member file, so there is nothing to spawn). Save the task block to
-     `RUN/task.md`, check the command with `qargi local run RUN --dry-run` (it prints the argv, the working directory and the
-     prompt, and runs nothing), then `qargi local run RUN [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout S]`. The
-     command is built from the definition as an array, without a shell, in a scrubbed environment (only what the pack's `env_pass` lists, which the review shows), with the member's
-     prompt and the task block composed into one prompt; its output goes to `OUT/transcript`. `--again` runs a second time in the same
-     run. A read-only run is refused unless the definition declares a verified barrier or the project accepted the lack of one
-     (`qargi provider accept`). The runtime is not a sandbox: it runs as the user, so step 3 matters more. An in-session runtime is
-     refused by `local run`. A member's guard refuses `local run`.
+   - **Command runtime** (`dispatch.mode` is command: a headless CLI, no member file): load local-run.md.
 3. When it reports, run `qargi local verify <RUN>` **first**: it compares all refs
    of the real repository and its remote with the snapshot. A change means the agent
    (or something it ran) pushed or wrote to the real repository: stop, tell the user,
