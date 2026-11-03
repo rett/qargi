@@ -383,6 +383,17 @@ def packs(words):
     return out
 
 
+def members(words):
+    """The members to complete: those of the project named with --project, else of the project in effect, else of every project (a name once)."""
+    ps = _read(os.path.join(conf(), "agents.json")).get("projects") or {}
+    named = next((words[i + 1] for i in range(len(words) - 1) if words[i] == "--project"), None) or infer_project()
+    out = {}
+    for p in sorted(ps) if not named else [named]:
+        for n, v in sorted((ps.get(p) or {}).items()):
+            out.setdefault(n, ",".join(v.get("roles") or []))
+    return sorted(out.items())
+
+
 def roles_of(words):
     d = project_data(words)
     have = list((d.get("roles") or {}))
@@ -503,7 +514,7 @@ def by_type(t, words):
     if base == "pack":
         return packs(words)
     if base == "member":
-        return [(n, ",".join(v.get("abilities") or [])) for n, v in sorted(_read(os.path.join(conf(), "agents.json")).items())]
+        return members(words)
     if base == "team":
         return [(n, ", ".join(v.get("members", []))) for n, v in sorted((project_data(words).get("teams") or {}).items())]
     if base == "role":

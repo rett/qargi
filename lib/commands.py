@@ -63,6 +63,7 @@ KIND = opt("--kind", "which store: memory or reference (default: both)", "KIND",
 REASONS = ("wrong-scope", "broke-check", "style", "too-slow", "too-costly", "skill-ignored", "skill-wrong", "brief-unclear", "gate-noise", "other")
 
 PROJECT_OPT = opt("--project", "the project, instead of the one inferred from here", "PROJECT", "project")
+MEMBER_PROJECT_OPT = opt("--project", "the project the member belongs to (default: the one in effect when it has the member, else the only project that has it)", "PROJECT", "project")
 AS_OPT = opt("--as", "act as this lead identity (default: the session id in QARGI_LEAD, else user@host)", "ID")
 RESOLVED_OPT = opt("--resolved", "use the merge you resolved and committed in the conflict worktree")
 REMOTE_NOTE = ("It asks the live origin with git ls-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, "
@@ -164,10 +165,14 @@ COMMANDS = {
                               "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no --project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user-level directory."),
                         examples=["qargi agent add forge --abilities build,test --project myproject", "qargi agent add scribe --abilities write --model opus --project myproject",
                                   "qargi agent add worker --project myproject    # the write-class base: build, write and test"]),
-            "list": verb("List the members, their abilities and definitions"),
-            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [PROJECT_OPT]),
-            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [PROJECT_OPT],
-                            desc="Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
+            "list": verb("List the members of every project, their abilities and definitions", [],
+                         [opt("--project", "only the members of this project", "PROJECT", "project")],
+                         desc="One row per member: PROJECT, NAME, ABILITIES, MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. "
+                              "Members are kept per project, so two projects can each have a worker."),
+            "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
+                           desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
+            "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
+                            desc="The project is found as for rename. Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
@@ -176,8 +181,10 @@ COMMANDS = {
                                 "(build, write, test, review, auditor, advisor, researcher, lead), a project adds or overrides its own under profiles.NAME in its answers, "
                                 "and a provider file (lib/providers/NAME.json; the project's models.provider) maps the tiers fast, balanced, deep and frontier to models. "
                                 "The frontier tier (researcher) is opt-in. Problems are flagged on their row, never fatal: a legacy member (one per ability, retire it after the "
-                                "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. Read-only."),
-            "remove": verb("Delete a member's definition and its record", [("NAME", "member")]),
+                                "base exists), a missing base, a refused project profile, a mixed-class member, a tier with no alias, a frontier member outside researcher. "
+                                "The members shown are those of --project, else of the project in effect; with none in effect, every project's (shown as PROJECT/NAME). Read-only."),
+            "remove": verb("Delete a member's definition and its record", [("NAME", "member")], [MEMBER_PROJECT_OPT],
+                           desc="The project is found as for rename: --project, else the one in effect, else the only project that has the member; a name in two or more projects with none named is refused (exit 2)."),
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "the project whose members serve and whose profiles apply (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),

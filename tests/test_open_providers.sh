@@ -152,20 +152,20 @@ flow() {   # (the 6th argument is the name of the member made: member names are 
         && ok "$rt: the file parses as markdown with front matter; the balanced tier is the model, effort is dropped (no control), tools are renamed, the hook is the guard" || no "$rt md fields: $d"
       ;;
   esac
-  "$DA" agent list | grep "^$mem " | grep -q '(' && no "$rt: $mem flagged right after add: $("$DA" agent list | grep "^$mem ")" || ok "$rt: and the new member is current"
+  "$DA" agent list | grep " $mem " | grep -q '(' && no "$rt: $mem flagged right after add: $("$DA" agent list | grep " $mem ")" || ok "$rt: and the new member is current"
 
   # DRIFT: edited by hand
   printf '# edited by hand\n' >> "$f"
-  "$DA" agent list | grep -q "^$mem .*$mem$ext (DRIFT)\$" && ok "$rt: a hand edit of the file is DRIFT" || no "$rt drift: $("$DA" agent list | grep "^$mem ")"
-  "$DA" agent refresh "$mem" >/dev/null 2>&1; "$DA" agent list | grep "^$mem " | grep -q '(' && no "$rt: refresh kept the flag" || ok "$rt: refresh renders it again and clears the flag"
+  "$DA" agent list | grep -q "^$p  *$mem .*$mem$ext (DRIFT)\$" && ok "$rt: a hand edit of the file is DRIFT" || no "$rt drift: $("$DA" agent list | grep " $mem ")"
+  "$DA" agent refresh "$mem" >/dev/null 2>&1; "$DA" agent list | grep " $mem " | grep -q '(' && no "$rt: refresh kept the flag" || ok "$rt: refresh renders it again and clears the flag"
 
   # STALE: the definition changed and was sealed again
   jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/$rt/definition.json" > "$T/d.json" && cp "$T/d.json" "$LIB/$rt/definition.json"
   seal "$rt"
-  "$DA" agent list | grep -q "^$mem .*$mem$ext (STALE)\$" && ok "$rt: a definition changed and sealed again makes its members STALE" || no "$rt stale: $("$DA" agent list | grep "^$mem ")"
+  "$DA" agent list | grep -q "^$p  *$mem .*$mem$ext (STALE)\$" && ok "$rt: a definition changed and sealed again makes its members STALE" || no "$rt stale: $("$DA" agent list | grep " $mem ")"
   "$DA" agent models --project "$p" --json | jq -e '[.members[] | select(.name == "'"$mem"'")] | length == 1 and (.[0].state == ["STALE"])' >/dev/null && ok "$rt: agent models says so too" || no "$rt models stale"
   "$DA" agent refresh "$mem" >/dev/null 2>&1
-  { ! "$DA" agent list | grep "^$mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep "^$mem ")"
+  { ! "$DA" agent list | grep " $mem " | grep -q '('; } && grep -q "serves" "$f" && ok "$rt: refresh renders the new definition" || no "$rt refresh: $("$DA" agent list | grep " $mem ")"
   out=$("$DA" provider check "$rt" 2>&1); [ "$("$DA" provider effective "$rt" local skills)" = yes ] && ok "$rt: and check records the verification of the new content" || no "$rt recheck: $out"
 
   # the audit: a skill of the user's own in the main checkout is unmanaged until the runtime's exclusion hides it
