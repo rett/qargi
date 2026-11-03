@@ -581,7 +581,7 @@ def cmd_install(args):
         tool = inst["tool"]
         files = [os.environ["QARGI_AGENT_FILE"]] if os.environ.get("QARGI_AGENT_FILE") else agent_files(opts.get("role"))
         if not files:
-            die("no member serves that ability yet: qargi agent add NAME first")
+            die("no member serves that ability yet: qargi agent add NAME --project P first")
         todo = [f for f in files if tool not in (tools_line(f) or [tool])]
         if not todo:
             print("Every local agent in scope has %s already. Nothing changed." % tool)

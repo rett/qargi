@@ -124,7 +124,7 @@ REDIR = re.compile(r"^(?:\d*|&)>>?(.*)$")
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -777,6 +777,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
         words = ["project", "unlink" if "unlink" in words[:2] else "link"]
+    if name == "local_run.py":                           # any use of the script is `local run`
+        words = ["local", "run"]
+    if name == "local.sh":
+        words = ["local"] + words
     if name == "project.sh":
         words = ["project"] + words
     if name == "packs_audit.py":                         # only `store` writes accepted.json; scan, report, target and acceptance read (scan and target write the file they are given)
@@ -817,12 +821,14 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status, check and handoff without --write are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("packs", "migrate-render")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("packs", "migrate-render"), ("local", "run")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"
         if area == "cloud":
             return "qargi cloud %s changes which cloud workspace a project uses and is not available to an agent" % verb
+        if area == "local":
+            return "qargi local run starts the runtime's command for the lead, with the environment it names, and is not available to an agent"
         return "%s changes a skill and is not available to an agent" % ("qargi import" if area == "import" else "qargi %s %s" % (area, verb))
     return None
 

@@ -116,7 +116,7 @@ def member_names(arg):
             die("--member-names: ability=name pairs, for example build=forge,write=scribe (abilities: %s; names kebab-case)" % ", ".join(R.ABILITIES))
         names[k] = v
     if len(set(names.values())) != len(names):
-        die("--member-names: give each ability its own member (one member for several abilities: qargi agent add NAME --abilities LIST)")
+        die("--member-names: give each ability its own member (one member for several abilities: qargi agent add NAME --abilities LIST --project P)")
     return names
 
 
@@ -306,7 +306,7 @@ def plan_agents(p, names):
             p.say("  qargi agent add %s --abilities %s --user    (%s)" % (new, ability, os.path.join(adir, new + ".md")))
 
             def add(new=new, ability=ability):
-                r = subprocess.run([os.path.join(HERE, "agent.sh"), "add", new, F("abilities"), ability, "--user"],
+                r = subprocess.run([os.path.join(HERE, "agent.sh"), "add", new, F("abilities"), ability, '--user'],
                                    stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_PROJECT=PROJECT[0]))   # the provider of this project; the member stays user-level
                 if r.returncode != 0:
                     raise RuntimeError("qargi agent add %s failed" % new)
