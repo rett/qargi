@@ -96,8 +96,7 @@ if [ -f "$PCFG" ]; then
 fi
 if [ -z "$MODEL" ]; then   # the balanced model of the project's provider on the cloud surface (models.provider; no default, a project with none for it is refused with exit 2)
   _prov=$(project_provider "$PROJECT" cloud) || exit $?
-  [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
-  MODEL=$(jq -r '.tiers.balanced' "$here/providers/$_prov.json")
+  MODEL=$(python3 -I "$here/provider.py" model "$_prov" cloud balanced) || die "models.provider '$_prov' has no descriptor (qargi provider list), or none for the cloud surface"
 fi
 if is_base "$ROLE"; then EFFORT=${EFFORT:-medium}; fi   # a base runs the balanced tier at medium effort until a session overrides it
 EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
