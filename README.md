@@ -403,7 +403,6 @@ Each verb prints its plan and a plan token and changes nothing until you run it 
 `qargi export` writes one archive of what you select, and `qargi import` restores it, on this machine or another:
 
 - **config**: project answers, the instance registry, profiles, the skill and tool library.
-  An archive made with the earlier role names (`dev`, `docs`) is imported under the current ones.
 - **definitions**: the cloud agents, deployments and environment as they are now, read from the cloud with secret values removed. Import restores them as files; rebuild with `qargi provision`.
 - **memories**: every note of the memory and reference stores. Import writes them to the stores named in the project's answers.
 - **state**: the session tracker and the audit log (the audit log is only ever appended to).
@@ -440,11 +439,9 @@ Installing also adds the baseline packs that ship with qargi (`packs/`) to your 
 
 Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
 
-An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`. While only those exist, every command except `help`, `version`, the completion, the guard and the run-event hooks stops and tells you to run `qargi migrate home`. It prints the plan (every file, mode and digest, and the files whose old paths it rewrites; the records `audit.log`, `supervisor.log` and `run-events/` are copied byte for byte) and a token; with `--plan TOKEN --approved "<words>"` it copies, checks every file by digest and leaves the old directories untouched as a backup. It never creates an empty `~/.qargi` next to old data.
-
 ### Running a branch checkout
 
-`install.sh --user` records the tool it installed in `~/.qargi/config/install.json`. A checkout run from anywhere else, for example `bin/qargi` in a worktree, is then a dev run: it keeps its data in `<checkout>/.qargi` (ignored by git), prints `qargi: dev run from ...; data in ...` on stderr once per command, and never touches your live projects, credentials or audit log. The installed copy (for example `/opt/qargi`) is for confirming committed work and managing live projects, and never writes into its own directory. Without `install.json` a checkout behaves as the installed one. To point a dev run at live data on purpose set `QARGI_HOME=~/.qargi`; any explicit `QARGI_HOME`, `QARGI_CONF` or `QARGI_STATE` overrides the sandbox, and `qargi migrate home` refuses in a dev run unless one of them is set. Members call `qargi __guard` and the hooks from `PATH`, which is the installed copy: put `<checkout>/bin` first on `PATH` to test a branch's guard or hooks.
+`install.sh --user` records the tool it installed in `~/.qargi/config/install.json`. A checkout run from anywhere else, for example `bin/qargi` in a worktree, is then a dev run: it keeps its data in `<checkout>/.qargi` (ignored by git), prints `qargi: dev run from ...; data in ...` on stderr once per command, and never touches your live projects, credentials or audit log. The installed copy (for example `/opt/qargi`) is for confirming committed work and managing live projects, and never writes into its own directory. Without `install.json` a checkout behaves as the installed one. To point a dev run at live data on purpose set `QARGI_HOME=~/.qargi`; any explicit `QARGI_HOME`, `QARGI_CONF` or `QARGI_STATE` overrides the sandbox. Members call `qargi __guard` and the hooks from `PATH`, which is the installed copy: put `<checkout>/bin` first on `PATH` to test a branch's guard or hooks.
 
 ## Cloud (ant) profiles per project
 

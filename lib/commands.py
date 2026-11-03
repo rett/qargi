@@ -79,7 +79,7 @@ GROUPS = [
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
-    ("Export and import", ["export", "import", "migrate"]),
+    ("Export and import", ["export", "import"]),
     ("Other", ["upgrade", "help", "version"]),
 ]
 
@@ -870,23 +870,6 @@ COMMANDS = {
                  opt("--dry-run", "print the plan and stop; changes nothing")],
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
-    "migrate": {
-        "summary": "Copy the data of the earlier XDG directories to ~/.qargi",
-        "desc": ("home copies your qargi data from the earlier XDG directories ($XDG_CONFIG_HOME/qargi, default ~/.config/qargi, and "
-                 "$XDG_STATE_HOME/qargi, default ~/.local/state/qargi) to ~/.qargi/config and ~/.qargi/state (QARGI_HOME replaces ~/.qargi). "
-                 "Until it has run, every other command stops and tells you to run it. Without --approved it prints the plan, with every "
-                 "directory, file and link it will create (modes and digests), the lock files it skips and the files in which it rewrites "
-                 "old absolute paths (a project's credential file, local-runs.jsonl; the records audit.log, supervisor.log and run-events/ are copied byte for byte and listed as such), and a plan token, and changes nothing. With the token "
-                 "and your go-ahead it copies: the old directories stay untouched as a backup, modes are kept, every copy is checked by "
-                 "digest, and a failure removes what was made. It refuses when the new root exists and is not empty, and in a dev run "
-                 "(a checkout other than the installed one) unless QARGI_HOME is set. Run again afterwards, it says there is nothing to do. "
-                 ),
-        "scripts": ["migrate.py", "migrate_home.py"],
-        "verbs": {
-            "home": verb("Plan, then copy, the data from the XDG directories to ~/.qargi", [], [PLAN, APPROVED],
-                         examples=["qargi migrate home", 'qargi migrate home --plan TOKEN --approved "yes, copy it"']),
-        },
-    },
     "lead": {
         "summary": "Give, inspect or take away the cloud lead's right to push",
         "desc": ("Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is "
@@ -1055,8 +1038,8 @@ TOPICS = {
     "files": ("Where things are", [
         "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
         "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
-        "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used "
-        "(the earlier layout under them is copied by qargi migrate home; until then qargi stops and says so). QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
+        "Overrides: QARGI_HOME replaces ~/.qargi; QARGI_CONF and QARGI_STATE replace the two directories and win over it. XDG_CONFIG_HOME and XDG_STATE_HOME are not used. "
+        "QARGI_PROJECT names the project when you are not inside its repository. QARGI_ROLES replaces the list of roles. "
         "QARGI_DRY_RUN prints a session request with secrets masked instead of sending it.",
         "Nothing is stored in a repository."]),
     "dev": ("Running a branch checkout", [

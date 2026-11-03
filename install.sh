@@ -22,8 +22,7 @@
 #
 # --user also records the tool it installed in <live config>/install.json (~/.qargi/config, or QARGI_CONF /
 # QARGI_HOME when set; --uninstall removes it). A checkout run from any other place is then a dev run that keeps its data
-# in its own .qargi directory (see README, Running a branch checkout). The record is not written while the data is still
-# in the earlier XDG directories: run `qargi migrate home` first, then install.sh --user again.
+# in its own .qargi directory (see README, Running a branch checkout).
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
@@ -159,10 +158,7 @@ if [ "$mode" = user ]; then
   fi
   echo "installed skills in $target, command at $cmd, man page at $manpage ($kind)"
   echo "completion: bash $completion, zsh $zshcomp, fish $fishcomp"
-  if [ -z "${QARGI_CONF:-}${QARGI_STATE:-}${QARGI_HOME:-}" ] && [ ! -e "$HOME/.qargi" ] \
-     && { [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/qargi" ] || [ -d "${XDG_STATE_HOME:-$HOME/.local/state}/qargi" ]; }; then
-    echo "note: your data is still in the earlier XDG directories, so the install was not recorded; run: qargi migrate home, then install.sh --user again" >&2
-  elif command -v jq >/dev/null 2>&1; then
+  if command -v jq >/dev/null 2>&1; then
     mkdir -p "$liveconf"; chmod 700 "$liveconf"
     jq -n --arg r "$(cd "$src" && pwd -P)" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg v "$(cat "$src/VERSION")" '{tool_root:$r, installed_at:$t, version:$v}' > "$liveconf/install.json"
     chmod 600 "$liveconf/install.json"

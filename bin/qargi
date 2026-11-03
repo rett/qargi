@@ -24,8 +24,8 @@ case $area:${1:-} in
   hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
     "$lib/hook.sh" "$@" || true; exit 0;;
 esac
-# Only the earlier XDG layout exists: stop before anything creates the new root (lib/paths.py; lib.sh checks too).
-case $area:${1:-} in migrate:home) ;; *) python3 -I "$lib/paths.py" check || exit 1;; esac
+# A dev run says so on stderr, once per command (lib/paths.py).
+python3 -I "$lib/paths.py" banner || exit 1
 # What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
 _rf=$(mktemp)
 if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
@@ -76,7 +76,6 @@ case $area in
   supervise) exec "$lib/supervise.sh" "$@";;
   discover) exec python3 -I "$lib/discover.py" "$@";;
   export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
-  migrate) exec python3 -I "$lib/migrate.py" "$@";;
   version) cat "$root/VERSION";;
   *) echo "qargi: unknown command '$area'. Try: qargi help" >&2; exit 2;;
 esac

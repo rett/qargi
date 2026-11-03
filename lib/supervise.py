@@ -107,7 +107,7 @@ def hook_event(verb):
     try:
         signal.signal(signal.SIGALRM, lambda *a: os._exit(0))
         signal.alarm(4)
-        if verb not in EVENTS or sys.stdin.isatty() or P.legacy_pending():   # not before `qargi migrate home`: it must not create the new root
+        if verb not in EVENTS or sys.stdin.isatty():
             return
         p = json.loads(sys.stdin.buffer.read(4000000).decode("utf-8", "replace"))
         if not isinstance(p, dict):
