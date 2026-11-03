@@ -56,17 +56,8 @@ recommended; do not assume answers:
    packages, and Anthropic skills (`pdf`, `docx`, `pptx`, `xlsx`; the write role defaults to `pdf`).
 7. **Budget** per cloud session in cents (default 500, set on the deployment).
 8. **Memory.** Create the project's stores or attach existing ones (ids).
-9. **Members, once.** The local workers are agents the user names. Ask for their
-   names and abilities, suggesting the two base members (`worker` for build, write and
-   test; `reviewer` for review); specializations such as the auditor are profiles, not
-   members (`qargi agent models`). Create each with `qargi agent add NAME --roles LIST --project NAME`, which
-   the project's local runtime renders; skip names that `qargi agent list --project NAME` already shows. Where
-   the file lands follows the runtime's definition: a directory or one link per entry
-   of the project's member render (`project link`, below), or the checkout's own agents directory,
-   hidden from git (Claude Code). Every member belongs to a project and `--project` is required:
-   nothing is written to the runtime's user-level directory (`~/.claude/agents` for Claude Code).
-   With no `--project`, or a project with no local runtime, `agent add` refuses; so does a runtime
-   that has no agent files (a command runtime: `qargi local run` composes the member's prompt itself).
+9. **Members, once.** The local workers are agents the user names: ask for their names and abilities, suggesting the two
+   base members (`worker`, `reviewer`; the rest are profiles). Name the members; `qargi agent add` is in `/qargi-instances`.
 10. **Profile.** Which profile file holds the repository's gates and review steps
     (kept under the config directory, per role if the gates differ).
 
