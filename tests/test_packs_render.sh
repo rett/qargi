@@ -195,6 +195,27 @@ out=$(fapply --plan "$ntok" --approved test 2>&1)
 [ -f "$T/s/render/delta/nomcp/.fk/skills/s-all/SKILL.md" ] && [ ! -e "$T/s/render/delta/nomcp/conf" ] && [ ! -e "$T/s/render/delta/nomcp/rules.json" ] && ok "a runtime with no mcp resource: only the skills are rendered" || no "nomcp apply: $out"
 out=$($FX packs check --target fk-render delta 2>&1); rc=$?
 [ "$rc" = 0 ] && grep -q "^note: skipped tool issues: provider nomcp has no usable mcp resource" <<<"$out" && ok "a runtime with no mcp resource: check passes and notes the skip" || no "nomcp check (rc=$rc): $out"
+# --- an extension the project enabled is part of the definition the render reads: a runtime like nomcp that also claims no mcp, given an mcp
+# resource and a label by an extension pack of the library, renders the tool pack; without the extension it still skips it. The extension is a
+# library pack, imported through its plan; the render reads the composed definition (provider compose), not the runtime's own file.
+mkfake bare 'del(.resources.mcp) | del(.renderers) | del(.capabilities.mcp) | .resources.settings.allow_pointer = null'
+EXT=$T/ext/mcpext; mkdir -p "$EXT"
+jq -n '{schema:2,kind:"extension",extension:"mcpext",description:"gives bare an mcp resource",extends:"bare",provides:["mcp"],
+  adds:{capabilities:{mcp:{value:"yes",note:"servers file"}},
+        resources:{mcp:{file:"conf/servers.json",format:"json",root_pointer:"/servers/remote",entry:{transport:"http",address:"{url}",label:"{name}"},permission_rule:null}},
+        renderers:{packs:{label:"ExtRT"}}}}' > "$EXT/definition.json"
+etok=$($FX provider import "$EXT" | tok_of); $FX provider import "$EXT" --plan "$etok" --approved test >/dev/null 2>&1 || no "could not import the extension pack"
+jq '.models = {provider: "bare"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+out=$(fapply); grep -q "^  skipped tool issues: provider bare has no usable mcp resource" <<<"$out" && ok "an extension not enabled by the project changes nothing: the tool pack is still skipped" || no "extension not enabled: $out"
+jq '.models.extensions = ["mcpext"]' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
+out=$(fapply); xtok=$(tok_of <<<"$out")
+{ [ -n "$xtok" ] && grep -q "^  tool entry: issues  (see conf/servers.json)$" <<<"$out" && ! grep -q "skipped tool issues" <<<"$out" && grep -q "role scoping is advisory: ExtRT cannot enforce" <<<"$out"; } \
+  && ok "an extension the project enabled: the plan has the tool entry its mcp resource gives, and its label" || no "extension plan: $out"
+out=$(fapply --plan "$xtok" --approved test 2>&1)
+jq -e '.servers.remote.issues == {transport:"http",address:"https://mcp.example.net/",label:"issues"}' "$T/s/render/delta/bare/conf/servers.json" >/dev/null 2>&1 && ok "and the render has the server entry built from the extension's template" || no "extension apply: $out; $(find "$T/s/render/delta/bare" | head)"
+out=$($FX packs check --target fk-render delta 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "and check reads the same composed definition and passes" || no "extension check (rc=$rc): $out"
+jq '.models = {provider: "nomcp"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
 # --- packs migrate-render: the renders an earlier version made under <state>/claude/PROJECT move to <state>/render/PROJECT/RUNTIME, gated
 # like apply (a plan and its token, then --plan and --approved), with the checkout link that points into them. Everything here is in the
 # test's own temporary state directory; the old layout is made by hand (a real render moved to where the earlier version wrote it).

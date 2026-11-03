@@ -127,7 +127,8 @@ class Context:
         if self.answers is None:
             die("no stored answers for project '%s'" % project)
         self.runtime = provider.provider_of(self.answers, "local", project)
-        self.res = (provider.definition(self.runtime, "local").get("resources") or {})
+        # the resources of the runtime as composed with the extensions the project enabled (provider.compose): what an extension adds is linked
+        self.res = (provider.composed(self.runtime, "local", project).get("resources") or {})
         repo = (self.answers.get("repo") or {}).get("path") or ""
         if not repo:
             die("project %s has no checkout (repo.path is empty): qargi project set %s repo.path DIR" % (project, project))
@@ -139,7 +140,7 @@ class Context:
         p, st, rt, co = self.project, self.state, self.runtime, self.checkout
         if resource == "skills":
             r, mode = mode_of(self.res, "skills", "project")
-            provider.require_skills(rt, "link the checkout's skills directory to the render")
+            provider.require_skills(rt, "link the checkout's skills directory to the render", project=p)
             rel = r.get("project_dir")
             if not rel:
                 raise Skip("the runtime has no project skills directory")
