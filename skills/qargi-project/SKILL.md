@@ -63,11 +63,10 @@ recommended; do not assume answers:
    the project's local runtime renders; skip names that `qargi agent list` already shows. Where
    the file lands follows the runtime's definition: a directory or one link per entry
    of the project's member render (`project link`, below), or the checkout's own agents directory,
-   hidden from git (Claude Code). `--user` is the other placement, for a member that belongs to
-   no project: it writes the runtime's user-level directory (`~/.claude/agents` for Claude Code),
-   which nothing else ever does; give it only when the person asks. With no project and no
-   `--user`, or a project with no local runtime, `agent add` refuses; so does a runtime that has
-   no agent files (a command runtime: `qargi local run` composes the member's prompt itself).
+   hidden from git (Claude Code). Every member belongs to a project and `--project` is required:
+   nothing is written to the runtime's user-level directory (`~/.claude/agents` for Claude Code).
+   With no `--project`, or a project with no local runtime, `agent add` refuses; so does a runtime
+   that has no agent files (a command runtime: `qargi local run` composes the member's prompt itself).
 10. **Profile.** Which profile file holds the repository's gates and review steps
     (kept under the config directory, per role if the gates differ).
 
