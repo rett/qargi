@@ -2802,6 +2802,345 @@ class RemoveEnable(LibraryBase):
         self.assertIn("FAIL: provides must equal the capability names of adds.capabilities", out)
 
 
+# ---- extensions: composition with provenance, conflicts, per-capability verification, per surface ---------------------------------
+
+def skill_ext(name="skillext", extends="plaincli", **over):
+    """An extension that gives a runtime without skills the skills resource, and claims the capability (a hermetic case backs it)."""
+    d = {"schema": 2, "kind": "extension", "extension": name, "description": "adds skills", "extends": extends, "provides": ["skills"],
+         "adds": {"capabilities": {"skills": {"value": "yes", "note": "n"}}, "resources": copy.deepcopy(SKILLS_RES)}}
+    d.update(over)
+    return d
+
+
+def cap_ext(name, extends, caps, **over):
+    """An extension that adds capabilities only (cells without a hermetic case)."""
+    d = {"schema": 2, "kind": "extension", "extension": name, "description": name, "extends": extends, "provides": sorted(caps),
+         "adds": {"capabilities": {c: {"value": "yes", "note": "n"} for c in caps}}}
+    d.update(over)
+    return d
+
+
+class ExtensionBase(LibraryBase):
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.conf, "projects"))
+
+    def project(self, name, models):
+        base = {"schema": 1, "project": name, "repo": {"url": "https://example.invalid/r.git", "path": "", "credential_file": "", "long_lived": ["master"]},
+                "roles": {"build": {"base": "@dispatcher", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high", "apt": [], "skills": []}},
+                "models": models, "memory": {"memory_store": "", "reference_store": "", "tiers": {}}, "budget_cents": 500}
+        with open(os.path.join(self.conf, "projects", name + ".json"), "w") as f:
+            json.dump(base, f)
+
+    def answers(self, name="alpha"):
+        return jread(os.path.join(self.conf, "projects", name + ".json"))
+
+    def put(self, name, doc, exec_names=None, **kw):
+        self.import_pack(self.source(name, doc, **kw), exec_names=exec_names)
+
+    def edit(self, name, mutate):
+        p = os.path.join(self.lib, name, "definition.json")
+        d = jread(p)
+        mutate(d)
+        jwrite(p, d)
+        self.apply("seal", name)
+
+    def eff_for(self, name="plaincli", surface="local", cap="skills", project="alpha"):
+        return P.effective(name, surface, cap, project=project)
+
+
+class Extensions(ExtensionBase):
+    def setUp(self):
+        super().setUp()
+        self.put("plaincli", runtime("plaincli", capabilities={"mcp": {"value": "yes", "note": "m"}}))
+        self.put("skillext", skill_ext())
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["skillext"]})
+
+    def test_the_composition_records_which_pack_provided_each_capability(self):
+        comp = P.compose("plaincli", "local", project="alpha")
+        d = comp["definition"]
+        self.assertEqual(sorted(d["capabilities"]), ["mcp", "skills"])
+        self.assertEqual(comp["provenance"]["capabilities.mcp"], "plaincli")
+        self.assertEqual(comp["provenance"]["capabilities.skills"], "skillext")
+        self.assertEqual(comp["provenance"]["resources.skills"], "skillext")
+        self.assertEqual(d["resources"]["skills"]["project_dir"], ".fake/skills")
+        self.assertEqual((comp["extensions"], comp["ignored"]), (["skillext"], []))
+        base = P.definition("plaincli", "local")                                   # the base is not touched
+        self.assertNotIn("skills", base["capabilities"])
+        self.assertNotIn("skills", base["resources"])
+        none = P.compose("plaincli", "local")                                      # no project, no extensions
+        self.assertEqual((none["extensions"], sorted(none["definition"]["capabilities"])), ([], ["mcp"]))
+
+    def test_extensions_are_merged_in_name_order_and_all_recorded(self):
+        self.put("aaext", cap_ext("aaext", "plaincli", ["resume"], adds={"capabilities": {"resume": {"value": "yes", "note": "n"}}, "adapter_verbs": {"resume": "verbs/resume"}}),
+                 files={"verbs/resume": "#!/bin/sh\necho {}\n"}, execs=("verbs/resume",), exec_names="verbs/resume")
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["skillext", "aaext"]})
+        comp = P.compose("plaincli", "local", project="alpha")
+        self.assertEqual(comp["extensions"], ["aaext", "skillext"])
+        self.assertEqual(comp["provenance"]["adapter_verbs.resume"], "aaext")
+        self.assertEqual(comp["definition"]["extension_verbs"], {"resume": {"pack": "aaext", "path": "verbs/resume"}})
+
+    def test_show_with_a_project_prints_the_composed_view_with_provenance(self):
+        rc, out, err = self.q("show", "plaincli", "--project", "alpha")
+        self.assertEqual(rc, 0, err)
+        self.assertRegex(out, r"mcp +yes .*\[plaincli\]")
+        self.assertRegex(out, r"skills +yes .*\[skillext\]")
+        self.assertIn("composed for project alpha", out)
+        self.assertRegex(out, r"skillext +applied")
+        rc, out, _ = self.q("show", "plaincli")                                    # without a project: the runtime alone
+        self.assertNotIn("skills", out.split("capabilities")[1])
+        rc, out, _ = self.q("show", "plaincli", "--project", "alpha", "--json")
+        j = json.loads(out)
+        self.assertEqual(j["provenance"]["capabilities.skills"], "skillext")
+        self.assertEqual(j["extensions"], ["skillext"])
+        rc, out, _ = self.q("show", "plaincli", "--project", "nosuch")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("composed for", out)
+
+    def test_an_extension_capability_counts_only_after_check_of_that_extension(self):
+        self.assertEqual(P.cap("plaincli", "local", "skills", project="alpha"), "unverified")
+        self.assertEqual(self.eff_for(), "no")
+        self.assertEqual(self.q("effective", "plaincli", "local", "skills", "--project", "alpha")[1].strip(), "no")
+        rc, out, err = self.q("check", "skillext", "--project", "alpha")
+        self.assertEqual(rc, 0, (out, err))
+        self.assertIn("ok   link-skills", out)
+        self.assertIn("skills                             verified (cases link-skills)", out)
+        self.assertIn("recorded 1 verification", out)
+        rec = jread(os.path.join(self.state, "providers", "skillext", "verified.json"))
+        self.assertEqual(list(rec), ["skills"])
+        self.assertEqual((rec["skills"]["by"], rec["skills"]["hash"]), ("conformance", P.extension_hash("skillext", "plaincli", "local")))
+        self.assertEqual(self.eff_for(), "yes")
+        self.assertEqual(self.q("effective", "plaincli", "local", "skills", "--project", "alpha")[1].strip(), "yes")
+        self.assertEqual(P.effective("plaincli", "local", "skills"), "no")        # the runtime alone has no skills
+        self.assertEqual(self.eff_for(cap="mcp"), "no")                            # the base's own claim is still unverified
+        self.assertEqual(self.q("show", "plaincli", "--project", "alpha")[1].count("verified by conformance"), 1)
+        self.project("alpha", {"provider": {"local": "plaincli"}})                 # disabled: back to no
+        self.assertEqual(self.eff_for(), "no")
+
+    def test_check_without_a_project_binds_to_the_runtime_the_extension_names(self):
+        rc, out, err = self.q("check", "skillext")
+        self.assertEqual(rc, 0, (out, err))
+        self.assertEqual(self.eff_for(), "yes")
+
+    def test_a_changed_extension_or_a_resealed_base_demotes_what_was_verified(self):
+        self.q("check", "skillext")
+        self.assertEqual(self.eff_for(), "yes")
+        self.edit("skillext", lambda d: d.update(description="edited"))
+        self.assertEqual(self.eff_for(), "no")
+        self.assertIn("record is stale, counts as no", self.q("show", "plaincli", "--project", "alpha")[1])
+        self.q("check", "skillext")
+        self.assertEqual(self.eff_for(), "yes")
+        self.edit("plaincli", lambda d: d.update(description="edited base"))       # the hash chain: a base reseal makes the extension's verification STALE
+        self.assertEqual(self.eff_for(), "no")
+        self.q("check", "skillext")
+        self.assertEqual(self.eff_for(), "yes")
+
+    def test_a_record_with_another_verifier_or_a_wrong_hash_is_no_record(self):
+        os.makedirs(os.path.join(self.state, "providers", "skillext"))
+        f = os.path.join(self.state, "providers", "skillext", "verified.json")
+        h = P.extension_hash("skillext", "plaincli", "local")
+        for rec in ({"hash": "0" * 64, "by": "conformance"}, {"hash": h, "by": "me"}, {"hash": h}, {"hash": P.definition_hash("plaincli"), "by": "attest"}):
+            jwrite(f, {"skills": rec})
+            self.assertEqual(self.eff_for(), "no", rec)
+
+    def test_an_extension_for_another_surface_or_runtime_is_ignored(self):
+        self.put("cloudrt", runtime("cloudrt", surface="cloud"))
+        self.project("alpha", {"provider": {"local": "plaincli", "cloud": "cloudrt"}, "extensions": ["skillext"]})
+        self.q("check", "skillext")
+        self.assertEqual(self.eff_for(), "yes")
+        comp = P.compose("cloudrt", "cloud", project="alpha")
+        self.assertEqual(comp["extensions"], [])
+        self.assertEqual([i["extension"] for i in comp["ignored"]], ["skillext"])
+        self.assertIn("extends plaincli", comp["ignored"][0]["why"])
+        self.assertEqual(self.eff_for("cloudrt", "cloud"), "no")
+        self.assertEqual(self.eff_for("plaincli", "cloud"), "no")                    # plaincli does not serve cloud
+        # a family extension names its surface: it applies to the runtime of the family on that surface only
+        self.put("fama", runtime("fama", family="fam"))
+        self.put("famb", runtime("famb", family="fam", surface="cloud"))
+        self.put("cloudbit", skill_ext("cloudbit", "fam", surface="cloud"))
+        self.project("alpha", {"provider": {"local": "fama", "cloud": "famb"}, "extensions": ["cloudbit"]})
+        self.assertEqual(P.compose("fama", "local", project="alpha")["extensions"], [])
+        self.assertEqual(P.compose("famb", "cloud", project="alpha")["extensions"], ["cloudbit"])
+        self.assertIn("on cloud, not local", P.compose("fama", "local", project="alpha")["ignored"][0]["why"])
+        # a project that does not run the runtime on that surface gets no extension on it
+        self.project("beta", {"provider": {"local": "fama"}, "extensions": ["cloudbit"]})
+        self.assertEqual(P.compose("famb", "cloud", project="beta")["extensions"], [])
+
+    def test_a_family_extension_without_a_surface_applies_nowhere_and_enable_refuses_it(self):
+        self.put("fama", runtime("fama", family="fam"))
+        self.put("famext", skill_ext("famext", "fam"))
+        self.project("beta", {"provider": {"local": "fama"}, "extensions": ["famext"]})
+        comp = P.compose("fama", "local", project="beta")
+        self.assertEqual(comp["extensions"], [])
+        self.assertIn("extends the family fam and names no surface", comp["ignored"][0]["why"])
+        self.project("beta", {"provider": {"local": "fama"}})
+        rc, out, err = self.q("enable", "beta", "famext")
+        self.assertEqual(rc, 2)
+        self.assertIn("applies to nothing", err)
+        self.assertIn("names no surface", err)
+
+    def test_what_the_extension_requires_must_be_there_or_it_is_ignored_and_says_why(self):
+        self.put("needsagents", skill_ext("needsagents", requires={"resources": ["agents"]}))
+        self.put("needsmcp", skill_ext("needsmcp", requires={"capabilities": ["mcp"]}))
+        self.put("needsnew", skill_ext("needsnew", requires={"qargi": ">=999.0"}))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["needsagents", "needsmcp", "needsnew"]})
+        comp = P.compose("plaincli", "local", project="alpha")
+        why = {i["extension"]: i["why"] for i in comp["ignored"]}
+        self.assertEqual(comp["extensions"], [])
+        self.assertIn("needs the agents resource", why["needsagents"])
+        self.assertIn("needs mcp, which plaincli does not have verified", why["needsmcp"])
+        self.assertIn("needs qargi >=999.0", why["needsnew"])
+
+    def test_the_barrier_of_an_extension_is_honoured_by_require_barrier_once_verified(self):
+        self.put("barext", cap_ext("barext", "plaincli", ["read_only_barrier"], adds={"capabilities": {"read_only_barrier": {"value": "yes", "note": "n"}}, "barrier": {"kind": "sandbox-args"}}))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["barext"]})
+        self.assertEqual(P.require_barrier("plaincli", "local", "alpha")[0], "refused")
+        rc, out, _ = self.q("check", "barext", "--project", "alpha")                 # no hermetic case reaches a composed barrier
+        self.assertEqual(rc, 0)
+        self.assertIn("read_only_barrier                  not verified: could not run", out)
+        self.assertEqual(P.require_barrier("plaincli", "local", "alpha")[0], "refused")
+        P.record_verification("barext", {"read_only_barrier": {"hash": P.extension_hash("barext", "plaincli", "local"), "by": "attest", "at": "t", "note": ""}})
+        self.assertEqual(P.require_barrier("plaincli", "local", "alpha")[0], "yes")
+        self.assertEqual(P.require_barrier("plaincli", "local")[0], "refused")       # asked without the project: the runtime alone
+        self.assertEqual(self.q("require-barrier", "plaincli", "local", "--project", "alpha")[0], 0)
+        self.assertEqual(self.q("require-barrier", "plaincli", "local")[0], 2)
+
+    def test_attest_binds_an_extension_capability_to_the_extension_and_its_base(self):
+        self.put("resext", cap_ext("resext", "plaincli", ["resume"]))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["resext"]})
+        words = ("--asked", "ok", "--did", "ran resume once", "--result", "pass", "--cost-cents", "0", "--cleanup", "nothing left")
+        self.assertEqual(self.eff_for(cap="resume"), "no")
+        self.apply("attest", "resext", "resume", "--project", "alpha", *words)
+        rec = jread(os.path.join(self.state, "providers", "resext", "verified.json"))["resume"]
+        self.assertEqual((rec["by"], rec["hash"]), ("attest", P.extension_hash("resext", "plaincli", "local")))
+        self.assertEqual(self.eff_for(cap="resume"), "yes")
+        self.edit("plaincli", lambda d: d.update(description="edited base"))
+        self.assertEqual(self.eff_for(cap="resume"), "no")
+        self.assertEqual(self.q("attest", "resext", "skills", "--project", "alpha", *words)[0], 1)    # it does not provide that
+        # a check keeps what was attested for the same content and records what it can verify
+        self.apply("attest", "resext", "resume", "--project", "alpha", *words)
+        self.assertEqual(self.eff_for(cap="resume"), "yes")
+        self.q("check", "resext", "--project", "alpha")
+        self.assertEqual(self.eff_for(cap="resume"), "yes")
+
+    def test_an_enabled_extension_that_changed_or_is_gone_refuses_the_composition(self):
+        p = os.path.join(self.lib, "skillext", "definition.json")
+        d = jread(p); d["description"] = "edited"; jwrite(p, d)
+        with self.assertRaises(P.Drift):
+            P.compose("plaincli", "local", project="alpha")
+        self.apply("seal", "skillext")
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["nosuchext"]})
+        with self.assertRaises(P.Refused) as cm:
+            P.compose("plaincli", "local", project="alpha")
+        self.assertIn("nosuchext", str(cm.exception))
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": ["plaincli"]})        # a runtime is not an extension
+        with self.assertRaises(P.Refused):
+            P.compose("plaincli", "local", project="alpha")
+        rc, _, err = self.q("effective", "plaincli", "local", "skills", "--project", "alpha")
+        self.assertEqual(rc, 2)
+
+
+class ExtensionConflicts(ExtensionBase):
+    def setUp(self):
+        super().setUp()
+        self.put("plaincli", runtime("plaincli", capabilities={"mcp": {"value": "yes", "note": "m"}}))
+
+    def enable_list(self, *names):
+        self.project("alpha", {"provider": {"local": "plaincli"}, "extensions": list(names)})
+
+    def refused(self, needle, *names):
+        self.enable_list(*names)
+        with self.assertRaises(P.Conflict) as cm:
+            P.compose("plaincli", "local", project="alpha")
+        self.assertIn(needle, str(cm.exception))
+        rc, out, err = self.q("show", "plaincli", "--project", "alpha")
+        self.assertEqual((rc, out), (2, ""))
+        self.assertIn(needle, err)
+        rc, out, err = self.q("effective", "plaincli", "local", "skills", "--project", "alpha")
+        self.assertEqual(rc, 2)
+        self.assertIn(needle, err)
+        with self.assertRaises(P.Conflict):
+            P.effective("plaincli", "local", "mcp", project="alpha")
+
+    def test_two_extensions_providing_the_same_capability_are_refused_naming_both(self):
+        self.put("ext1", skill_ext("ext1"))
+        self.put("ext2", skill_ext("ext2"))
+        self.refused("extensions ext1 and ext2 both add capabilities.skills", "ext1", "ext2")
+
+    def test_an_extension_colliding_with_a_base_field_is_refused_naming_the_runtime(self):
+        self.put("mcpext", cap_ext("mcpext", "plaincli", ["mcp"]))
+        self.refused("extension mcpext adds capabilities.mcp, which the runtime plaincli already has", "mcpext")
+
+    def test_a_base_cell_that_says_no_is_not_a_claim_and_the_extension_may_provide_it(self):
+        self.put("nocli", runtime("nocli", capabilities={"resume": {"value": "no", "note": "none"}}))
+        self.put("resext", cap_ext("resext", "nocli", ["resume"]))
+        self.project("alpha", {"provider": {"local": "nocli"}, "extensions": ["resext"]})
+        comp = P.compose("nocli", "local", project="alpha")
+        self.assertEqual((comp["provenance"]["capabilities.resume"], comp["definition"]["capabilities"]["resume"]["value"]), ("resext", "yes"))
+
+    def test_two_resources_renderers_or_barriers_with_the_same_name_are_refused(self):
+        self.put("withskills", runtime("withskills", resources=SKILLS_RES))
+        self.put("res1", skill_ext("res1", "withskills"))
+        self.project("alpha", {"provider": {"local": "withskills"}, "extensions": ["res1"]})
+        with self.assertRaises(P.Conflict) as cm:
+            P.compose("withskills", "local", project="alpha")
+        self.assertIn("extension res1 adds resources.skills, which the runtime withskills already has", str(cm.exception))
+        rend = {"agent": {"engine": "map", "target": "x"}}
+        self.put("rend1", cap_ext("rend1", "plaincli", [], adds={"capabilities": {}, "renderers": rend}))
+        self.put("rend2", cap_ext("rend2", "plaincli", [], adds={"capabilities": {}, "renderers": rend}))
+        self.refused("extensions rend1 and rend2 both add renderers.agent", "rend1", "rend2")
+        bar = {"capabilities": {}, "barrier": {"kind": "sandbox-args"}}
+        self.put("bar1", cap_ext("bar1", "plaincli", [], adds=bar))
+        self.put("bar2", cap_ext("bar2", "plaincli", [], adds=bar))
+        self.refused("extensions bar1 and bar2 both add barrier", "bar1", "bar2")
+
+    def test_two_extensions_with_the_same_adapter_verb_are_refused(self):
+        for n in ("verb1", "verb2"):
+            self.put(n, cap_ext(n, "plaincli", [], adds={"capabilities": {}, "adapter_verbs": {"status": "v/status"}}), files={"v/status": "#!/bin/sh\necho {}\n"},
+                     execs=("v/status",), exec_names="v/status")
+        self.refused("extensions verb1 and verb2 both add adapter_verbs.status", "verb1", "verb2")
+
+    def test_a_verb_the_base_adapter_serves_is_refused_and_one_it_does_not_is_added(self):
+        self.put("adaptcli", runtime("adaptcli", adapter="adapter", adapter_verbs=["resolve", "start-session"]), files={"adapter": "#!/bin/sh\necho {}\n"},
+                 execs=("adapter",), exec_names="adapter")
+        for n, verb in (("takes", "resolve"), ("adds", "status")):
+            self.put(n, cap_ext(n, "adaptcli", [], adds={"capabilities": {}, "adapter_verbs": {verb: "v/x"}}), files={"v/x": "#!/bin/sh\necho {}\n"}, execs=("v/x",), exec_names="v/x")
+        self.project("alpha", {"provider": {"local": "adaptcli"}, "extensions": ["takes"]})
+        with self.assertRaises(P.Conflict) as cm:
+            P.compose("adaptcli", "local", project="alpha")
+        self.assertIn("extension takes adds adapter_verbs.resolve, which the runtime adaptcli already has", str(cm.exception))
+        self.project("alpha", {"provider": {"local": "adaptcli"}, "extensions": ["adds"]})
+        self.assertEqual(P.compose("adaptcli", "local", project="alpha")["provenance"]["adapter_verbs.status"], "adds")
+        # an adapter that names no verbs serves every verb of the contract
+        self.put("allcli", runtime("allcli", adapter="adapter"), files={"adapter": "#!/bin/sh\necho {}\n"}, execs=("adapter",), exec_names="adapter")
+        self.put("takes2", cap_ext("takes2", "allcli", [], adds={"capabilities": {}, "adapter_verbs": {"collect": "v/x"}}), files={"v/x": "#!/bin/sh\necho {}\n"}, execs=("v/x",), exec_names="v/x")
+        self.project("alpha", {"provider": {"local": "allcli"}, "extensions": ["takes2"]})
+        with self.assertRaises(P.Conflict):
+            P.compose("allcli", "local", project="alpha")
+
+    def test_enable_refuses_an_extension_that_conflicts_with_the_enabled_ones_and_changes_nothing(self):
+        self.put("ext1", skill_ext("ext1"))
+        self.put("ext2", skill_ext("ext2"))
+        self.enable_list()
+        self.apply("enable", "alpha", "ext1")
+        self.assertEqual(self.answers()["models"]["extensions"], ["ext1"])
+        rc, out, err = self.q("enable", "alpha", "ext2")
+        self.assertEqual(rc, 2)
+        self.assertIn("extensions ext1 and ext2 both add capabilities.skills", err)
+        self.assertEqual(self.answers()["models"]["extensions"], ["ext1"])
+        self.put("mcpext", cap_ext("mcpext", "plaincli", ["mcp"]))
+        rc, _, err = self.q("enable", "alpha", "mcpext")
+        self.assertEqual(rc, 2)
+        self.assertIn("which the runtime plaincli already has", err)
+
+    def test_checking_an_extension_that_collides_with_its_base_fails_and_records_nothing(self):
+        self.put("mcpext", cap_ext("mcpext", "plaincli", ["mcp"]))
+        rc, out, err = self.q("check", "mcpext")
+        self.assertEqual(rc, 1)
+        self.assertIn("which the runtime plaincli already has", out + err)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "providers", "mcpext", "verified.json")))
+
+
 class ExtensionSchema(unittest.TestCase):
     def good(self):
         return {"schema": 2, "kind": "extension", "extension": "addon", "extends": "libcli", "surface": "local", "provides": ["resume", "skills"],
