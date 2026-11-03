@@ -20,9 +20,11 @@ $GIT -C "$CLONE" push origin agent/demo >/dev/null 2>&1 && no "git push origin s
 git -C "$CLONE" remote -v | grep -q "$T/r" && no "the clone knows the real repository" || ok "the clone does not know the real repository path"
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after a clean run" || no "verify clean"
 [ "$(cat "$RUN/ability")" = build ] && ok "the run records its ability (build by default)" || no "ability file"
-R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --ability review | sed -n '1,/^$/s/^RUN=//p')
-[ "$(cat "$R2/ability")" = review ] && ok "--ability review is recorded for the guard" || no "review ability"
-./bin/qargi local prepare --repo "$T/r" --base main --slug bad --scratch "$T" --ability deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --role review | sed -n '1,/^$/s/^RUN=//p')
+[ "$(cat "$R2/ability")" = review ] && ok "--role review is recorded for the guard" || no "review ability"
+./bin/qargi local prepare --repo "$T/r" --base main --slug bad --scratch "$T" --role deploy >/dev/null 2>&1 && no "an unknown ability was accepted" || ok "an unknown ability is refused"
+out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug old --scratch "$T" --ability review 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "unknown option --ability" <<<"$out" && ok "--ability is gone: an unknown option" || no "--ability still accepted: $out"
 git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with plain git
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
 [ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
