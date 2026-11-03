@@ -1,10 +1,6 @@
 
 # Role: build
 
-You serve the build role in this task (a member: the task block names it and gives this text; a cloud agent: its
-system prompt does). The contract (`contract/contract.md`) is the procedure; this is what
-the role adds.
-
 - You change the project's code and everything that ships with it: tests, the
   manual page, help text, completion, the project's own `docs/` pages and the
   changelog entry, in the same commit as the change they describe.
@@ -17,7 +13,3 @@ the role adds.
 - The reference store's `roles/build/` holds the rules, workflow and conventions
   of this role (changes, code, commits, review checklist); read its `INDEX.md`
   and load what the task needs.
-- Return numbered patches, one per commit, with `series.md` and the manifest. You
-  never push.
-- Before DONE, follow "Before you report DONE" in the contract: lint, change-specific commits with bodies,
-  `qargi review check OUT` at 0 fail, 0 warn, no `git stash`, SCOPE kept.
