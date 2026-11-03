@@ -148,16 +148,23 @@ for f in '.models.extensions=["x"]' '.models.accept_no_barrier={local:{by:"a",at
   msg=$($DA project init demo --answers $T/g.json --force 2>&1); rc=$?
   { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json && grep -q "qargi provider" <<<"$msg"; } && echo "ok   init --force refuses to add $f" || { echo "FAIL init --force $f (rc=$rc): $msg"; fail=1; }
 done
-# once the stored answers hold them (a gated verb put them there), a file that keeps them as they are is fine, and one that changes or drops them is not
+# once the stored answers hold them (a gated verb put them there), a file that keeps them as they are is fine, one that adds or changes an entry is not, and one that drops an entry is (that only narrows trust)
 jq "$GATEKEYS" $T/c/projects/demo.json > $T/g.json && mv $T/g.json $T/c/projects/demo.json; cp $T/c/projects/demo.json $T/before.json
 jq '.budget_cents = 777' $T/before.json > $T/g.json
 $DA project init demo --answers $T/g.json --force >/dev/null 2>&1 && [ "$(jq .budget_cents $T/c/projects/demo.json)" = 777 ] && [ "$(jq -c .models.extensions $T/c/projects/demo.json)" = '["x"]' ] \
   && echo "ok   init --force with the gated keys unchanged stores the rest" || { echo "FAIL init --force with the gated keys unchanged"; fail=1; }
 cp $T/c/projects/demo.json $T/before.json
-for f in '.models.extensions=["x","y"]' 'del(.models.extensions)' '.models.accept_no_barrier.local.reason="other"' 'del(.models.accept_no_barrier)'; do
+for f in '.models.extensions=["x","y"]' '.models.accept_no_barrier.local.reason="other"'; do
   jq "$f" $T/before.json > $T/g.json
   msg=$($DA project init demo --answers $T/g.json --force 2>&1); rc=$?
   { [ $rc != 0 ] && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   init --force refuses to change the stored keys ($f)" || { echo "FAIL init --force $f (rc=$rc): $msg"; fail=1; }
+done
+# dropping a stored entry only narrows trust, so a file may do it
+for f in 'del(.models.extensions)' 'del(.models.accept_no_barrier)'; do
+  jq "$f" $T/before.json > $T/g.json
+  $DA project init demo --answers $T/g.json --force >/dev/null 2>&1 && [ "$(jq -c "$(sed 's/^del(\(.*\))$/\1/' <<<"$f")" $T/c/projects/demo.json)" = null ] \
+    && echo "ok   init --force may drop a stored gated key ($f)" || { echo "FAIL init --force $f was not stored"; fail=1; }
+  cp $T/before.json $T/c/projects/demo.json
 done
 # attach --force keeps the stored keys as they are (it replaces only what it detects)
 AF=$T/afrepo; git init -q -b main "$AF"; echo x > "$AF/README"; git -C "$AF" -c user.name=t -c user.email=t@example.net add -A; git -C "$AF" -c user.name=t -c user.email=t@example.net commit -q -m one
