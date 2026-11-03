@@ -365,7 +365,8 @@ def adapter_harness(doc, directory, name, sealed, usable):
             json.dump(staged, f)
         stubs = os.path.join(tmp, "stubs")
         shutil.copytree(os.path.join(copy, "conformance"), stubs, symlinks=True)
-        r = subprocess.run(["bash", RUN_SH, name, "--tool", tool, "--stub", stubs], capture_output=True, text=True, timeout=HARNESS_TIMEOUT, stdin=subprocess.DEVNULL)
+        r = subprocess.run(["bash", RUN_SH, name, "--tool", tool, "--stub", stubs], capture_output=True, text=True, timeout=HARNESS_TIMEOUT, stdin=subprocess.DEVNULL,
+                           env=P.pack_env(tmp, tmp))              # the pack's adapter and stub run with nothing of the caller's environment
         lines = r.stdout.splitlines()
         for ln in lines:
             m = LINE.match(ln)

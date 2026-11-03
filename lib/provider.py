@@ -307,6 +307,54 @@ def seal_state(e):
     return "sealed", ""
 
 
+# ---- the environment pack and runtime code gets ----------------------------------------------------------------------------------
+
+ENV_DENIED = {
+    "HOME": "the run's own home is set by qargi, never the real one", "USER": "the login identity is not handed on", "LOGNAME": "the login identity is not handed on",
+    "SHELL": "the login shell is not handed on", "PWD": "the working directory is set by qargi", "OLDPWD": "the working directory is set by qargi",
+    "TMPDIR": "the run's temporary directory is set by qargi", "TMP": "the run's temporary directory is set by qargi", "TEMP": "the run's temporary directory is set by qargi",
+    "PATH": "the search path is qargi's (absolute entries of the caller's PATH); a pack does not replace it", "IFS": "it changes how a shell splits words",
+    "CDPATH": "it changes where a shell goes", "ENV": "a shell startup file", "BASH_ENV": "a shell startup file", "SHELLOPTS": "it changes how a shell behaves",
+    "BASHOPTS": "it changes how a shell behaves", "PROMPT_COMMAND": "a command a shell runs by itself", "PS4": "a shell prompt that runs commands",
+    "NODE_OPTIONS": "it loads code into node", "NODE_PATH": "it changes where node loads code from", "JAVA_TOOL_OPTIONS": "it loads code into java",
+    "_JAVA_OPTIONS": "it loads code into java", "CLASSPATH": "it changes where java loads code from", "GCONV_PATH": "it changes where libc loads code from",
+    "LOCPATH": "it changes where libc loads code from", "NLSPATH": "it changes where libc loads code from",
+    "EDITOR": "a program other tools run by themselves", "VISUAL": "a program other tools run by themselves", "PAGER": "a program other tools run by themselves",
+    "MANPAGER": "a program other tools run by themselves", "BROWSER": "a program other tools run by themselves", "GIT": "qargi's git wrapper of the run",
+    "GNUPGHOME": "the user's keys", "NETRC": "the user's stored logins", "KRB5CCNAME": "the user's Kerberos credentials",
+}
+ENV_DENIED_PREFIX = (
+    ("GIT_", "the run's git wrapper and its settings are qargi's"), ("QARGI_", "qargi's own settings are not handed on"),
+    ("LD_", "it changes what the dynamic loader loads"), ("DYLD_", "it changes what the dynamic loader loads"),
+    ("PYTHON", "it changes what python loads"), ("PERL", "it changes what perl loads"), ("RUBY", "it changes what ruby loads"),
+    ("BASH_FUNC_", "an exported shell function"), ("XDG_", "the run's own configuration, data and state directories are qargi's"),
+    ("SSH_", "the ssh agent and its keys are the user's, and a member never pushes"), ("GPG_", "the user's signing agent"),
+    ("GH_", "a forge credential: a member never pushes or calls the forge"), ("GITHUB_", "a forge credential: a member never pushes or calls the forge"),
+    ("GITLAB_", "a forge credential: a member never pushes or calls the forge"), ("BITBUCKET_", "a forge credential: a member never pushes or calls the forge"),
+)
+
+
+def env_pass_problem(name):
+    """Why a variable of the caller's environment may not be listed in a runtime's dispatch.env_pass, or None when it may. What is refused is
+    what would hand the member or a pack the user's own home, search path, code loaders, shell startup, ssh agent or forge credentials, or
+    would replace what qargi sets for the run. A name that merely looks like a credential (an API key the vendor's command needs) is
+    allowed: it travels by name, and the review shows it (review.scan lists env_pass and flags such names)."""
+    if name in ENV_DENIED:
+        return ENV_DENIED[name]
+    for prefix, why in ENV_DENIED_PREFIX:
+        if name.startswith(prefix):
+            return why
+    return None
+
+
+def pack_env(home, tmp):
+    """The environment pack code runs in when qargi runs it itself (the conformance harness of `provider check`): nothing of the caller's, only
+    a search path of absolute entries, a home and temporary directory of the run, a locale and a clock zone. Same shape as the environment a
+    renderer command gets (render.py) and a member gets (local_run.py) before its env_pass names."""
+    path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if p.startswith("/")) or "/usr/local/bin:/usr/bin:/bin"
+    return {"PATH": path, "HOME": home, "TMPDIR": tmp, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "TERM": "dumb"}
+
+
 def exec_copy(name, rel, root=None, library=None, tmp=None):
     """(directory, path): a private copy (mode 0700, in tmp or the temporary directory) of the library pack NAME, and the executable rel in
     it. The pack must be sealed with that executable approved: the content hash and the executable's hash are compared with the record
@@ -1034,6 +1082,9 @@ def validate2(d, name=None):
         return out
     out += [("fail", m) for m in _models_problems(d.get("models"))]
     out += [("fail", m) for m in _resource_problems(d.get("resources"))]
+    disp = d.get("dispatch")
+    if isinstance(disp, dict) and isinstance(disp.get("env_pass"), list):
+        out += [("fail", "dispatch.env_pass: %s is never handed on: %s" % (n, env_pass_problem(n))) for n in disp["env_pass"] if isinstance(n, str) and env_pass_problem(n)]
     ad = d.get("adapter")
     if isinstance(ad, str) and (not ad or os.path.isabs(ad) or ad.startswith("~") or ".." in ad.split("/")):
         out.append(("fail", "adapter: '%s' is not a path inside the definition's directory" % ad))

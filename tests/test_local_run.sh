@@ -193,6 +193,10 @@ bad fakeb2 '{"mode":"command","argv":"fakellm run","prompt":{"via":"stdin"}}'; t
 [ "$rc" = 2 ] && grep -q 'never a shell string' <<<"$out" && ok "a shell string for the argv is refused" || no "string argv: rc=$rc $out"
 bad fakeb3 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"stdin"},"env_pass":["GIT_DIR"]}'; tryrun
 [ "$rc" = 2 ] && grep -q 'names GIT_DIR' <<<"$out" && ok "env_pass may not replace the git wrapper's variables" || no "env_pass: rc=$rc $out"
+for ev in HOME GH_TOKEN GITHUB_TOKEN SSH_AUTH_SOCK LD_PRELOAD PATH PYTHONPATH BASH_ENV; do
+  bad fakeb3e "{\"mode\":\"command\",\"argv\":[\"fakellm\"],\"prompt\":{\"via\":\"stdin\"},\"env_pass\":[\"$ev\"]}"; tryrun
+  [ "$rc" = 2 ] && grep -q "env_pass of fakeb3e names $ev" <<<"$out" && ok "env_pass may not hand on $ev (the member's home, search path, loaders and credentials are the run's)" || no "env_pass $ev: rc=$rc $out"
+done
 bad fakeb4 '{"mode":"command","argv":["fakellm"],"prompt":{"via":"arg"}}'; tryrun
 [ "$rc" = 2 ] && grep -q 'has no {prompt_arg}' <<<"$out" && ok "a prompt route the argv does not use is refused" || no "via mismatch: rc=$rc $out"
 bad fakeb5 '{"mode":"command","argv":["no-such-cli-here","x"],"prompt":{"via":"stdin"}}'; tryrun
