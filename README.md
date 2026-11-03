@@ -12,11 +12,13 @@ development tasks to sandboxed agents and take the work back as reviewable patch
 works on one task in its own clone and never pushes; the dispatching session
 verifies the result and applies it.
 
-Two kinds of agent do the work:
+Two kinds of agent do the work, each on a **runtime** the project names for that surface (see
+Providers and runtimes; there is no default):
 
-- **local**: a **member**, a Claude Code subagent you name, working in a scratch clone.
-- **cloud**: a Claude Managed Agents deployment of one role, registered as an instance and
-  driven through the `ant` CLI.
+- **local**: a **member**, an agent you name, run by the project's local runtime in a scratch clone:
+  a Claude Code subagent (`claude-code`), or a command-line runtime you define as data.
+- **cloud**: a hosted agent of one role, registered as an instance; today a Claude Managed Agents
+  deployment (`claude-platform`) driven through the `ant` CLI.
 
 A **lead** coordinates members on one task (a team): this session, a cloud lead or a lead
 started in the console.
@@ -123,9 +125,10 @@ packs attached to it, not for its ability:
 | `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
 
 The members are yours to name: `qargi agent add forge --abilities build,test --project P` renders
-the one member definition qargi ships into `~/.claude/agents/forge.md` (`--project
-NAME` puts it in that repository, hidden from git), with the abilities it serves (all
-four by default; `worker` and `reviewer`, the two base names, default to their base's abilities). The provider that renders it is the project's `models.provider` (`--project NAME`, else the project you are in or `QARGI_PROJECT`); with none, `agent add` refuses. Two base members cover
+the one member definition qargi ships through the project's local runtime into that runtime's own
+file (for Claude Code `forge.md`, in the repository's agents directory, hidden from git, or in the
+project's member render once `qargi project link` is applied), with the abilities it serves (all
+four by default; `worker` and `reviewer`, the two base names, default to their base's abilities). The runtime is the project's `models.provider.local` (`--project NAME`, else the project you are in or `QARGI_PROJECT`); with none, `agent add` refuses, and so does a runtime that keeps no agent files. Nothing is written to the runtime's user-level directory (`~/.claude/agents`) unless you say `--user`. `agent list` and `agent models` flag a member `STALE` when the definition, the model catalog or the renderer changed since it was written and `DRIFT` when its file was edited by hand; `agent refresh NAME` writes it again. Two base members cover
 the two guard classes: `worker` (build, write and test; write class) and `reviewer` (review; read-only). Models and efforts
 come from profiles, not from more members (see Choosing models). `qargi agent for build` prints one line,
 `MEMBER MODEL EFFORT PROFILE`, and dispatch spawns that member with that model and effort; `qargi agent list`, `rename`,
@@ -243,15 +246,16 @@ Signing cannot stop someone with push access from deleting a ref; it makes forge
 
 ## Skills and command
 
-Ten skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
+Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
 | `/qargi-task` | dispatch (`/qargi-task "<task>" --done "<check>"`) and session lifecycle: `send`, `start`, `status`, `watch`, `collect`, `stop`, `close` |
-| `/qargi-project` | the one-time project questionnaire: repository, roles, per-role push policy, models, skills, budget, memory, the members |
+| `/qargi-project` | the one-time project questionnaire: repository, roles, per-role push policy, the runtime of each surface, models, skills, budget, memory, the members; `project link` |
 | `/qargi-instances` | `init`, `list`, `show`, `remove`, `normalize` |
 | `/qargi-provision` | `plan`, `apply`, `add-reference` |
-| `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), reviewed at import, checked for drift |
+| `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), declared compatible with the runtimes that may use them, reviewed at import, checked for drift |
+| `/qargi-providers` | the lead's guide to runtimes: add one with data only, review and seal it, verification and `attest`, extensions, the runtime of each surface |
 | `/qargi-memory` | `lint`, `get`, the canon (`check`, `plan`, `apply`, `import`, `promote`), the session-start autoload |
 | `/qargi-verify` | the coordinator's procedure for verifying and applying returned patches |
 | `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
@@ -260,9 +264,9 @@ Ten skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` disp
 
 ## Skills and tools in a local Claude Code session
 
-Packs are enabled for a project by links (`qargi skill|tool link NAME --scope project ...`, see `/qargi-packs`). To use them in a Claude Code session on your machine, render them. `qargi packs apply --target claude-code PROJECT` prints a plan and a token; run it again with `--plan TOKEN --approved "<your words>"` to apply.
+Packs are enabled for a project by links (`qargi skill|tool link NAME --scope project ...`, see `/qargi-packs`). Each pack declares `compatible_providers` (runtime names, family names or `any`; required, and part of the content hash), and a project renders only the packs that match its local runtime: the others are skipped with a note, never attached silently (`--compatible LIST` on `skill|tool new|import|seal`). To use the packs in a Claude Code session on your machine, render them. `qargi packs apply --target claude-code PROJECT` prints a plan and a token; run it again with `--plan TOKEN --approved "<your words>"` to apply (the target is the render target of the project's local runtime).
 
-The apply renders the union of the packs of all the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (`QARGI_HOME` or `QARGI_STATE` move it): the skills under `.claude/skills`, `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. It then prints the launch line that starts Claude Code with the render:
+The apply renders the union of the packs of all the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (RUNTIME is the runtime's name, here `claude-code`; `QARGI_HOME` or `QARGI_STATE` move it): the runtime's skills directory (`.claude/skills` for Claude Code), `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. Renders made by an earlier version are in `state/claude/PROJECT`; `qargi packs migrate-render` moves them (plan, token, approval; nothing is deleted). It then prints the launch line that starts Claude Code with the render:
 
 ```
 claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
@@ -270,13 +274,13 @@ claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
 
 (the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing.
 
-To load the render without typing the launch line, `qargi packs link PROJECT` makes the repository's `.claude/skills` a symbolic link to it (plan token and approval as for apply): any session opened in that checkout then loads the project's packs. A real `.claude/skills` is moved to `skills.qargi-backup` (nothing is deleted) and `qargi packs unlink PROJECT` puts it back; `packs link` lists which of its skills are new to the library first, and `qargi skill import` brings them in. `.claude` is not tracked, so a new worktree needs its own link. `packs check` also lists every skill a session would load that qargi does not manage (`unmanaged`); `qargi skill accept PROJECT NAME` records one you want (for example a skill in `~/.claude/skills`) by name and content hash.
+To load the render without typing the launch line, `qargi packs link PROJECT` makes the repository's `.claude/skills` a symbolic link to it (plan token and approval as for apply): any session opened in that checkout then loads the project's packs. A real `.claude/skills` is moved to `skills.qargi-backup` (nothing is deleted) and `qargi packs unlink PROJECT` puts it back; `packs link` lists which of its skills are new to the library first, and `qargi skill import` brings them in. `.claude` is not tracked, so a new worktree needs its own link. `qargi project link PROJECT [--resource skills,agents,memory]` does the same for the skills, the members and the memory in one plan and one token, each placed the way the runtime's definition says (a directory link, one link per entry, or a copy), and `project unlink` undoes it. `packs check` also lists every skill a session would load that qargi does not manage (`unmanaged`); `qargi skill accept PROJECT NAME` records one you want (for example a skill in `~/.claude/skills`) by name and content hash.
 
 The plan refuses, writing nothing, a skill whose `SKILL.md` name differs from its pack name (or whose front matter is not closed or has two `name` keys), a skill and a tool with the same name, and a tool allowlist name with anything but letters, digits, `_`, `.` and `-`. Concurrent applies serialize on a lock (the second refuses if the render changed meanwhile), and the swap installs only the tree the token approved; the token also covers file modes. `check` also reports a rendered file that differs from the library copy, a mode change, a group- or world-writable render, a malformed manifest, and a manifest for another project or with role scoping other than advisory.
 
 `qargi local prepare` warns too: when the project has a render that has drifted, it prints a WARNING block to stderr with the findings and the fix (`qargi packs apply --target claude-code PROJECT`); the run goes on and its output is unchanged.
 
-- Nothing is written into a repository or into `~/.claude`; the render lives in the state directory only.
+- Applying a render writes nothing into a repository or into `~/.claude`: it lives in the state directory only. Only the links you apply (`packs link`, `project link`) put anything in a checkout.
 - Role scoping is advisory here: Claude Code cannot hold a session to one role's skills, so the render is the union over the project's roles.
 - A member cannot change the render: the guard refuses its writes under `state/render/`. Only you apply it.
 - A tool whose pack lists vault credentials (`vault_ids`) cannot authenticate locally; the plan names it and you configure its credentials yourself.
@@ -304,10 +308,15 @@ All three, and the checks that keep them true, come from one description of the 
 
 ## Members
 
-qargi ships one member definition (`agents/member.md`) and installs none: you create
-the members with `qargi agent add`. A member may call `Bash`, `Read`, `Edit`, `Write`,
+qargi ships one neutral member definition (`agents/member.json` and its prompt
+`agents/member.body.md`) and installs none: you create the members with `qargi agent add`, which
+renders it through the project's local runtime. The runtime's definition says how (`renderers.agent`)
+and which of its own tools the neutral names (shell, read, edit, write, search, monitor, skill, ...)
+become. For Claude Code a member may call `Bash`, `Read`, `Edit`, `Write`,
 `Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every Bash, Edit,
-Write and NotebookEdit call passes `qargi __guard`. The guard refuses `git push`, `gh`,
+Write and NotebookEdit call passes `qargi __guard` (a runtime states its own hook protocol, or has
+none: then a read-only run needs its declared barrier or your acceptance, and `qargi local verify`
+is the proof). The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
 command of its definition, and `qargi local prepare --ability review` records the ability
@@ -316,12 +325,14 @@ write to that record). Under review the guard refuses an edit outside the run's 
 directory and a Bash command that writes into the clone. Whatever the ability,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
-install`, `qargi packs apply`) and any write in the pack library, in `credentials/` or `install.json` of the
-configuration directory (not the rest of it), in `~/.claude/skills` or
-a `.claude/skills` directory outside its clone (also `~/.claude/agents` and
-`~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
+install`, `qargi packs apply`), the verbs that change a runtime (`qargi provider new|import|seal|remove|enable|disable|attest|accept|migrate`),
+link a work tree (`qargi project link|unlink`, `qargi packs link|unlink`) or start a command runtime (`qargi local run`),
+and any write in the pack library, in `credentials/` or `install.json` of the
+configuration directory (not the rest of it), under `state/render`, and in the skills and agents
+directories the runtimes declare, outside its clone (for Claude Code `~/.claude/skills`, `.claude/skills`,
+`~/.claude/agents` and `~/.claude/plugins`); the `skills/` and `.claude/skills` directories of the repository in
 the member's clone stay writable, since they are the work product. The guard fails closed on an
-internal error, and the member definition sets `onFailure: "block"` on the hook (Claude
+internal error, and the Claude Code member file sets `onFailure: "block"` on the hook (Claude
 Code 2.1.295 or later) so that a hook that cannot run blocks the call; frontmatter
 hooks of a project-level agent run only once you trust the workspace. So one definition
 serves every ability; what an ability does comes from its role text and the contract, not
@@ -344,7 +355,7 @@ qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per gu
 | `researcher` | reviewer | frontier | high | research and design judgment on a hard question; opt-in only |
 | `lead` | none | balanced | medium | the lead's own session; never dispatched |
 
-A **tier** (`fast`, `balanced`, `deep`, `frontier`) is mapped by `lib/providers/claude.json` to a full model id for cloud and for the template (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`) and to an alias for local dispatch (`haiku`, `sonnet`, `opus`, `fable`). A project picks the provider with `models.provider` in its answers; there is no default, so a verb that needs one (`agent`, `provision`, a read-only `local prepare`, a cloud session, `packs apply --target`) refuses a project with none (exit 2, naming `qargi project set PROJECT models.provider NAME`), and a name without a file under `lib/providers/` is refused. `qargi project attach` and `qargi project new` store a provider only with `--provider NAME`. Another provider needs its own file there, and until a backend for it exists the file is reference data only. The `frontier` tier is an opt-in escalation: no default profile except `researcher` uses it, and `researcher` is used only when you or the lead name it for the task.
+A **tier** (`fast`, `balanced`, `deep`, `frontier`) is mapped by the model catalog of the runtime's family (`lib/providers/catalogs/claude.json` for `claude`) to a full model id for cloud and for the template (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`) and to an alias for local dispatch (`haiku`, `sonnet`, `opus`, `fable`); a runtime with a single model writes it once for every tier. A project picks the runtime of each surface with `models.provider.local` and `models.provider.cloud` in its answers; there is no default, so a verb that needs a surface (`agent`, `provision`, a read-only `local prepare`, a cloud session, `packs apply --target`) refuses a project that leaves it out (exit 2, naming `qargi project set PROJECT models.provider.SURFACE NAME`), and a name with no definition is refused. `qargi project attach` and `qargi project new` store them with `--provider-local` and `--provider-cloud` (or `--provider NAME` for one name), and nothing without. The `frontier` tier is an opt-in escalation: no default profile except `researcher` uses it, and `researcher` is used only when you or the lead name it for the task.
 
 A project adds or overrides profiles in its answers as `profiles.<name>` (`base`, `tier`, `model`, `effort`, `purpose`, `abilities`). A profile whose base class conflicts with its abilities, or with the role being dispatched, is refused.
 
@@ -354,15 +365,19 @@ Search is not a role: mapping the repository and finding call sites is done by a
 
 Moving from one-per-ability members: `qargi agent add worker --project P` and `qargi agent add reviewer --project P` (each defaults to its base's abilities), `qargi agent models` to see the legacy members flagged, then retire builder, writer and tester with `qargi agent remove`. The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
 
-Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the provider file and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
+Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
 
-## Providers
+## Providers and runtimes
 
-A provider is a descriptor, `lib/providers/NAME.json`, and every provider uses the same schema (`lib/providers/schema.json`): the model each tier (fast, balanced, deep, frontier) maps to, each with the date and source it was verified on; the effort levels it understands; the surfaces it serves (local, cloud); and a capability matrix per surface (model and effort overrides at dispatch, a fixed tool list per agent, a read-only barrier, a session budget ceiling, memory stores, skills, MCP). A capability that has no verification date counts as not supported. `qargi provider list`, `show NAME` and `check NAME` print the descriptors, the matrix and what degrades; a project picks its provider with `models.provider` in its answers, and there is no default.
+A **runtime** is one way of running agents on one surface (local or cloud), and it is data: a JSON definition (`lib/providers/schema-2.json`) with the models of each tier and the date and source each was verified on, the effort levels it understands, a capability matrix (model and effort overrides at dispatch, a fixed tool list per agent, a read-only barrier, a session budget ceiling, memory stores, skills, MCP), where its skills, agents, MCP file, settings and memory live and how each is linked into a work tree (a directory link, one link per entry, a copy), how a member is written as the runtime's own file, how a member is dispatched, and how a read-only member is held. A **family** groups the runtimes that share a **model catalog**. Claude ships as the family `claude` with the catalog `claude` and two runtimes, `claude-code` (local) and `claude-platform` (cloud). Three kinds of pack share the provider library, `~/.qargi/config/packs/providers/NAME/`: `provider` (a runtime), `catalog` and `extension` (capabilities a project adds to a runtime). `qargi provider list`, `show NAME` and `check NAME` print them, the matrix and what degrades; a project picks one runtime per surface with `models.provider.local` and `models.provider.cloud`, and there is no default.
 
-The rules that do not depend on the provider: a surface whose read-only barrier is not supported cannot serve the review role, unless you accept that for the project with `qargi provider accept NAME --surface S --no-barrier --asked "..."` (it prints a plan and a token, records `models.accept_no_barrier` and writes the audit log); a provider with no effort control has the effort dropped and `qargi agent models` says so; a provider without a per-dispatch model override must have one member per profile; and the output of a read-only run is never applied as patches. For the bundled `claude` descriptor the local barrier is the guard hook (partial: shell writes are caught heuristically and `local verify` is the backstop); the cloud review agents have no barrier, so a cloud review role needs your acceptance before it is provisioned or started.
+Add a runtime with no code: `qargi provider new NAME`, edit the definition (CONTRIBUTING has a worked example), `provider check NAME`, `provider seal NAME`, then `qargi project set P models.provider.local NAME`. A command-line runtime is dispatched by `qargi local run RUN` (`--dry-run` prints the argv, the working directory and the prompt): the argv is an array in the definition, never a shell string, and only the environment variables it names reach the process. `provider import SOURCE` takes someone else's pack from a directory, a JSON file or an https git URL. Every change to the library (`new`, `import`, `seal`, `remove`, `enable`, `disable`, `attest`) is a plan, a token and your approval, and a pack with executables also needs `--approve-exec` naming every one. A pack holds text only: scripts you can read, never a compiled program, an archive or a symlink; secrets are refused, opaque blobs and scripts that fetch and run code are flagged, and a vendor CLI is installed by you and only named. An approved executable is code that runs with your rights; the guard does not contain it, so read it before you approve it.
 
-A provider's adapter (`lib/providers/NAME/adapter`) implements a small JSON contract (resolve, dispatch-local, barrier-check, provision, start-session, status, collect, stop, cost; exit 3 for what the descriptor says is unsupported), and `bash tests/conformance.sh NAME` runs the conformance cases against it, including a corpus of calls a read-only barrier must allow or deny. The `claude` adapter has the local verbs and the cloud start-session request builder; its other cloud verbs still run through the existing scripts.
+A capability counts only when the definition claims it and it is verified. A shipped definition carries a `verified_on` date for each; a library definition is verified by `provider check` (the hermetic cases: the agent render, the skills link, the read-only corpus through the guard, an adapter's stub), which records it bound to the definition's hash, so an edit or a reseal makes it stale. What no hermetic case can show (an operating-system sandbox that really holds, a real model id) is recorded with `qargi provider attest NAME CAPABILITY`, which runs and spends nothing itself and is asked each time, with the command, the scratch resources, the smallest model, the ceiling and the expected cost stated first. An extension is enabled for one project with `provider enable PROJECT EXTENSION`; two extensions that add the same thing are refused, and what one provides counts only after its own check.
+
+The rules that do not depend on the runtime: a surface whose read-only barrier is not supported cannot serve the review role, unless you accept that for the project with `qargi provider accept NAME --surface S --no-barrier --asked "..."` (it prints a plan and a token, records `models.accept_no_barrier` and writes the audit log); a runtime with no effort control has the effort dropped and `qargi agent models` says so; a runtime without a per-dispatch model override must have one member per profile; and the output of a read-only run is never applied as patches. For `claude-code` the local barrier is the guard hook (partial: shell writes are caught heuristically and `local verify` is the backstop); the cloud review agents of `claude-platform` have no barrier, so a cloud review role needs your acceptance before it is provisioned or started. A runtime that is not a hook runtime holds a read-only member another way (the runtime's own sandbox flags, or an adapter) or not at all, and what qargi guarantees for any runtime is the same: no push, patches reviewed before they are applied, and the class recorded by qargi and not by the task text.
+
+A runtime's adapter (`lib/providers/NAME/adapter`, or a file of the pack) is optional code behind a small JSON contract (`lib/providers/adapter-schema.json`: resolve, dispatch-local, barrier-check, provision, start-session, status, collect, stop, cost; exit 3 for what the definition says is unsupported), and `bash tests/conformance.sh NAME` runs the conformance cases against it, including a corpus of calls a read-only barrier must allow or deny. The `claude-code` adapter has the local verbs, the `claude-platform` adapter the cloud start-session request builder; its other cloud verbs still run through the existing scripts. A data-only runtime has none.
 
 ## Splitting, merging and moving memory
 
@@ -409,6 +424,8 @@ qargi agent add worker --project P                     # then the read-only base
 qargi agent add reviewer --project P
 ```
 
+qargi needs Python 3.11 or later (the standard library reads the TOML files some runtimes keep their settings in). The `agent add` lines need a project whose `models.provider.local` is set (see Providers and runtimes).
+
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove (copies need `--force`). An existing real directory is
@@ -425,7 +442,7 @@ Installing also adds the baseline packs that ship with qargi (`packs/`) to your 
 
 ### Where the data lives
 
-Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
+Everything qargi keeps about you is under `~/.qargi`: `config/` (projects, instances, profiles, the pack library of skills, tools and provider packs, credentials, `install.json`) and `state/` (the session tracker, the audit log, runs, backups, the renders under `render/`, the provider verification records). `QARGI_HOME` replaces the root; `QARGI_CONF` and `QARGI_STATE` name either directory and win over it. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` are not used (the `ant` CLI keeps its login there).
 
 An earlier version kept the data in `~/.config/qargi` and `~/.local/state/qargi`. While only those exist, every command except `help`, `version`, the completion, the guard and the run-event hooks stops and tells you to run `qargi migrate home`. It prints the plan (every file, mode and digest, and the files whose old paths it rewrites; the records `audit.log`, `supervisor.log` and `run-events/` are copied byte for byte) and a token; with `--plan TOKEN --approved "<words>"` it copies, checks every file by digest and leaves the old directories untouched as a backup. It never creates an empty `~/.qargi` next to old data.
 
