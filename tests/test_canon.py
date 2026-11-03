@@ -67,6 +67,27 @@ class Canon(unittest.TestCase):
         for kind in ("memory", "reference"):
             self.assertConverges(kind, {})
 
+    def test_empty_store_plans_the_full_seed_and_the_marker(self):
+        """The set-up of an empty store: the seed's own files, nothing moved, the marker last. Tier init (`memory init`) and
+        a new project's stores both start here."""
+        roles = ["build", "write"]
+        subs = {"{{PROJECT}}": "demo", "{{ROLES}}": C.role_lines(roles), "{{ROLE_LIST}}": "build write"}
+        for kind in ("memory", "reference"):
+            p = plan(kind, {})
+            self.assertEqual(p["to_version"], C.LATEST)
+            self.assertEqual(p["notes"], [])
+            self.assertEqual({o["op"] for o in p["ops"]}, {"create", "marker"})
+            self.assertEqual(p["ops"][-1]["path"], "/CANON.md", "the marker is written last")
+            self.assertEqual(sorted(o["path"] for o in p["ops"]),
+                             sorted(["/CANON.md", "/README.md", "/_template.md", "/shared/INDEX.md", "/roles/build/INDEX.md", "/roles/write/INDEX.md"]))
+            by = {o["path"]: o["content"] for o in p["ops"]}
+            self.assertEqual(by["/README.md"], C.seed_text(SEED, "README.%s.md" % kind, subs))
+            self.assertEqual(by["/_template.md"], slurp(os.path.join(SEED, "_template.%s.md" % kind)))
+            self.assertEqual(by["/shared/INDEX.md"], C.seed_text(SEED, "INDEX.shared.%s.md" % kind, subs))
+            self.assertEqual(by["/roles/write/INDEX.md"], C.seed_text(SEED, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": "write"})))
+            m = C.parse_marker(by["/CANON.md"])
+            self.assertEqual((m["canon"], m["kind"], m["project"], m["roles"]), (str(C.LATEST), kind, "demo", "build write"))
+
     def test_legacy_memory(self):
         files = {"/README.md": "# old\n\n| Path | Purpose | Load when |\n|---|---|---|\n| sandbox/a.md | a | always |\n| repos/demo/INDEX.md | d | x |\n",
                  "/_template.md": "t", "/sandbox/a.md": "# a\n" + GOOD,
