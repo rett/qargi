@@ -2694,7 +2694,7 @@ Check what an agent returned and put it on a task branch.
 .BI "check " "RUN_DIR"
 Check a run: numbered patches, messages, manifest, groups.
 .br
-Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md that has a Findings section instead of patches.
+Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.
 .RS
 .TP
 .B \-\-allow\-empty

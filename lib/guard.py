@@ -318,7 +318,7 @@ def review_refusal(call):
             return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
         if run and is_review(run) and not inside(full, os.path.join(run, "out")):
-            return "under the review ability only the report and the manifest in RUN_DIR may be written (%s is not)" % fp
+            return "under the review ability only the report and the manifest in OUT may be written (%s is not)" % fp
         return None
     if call.kind != "shell":
         return None
@@ -1185,11 +1185,10 @@ def judge(call):
     if isinstance(why, MarshalReason):
         return "qargi guard: %s." % why
     if why:
-        return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change as a "
-                "patch or a plan in RUN_DIR." % why)
+        return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change in your report." % why)
     why = review_refusal(call)
     if why:
-        return "qargi guard: %s. A review reads the work and writes its report to RUN_DIR." % why
+        return "qargi guard: %s. A review reads the work and writes its report to OUT." % why
     return None
 
 
