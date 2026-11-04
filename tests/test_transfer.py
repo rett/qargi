@@ -384,6 +384,115 @@ class Import(Env):
         self.assertNotIn("alpha-build", r.stdout)
 
 
+class RoundTrip(Env):
+    """What export writes, import must accept: a library with a skill pack and a tool pack moves to a fresh home as it is."""
+
+    LIB = {
+        "packs/skills/example-skill/SKILL.md": "# example skill\n",
+        "packs/skills/example-skill/.pack.json": '{"name":"example-skill","kind":"skill"}',
+        "packs/skills/example-skill/scripts/run.sh": "#!/bin/sh\necho hi\n",
+        "packs/skills/example-skill/notes/deep/.hidden-note": "a dot file in a nested folder\n",
+        "packs/tools/example-tool.json": '{"name":"example-tool"}',
+        "packs/tools/example-tool.pack.json": '{"name":"example-tool","kind":"tool"}',
+        "packs/accepted.json": "{}",
+        "packs/accepted.json.lock": "",
+        "profiles/alpha.md": "profile text",
+    }
+
+    def setUp(self):
+        super().setUp()
+        for rel, text in self.LIB.items():
+            self.write(os.path.join(self.conf, rel), text)
+        os.chmod(os.path.join(self.conf, "packs/skills/example-skill/scripts/run.sh"), 0o755)
+        self.write(os.path.join(self.t, "pw"), "pw-round-trip\n")
+
+    def tree(self, base, sub):
+        out = {}
+        for dp, _, fs in os.walk(os.path.join(base, sub)):
+            for f in fs:
+                full = os.path.join(dp, f)
+                out[os.path.relpath(full, base)] = rd(full)
+        return out
+
+    def round_trip(self, only):
+        arc = os.path.join(self.t, "rt-%s.gpg" % only.replace(",", "_"))
+        r = self.qargi(["export", "--only", only, "--project", "alpha", "--password-file", os.path.join(self.t, "pw"), "--out", arc])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for d in ("c2", "s2", "fake2"):
+            shutil.rmtree(os.path.join(self.t, d), ignore_errors=True)
+        t, conf, state, fake = self.fresh_target()
+        self.put_store(fake, "memstore_A", {})
+        self.put_store(fake, "memstore_B", {})
+        r = self.qargi(["import", arc, "--only", only, "--project", "alpha", "--mode", "overwrite", "--password-file", os.path.join(self.t, "pw")], answers=["y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        return conf, state, fake
+
+    def test_the_library_and_everything_else_survive_each_part_combination(self):
+        for only in ("config", "credentials", "config,credentials", "definitions", "memories", "state", "config,definitions,memories,state,credentials"):
+            conf, state, fake = self.round_trip(only)
+            parts = only.split(",")
+            if "config" in parts:
+                self.assertEqual(self.tree(conf, "packs"), self.tree(self.conf, "packs"), only)
+                self.assertTrue(os.path.exists(os.path.join(conf, "packs/skills/example-skill/.pack.json")), only)
+                for rel in self.LIB:
+                    if rel.startswith("packs/"):
+                        self.assertEqual(os.stat(os.path.join(conf, rel)).st_mode & 0o111 != 0, os.stat(os.path.join(self.conf, rel)).st_mode & 0o111 != 0, (only, rel))
+                self.assertTrue(os.access(os.path.join(conf, "packs/skills/example-skill/scripts/run.sh"), os.X_OK), only)
+                self.assertEqual(rd(os.path.join(conf, "profiles/alpha.md")), "profile text", only)
+                self.assertEqual(sorted(jd(os.path.join(conf, "instances.json"))), ["alpha-build", "alpha-write"], only)
+            else:
+                self.assertFalse(os.path.exists(os.path.join(conf, "packs")), only)
+            self.assertEqual(self.tree(conf, "credentials") if "credentials" in parts else {}, self.tree(self.conf, "credentials") if "credentials" in parts else {}, only)
+            if "state" in parts:
+                self.assertEqual(rd(os.path.join(state, "audit.log")).splitlines()[:2], ['{"verb":"one"}', '{"verb":"two"}'], only)
+                self.assertEqual(sorted(jd(os.path.join(state, "sessions.json"))), ["sesn_1"], only)
+            if "definitions" in parts:
+                self.assertEqual(sorted(self.tree(state, "definitions")), ["definitions/alpha-build/agent.json", "definitions/alpha-build/deployment.json", "definitions/alpha-build/environment.json",
+                                                                           "definitions/alpha-write/agent.json", "definitions/alpha-write/deployment.json", "definitions/alpha-write/environment.json"], only)
+            if "memories" in parts:
+                self.assertEqual(self.store_notes_at(fake, "memstore_A"), self.store_notes("memstore_A"), only)
+
+    def store_notes_at(self, fake, store):
+        d = os.path.join(fake, "stores", store)
+        return {jd(os.path.join(d, f))["path"]: jd(os.path.join(d, f))["content"] for f in os.listdir(d)}
+
+    def test_export_refuses_a_name_that_import_would_refuse(self):
+        self.write(os.path.join(self.conf, "packs/skills/example-skill/my notes.md"), "x")
+        r = self.qargi(["export", "--only", "config", "--no-encrypt", "--out", os.path.join(self.t, "no.tar.gz")])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("the reader would refuse", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.t, "no.tar.gz")))
+
+    def test_a_symbolic_link_in_the_library_is_left_out_with_a_note(self):
+        os.symlink("/etc/hostname", os.path.join(self.conf, "packs/skills/example-skill/link.md"))
+        r = self.qargi(["export", "--only", "config", "--no-encrypt", "--out", os.path.join(self.t, "l.tar.gz")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("symbolic link", r.stderr)
+        self.assertNotIn("config/packs/skills/example-skill/link.md", self.members(os.path.join(self.t, "l.tar.gz")))
+
+    def test_a_memory_note_with_an_unreadable_name_is_left_out_with_a_note(self):
+        self.put_store(self.fake, "memstore_A", {"/odd/./note.md": "x"})
+        arc = os.path.join(self.t, "m.tar.gz")
+        r = self.qargi(["export", "--only", "memories", "--no-encrypt", "--out", arc])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("left out", r.stderr)
+        names = self.members(arc)
+        self.assertIn("memories/alpha/memory/README.md", names)
+        self.assertFalse([n for n in names if "odd" in n])
+
+    def test_a_script_that_lost_its_executable_bit_is_a_change_and_gets_it_back(self):
+        arc = os.path.join(self.t, "x.tar.gz")
+        self.assertEqual(self.qargi(["export", "--only", "config", "--no-encrypt", "--out", arc]).returncode, 0)
+        t, conf, state, fake = self.fresh_target()
+        script = os.path.join(conf, "packs/skills/example-skill/scripts/run.sh")
+        self.write(script, self.LIB["packs/skills/example-skill/scripts/run.sh"])
+        os.chmod(script, 0o644)
+        r = self.qargi(["import", arc, "--only", "config", "--project", "alpha", "--mode", "overwrite"], answers=["y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertTrue(os.access(script, os.X_OK))
+        self.assertEqual(os.stat(script).st_mode & 0o777, 0o700)
+
+
 class Hostile(Env):
     def archive(self, entries, manifest_files=None, fmt=1):
         buf = io.BytesIO()
@@ -393,7 +502,7 @@ class Hostile(Env):
                 if isinstance(data, tarfile.TarInfo):
                     tf.addfile(data); continue
                 ti = tarfile.TarInfo(name); ti.size = len(data); tf.addfile(ti, io.BytesIO(data))
-                files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": "alpha"}
+                files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": "alpha", "mode": "0600"}
             m = json.dumps({"format": fmt, "projects": ["alpha"], "components": {"config": 1}, "files": manifest_files if manifest_files is not None else files}).encode()
             ti = tarfile.TarInfo("manifest.json"); ti.size = len(m); tf.addfile(ti, io.BytesIO(m))
         p = os.path.join(self.t, "h.tar.gz")
@@ -416,6 +525,29 @@ class Hostile(Env):
         self.assertIn("refusing", r.stderr)
         r = self.dry(self.archive([("elsewhere/x", b"x")]))
         self.assertIn("outside the known folders", r.stderr)
+
+    def test_dot_names_in_the_library_pass_but_dot_segments_do_not(self):
+        r = self.dry(self.archive([("config/packs/skills/example-skill/.pack.json", b"{}")]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name in ("config/packs/skills/example-skill/./.pack.json", "config/packs/skills/example-skill/../x", "config/packs//x", "config/packs/skills/x/.."):
+            r = self.dry(self.archive([(name, b"{}")]))
+            self.assertNotEqual(r.returncode, 0, name)
+            self.assertIn("refusing", r.stderr)
+        r = self.dry(self.archive([("config/packs", b"{}")]))
+        self.assertIn("not valid for its folder", r.stderr)
+        r = self.dry(self.archive([("config/other/x", b"{}")]))
+        self.assertIn("not valid for its folder", r.stderr)
+
+    def test_a_mode_other_than_the_two_the_export_writes_is_refused(self):
+        for mode in ("0777", "4755", 755):
+            p = self.archive([("config/packs/skills/example-skill/SKILL.md", b"x")], manifest_files={"config/packs/skills/example-skill/SKILL.md": {"sha256": hashlib.sha256(b"x").hexdigest(), "size": 1, "project": None, "mode": mode}})
+            r = self.dry(p)
+            self.assertNotEqual(r.returncode, 0, mode)
+            self.assertIn("mode that is not valid", r.stderr)
+
+    def test_a_manifest_without_modes_is_refused(self):
+        p = self.archive([("config/profiles/a.md", b"x")], manifest_files={"config/profiles/a.md": {"sha256": hashlib.sha256(b"x").hexdigest(), "size": 1, "project": "alpha"}})
+        self.assertIn("no mode", self.dry(p).stderr)
 
     def test_a_changed_file_fails_its_checksum(self):
         p = self.archive([("config/profiles/a.md", b"one")], manifest_files={"config/profiles/a.md": {"sha256": "0" * 64, "size": 3, "project": "alpha"}})
