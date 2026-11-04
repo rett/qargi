@@ -13,7 +13,7 @@ verb=${1:-}; shift || true
 RUN_ARG='' BRANCH='' PROJ='' YES=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) PROJ=${2:?--project needs a name}; shift 2;; --branch) BRANCH=${2:?--branch needs a name}; shift 2;; --yes) YES=1; shift;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;; --branch) need_val "$1" $#; BRANCH=$2; shift 2;; --yes) YES=1; shift;;
     -*) die "unknown option $1";;
     *) [ -z "$RUN_ARG" ] || die "unexpected argument $1"; RUN_ARG=$1; shift;;
   esac

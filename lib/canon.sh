@@ -22,11 +22,11 @@ PROJECT=${1:-}; shift || true
 KIND='' PLAN_ARG='' APPROVED='' ROLE='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --kind) KIND=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --path) PATH_ARG=$2; shift 2;;
+    --kind) need_val "$1" $#; KIND=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --path) need_val "$1" $#; PATH_ARG=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done

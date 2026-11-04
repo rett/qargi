@@ -18,12 +18,12 @@ verb=${1:-}; shift || true
 NAME='' SURFACE='' NOBAR='' PROJ='' ASKED='' APPROVED='' PLAN_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --surface) SURFACE=${2:?--surface needs local or cloud}; shift 2;;
+    --surface) need_val "$1" $#; SURFACE=$2; shift 2;;
     --no-barrier) NOBAR=1; shift;;
-    --project) PROJ=${2:?--project needs a name}; shift 2;;
-    --asked) ASKED=${2:?--asked needs your words}; shift 2;;
-    --approved) APPROVED=${2:?--approved needs your words}; shift 2;;
-    --plan) PLAN_ARG=${2:?--plan needs the token}; shift 2;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     -*) die "unknown option $1";;
     *) [ -z "$NAME" ] || die "unexpected argument $1"; NAME=$1; shift;;
   esac
