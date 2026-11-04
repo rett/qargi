@@ -343,10 +343,9 @@ class Cli(Fixtures):
         self.assertEqual(self.q("env").returncode, 2)
         self.answers("nopath", "")
         self.assertEqual(self.q("env", "show", "--project", "nopath").returncode, 2)
-        for verb in E.LEAD_ONLY:                      # lead-only verbs, not built yet
-            r = self.q("env", verb)
-            self.assertEqual(r.returncode, 2)
-            self.assertIn("not built yet", r.stderr)
+        for verb in ("plan", "apply"):                # lead-only verbs: no arguments is a usage error (tests/test_env_apply.py has the rest)
+            r = self.q("env", verb, "--repo", self.repo("bare", {}) if verb == "plan" else self.t)
+            self.assertEqual(r.returncode, 2, verb)
 
     def test_help_completion_and_the_member_guard(self):
         self.assertIn("show", self.q("help", "env").stdout)
