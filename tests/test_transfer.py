@@ -286,6 +286,39 @@ class Import(Env):
         backups = [os.path.join(dp, f) for dp, _, fs in os.walk(os.path.join(state, "backups")) for f in fs]
         self.assertTrue(any(rd(b) == "my own profile" for b in backups), backups)
 
+    def test_the_archive_cannot_add_or_change_the_gated_answers(self):
+        # models.extensions and models.accept_no_barrier have their own verbs (a plan token and an approval); an archive is untrusted data
+        src = os.path.join(self.conf, "projects", "alpha.json")
+        doc = jd(src)
+        doc["models"] = {"provider": "claude-code", "extensions": ["bad-ext", "kept-ext"], "accept_no_barrier": {"local": {"by": "x", "at": "d", "reason": "r"}}}
+        self.write(src, json.dumps(doc))
+        a = self.export()
+        t, conf, state, fake = self.target()
+        # a machine that stores none: both keys are left out, the rest of the answers comes in (overwrite replaces the stored file)
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        got = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertEqual(got["models"], {"provider": "claude-code"})
+        self.assertIn("models.extensions, models.accept_no_barrier", r.stderr)
+        self.assertEqual(got["repo"], {"path": "/x/alpha"})
+        # a machine that stores kept-ext: the archive may drop bad-ext (it only narrows) but not add it
+        own = {"project": "alpha", "models": {"provider": "claude-code", "extensions": ["kept-ext", "other"], "accept_no_barrier": {"local": {"by": "x", "at": "d", "reason": "r"}}},
+               "memory": {"memory_store": "memstore_A", "reference_store": "memstore_B"}}
+        self.write(os.path.join(conf, "projects", "alpha.json"), json.dumps(own))
+        r = self.run_import(a, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        got = jd(os.path.join(conf, "projects", "alpha.json"))
+        self.assertEqual(got["models"]["extensions"], ["kept-ext", "other"])
+        self.assertEqual(got["models"]["accept_no_barrier"], own["models"]["accept_no_barrier"])
+        # the same acceptance as stored needs no note; dropping an entry is allowed
+        doc["models"] = {"provider": "claude-code", "extensions": ["kept-ext"]}
+        self.write(src, json.dumps(doc))
+        a2 = self.export("b.tar.gz")
+        r = self.run_import(a2, ["config", "alpha", "2", "y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertNotIn("would add or change", r.stderr)
+        self.assertEqual(jd(os.path.join(conf, "projects", "alpha.json"))["models"], {"provider": "claude-code", "extensions": ["kept-ext"]})
+
     def test_replace_removes_what_the_archive_lacks_only_after_typing_replace(self):
         a = self.export()
         t, conf, state, fake = self.target()
