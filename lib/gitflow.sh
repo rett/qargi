@@ -115,13 +115,14 @@ wt_drop() {
   else echo "qargi: warning: could not remove the worktree $w; remove it yourself: git worktree remove $w" >&2; fi
 }
 # wt_outside_report -> a line for each worktree of the project that is not under the root, with the git worktree move that fixes it. Not
-# reported: the main checkout, the runtime's own .claude/worktrees directories and qargi's temporary worktrees under the state directory.
+# reported: the main checkout, any worktree inside it (the agent runtime makes its own there; qargi never does, validate forbids a root
+# inside the repository) and qargi's temporary worktrees under the state directory.
 wt_outside_report() {
   local w first=1 b
   while IFS=$'\t' read -r w b; do
     if [ -n "$first" ]; then first=''; continue; fi
     wt_in_root "$w" && continue
-    case $(wt_path "$w") in */.claude/worktrees/*) continue;; "$(wt_path "$DA_STATE")"/*) continue;; esac
+    case $(wt_path "$w") in "$(wt_path "$REPO")"/*) continue;; "$(wt_path "$DA_STATE")"/*) continue;; esac
     echo "worktree outside the root: $w (${b:-detached}): mkdir -p $(dirname "$WT_ROOT/${b:-$(basename "$w")}") && git worktree move $w $WT_ROOT/${b:-$(basename "$w")}"
   done < <(g worktree list --porcelain | awk '/^worktree /{if (w != "") print w "\t" b; w=substr($0,10); b=""} $1=="branch"{b=$2; sub("^refs/heads/","",b)} END{if (w != "") print w "\t" b}')
 }

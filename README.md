@@ -235,7 +235,8 @@ per branch at `ROOT/<branch>`. `qargi feature start NAME --worktree` creates `RO
 clean worktree of a feature is under the root, `feature merge` and `feature sync` bring it up to date, and `feature finish`
 detaches and removes it after the merge, when it deletes the branch; a dirty one stops each of them with its path. `feature list`
 and `feature status` flag every other worktree of the project, with the `git worktree move` that fixes it. The main checkout, the
-runtime's own `.claude/worktrees/` directories and qargi's temporary worktrees are not flagged.
+worktrees inside the main checkout (the agent runtime makes its own there, under `.claude/worktrees/` for Claude Code) and qargi's
+temporary worktrees are not flagged.
 
 ### The parking branch
 

@@ -1680,7 +1680,7 @@ also make the feature's worktree at <worktrees.root>/feature/NAME and print its 
 .B list
 List the open features: purpose, distance from develop, and the files two features both change.
 .br
-Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that fixes it; the main checkout, the runtime's own .claude/worktrees directories and qargi's temporary worktrees are not flagged.
+Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that fixes it; the main checkout, the worktrees inside it (the agent runtime makes its own there) and qargi's temporary worktrees are not flagged.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
