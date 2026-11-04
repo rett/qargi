@@ -1,7 +1,7 @@
 ---
 name: qargi-packs
 description: Create or import skills and tools (MCP servers) into one library and attach them by scope: user, user-role, project, project-role. Review and approve at import, link to a scope, opt a role out, check for drift, and apply to provisioned or existing cloud agents. Names are globally unique, so there is no precedence to resolve.
-argument-hint: skill|tool new|import|seal [--compatible LIST]|link|unlink|enable|disable|list|show|effective|check|remove ... | packs seed [--install] | packs apply INSTANCE | packs apply|check|link|unlink --target RUNTIME PROJECT | packs migrate-render | project link PROJECT
+argument-hint: skill|tool new|import|seal [--compatible LIST]|link|unlink|enable|disable|list|show|effective|check|remove ... | packs seed [--install] | packs apply INSTANCE | packs apply|check|link|unlink --target RUNTIME PROJECT | project link PROJECT
 ---
 
 # /qargi-packs
@@ -69,7 +69,5 @@ go-ahead. `/qargi-provision` attaches a new instance's packs. For an existing cl
 `qargi packs apply INSTANCE --asked "..."` uploads the custom skills and replaces the agent's
 skill, MCP-server and tool lists. For a local session, `qargi packs apply --target RUNTIME
 PROJECT` renders the project's packs outside every repository; `packs check` reports drift;
-`packs link|unlink PROJECT` and `qargi project link PROJECT` link the render into a work tree;
-`packs migrate-render` moves renders made before the runtime names. Vault credentials a tool needs
-are reported, never attached. Load `apply.md` before you render or apply, link, or handle
-unmanaged skills.
+`packs link|unlink PROJECT` and `qargi project link PROJECT` link the render into a work tree. Vault credentials a tool needs are reported, never
+attached. Load `apply.md` before you render or apply, link, or handle unmanaged skills.

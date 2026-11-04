@@ -447,9 +447,6 @@ COMMANDS = {
                            desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
                                  "and approval as link; nothing else is deleted.")),
-            "migrate-render": verb("Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME", [], [PLAN, APPROVED],
-                                   desc=("Prints the move and a plan token; with --plan and --approved it moves the directory, re-points the checkout's skills link only "
-                                         "when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.")),
         },
     },
     "start": {
