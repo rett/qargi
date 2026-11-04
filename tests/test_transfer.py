@@ -451,6 +451,13 @@ class RoundTrip(Env):
         d = os.path.join(fake, "stores", store)
         return {jd(os.path.join(d, f))["path"]: jd(os.path.join(d, f))["content"] for f in os.listdir(d)}
 
+    def test_export_refuses_a_name_that_import_would_refuse(self):
+        self.write(os.path.join(self.conf, "packs/skills/example-skill/my notes.md"), "x")
+        r = self.qargi(["export", "--only", "config", "--no-encrypt", "--out", os.path.join(self.t, "no.tar.gz")])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("the reader would refuse", r.stderr)
+        self.assertFalse(os.path.exists(os.path.join(self.t, "no.tar.gz")))
+
 
 class Hostile(Env):
     def archive(self, entries, manifest_files=None, fmt=1):
