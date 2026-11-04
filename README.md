@@ -217,6 +217,15 @@ master and release branches keep their plans and tokens. `branches.delete_merged
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
 shows the deletion and its token covers origin's tip.
 
+### The worktree root
+
+qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one
+per branch at `ROOT/<branch>`. `qargi feature start NAME --worktree` creates `ROOT/feature/NAME` and prints the path. While a
+clean worktree of a feature is under the root, `feature merge` and `feature sync` bring it up to date, and `feature finish`
+detaches and removes it after the merge, when it deletes the branch; a dirty one stops each of them with its path. `feature list`
+and `feature status` flag every other worktree of the project, with the `git worktree move` that fixes it. The main checkout, the
+runtime's own `.claude/worktrees/` directories and qargi's temporary worktrees are not flagged.
+
 ### The parking branch
 
 qargi moves develop and master without touching a working tree, so neither can be checked out in the project's main checkout
