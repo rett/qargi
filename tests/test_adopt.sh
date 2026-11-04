@@ -124,6 +124,14 @@ $DA project adopt gimel --plan "$tok" --approved go >/dev/null 2>&1 || no "apply
 [ "$(git -C "$G" show agent/adopt-gitflow:CHANGELOG.md)" = "$(printf '# Changelog\n\nmine\n')" ] && ! git -C "$G" diff --name-only develop agent/adopt-gitflow | grep -qx CHANGELOG.md && ok "an existing CHANGELOG.md is not modified" || no "changelog touched"
 grep -qi "keep a changelog\|changelog format\|CHANGELOG.md" <<<"$out" && ok "its format is reported as a gap left for a human" || no "format gap: $out"
 
+# a changelog with its own headings (release.changelog.unreleased) is not "not Keep a Changelog", and release.version_file none adds no VERSION
+H=$T/h; git init -q -b main "$H"; printf '# Changes\n\n## Next\n\n- x\n' > "$H/CHANGELOG.md"; git -C "$H" add -A; git -C "$H" commit -q -m first
+attach hay "$H"
+out=$($DA project adopt hay 2>&1); echo "$out" | grep -qi "no '## \[Unreleased\]' heading" && ok "by default a changelog without '## [Unreleased]' is a format gap" || no "default gap: $out"
+jq '.release = {version_file: "none", changelog: {unreleased: "## Next", released: "## {version}"}}' "$T/c/projects/hay.json" > "$T/hay.json" && mv "$T/hay.json" "$T/c/projects/hay.json"
+out=$($DA project adopt hay 2>&1)
+! grep -qi "format" <<<"$out" && ! grep -q "^    VERSION$" <<<"$out" && grep -q "^    CONTRIBUTING.md$" <<<"$out" && ok "with the answers, the changelog's own heading is found and no VERSION file is planned" || no "template gap: $out"
+
 # the audit line, and a bad methodology
 grep -q '"verb":"project:adopt"' "$T/s/audit.log" && ok "applying leaves an audit line" || no "audit"
 $DA project adopt alpha --methodology nosuch >/dev/null 2>&1 && no "an unknown methodology was accepted" || ok "an unknown methodology is refused"
