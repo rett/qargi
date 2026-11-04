@@ -302,7 +302,7 @@ COMMANDS = {
         "desc": ("release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. "
                  "It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with --no-ff, "
                  "tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with --no-ff and deletes it. A release starts only from "
-                 "a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval."),
+                 "a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal."),
         "scripts": ["release.sh"],
         "verbs": {
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
@@ -318,6 +318,15 @@ COMMANDS = {
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. " + REMOTE_NOTE)),
+            "sign": verb("Sign the release files from the tag with your own key, on your own terminal, and record that they verify", [("VERSION", "none")], [PROJECT_OPT],
+                         desc=("Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it): "
+                               "after finish, before publish. For each file of the answer release.sign.files it runs ssh-keygen -Y sign -f KEY -n NAMESPACE FILE attached to "
+                               "your terminal (stdin, stdout and stderr are yours; nothing is captured and no input is logged), so you type the key's passphrase there and it "
+                               "never passes through qargi, a log or an agent; no ssh agent is asked. Then it runs release.sign.verify_command (a list of words, no shell) in the "
+                               "repository and records the result, the tag's commit and the hash of every signed file and signature under the state's release directory. "
+                               "Refused (exit 1) when stdin is no terminal, HEAD is not exactly the tag VERSION, on a branch other than master, or a tracked file is modified; "
+                               "refused (exit 2) in a member run or when QARGI_NESTED is set. A member run cannot sign. The answers: release.sign.key (an ssh private key), "
+                               "release.sign.namespace, release.sign.files (relative to the repository) and optionally release.sign.verify_command.")),
             "publish": verb("Create the GitHub release of an existing tag, with its changelog section as the notes", [("VERSION", "none")], [PROJECT_OPT, PLAN, APPROVED],
                             desc=("For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, "
                                   "the VERSION section of CHANGELOG.md at the tag and the command: gh release create VERSION --verify-tag --title \"PROJECT VERSION\" --notes-file FILE "
@@ -1047,7 +1056,7 @@ TOPICS = {
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
-        "read); release publish; marshal claim, set, renew, release, take, "
+        "read); release publish and sign; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
