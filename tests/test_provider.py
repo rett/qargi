@@ -558,6 +558,20 @@ class Layout(Tree):
         with self.assertRaises(P.Unsupported):
             P.memory_dir("claude-code", "/x", root=self.root)
 
+    def test_transcripts_is_the_directory_with_the_key_filled_in_and_the_reading_rule(self):
+        tr = P.transcripts("claude-code", "/home/me/p.q", root=self.root, home="/h")
+        self.assertEqual(tr["dir"], "/h/.claude/projects/-home-me-p-q")
+        self.assertEqual((tr["ext"], tr["window"]), (".jsonl", 200000))
+        self.assertEqual(tr["usage"]["tokens"], "/message/usage")
+        self.assertEqual(tr["usage"]["fields"], ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"])
+        d = self.without("resources", "transcripts", "window")
+        self.put("claude-code", d)
+        self.assertEqual(P.transcripts("claude-code", "/x", root=self.root, home="/h")["window"], P.TRANSCRIPT_WINDOW)
+        self.put("claude-code", self.without("resources", "transcripts"))
+        with self.assertRaises(P.Unsupported) as cm:
+            P.transcripts("claude-code", "/x", root=self.root)
+        self.assertIn("has no session transcripts location", str(cm.exception))
+
     def test_the_launch_line_keeps_an_optional_group_only_when_its_file_exists(self):
         render = os.path.join(self.tmp, "render")
         os.makedirs(render)
@@ -764,6 +778,11 @@ class Schema2(unittest.TestCase):
         bad({"settings": {"files": [{"scope": "project", "path": "~/x"}]}}, "resources.settings.files[0].path: '~/x' is not a path inside the checkout")
         bad({"memory": {"user_dir": "/m"}}, "resources.memory.user_dir: '/m' does not start with ~/")
         bad({"memory": {"user_dir": "~/m/{checkout_key}", "checkout_key": None}}, "resources.memory.user_dir: uses {checkout_key} but checkout_key is null")
+        bad({"transcripts": {"user_dir": "/t"}}, "resources.transcripts.user_dir: '/t' does not start with ~/")
+        bad({"transcripts": {"user_dir": "~/t/{checkout_key}", "checkout_key": None}}, "resources.transcripts.user_dir: uses {checkout_key} but checkout_key is null")
+        bad({"transcripts": {"user_dir": "~/t", "window": 5}}, "resources.transcripts.window: 5 is not a number of tokens")
+        bad({"transcripts": {"user_dir": "~/t", "usage": {"select": {"type": "assistant"}}}}, "resources.transcripts.usage.select: 'type' is not a JSON pointer")
+        bad({"transcripts": {"user_dir": "~/t", "usage": {"tokens": "usage"}}}, "resources.transcripts.usage.tokens: 'usage' is not a JSON pointer")
         bad({"mcp": {"file": "../x.json"}}, "resources.mcp.file: '../x.json' is not a path inside the checkout")
 
     def test_an_exclusion_form_needs_the_keys_that_form_reads(self):

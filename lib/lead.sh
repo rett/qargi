@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# The cloud lead's push grant as one guided flow. Only the lead ever pushes; members never do.
+# The lead session: its context, and the cloud lead's push grant as one guided flow. Only the lead ever pushes; members never do.
 #
 #   lead.sh grant  PROJECT [--from-file F]   create or rotate the grant: token, vault, GitHub tool, prompt
 #   lead.sh status PROJECT                   what is in place and what is missing (read-only)
 #   lead.sh revoke PROJECT                   take the grant away again
+#   lead.sh usage [--project P] [--session ID | --transcript FILE] [--json]
+#                                            how much of this session's context is in use (read-only, lib/lead_usage.py)
+#   lead.sh compact-check [--project P] [--advise] [--json]
+#                                            exit 0 when a compact is safe now, 1 when not, with the reasons and what to re-read after it
 #
 # grant and revoke are interactive: each step prints its plan and asks you at the terminal, and your
 # answer is the approval that is recorded. They never run without a terminal; an agent uses the
@@ -13,7 +17,27 @@
 here=$(dirname "$(readlink -f "$0")")
 TTY_IN=${QARGI_TTY_IN:-/dev/tty}; TTY_OUT=${QARGI_TTY_OUT:-/dev/tty}    # the tests answer the prompts through these
 
-verb=${1:-}; PROJECT=${2:-}; shift 2 || true
+verb=${1:-}
+case $verb in
+  usage|compact-check)
+    # the lead's context: read only; the project is --project or the one the checkout belongs to. An unreadable transcript is "unknown", not an error.
+    shift
+    ctx_args=() ctx_proj=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --project) [ $# -ge 2 ] || die "--project needs a value"; ctx_proj=$2; shift 2;;
+        --session|--transcript)
+          [ "$verb" = usage ] || die "compact-check takes no $1"
+          [ $# -ge 2 ] || die "$1 needs a value"; ctx_args+=("$1" "$2"); shift 2;;
+        --json) ctx_args+=("$1"); shift;;
+        --advise) [ "$verb" = compact-check ] || die "usage takes no --advise"; ctx_args+=("$1"); shift;;
+        *) die "usage: qargi lead usage [--project P] [--session ID | --transcript FILE] [--json]; qargi lead compact-check [--project P] [--advise] [--json]";;
+      esac
+    done
+    [ -n "$ctx_proj" ] || ctx_proj=$(python3 -I "$(dirname "$0")/help.py" infer)
+    exec python3 -I "$(dirname "$0")/lead_usage.py" "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$ctx_proj" ${ctx_args[@]+"${ctx_args[@]}"};;
+esac
+PROJECT=${2:-}; shift 2 || true
 valid_project "$PROJECT" || die "usage: lead.sh grant|status|revoke PROJECT"
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
