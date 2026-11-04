@@ -183,9 +183,10 @@ class Apply(Fixtures):
         tok = self.token()
         r = self.apply(tok, "--approve-exec", "make")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.ran(), "bootstrap one two\n")
+        self.assertEqual(self.ran(), "bootstrap one two\ndoctor\n")            # then env check runs the doctor
         self.assertIn("running: make bootstrap", r.stdout)
-        self.assertIn("env check", r.stdout)                               # run, or the command to run
+        self.assertIn("running: qargi env check", r.stdout)
+        self.assertTrue(r.stdout.rstrip().endswith("ENV OK"), r.stdout)
         lines = [x for x in self.audit_lines() if x["verb"].startswith("env:apply")]
         self.assertEqual([x["verb"] for x in lines], ["env:apply", "env:apply-result"])
         self.assertEqual(lines[0]["approved"], GO)
@@ -193,17 +194,22 @@ class Apply(Fixtures):
         self.assertTrue(lines[1]["detail"].endswith("exit 0"))
         f = os.path.join(self.t, "state", "env", "acme.json")
         self.assertEqual(stat.S_IMODE(os.stat(f).st_mode), 0o600)
-        rec = json.loads(slurp(f))["apply"]
+        doc = json.loads(slurp(f))
+        self.assertEqual((doc["check"]["verdict"], doc["check"]["exit"]), ("ENV OK", 0))       # check kept apply's key and added its own
+        rec = doc["apply"]
         self.assertEqual((rec["exit"], rec["command"], rec["token"], rec["allow_root"]), (0, "make bootstrap", tok, False))
         self.assertEqual(len(rec["dry_run_sha256"]), 64)
 
     def test_apply_keeps_what_else_the_record_holds(self):
         f = os.path.join(self.t, "state", "env", "acme.json")
-        put(os.path.dirname(f), "acme.json", json.dumps({"check": {"verdict": "ENV OK"}}))
+        put(os.path.dirname(f), "acme.json", json.dumps({"note": {"kept": True}, "check": {"verdict": "old"}}))
         self.assertEqual(self.apply(self.token(), "--approve-exec", "make").returncode, 0)
         d = json.loads(slurp(f))
-        self.assertEqual(d["check"], {"verdict": "ENV OK"})
+        self.assertEqual(d["note"], {"kept": True})
+        self.assertEqual(d["check"]["verdict"], "ENV OK")                  # check replaced its own key
         self.assertEqual(d["apply"]["exit"], 0)
+        self.assertEqual(self.q("env", "check", "--repo", self.d).returncode, 0)
+        self.assertEqual(json.loads(slurp(f))["apply"]["exit"], 0)         # and a check alone keeps apply's
 
     def test_apply_refuses_a_stale_token(self):
         tok = self.token()
@@ -242,7 +248,7 @@ class Apply(Fixtures):
         self.assertIsNone(self.ran())
         r = self.apply(tok, "--approve-exec", "make,sh")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.ran(), "viash\n")
+        self.assertEqual(self.ran(), "viash\ndoctor\n")
 
     def test_apply_refuses_privileged_lines_without_allow_root(self):
         self.set_makefile(MAKEFILE + "\tsudo ./record.sh rooted\n")
@@ -255,10 +261,17 @@ class Apply(Fixtures):
         self.assertFalse(os.path.exists(self.sudolog))
         r = self.apply(tok, "--approve-exec", "make,sudo", "--allow-root")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.ran(), "bootstrap one two\nrooted\n")
+        self.assertEqual(self.ran(), "bootstrap one two\nrooted\ndoctor\n")
         self.assertEqual(slurp(self.sudolog), "sudo ./record.sh rooted\n")
         self.assertIn("allow-root", [x for x in self.audit_lines() if x["verb"] == "env:apply"][0]["detail"])
         self.assertTrue(json.loads(slurp(os.path.join(self.t, "state", "env", "acme.json")))["apply"]["allow_root"])
+
+    def test_apply_exits_with_the_check_when_the_environment_is_still_incomplete(self):
+        self.set_makefile(MAKEFILE.replace("./record.sh doctor", "@echo missing: acme-tool"))
+        r = self.apply(self.token(), "--approve-exec", "make")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("ENV INCOMPLETE: 1 missing", r.stdout)
+        self.assertEqual(json.loads(slurp(os.path.join(self.t, "state", "env", "acme.json")))["apply"]["exit"], 0)
 
     def test_a_failing_bootstrap_is_audited_and_fails(self):
         self.answers("acme", self.d, env={"bootstrap_command": "make nosuchtarget"})

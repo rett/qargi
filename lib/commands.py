@@ -352,7 +352,7 @@ COMMANDS = {
                                 "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
-                                "The verdict, HEAD, time and commands are recorded in state/env/PROJECT.json (mode 600); no command output is."),
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
                           examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
             "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
@@ -375,7 +375,7 @@ COMMANDS = {
                                 "executables, and when the plan has privileged lines and --allow-root is not given. Then the bootstrap command runs once, without a "
                                 "shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run "
                                 "it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), "
-                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check, or says to run it. QARGI_DRY_RUN stops it "
+                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check (the project's doctor), whose verdict ends the output and whose exit status is the verb's. QARGI_DRY_RUN stops it "
                                 "after the checks, before the bootstrap runs. A member's guard refuses it."),
                           examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make",
                                     "qargi env apply --plan 0123456789ab --approved \"go\" --approve-exec make,pacman --allow-root"]),
