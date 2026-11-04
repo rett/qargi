@@ -12,33 +12,53 @@
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #   release.sh status VERSION [--hotfix]    for an existing tag also warns: no GitHub release for it (gh release view, through
-#                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it
+#                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
+#                                           with release.sign set and no release yet it says "awaiting signature" until `sign` recorded
+#                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push
 #
-#   release.sh publish VERSION [--plan T --approved W]
+#   release.sh sign VERSION                 sign the files of the answer release.sign.files (ssh-keygen -Y sign -f KEY -n NAMESPACE FILE, one by one),
+#                                           run release.sign.verify_command and record the result under STATE/release/. Only from the tag, because the
+#                                           release files are built from the tagged commit: after `finish`, before `publish`. The repository's HEAD
+#                                           must be the commit of the tag VERSION, on master or detached, with no tracked file modified. ssh-keygen
+#                                           runs on the person's own terminal (stdin, stdout and stderr are inherited; nothing is captured and no
+#                                           input is logged), so the passphrase is typed there and never passes through qargi; no ssh agent is
+#                                           asked (SSH_AUTH_SOCK and SSH_ASKPASS are removed from its environment). Refused when stdin is no
+#                                           terminal, in a member run, when QARGI_NESTED is set and when the project has no release.sign (signing is
+#                                           optional and off by default; exit 2); the guard refuses it to a member too.
+#                                           The verify command is an argv list, run without a shell in the repository.
+#
+#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--notes-file FILE]
 #                                           create the GitHub release of the tag VERSION (gh release create --verify-tag, through
 #                                           QARGI_GH) with the tag's changelog section as notes; for a tag pushed before the release
 #                                           workflow existed. Refuses when the release exists, the tag is missing or the section is empty.
+#                                           The files of --asset and of the answer release.assets (relative to the repository, inside it)
+#                                           are attached by the same gh release create. The notes are --notes-file, else the answer
+#                                           release.notes_file ({version} replaced), else the changelog section. When release.sign is
+#                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
+#                                           plan token covers the notes and the hash of every asset.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY=''
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT=''; ASSETS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
+[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|publish VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -86,6 +106,41 @@ tag_checks() {
   esac
 }
 open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPREFIX}*"; }   # the open release branches
+
+# The signing of a release (lib/release_sign.py holds the answers' checks and the record). The record of VER is a file under STATE/release/.
+RS=$(dirname "$0")/release_sign.py
+SIGNREC=$DA_STATE/release/$PROJ-$VER.sign.json
+sign_configured() { jq -e '(.release // {}) | has("sign")' "$af" >/dev/null 2>&1; }
+# sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
+# and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
+sign_status() {
+  local tc s
+  sign_configured || return 0
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  [ "${GHS:-}" != found ] || return 0
+  python3 -I "$RS" config "$af" >/dev/null 2>&1 || { echo "warning: the release answers of $PROJ are not valid (qargi project validate $PROJ), so the signature of $VER was not checked"; return 0; }
+  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
+  echo "awaiting signature: $s"
+  sign_gate
+  if [ -z "$SG_WHY" ]; then echo "$VER is ready for signing: qargi release sign $VER"; else echo "  not ready for signing: $SG_WHY"; fi
+}
+# sign_gate: sets SG_WHY to why the repository is not in a state to sign VER (empty when it is). The files are built from the tagged commit, so
+# the repository's HEAD must be that commit, on master or detached (a develop, feature or other branch is refused) with no tracked file modified.
+sign_gate() {
+  local tc head br f
+  SG_WHY=''
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || { SG_WHY="no tag $VER yet (qargi release finish $VER makes it): sign from the tag, after finish and before publish"; return 0; }
+  head=$(g rev-parse -q --verify 'HEAD^{commit}') || head=''
+  br=$(g symbolic-ref -q --short HEAD) || br=''
+  if [ "$head" != "$tc" ]; then
+    SG_WHY="HEAD of $REPO is ${br:-detached} at ${head:0:7}, not the tag $VER (${tc:0:7}): git -C $REPO checkout --detach $VER, build the release files there, then sign"; return 0
+  fi
+  if [ -n "$br" ] && [ "$br" != master ]; then SG_WHY="$REPO is on branch $br: sign from master or a detached HEAD at the tag (git -C $REPO checkout --detach $VER)"; return 0; fi
+  if [ -n "$(g status --porcelain --untracked-files=no)" ]; then SG_WHY="tracked files of $REPO are modified: the release files must be built from the tag as it is"; return 0; fi
+  while IFS= read -r f; do
+    [ -f "$REPO/$f" ] || { SG_WHY="the file $f of release.sign.files does not exist in $REPO: build the release files first"; return 0; }
+  done < <(jq -r '.release.sign.files[]' "$af")
+}
 
 case $verb in
   start)
@@ -165,6 +220,7 @@ PY
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: $(v=$(verified "$BASE"); if [ -z "$v" ]; then echo "not run"; elif [ "${v%% *}" = "$(sha_of "$BASE")" ]; then echo "${v##* } at this head"; else echo "${v##* } at an older head"; fi)"
       remote_report "$BASE"
       tag_checks
+      sign_status
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
@@ -172,7 +228,8 @@ PY
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
-    tag_checks;;
+    tag_checks
+    sign_status;;
   verify)
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     on=$BR; branch_exists "$BR" || on=$BASE
@@ -258,12 +315,74 @@ PY
     else
       echo "no origin remote: nothing was pushed"
     fi;;
+  sign)
+    python3 -I "$RS" lead-only || exit $?
+    sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
+    python3 -I "$RS" config "$af" --need-sign || die "the answers of $PROJ do not hold a usable release.sign"
+    sign_gate; [ -z "$SG_WHY" ] || die "$SG_WHY"
+    # the passphrase is typed on the person's terminal, so a stdin that is no terminal (a pipe, a file, an agent's tool) is refused
+    [ -t 0 ] || die "release sign needs a terminal on stdin: ssh-keygen asks for the key's passphrase there, and it must be you who types it. Run it in your own terminal"
+    key=$(jq -r '.release.sign.key' "$af"); key=${key/#\~/$HOME}
+    ns=$(jq -r '.release.sign.namespace' "$af")
+    [ -f "$key" ] || die "release.sign.key: $key is not a file"
+    mapfile -t rels < <(jq -r '.release.sign.files[]' "$af")
+    mapfile -t sfiles < <(python3 -I "$RS" resolve "$REPO" "${rels[@]}") && [ "${#sfiles[@]}" = "${#rels[@]}" ] || die "a file of release.sign.files cannot be used"
+    [ "${#sfiles[@]}" -gt 0 ] || die "release.sign.files names nothing to sign"
+    rm -f "$SIGNREC"; mkdir -p "$DA_STATE/release"
+    tc=$(g rev-parse "refs/tags/$VER^{commit}")
+    echo "signing ${#sfiles[@]} file(s) of $PROJ $VER with $key (namespace $ns); ssh-keygen asks for the passphrase on this terminal"
+    signrc=0
+    for line in "${sfiles[@]}"; do
+      IFS=$'\t' read -r _ abs rel <<<"$line"
+      rm -f "$abs.sig"
+      echo "  $rel"
+      # stdin, stdout and stderr are this terminal's own; no ssh agent or askpass program may stand in for the person
+      env -u SSH_AUTH_SOCK -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE ssh-keygen -Y sign -f "$key" -n "$ns" "$abs" || { signrc=$?; echo "qargi: signing $rel failed (ssh-keygen exit $signrc)" >&2; break; }
+    done
+    vrc=none
+    if [ "$signrc" = 0 ] && jq -e '.release.sign.verify_command' "$af" >/dev/null 2>&1; then
+      mapfile -d '' -t vcmd < <(jq -j '.release.sign.verify_command[] | ., "\u0000"' "$af")
+      echo "verifying: ${vcmd[*]}"
+      (cd "$REPO" && "${vcmd[@]}" </dev/null) && vrc=0 || vrc=$?
+    fi
+    res=$(python3 -I "$RS" record --state "$SIGNREC" --repo "$REPO" --af "$af" --project "$PROJ" --version "$VER" --commit "$tc" --sign-rc "$signrc" --verify-rc "$vrc") || true
+    audit_log "release:sign" "$PROJ $VER ${res:-failed}"
+    case ${res:-} in
+      ok) echo "signed$([ "$vrc" = none ] && echo " (release.sign.verify_command is not set, so nothing verified it)" || echo " and verified"): $VER of $PROJ is recorded (${SIGNREC#"$DA_STATE/"})"
+          echo "attach the .sig files with release.assets or --asset; then: qargi release publish $VER";;
+      verify-failed) die "the signatures were made, but verify_command exited $vrc: the signature is not recorded as ok (fix it and sign again)";;
+      *) die "signing failed: nothing is recorded as signed";;
+    esac;;
   publish)
     tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it)"
+    python3 -I "$RS" config "$af" || die "the release answers of $PROJ are not valid (qargi project validate $PROJ)"
     notes=$(mktemp "$DA_STATE/.release-notes.XXXXXX")
-    g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
-    sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
-    printf '%s\n' "$sect" > "$notes"
+    # the notes: --notes-file, else the answer release.notes_file, else the VER section of CHANGELOG.md at the tag
+    nfile=$NOTES_OPT
+    [ -n "$nfile" ] || { nfile=$(jq -r '.release.notes_file // ""' "$af"); nfile=${nfile//\{version\}/$VER}; }
+    if [ -n "$nfile" ]; then
+      out=$(python3 -I "$RS" resolve "$REPO" "$nfile") || die "the notes file cannot be used"
+      IFS=$'\t' read -r _ nabs nrel <<<"$out"
+      cp "$nabs" "$notes"
+      grep -q '[^[:space:]]' "$notes" || die "the notes file $nrel is empty: nothing to publish"
+      nsrc="the file $nrel"
+    else
+      g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
+      sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
+      printf '%s\n' "$sect" > "$notes"
+      nsrc="the $VER section of CHANGELOG.md at the tag"
+    fi
+    # the assets: release.assets and every --asset, each a regular file inside the repository; attached by the same gh release create
+    mapfile -t alist < <(jq -r '(.release.assets // [])[]' "$af")
+    alist+=("${ASSETS[@]}")
+    assets=(); ahash=; arel=; declare -A seen
+    if [ "${#alist[@]}" -gt 0 ]; then
+      out=$(python3 -I "$RS" resolve "$REPO" "${alist[@]}") || die "an asset cannot be used; nothing was published"
+      while IFS=$'\t' read -r h abs rel; do
+        [ -z "${seen[$abs]:-}" ] || continue; seen[$abs]=1   # named twice (the answers and --asset)
+        assets+=("$abs"); ahash+="$h $rel"$'\n'; arel+="$rel"$'\n'
+      done <<<"$out"
+    fi
     title="$PROJ $VER"
     gh_release_state "$VER"
     case $GHS in
@@ -272,11 +391,28 @@ PY
       noauth) echo "note: gh is not authenticated, so whether GitHub has a release for tag $VER was not checked; applying needs it (gh auth login)" >&2;;
       unchecked) echo "note: could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer})" >&2;;
     esac
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" | plan_token)
+    # when the project signs its releases, nothing is published before the signature of this tag is recorded ok and the signed files are as signed
+    signline=''; stok=''
+    if sign_configured; then
+      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc") \
+        || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
+      stok=$(sha256sum < "$SIGNREC")
+    fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" | plan_token)
     echo "publish the GitHub release of tag $VER of $PROJ: tag at ${tc:0:7} ($(g log -1 --format=%s "$tc"))"
-    echo "notes (the $VER section of CHANGELOG.md at the tag):"
+    echo "notes ($nsrc):"
     sed 's/^/  | /' "$notes"
-    echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES"
+    if [ "${#assets[@]}" -gt 0 ]; then
+      echo "assets (${#assets[@]}), attached by the same gh release create:"
+      sed 's/^\([0-9a-f]*\) /  | \1  /' <<<"${ahash%$'\n'}"
+    fi
+    if [ -n "$signline" ]; then
+      echo "signature: $signline"
+      while IFS= read -r f; do
+        grep -qxF -- "$f.sig" <<<"$arel" || echo "note: $f.sig is not among the assets: attach it with --asset $f.sig or release.assets"
+      done < <(jq -r '.files | keys[]' "$SIGNREC")
+    fi
+    echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES$([ "${#assets[@]}" -eq 0 ] || printf ' %s' "${assets[@]}")"
     echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
@@ -286,8 +422,8 @@ PY
       noauth) die "gh is not authenticated (gh auth login); nothing was published";;
       *) die "could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer}); nothing was published";;
     esac
-    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
-    audit_log "release:publish" "$PROJ $VER"
+    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
+    audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
     echo "published the release of tag $VER: $out";;
-  *) die "usage: qargi release start|status|verify|push|finish|publish VERSION [--hotfix] [--project P]";;
+  *) die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]";;
 esac

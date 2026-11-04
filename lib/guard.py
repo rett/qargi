@@ -77,8 +77,9 @@ read-only role run there) is refused to a member, found like the skill verbs, an
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
 PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
-Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
-verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
+Release: `qargi release publish` (it creates the GitHub release of a tag) and `qargi release sign` (it signs the release files with the
+lead's key) are refused to a member, found like the skill verbs, also as a verb held in a variable and through lib/release.sh and
+lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -184,7 +185,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
            "agent.sh", "team.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
@@ -2063,6 +2064,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "release.sh":
         words = ["release"] + words
+    if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
+        words = ["release", "sign"]
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
@@ -2120,6 +2123,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    if area == "release" and any(w == "sign" for w in words[1:4]):
+        return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb not in FEATURE_OPEN:
