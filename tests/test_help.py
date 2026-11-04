@@ -144,7 +144,7 @@ class Render(unittest.TestCase):
     def test_the_guard_topic_names_every_verb_the_guard_refuses(self):
         text = " ".join(C.TOPICS["guard"][1])
         words = set(re.findall(r"[a-z][a-z-]*", text))
-        refused = set(G.SKILL_VERBS) | set(G.PROJECT_VERBS) | set(G.MEMORY_VERBS) | set(G.MARSHAL_MUTATING) | set(G.MARSHAL_SIGNING)
+        refused = set(G.SKILL_VERBS) | set(G.PROJECT_VERBS) | set(G.MEMORY_VERBS) | {"claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable"} | set(G.MARSHAL_SIGNING)
         src = slurp(os.path.join(LIB, "guard.py"))
         m = re.search(r"if \(area in \(\"skill\", \"tool\"\) and verb in SKILL_VERBS\) or \(area, verb\) in \((.*?)\)\s*\\", src, re.S)
         self.assertTrue(m, "the gated (area, verb) pairs of lib/guard.py moved: update this test")

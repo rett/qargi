@@ -94,7 +94,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
   - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
-  the Read, NotebookRead and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
+  the Read and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
   globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
   look at it and stay allowed; the other credentials stay readable.
@@ -140,13 +140,10 @@ Not seen: a script built by code (python -c ...), a program or a verb held in a 
 `bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
-JSON is still let through (exit 0), as before. Known limits outside this file, from the Claude Code hooks documentation
-(https://code.claude.com/docs/en/hooks): a hook that cannot start, exits other than 0 or 2, times out or prints invalid
-JSON is a non-blocking error ("The action goes ahead, except for hooks whose failure blocks the action, for example a
-hook with `onFailure` set to \"block\""), so agents/member.md sets `onFailure: "block"` and a `timeout` (`onFailure`
-"Requires Claude Code v2.1.295 or later"; an older version does not enforce it). Frontmatter hooks of a project-level
-agent file run only after the workspace trust dialog is accepted (https://code.claude.com/docs/en/sub-agents): until
-then the subagent runs without this guard."""
+JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
+JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
+enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
+subagent runs without this guard."""
 import collections, fnmatch, functools, json, os, re, shlex, sys, time
 
 SEPARATOR = re.compile(r"(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))")           # the separators, kept (re.split hands them back between the pieces); no \s* around them: a long run of blanks made that quadratic
@@ -190,7 +187,6 @@ PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dir
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 LEAD_VERBS = {("local", "clean"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
-MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
@@ -436,19 +432,16 @@ def skip_wrappers(toks):
 
 @functools.cache
 def parsed(seg):
-    """(the words of a segment, the index of its program): cmd_tokens and skip_wrappers, once per text (every check asks). The list is shared: not to be changed."""
+    """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
+    asks). The list is shared: not to be changed."""
     toks = list(_cmd_tokens(seg))
     return toks, skip_wrappers(toks)
 
 
-def cmd_tokens(seg):
-    """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
-    a group or a substitution stuck to the last. Cut once per text (a command is asked about by several checks); the list is the caller's."""
-    return list(_cmd_tokens(seg))
-
-
 @functools.cache
 def _cmd_tokens(seg):
+    """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
+    a group or a substitution stuck to the last. Cut once per text (a command is asked about by several checks)."""
     toks = tokens(seg)
     if toks[:1] == ["function"]:                             # function NAME { ...
         toks = toks[2:]
@@ -781,8 +774,9 @@ RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs
 
 def control_refusal(full):
     """The reason a write to a run directory's own record is refused, or None. RUN_CONTROL is every file of the run directory that `qargi local` reads
-    back and trusts: the ability and class the guard is held to, the refs the run is compared with, the directory `local clean` removes (tmpdir), the
-    repository and the tip it asks whether the work is merged (repo.path, applied), the credential path, the git wrapper."""
+    back or that names something it uses: the ability and class the guard is held to, the refs the run is compared with, the temporary directory prepare made
+    (tmpdir: `local clean` takes the one to remove from the lead's registry, never from this file), the repository and the tip it asks whether the work is
+    merged (repo.path, applied), the credential path, the git wrapper."""
     if os.path.basename(full) in RUN_CONTROL and run_dir(os.path.dirname(full)) == os.path.dirname(full):
         return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
     return None
@@ -1510,49 +1504,41 @@ def lead_roots(home=None):
     return {os.path.realpath(r) for r in (os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git"), os.path.join(xdg, "git"), os.path.join(home, ".git"))}
 
 
-def render_roots(P=None, home=None):
-    """The render/ directory of the state: where the renders of every runtime go (state/render/<project>/<runtime>: skills, tools and
-    members as a runtime loads them). Found like the other qargi paths: QARGI_STATE, else <root>/state, and the default
-    ~/.qargi/state beside an override (real paths, so a link into it is followed)."""
+def state_sub(name, P=None, home=None):
+    """The directory `name` of the state, in each of the places qargi keeps it: QARGI_STATE, else <root>/state, and the default ~/.qargi/state beside an override
+    (real paths, so a link into it is followed)."""
     if P is None:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import paths as P
     home = home or os.path.expanduser("~")
-    return {os.path.realpath(os.path.join(st, "render")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    return {os.path.realpath(os.path.join(st, name)) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+
+
+def render_roots(P=None, home=None):
+    """The render/ directory of the state: where the renders of every runtime go (state/render/<project>/<runtime>: skills, tools and members as a runtime loads
+    them)."""
+    return state_sub("render", P, home)
 
 
 def providers_state_roots(P=None, home=None):
-    """The providers/ directory of the state: the verification records (verified.json) that decide which capabilities of a library
-    runtime count. Written only by `provider check` and `provider attest`. Found as render_roots does."""
-    if P is None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import paths as P
-    home = home or os.path.expanduser("~")
-    return {os.path.realpath(os.path.join(st, "providers")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    """The providers/ directory of the state: the verification records (verified.json) that decide which capabilities of a library runtime count. Written only by
+    `provider check` and `provider attest`."""
+    return state_sub("providers", P, home)
 
 
 def feature_roots(P=None, home=None):
-    """The features/ directory of the state: the marshal's record of each open feature. Found as render_roots does."""
-    if P is None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import paths as P
-    home = home or os.path.expanduser("~")
-    return {os.path.realpath(os.path.join(st, "features")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    """The features/ directory of the state: the marshal's record of each open feature."""
+    return state_sub("features", P, home)
 
 
 def switch_roots(P=None, home=None):
-    """The marshal/ directory of the state: the per-project `.enabled` switch files of the shared-refs backend. Found as
-    feature_roots does."""
-    if P is None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import paths as P
-    home = home or os.path.expanduser("~")
-    return {os.path.realpath(os.path.join(st, "marshal")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    """The marshal/ directory of the state: the per-project `.enabled` switch files of the shared-refs backend."""
+    return state_sub("marshal", P, home)
 
 
 def memory_roots(P=None, home=None):
-    """The memory tiers qargi keeps by default: <root>/memory (project, shared and system) and ~/.qargi/memory. Reading stays
-    allowed; a tier placed elsewhere by the project's answers is not guarded."""
+    """The memory tiers qargi keeps by default: <root>/memory (project, shared and system) and ~/.qargi/memory. Reading stays allowed; a tier placed elsewhere by
+    the project's answers is not guarded."""
     if P is None:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import paths as P
@@ -2257,7 +2243,7 @@ CLAUDE_HOOK = {
     "input": "json-stdin", "tool_pointer": "/tool_name", "command_pointer": "/tool_input/command", "cwd_pointer": "/cwd",
     "path_pointers": {"write": ["/tool_input/file_path", "/tool_input/notebook_path"],
                       "read": ["/tool_input/file_path", "/tool_input/notebook_path", "/tool_input/path"]},
-    "tool_names": {"shell": ["Bash"], "write": ["Edit", "Write", "NotebookEdit", "MultiEdit"], "read": ["Read", "NotebookRead"], "search": ["Grep"]},
+    "tool_names": {"shell": ["Bash"], "write": ["Edit", "Write", "NotebookEdit"], "read": ["Read"], "search": ["Grep"]},
     "deny": {"exit": 2, "stream": "stderr"}, "allow": {"exit": 0},
 }
 
