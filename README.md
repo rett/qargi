@@ -177,6 +177,7 @@ refusal changes nothing.
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
+   `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
