@@ -15,7 +15,11 @@ The project's answers (outside the repository) may override the commands derived
 
 Detection only reads files. Nothing is executed (make, just, task and mise are never run; their files are parsed
 as text), and no git command is run. A file that is a symbolic link leaving the repository, is not a regular file or
-is larger than 1 MB is not read. plan and apply are lead-only verbs of this group and are not built yet.
+is larger than 1 MB is not read.
+
+  env.py plan [--project P] [--repo DIR] --approve-exec NAME                          run the dry run, show it, print a plan token
+  env.py apply [--project P] [--repo DIR] --plan T --approved WORDS --approve-exec NAMES [--allow-root]    run the bootstrap once
+plan and apply run project code (even a dry run does) and are the lead's: lib/env_apply.py, and the member guard refuses them.
 
 As a module: detect(repo) -> dict, effective(repo, answers) -> dict (detection plus the answers' overrides, the
 form the later check, plan and apply verbs read), problems(env_answers) -> list of messages (project validation).
@@ -26,7 +30,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402
 
 CAP = 1024 * 1024                         # bytes read from any one file
-LEAD_ONLY = ("plan", "apply")             # verbs of this group that only the lead will run; the member guard refuses them when they exist
 KEYS = ("doctor_command", "bootstrap_command", "dry_run_command", "known_failures")
 SECTION_FILES = ("AGENTS.md", "README.md")
 SECTION_HEADING = re.compile(r"(?:development |dev )?(?:environment|setup)(?: setup)?")
@@ -411,6 +414,35 @@ def repo_root_of(path):
         d = up
 
 
+class Problem(Exception):
+    """The project or the repository asked for cannot be used (the message is printed after "qargi: "; the exit status is 2)."""
+
+
+def resolve(project, repo):
+    """(project, answers, repo directory) for --project and --repo as given (None when absent): the stored project, else the one that
+    holds the directory or the current one, and the repository it names, else the one around here."""
+    answers = None
+    if project is not None:
+        answers = answers_of(project)
+        if answers is None:
+            raise Problem("no such project '%s' (qargi project list)" % project)
+    elif repo is None:
+        project = os.environ.get("QARGI_PROJECT") or project_for_dir(os.getcwd())
+        answers = answers_of(project) if project else None
+        project = project if answers is not None else None
+    else:
+        project = project_for_dir(repo)
+        answers = answers_of(project) if project else None
+    if repo is None:
+        rp = ((answers or {}).get("repo") or {}).get("path") or ""
+        if project is not None and not rp:
+            raise Problem("project %s has no repo.path; give --repo DIR" % project)
+        repo = os.path.expanduser(rp) if rp else repo_root_of(os.getcwd())
+    if not os.path.isdir(repo):
+        raise Problem("%s is not a directory" % repo)
+    return project, answers, repo
+
+
 def show(argv):
     project = repo = None
     as_json = False
@@ -429,27 +461,10 @@ def show(argv):
         else:
             print("usage: qargi env show [--project P] [--repo DIR] [--json]", file=sys.stderr)
             return 2
-    answers = None
-    if project is not None:
-        answers = answers_of(project)
-        if answers is None:
-            print("qargi: no such project '%s' (qargi project list)" % project, file=sys.stderr)
-            return 2
-    elif repo is None:
-        project = os.environ.get("QARGI_PROJECT") or project_for_dir(os.getcwd())
-        answers = answers_of(project) if project else None
-        project = project if answers is not None else None
-    else:
-        project = project_for_dir(repo)
-        answers = answers_of(project) if project else None
-    if repo is None:
-        rp = ((answers or {}).get("repo") or {}).get("path") or ""
-        if project is not None and not rp:
-            print("qargi: project %s has no repo.path; give --repo DIR" % project, file=sys.stderr)
-            return 2
-        repo = os.path.expanduser(rp) if rp else repo_root_of(os.getcwd())
-    if not os.path.isdir(repo):
-        print("qargi: %s is not a directory" % repo, file=sys.stderr)
+    try:
+        project, answers, repo = resolve(project, repo)
+    except Problem as e:
+        print("qargi: %s" % e, file=sys.stderr)
         return 2
     d = effective(repo, answers)
     d["project"] = project
@@ -458,12 +473,12 @@ def show(argv):
 
 
 def main(argv):
-    if argv[:1] and argv[0] in LEAD_ONLY:
-        print("qargi env %s is not built yet; it will be run by the lead only" % argv[0], file=sys.stderr)
-        return 2
     if argv[:1] == ["show"]:
         return show(argv[1:])
-    print("usage: env.py show [--project P] [--repo DIR] [--json]", file=sys.stderr)
+    if argv[:1] in (["plan"], ["apply"]):
+        import env_apply                       # not at the top: reading files (show) needs none of it
+        return env_apply.main(argv[0], argv[1:])
+    print("usage: env.py show|plan|apply ...   (qargi help env)", file=sys.stderr)
     return 2
 
 

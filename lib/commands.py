@@ -340,6 +340,31 @@ COMMANDS = {
                                "(make bootstrap, make -n bootstrap, make doctor) and replaced by the project's answers env.doctor_command, "
                                "env.bootstrap_command and env.dry_run_command; env.known_failures lists doctor lines accepted on this host. Each line says where it came from."),
                          examples=["qargi env show", "qargi env show --project acme --json", "qargi project set acme env.doctor_command 'make doctor'"]),
+            "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
+                         [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                          opt("--approve-exec", "the executable of the dry-run command (make for make -n bootstrap); without it nothing is run and the exit status is 2", "NAME")],
+                         desc=("A dry run is not harmless: make -n still expands $(shell ...) and runs recipe lines marked + or holding $(MAKE), and the dry run "
+                               "of the other runners evaluates project code too. So the plan itself runs project code, and needs --approve-exec naming the "
+                               "executable; read the project's files first. The command runs without a shell, in the repository, with standard input from /dev/null, "
+                               "a minimal environment (PATH with absolute entries, HOME, USER, LOGNAME, LANG, LC_ALL, LC_CTYPE, TERM, TZ, TMPDIR) and a limit of "
+                               "QARGI_ENV_TIMEOUT seconds (default 120). Its output is shown line by line, the privileged lines (a command in the line is sudo, doas, "
+                               "pkexec, su or run0) apart from the others, then the executables seen in the lines. Lines and executables are read from the text, "
+                               "best effort: a recipe can run more than its dry run shows. The plan token is a hash over the output, the commands, the repository "
+                               "and its HEAD, and the host name. A member's guard refuses it."),
+                         examples=["qargi env plan --approve-exec make", "qargi env plan --project acme --approve-exec make"]),
+            "apply": verb("Run the bootstrap command once, for a plan you showed (the lead's)", [],
+                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                           PLAN, APPROVED,
+                           opt("--approve-exec", "name the executables of the dry-run and the bootstrap commands, separated by commas (others the plan listed may be added)", "NAMES"),
+                           opt("--allow-root", "allow a plan that has privileged lines (sudo, doas, ...)")],
+                          desc=("Runs the dry run again (project code, as plan does) and refuses when its token is not --plan, when --approve-exec does not name the two "
+                                "executables, and when the plan has privileged lines and --allow-root is not given. Then the bootstrap command runs once, without a "
+                                "shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run "
+                                "it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), "
+                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check, or says to run it. QARGI_DRY_RUN stops it "
+                                "after the checks, before the bootstrap runs. A member's guard refuses it."),
+                          examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make",
+                                    "qargi env apply --plan 0123456789ab --approved \"go\" --approve-exec make,pacman --allow-root"]),
         },
     },
     "provision": {
@@ -1105,7 +1130,8 @@ TOPICS = {
         ".gitmodules; and two targets of its task runner (Makefile, justfile, Taskfile.yml or mise.toml tasks): bootstrap, which installs "
         "everything idempotently, and doctor, which only checks and exits non-zero on a missing item. setup and check are accepted names.",
         "Anyone, with or without qargi, runs the dry run (make -n bootstrap), reads it, runs bootstrap, then doctor. qargi env show prints what it "
-        "found and the commands it would use; it runs nothing.",
+        "found and the commands it would use; it runs nothing. qargi env plan runs the dry run (a dry run still runs project code: make -n expands $(shell ...)) "
+        "and shows it with a plan token; qargi env apply runs bootstrap once for that plan. Both are the lead's.",
         "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
         "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [
@@ -1131,7 +1157,8 @@ ENVIRONMENT = [
     ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
-    ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it"),
+    ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
+    ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 
