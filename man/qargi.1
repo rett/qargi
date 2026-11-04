@@ -961,6 +961,33 @@ the repository directory (default: the project's repo.path, else the repository 
 print the result as JSON.
 .RE
 .RE
+.RS
+.TP
+.B check
+Run the project's doctor, add the qargi layer (links, members, packs, memory) and print ENV OK or ENV INCOMPLETE.
+.br
+A member may run it. It RUNS THE PROJECT'S CODE: the doctor command (env.doctor_command, else the doctor or check target) is run once, without a shell, in the repository, with standard input closed and a minimal environment, so the repository is as trusted as it is for test_command. Its lines are read: one that begins with missing, fail, error, not ok, stale, [x] or a cross mark, or ends with missing, not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected and not red; a non\-zero exit with no such line is one missing item. With no doctor command a built\-in minimum runs: submodules initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering \-\-version and matching the pin's major.minor (this runs TOOL \-\-version). For a stored project it adds, read\-only, whether the checkout loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). The verdict, HEAD, time and commands are recorded in state/env/PROJECT.json (mode 600); no command output is.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-repo " "DIR"
+the repository directory (default: the project's repo.path, else the repository around here).
+.RE
+.RS
+.TP
+.BI "\-\-timeout " "SECONDS"
+seconds the doctor may run (default 300, at most 3600).
+.RE
+.RS
+.TP
+.B \-\-json
+print the result as JSON.
+.RE
+.RE
 .TP
 .B qargi instances
 Register, inspect and manage agent instances.
