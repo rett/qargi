@@ -20,7 +20,9 @@
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
-# start time; never a repository path or a token), so `qargi report` can list the local runs.
+# start time, temporary directory; never a repository path or a token), so `qargi report` can list the local runs. The
+# registry is the lead's: `clean` removes the temporary directory that this line names for the run, not the one the run's
+# own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
 # After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
@@ -276,8 +278,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" \
-      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end)}' >> "$DA_STATE/local-runs.jsonl"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" \
+      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
@@ -388,11 +390,19 @@ WRAP
         fi
       fi
     fi
-    # the run's temporary directory is removed only when it is where prepare puts one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm (QARGI_RUN_TMP,
-    # when prepare was told to use another parent); a recorded path anywhere else is left alone. The recorded text is only a claim until checked: the trailing
-    # slashes are stripped (rm -rf on a link with one empties what the link leads to), a link is refused after that, the real path of the directory must be
-    # directly under the real path of that parent (no link in between), and what is removed is that real path, on its own file system.
-    t=$(cat "$RUN/tmpdir" 2>/dev/null || true)
+    # the run's temporary directory is the one the lead's registry names for this run directory ($DA_STATE/local-runs.jsonl, written by prepare), else RUN/tmp:
+    # never the run's own tmpdir file, which a member can write and which could name another run's directory. It is removed only when it is where prepare puts
+    # one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm (QARGI_RUN_TMP, when prepare was told to use another parent); a recorded path anywhere else is
+    # left alone. The recorded text is only a claim until checked: the trailing slashes are stripped (rm -rf on a link with one empties what the link leads
+    # to), a link is refused after that, the real path of the directory must be directly under the real path of that parent (no link in between), and what
+    # is removed is that real path, on its own file system.
+    t=''; rrun=$(readlink -f -- "$RUN" 2>/dev/null || true)
+    if [ -n "$rrun" ] && [ -f "$DA_STATE/local-runs.jsonl" ]; then
+      while IFS=$'\t' read -r rr rt; do
+        [ -n "$rr" ] && [ "$(readlink -f -- "$rr" 2>/dev/null)" = "$rrun" ] && t=$rt
+      done < <(jq -r 'select((.tmpdir | type) == "string") | [.run, .tmpdir] | @tsv' "$DA_STATE/local-runs.jsonl" 2>/dev/null)
+    fi
+    [ -n "$t" ] || t=$RUN/tmp
     while [ "${t%/}" != "$t" ] && [ "$t" != / ]; do t=${t%/}; done
     rt=''
     if [ -n "$t" ] && [ ! -L "$t" ] && [ -d "$t" ]; then
@@ -426,6 +436,7 @@ WRAP
     fi
     printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
     nowe=$(date +%s)
+    plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
     for d in ${runs[@]+"${runs[@]}"}; do
       sl=$(jq -r --arg r "$d" 'select(.run == $r) | .slug' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
       [ -n "$sl" ] || sl=$(git -C "$d/clone" branch --show-current 2>/dev/null | sed 's|^agent/||')
@@ -437,7 +448,7 @@ WRAP
         if [ -z "$rp" ]; then mg='?'
         elif [ -n "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then mg=yes; fi
       fi
-      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(cat "$d/ability" 2>/dev/null || echo '?')" "${sl:--}" "$ag" "$ap" "$mg" "$d"
+      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)

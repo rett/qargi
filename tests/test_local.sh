@@ -29,6 +29,8 @@ git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
 [ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
 grep -q "$T/r" "$T/s/local-runs.jsonl" && no "the registry names the repository path" || ok "the registry holds no repository path"
+[ "$(jq -r 'select(.slug=="demo") | .tmpdir' "$T/s/local-runs.jsonl")" = "$TMP" ] && [ "$(jq -r 'select(.slug=="demo") | .slug' "$T/s/local-runs.jsonl")" = demo ] \
+  && ok "the registry names each run's temporary directory (and its slug): the lead's record of what clean removes" || no "registry tmpdir: $(cat "$T/s/local-runs.jsonl")"
 # clean: a collected, verified run goes away with its temporary directory; anything else is refused
 git init -q -b main "$T/r2" && git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c1 --scratch "$T"); C1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
@@ -161,7 +163,10 @@ err=$(./bin/qargi local clean "$C1" --discard 2>&1 >/dev/null); rcd=$?
   && ok "--discard removes a run whose refs changed, with its temporary directory, and prints the verify outcome as a warning" || no "discard after changed refs (rc=$rcd): $err"
 # a recorded temporary directory outside /dev/shm and QARGI_RUN_TMP is not removed
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c6 --scratch "$T"); C6=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM6=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
-mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; printf '%s\n' "$T/elsewhere/qargi-run.abcdef" > "$C6/tmpdir"
+settmp() { # RUN PATH: make the registry say that PATH is RUN's temporary directory (what clean trusts)
+  jq -c --arg r "$1" --arg t "$2" 'if .run == $r then .tmpdir = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
+}
+mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; settmp "$C6" "$T/elsewhere/qargi-run.abcdef"
 err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
   && ok "a recorded TMP that is not under QARGI_RUN_TMP or /dev/shm is left alone, with a note" || no "foreign tmpdir: $err"
 rm -rf "$TM6" "$T/elsewhere"
@@ -178,18 +183,41 @@ for form in 'T/qargi-run.abcde/' 'T/qargi-run.abcde' 'T/qargi-run.abcdef' 'T/qar
     RUN/tmp*) ln -s "$VIC" "$CV/tmp"; rec="$CV/${form#RUN/}";;
     T/*) rec="$T/${form#T/}";;
   esac
-  printf '%s\n' "$rec" > "$CV/tmpdir"
+  settmp "$CV" "$rec"
   ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
   [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ ! -e "$CV" ] && ok "a recorded tmpdir '$form' is left alone: what it leads to is untouched" || no "tmpdir '$form' damaged something"
   rm -rf "$TV"
 done
-read -r CV TV <<<"$(mkc lk-slash)"; touch "$TV/x"; printf '%s/\n' "$TV" > "$CV/tmpdir"
+read -r CV TV <<<"$(mkc lk-slash)"; touch "$TV/x"; settmp "$CV" "$TV/"
 ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
 [ ! -e "$TV" ] && [ ! -e "$CV" ] && ok "a real temporary directory recorded with a trailing slash is removed" || no "trailing slash tmpdir not removed"
 read -r CV TV <<<"$(mkc lk-run)"; echo '{}' > "$CV/out/manifest.json"; mv "$CV" "$T/real-$(basename "$CV")"; ln -s "$T/real-$(basename "$CV")" "$CV"
 ./bin/qargi local clean "$CV/" >/dev/null 2>&1; ./bin/qargi local clean "$CV" >/dev/null 2>&1
 [ -f "$T/real-$(basename "$CV")/refs.before" ] && ok "a run directory that is a link is not cleaned, with or without a trailing slash" || no "a linked run dir was cleaned"
 rm -f "$CV"; rm -rf "$T/real-$(basename "$CV")" "$TV" "$T/qargi-run.abcde" "$T/qargi-run.abcdef" "$T/linkroot" "$T/realroot"
+# the run's own tmpdir file is not trusted: it names another run's temporary directory (also written with // and with a trailing slash), and clean of this run
+# removes this run's directory from the registry and leaves the other alone
+read -r CX TX <<<"$(mkc fg-x)"; read -r CY TY <<<"$(mkc fg-y)"; touch "$TY/precious"
+for form in "$TY" "$TY/" "${TY%/*}//${TY##*/}" "${TY%/*}/./${TY##*/}"; do
+  printf '%s\n' "$form" > "$CX/tmpdir"; mkdir -p "$TX"
+  ./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
+  [ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ ! -e "$TX" ] && ok "a tmpdir file naming another run's temporary directory ('$form') is ignored: the other run's is untouched and this run's own is removed" \
+    || no "forged tmpdir file '$form': other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1) own=$(ls -d "$TX" 2>&1)"
+  read -r CX TX <<<"$(mkc fg-x)"
+done
+# a run with no line in the registry loses only RUN/tmp, whatever its tmpdir file says
+jq -c --arg r "$CX" 'select(.run != $r)' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
+mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
+./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
+[ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ -d "$TX" ] && ok "with no registry line only RUN/tmp goes: the tmpdir file's directory and the unrecorded temporary directory are left" || no "no record: other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1)"
+rm -rf "$TX" "$TY" "$CY"
+# list prints no control or escape byte a run's files hold
+read -r CZ TZ <<<"$(mkc ls-ctl)"; printf 'bui\033]0;pwn\007ld\n' > "$CZ/ability"
+jq -c --arg r "$CZ" 'if .run == $r then .slug = "s\u001b[2Jl\u0007ug" else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
+out=$(./bin/qargi local list --scratch "$T"); outr=$(./bin/qargi local list)
+{ ! LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" <<<"$out" && ! LC_ALL=C grep -q "$(printf '[\001-\010\013-\037\177]')" <<<"$outr" && grep -q 'bui\]0;pwnld' <<<"$out" && grep -q 's\[2Jlug' <<<"$outr"; } \
+  && ok "list prints the files of a run without control or escape bytes (also the slug the registry holds)" || no "list printed raw bytes: $(cat -v <<<"$out" | grep ls-ctl)"
+rm -rf "$CZ" "$TZ"
 # list and clean --applied: the runs of one scratch directory
 git init -q -b main "$T/r6" && $LC -C "$T/r6" commit -q --allow-empty -m one
 mkdir -p "$T/ls" "$T/ls2"
