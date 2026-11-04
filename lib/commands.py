@@ -330,7 +330,7 @@ COMMANDS = {
         "desc": ("qargi defines no file for this. A project declares its environment with a section of AGENTS.md (or README.md) headed "
                  "Development environment, Environment or Setup, the version pins in the standard files, and two runnable targets: bootstrap "
                  "(install or update, idempotent) and doctor (check only). qargi reads them; see qargi help environment."),
-        "scripts": ["env.py"],
+        "scripts": ["env.py", "env_check.py"],
         "verbs": {
             "show": verb("Print what was found (section, pins, submodules, runner, targets) and the commands in effect", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
@@ -340,6 +340,20 @@ COMMANDS = {
                                "(make bootstrap, make -n bootstrap, make doctor) and replaced by the project's answers env.doctor_command, "
                                "env.bootstrap_command and env.dry_run_command; env.known_failures lists doctor lines accepted on this host. Each line says where it came from."),
                          examples=["qargi env show", "qargi env show --project acme --json", "qargi project set acme env.doctor_command 'make doctor'"]),
+            "check": verb("Run the project's doctor, add the qargi layer (links, members, packs, memory) and print ENV OK or ENV INCOMPLETE", [],
+                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                           opt("--timeout", "seconds the doctor may run (default 300, at most 3600)", "SECONDS"), opt("--json", "print the result as JSON")],
+                          desc=("A member may run it. It RUNS THE PROJECT'S CODE: the doctor command (env.doctor_command, else the doctor or check target) is run once, "
+                                "without a shell, in the repository, with standard input closed and a minimal environment, so the repository is as trusted as it is for "
+                                "test_command. Its lines are read: one that begins with missing, fail, error, not ok, stale, [x] or a cross mark, or ends with missing, "
+                                "not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected "
+                                "and not red; a non-zero exit with no such line is one missing item. With no doctor command a built-in minimum runs: submodules "
+                                "initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering "
+                                "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it adds, read-only, whether the checkout "
+                                "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
+                                "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
+                                "The verdict, HEAD, time and commands are recorded in state/env/PROJECT.json (mode 600); no command output is."),
+                          examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
         },
     },
     "provision": {
@@ -1103,9 +1117,11 @@ TOPICS = {
         "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
         "Development environment, Environment or Setup; version pins in go.mod, .tool-versions, mise.toml, .python-version, .nvmrc or package.json; "
         ".gitmodules; and two targets of its task runner (Makefile, justfile, Taskfile.yml or mise.toml tasks): bootstrap, which installs "
-        "everything idempotently, and doctor, which only checks and exits non-zero on a missing item. setup and check are accepted names.",
+        "everything idempotently, and doctor, which prints one line per item and exits non-zero on a missing one. setup and check are accepted names.",
         "Anyone, with or without qargi, runs the dry run (make -n bootstrap), reads it, runs bootstrap, then doctor. qargi env show prints what it "
-        "found and the commands it would use; it runs nothing.",
+        "found and the commands it would use; it runs nothing. qargi env check runs the doctor (the project's code, as trusted as test_command), "
+        "adds the project's links, members, packs and memory and ends with ENV OK or ENV INCOMPLETE: N missing (...). A doctor line that "
+        "begins with missing, fail or error, or ends with missing or not found, is a missing item; one that begins with expected is not red.",
         "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
         "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [
