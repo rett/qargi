@@ -51,8 +51,16 @@ def run(*args, cwd=None):
     return r.returncode, r.stdout, r.stderr
 
 
+def pg(pages):
+    """--pages PAGES, and --config for the site.json beside the folder when the folder has none (the generator never looks upward)."""
+    beside = os.path.join(os.path.dirname(pages), "site.json")
+    if os.path.isfile(os.path.join(pages, "site.json")) or not os.path.isfile(beside):
+        return ["--pages", pages]
+    return ["--pages", pages, "--config", beside]
+
+
 def build(out, pages=PAGES, *extra):
-    return run("build", "--release", RELEASE, "--source", ROOT, "--pages", pages, "--out", out, *extra)
+    return run("build", "--release", RELEASE, "--source", ROOT, *pg(pages), "--out", out, *extra)
 
 
 class Converter(unittest.TestCase):
@@ -142,6 +150,21 @@ class Converter(unittest.TestCase):
         d = self.conv("## Same\n\n### Same\n\n## Same\n", id_prefix="v1-")
         self.assertEqual([h[1] for h in d.headings], ["v1-same", "v1-same-2", "v1-same-3"])
 
+    def test_a_byte_order_mark_is_named(self):
+        with self.assertRaises(MD.MdError) as cm:
+            MD.parse_front_matter("\ufeff---\ntitle: a\n---\n")
+        self.assertIn("byte order mark", cm.exception.msg)
+
+    def test_direction_characters_are_refused_in_link_targets(self):
+        for ch in ["\u202e", "\u2066", "\u200f"]:
+            with self.assertRaises(MD.MdError, msg=repr(ch)) as cm:
+                self.conv("## A\n\n[a](https://example.org/x%sy)\n" % ch)
+            self.assertIn("direction character", cm.exception.msg)
+
+    def test_the_heading_anchor_names_its_section(self):
+        d = self.conv("## Add *a* member\n")
+        self.assertIn('aria-label="Link to: Add a member">#</a>', d.html)
+
     def test_front_matter(self):
         meta, n = MD.parse_front_matter('---\ntitle: "A: b"\ndescription: d\n---\nbody\n')
         self.assertEqual((meta, n), ({"title": "A: b", "description": "d"}, 4))
@@ -190,37 +213,108 @@ class CommandChecks(unittest.TestCase):
             self.assertTrue(msgs and frag in msgs[0], "%s -> %s" % (line, msgs))
 
     def test_spans_and_blocks(self):
-        got = list(S.check_code(self.cmds, "span", "--asked REQUEST", 3))
-        self.assertEqual(got, [])
-        got = list(S.check_code(self.cmds, "span", "--nope", 3))
-        self.assertEqual(got[0][0], 3)
+        self.assertEqual(list(S.check_code(self.cmds, "span", "--asked REQUEST", 3)), [])
+        self.assertEqual(list(S.check_code(self.cmds, "span", "--nope", 3)), [])          # options are checked on qargi command lines only
+        self.assertEqual(list(S.check_code(self.cmds, "span", "install.sh --user", 3)), [])
+        self.assertEqual(len(list(S.check_code(self.cmds, "span", "qargi project init --nope", 3))), 1)
         self.assertEqual(list(S.check_code(self.cmds, "fence:text", "qargi nonesuch", 1)), [])      # output blocks are not checked
         got = list(S.check_code(self.cmds, "fence:bash", "# qargi nonesuch\nqargi project \\\n  frob\nFOO=1 qargi nope", 10))
         self.assertEqual([g[0] for g in got], [12, 14])
 
 
+class ShellChecks(unittest.TestCase):
+    """S6: fenced shell blocks, read the way a shell reads them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cmds = S.load_commands(ROOT)
+
+    def lines(self, kind, text):
+        return [(ln, m) for ln, m in S.check_code(self.cmds, kind, text, 0)]
+
+    def ok(self, text, kind="fence:bash"):
+        self.assertEqual(self.lines(kind, text), [], text)
+
+    def bad(self, text, frag, line=None, kind="fence:bash"):
+        got = self.lines(kind, text)
+        self.assertTrue(got and frag in got[0][1], "%r -> %r" % (text, got))
+        if line is not None:
+            self.assertEqual(got[0][0], line, text)
+
+    def test_text_that_is_not_a_command_is_not_checked(self):
+        self.ok("cat <<EOF\nqargi nonesuch\nEOF\nqargi project init acme")
+        self.ok("cat <<'EOF' > f\nqargi nonesuch\n  EOF\nEOF\n")
+        self.ok("cat <<-EOF\n\tqargi nonesuch\n\tEOF\nqargi --version")
+        self.ok("qargi send x \"line one\nline two\" --label y")
+        self.ok("$ qargi --version\nqargi 0.2.0\n$ qargi project init acme\nreview: ok", kind="fence:console")
+        self.ok("$ qargi --version\nqargi 0.2.0", kind="fence:shell-session")
+        self.ok("qargi project init acme -- --literal")
+        self.ok("qargi project init acme \\")
+        self.ok("sudo ./install.sh --user\n./install.sh --user && qargi --version\ncurl -fsSL https://example.org/i.sh | sh -s -- --user")
+
+    def test_the_continuation_of_a_command_is_one_command(self):
+        self.bad("qargi project init acme \\\n  --nope", "--nope", line=1)
+        self.bad("echo hi\nqargi project \\\n  frobnicate", "frobnicate", line=2)
+        self.bad("$ qargi project init acme \\\n  --nope", "--nope", kind="fence:console")
+
+    def test_wrappers_paths_and_substitutions_are_followed(self):
+        for line in ["sudo qargi nonesuch", "sudo -u build qargi nonesuch", "env A=1 qargi nonesuch", "env -i A=1 qargi nonesuch", "if qargi nonesuch; then echo y; fi",
+                     "for x in a b; do qargi nonesuch; done", "echo `qargi nonesuch`", "echo $(qargi nonesuch)", "./bin/qargi nonesuch", "/usr/local/bin/qargi nonesuch",
+                     "A=1 time qargi nonesuch", "nohup qargi nonesuch &", "! qargi nonesuch", "(qargi nonesuch)"]:
+            self.bad(line, "no command 'nonesuch'")
+
+    def test_words_after_a_redirection_still_belong_to_the_command(self):
+        self.bad("qargi project init acme > log --nope", "--nope")
+        self.bad("qargi project init acme 2>&1 --nope", "--nope")
+        self.bad("qargi project init acme &> log --nope", "--nope")
+        self.ok("qargi project init acme > log 2>&1")
+        self.ok("qargi project template acme >> out.json && qargi project init acme")
+
+    def test_an_option_value_that_is_missing_is_found(self):
+        self.bad("qargi project init acme --answers --force", "--answers needs a value")
+        self.ok("qargi project init acme --answers")                    # a span or a line may name an option without its value
+        self.ok("qargi project init acme --answers a.json --force")
+        self.ok("qargi project init acme --answers=a.json")
+        self.ok("qargi project init acme --answers FILE")
+
+    def test_an_unreadable_command_line_is_reported(self):
+        self.bad("qargi send x 'never closed\nsecond", "cannot read", line=1)
+
+    def test_check_options_only_on_qargi_lines_in_a_page(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        pages = os.path.join(t, "pages")
+        shutil.copytree(PAGES, pages)
+        spit(os.path.join(pages, "first-project.md"), "\n## Install\n\nRun `install.sh --user` and then:\n\n```bash\n./install.sh --user\nqargi --version\n```\n\nThe `--user` option belongs to the installer.\n", "a")
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages))
+        self.assertEqual((rc, err), (0, ""), out)
+
+
 class Check(unittest.TestCase):
     def test_clean_pages_pass(self):
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", PAGES)
+        t = tempfile.mkdtemp()                      # a copy outside git: the result does not depend on how the checkout was made
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "f"))
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(t, "f", "pages")))
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
+        self.assertIn("note: index.md: no commit date (not in a git repository): no lastmod for this page", out)
 
     def test_bad_pages_are_reported_with_line_numbers(self):
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", BAD)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(BAD))
         self.assertEqual(rc, 1, out + err)
         want = ["unsupported.md:7: raw HTML is not supported",
                 "broken.md:20: contains the forbidden word 'hunter2'",
                 "broken.md:11: qargi project has no verb 'frobnicate'",
                 "broken.md:12: qargi agent add has no option --no-such-option",
                 "broken.md:15: `qargi nonesuch run`: qargi has no command 'nonesuch'",
-                "broken.md:15: no qargi command has the option --also-missing",
                 "broken.md:19: link /no-such-page/: no such page",
                 "broken.md:19: link /reference/set-up/#no-such-heading: page /reference/set-up/ has no heading with id 'no-such-heading'",
                 "broken.md:19: link #nowhere: no heading with that id on this page"]
         for w in want:
             self.assertIn("error: " + w, out)
         self.assertNotIn("broken.md:10", out)      # the valid command on line 10 is not reported
-        self.assertIn("9 error(s)", out)
+        self.assertIn("8 error(s)", out)
 
     def test_build_refuses_what_check_refuses(self):
         t = tempfile.mkdtemp()
@@ -230,10 +324,10 @@ class Check(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(t, "o")))
 
     def test_the_release_must_match_the_source(self):
-        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES)
+        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, *pg(PAGES))
         self.assertEqual(rc, 1)
         self.assertIn("not --release 9.9.9", out)
-        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES, "--allow-unreleased")
+        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, *pg(PAGES), "--allow-unreleased")
         self.assertEqual(rc, 0, out)
 
     def test_description_length_warns(self):
@@ -244,7 +338,7 @@ class Check(unittest.TestCase):
         text = slurp(p)
         text = re.sub(r"(?m)^description: .*$", "description: Too short.", text)
         spit(p, text)
-        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, "--pages", os.path.join(t, "f", "pages"))
+        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(t, "f", "pages")))
         self.assertEqual(rc, 0, out)
         self.assertIn("warning: first-project.md: description is 10 characters", out)
 
@@ -256,11 +350,111 @@ class Check(unittest.TestCase):
         spit(os.path.join(pages, "a.md"), "## No front matter\n")
         spit(os.path.join(pages, "b.md"), "---\ntitle: B\n---\n## Body\n")
         spit(os.path.join(pages, "Bad_Name.md"), "---\ntitle: C\ndescription: d\n---\n## Body\n")
-        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, "--pages", pages, "--url", "https://docs.example.org/")
+        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages), "--url", "https://docs.example.org/")
         self.assertEqual(rc, 1)
         self.assertIn("error: a.md:1: no front matter", out)
         self.assertIn("error: b.md:1: front matter needs description", out)
         self.assertIn("error: Bad_Name.md: page names are lower-case", out)
+
+
+def source_copy(dest, changelog=None, commands=None):
+    """A copy of the source tree the generator needs (lib, VERSION, LICENSE, CHANGELOG), with edits applied by the callables."""
+    shutil.copytree(LIB, os.path.join(dest, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+    for n in ("VERSION", "LICENSE", "CHANGELOG.md"):
+        shutil.copy(os.path.join(ROOT, n), dest)
+    for rel, edit in (("CHANGELOG.md", changelog), (os.path.join("lib", "commands.py"), commands)):
+        if edit:
+            p = os.path.join(dest, rel)
+            spit(p, edit(slurp(p)))
+    return dest
+
+
+class SourceChild(unittest.TestCase):
+    """S5: the child that reads lib/commands.py runs the source's code, so it is boxed in."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.probe = os.path.join(self.tmp, "probe.json")
+
+    def src(self, code):
+        return source_copy(os.path.join(self.tmp, "src%d" % len(os.listdir(self.tmp))), commands=lambda t: code + "\n" + t)
+
+    def test_the_child_runs_isolated_in_an_empty_folder_with_a_small_environment(self):
+        code = ("import json, os, sys\n"
+                "json.dump({'env': sorted(os.environ), 'cwd': os.getcwd(), 'home': os.environ.get('HOME'), 'no_site': sys.flags.no_site, 'isolated': sys.flags.isolated,\n"
+                "           'dont_write': sys.flags.dont_write_bytecode, 'listing': os.listdir('.'), 'cpu': __import__('resource').getrlimit(__import__('resource').RLIMIT_CPU)[0]},\n"
+                "          open(%r, 'w'))\nopen('marker', 'w').write('x')\n" % self.probe)
+        src = self.src(code)
+        here = os.path.join(self.tmp, "here")
+        os.makedirs(here)
+        old = os.getcwd()
+        os.chdir(here)
+        try:
+            S.load_commands(src)
+        finally:
+            os.chdir(old)
+        got = json.load(open(self.probe))
+        self.assertLessEqual(set(got["env"]), {"PATH", "LANG", "HOME"})
+        self.assertEqual((got["no_site"], got["isolated"], got["dont_write"]), (1, 1, 1))
+        self.assertNotEqual(got["cwd"], here)
+        self.assertEqual(got["home"], got["cwd"])
+        self.assertEqual(got["listing"], [])
+        self.assertEqual(os.listdir(here), [])                          # nothing was written to the caller's folder
+        self.assertFalse(os.path.exists(got["cwd"]))                    # and the empty folder is gone
+        self.assertEqual(got["cpu"], S.CHILD_CPU_SECONDS)
+
+    def test_a_runaway_source_is_stopped_and_reported_as_a_refusal(self):
+        from unittest import mock
+        with mock.patch.object(S, "CHILD_CPU_SECONDS", 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("while True:\n    pass\n"))
+            self.assertIn("cannot load", str(cm.exception))
+        with mock.patch.object(S, "CHILD_MEMORY_BYTES", 256 * 1024 * 1024):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("x = bytearray(2 * 1024 ** 3)\n"))
+            self.assertIn("MemoryError", str(cm.exception))
+        with mock.patch.object(S, "CHILD_OUTPUT_BYTES", 1024 * 1024):
+            with self.assertRaises(S.Refusal):
+                S.load_commands(self.src("print('x' * (4 * 1024 * 1024))\n"))
+        with mock.patch.object(S, "CHILD_TIMEOUT", 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("import time\ntime.sleep(30)\n"))
+            self.assertIn("timed out", str(cm.exception))
+
+    def test_the_reported_error_has_no_control_characters(self):
+        with self.assertRaises(S.Refusal) as cm:
+            S.load_commands(self.src("raise RuntimeError('\\x1b]0;owned\\x07 boom ' + 'y' * 1000)\n"))
+        msg = str(cm.exception)
+        self.assertIn("boom", msg)
+        self.assertNotRegex(msg, r"[\x00-\x08\x0b-\x1f\x7f]")
+        self.assertLess(len(msg), 600)
+
+
+class ChangelogLinks(unittest.TestCase):
+    """S3: links in the changelog are validated like links in the hand pages."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_broken_changelog_links_fail_check_and_build(self):
+        head = re.search(r"(?m)^## \[0\.1\.0\] - .*$", slurp(os.path.join(ROOT, "CHANGELOG.md"))).group(0)
+        src = source_copy(os.path.join(self.tmp, "src"), changelog=lambda t: t.replace(
+            head, head + "\n\nSee [up](/../../../), [nope](/nope/), [frag](#nope) and [ok](/reference/#typical-use).", 1))
+        line = slurp(os.path.join(src, "CHANGELOG.md")).split("\n").index(head) + 3
+        args = ["--release", RELEASE, "--source", src, *pg(PAGES)]
+        rc, out, err = run("check", *args)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("error: CHANGELOG.md:%d: link /nope/: no such page" % line, out)
+        self.assertIn("error: CHANGELOG.md:%d: link /../../../: no such page" % line, out)
+        self.assertIn("error: CHANGELOG.md:%d: link #nope: no heading with that id on this page" % line, out)
+        self.assertNotIn("typical-use", out.split("link #nope")[0])
+        self.assertIn("3 error(s)", out)
+        o = os.path.join(self.tmp, "o")
+        rc, out, err = run("build", *args, "--out", o)
+        self.assertEqual(rc, 1, out + err)
+        self.assertFalse(os.path.exists(o))
 
 
 class Build(unittest.TestCase):
@@ -284,6 +478,21 @@ class Build(unittest.TestCase):
         rc, out, err = run("check-output", self.out)
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
+
+    def test_accessibility_markup(self):
+        t = self.page("first-project/index.html")
+        self.assertRegex(t, r'<pre class="code" tabindex="0" role="region" aria-label="bash code">')
+        self.assertIn('aria-label="Link to: Add a member">#</a>', t)
+        self.assertNotIn("Link to this section", t)
+        self.assertNotIn("Link to this section", self.page("index.html"))
+        ref = self.page("reference/set-up/index.html")
+        self.assertIn('<div class="table-wrap" tabindex="0" role="region" aria-label="Table">', ref)
+        self.assertIn('<nav aria-label="On this page"><details class="toc" open>', ref)
+        self.assertRegex(ref, r'<li><a href="\.\./" aria-current="true">Reference</a></li>')       # an ancestor, not the page itself
+        self.assertNotIn('aria-current="page">Reference</a>', ref)
+        self.assertRegex(self.page("reference/index.html"), r'<a href="\./" aria-current="page">Reference</a>')
+        self.assertIn('color-scheme: light dark', self.page("assets/site.css"))
+        self.assertIn('<meta name="color-scheme" content="light dark">', t)
 
     def test_the_files_exist(self):
         for rel in ["index.html", "404.html", "first-project/index.html", "reference/index.html", "reference/set-up/index.html", "reference/topics/index.html",
@@ -324,7 +533,7 @@ class Build(unittest.TestCase):
         self.assertIn('<meta name="twitter:card" content="summary">', t)
         self.assertIn('<html lang="en">', t)
         self.assertIn('<meta name="viewport"', t)
-        self.assertIn('<meta name="color-scheme" content="dark light">', t)
+        self.assertIn('<meta name="color-scheme" content="light dark">', t)
         self.assertIn('<a class="skip" href="#main">', t)
         self.assertEqual(t.count("<h1>"), 1)
         home = self.page("index.html")
@@ -339,21 +548,53 @@ class Build(unittest.TestCase):
 
     def test_json_ld(self):
         home = self.ld("index.html")
-        self.assertEqual(home["@type"], "SoftwareApplication")
-        self.assertEqual(home["offers"]["price"], "0")
-        self.assertEqual(home["softwareVersion"], RELEASE)
-        self.assertEqual(home["author"], {"@type": "Organization", "name": "qargi"})
-        self.assertEqual(home["license"], "https://opensource.org/licenses/MIT")
-        self.assertNotIn("aggregateRating", home)
+        types = {n["@type"]: n for n in home["@graph"]}
+        app, site = types["SoftwareApplication"], types["WebSite"]
+        self.assertEqual((site["name"], site["url"]), ("qargi", "https://docs.example.org/qargi/"))
+        self.assertEqual(app["softwareVersion"], RELEASE)
+        self.assertEqual(app["license"], "https://opensource.org/licenses/MIT")
+        for k in ("offers", "operatingSystem", "author", "aggregateRating"):      # nothing the page does not show
+            self.assertNotIn(k, app)
         g = self.ld("reference/set-up/index.html")["@graph"]
         art = [n for n in g if n["@type"] == "TechArticle"][0]
         self.assertEqual(art["headline"], "Reference: Set up")
-        self.assertEqual(art["author"], {"@type": "Organization", "name": "qargi"})
+        self.assertNotIn("author", art)                   # no author unless site.json names one that the footer shows
         crumbs = [n for n in g if n["@type"] == "BreadcrumbList"][0]["itemListElement"]
         self.assertEqual([c["position"] for c in crumbs], [1, 2, 3])
         self.assertEqual(crumbs[0]["item"], "https://docs.example.org/qargi/")
         self.assertEqual(crumbs[1]["item"], "https://docs.example.org/qargi/reference/")
         self.assertEqual(self.ld("first-project/index.html")["@graph"][1]["itemListElement"][1]["name"], "Your first project")
+
+    def test_the_description_is_shown_and_no_date_is_marked_up_that_is_not_shown(self):
+        t = self.page("first-project/index.html")
+        self.assertRegex(t, r'<h1>Your first project</h1>\n<p class="lede">Set up a project called acme')
+        self.assertNotIn("<time", t)                      # these copies have no commit date, so no date is shown or marked up
+        self.assertNotIn("dateModified", t)
+        ref = self.page("reference/set-up/index.html")
+        self.assertIn('<p class="dates">Updated <time datetime="%s">%s</time></p>' % (RELEASE_DATE, RELEASE_DATE), ref)
+        self.assertIn('"dateModified":"%s"' % RELEASE_DATE, ref)
+
+    def test_an_author_named_in_the_config_is_shown_in_the_footer_and_marked_up(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "f"))
+        cfgp = os.path.join(t, "f", "site.json")
+        data = json.loads(slurp(cfgp))
+        data["author"] = {"name": "Example Docs Team", "url": "https://example.org/team"}
+        spit(cfgp, json.dumps(data))
+        o = os.path.join(t, "o")
+        rc, out, err = build(o, os.path.join(t, "f", "pages"))
+        self.assertEqual(rc, 0, out + err)
+        page = slurp(os.path.join(o, "first-project", "index.html"))
+        self.assertIn('By <a href="https://example.org/team">Example Docs Team</a>', page)
+        ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S).group(1))
+        art = [n for n in ld["@graph"] if n["@type"] == "TechArticle"][0]
+        self.assertEqual(art["author"], {"@type": "Organization", "name": "Example Docs Team", "url": "https://example.org/team"})
+        self.assertEqual(run("check-output", o)[0], 0)
+        for bad in [{"url": "https://example.org"}, {"name": "x", "extra": 1}, "just a string", {"name": "x", "url": "http://example.org"}]:
+            data["author"] = bad
+            spit(cfgp, json.dumps(data))
+            self.assertEqual(build(os.path.join(t, "o2"), os.path.join(t, "f", "pages"))[0], 2, bad)
 
     def test_sitemap_robots_and_404(self):
         root = ET.parse(os.path.join(self.out, "sitemap.xml")).getroot()
@@ -363,9 +604,11 @@ class Build(unittest.TestCase):
         self.assertIn("https://docs.example.org/qargi/reference/set-up/", urls)
         self.assertNotIn("https://docs.example.org/qargi/404.html", urls)
         self.assertEqual(len(urls), 14)
-        # the generated pages carry the release date; the hand pages (untracked or modified here) fall back to it too, never to the build time
+        # the generated pages carry the release date; a hand page with no commit date (these are copies outside git) has no lastmod, never a guess
         for loc, u in urls.items():
-            self.assertEqual(u.find(ns + "lastmod").text, RELEASE_DATE, loc)
+            hand = loc in ("https://docs.example.org/qargi/", "https://docs.example.org/qargi/first-project/")
+            lm = u.find(ns + "lastmod")
+            self.assertEqual(None if hand else RELEASE_DATE, None if lm is None else lm.text, loc)
             self.assertIsNone(u.find(ns + "priority"))
             self.assertIsNone(u.find(ns + "changefreq"))
         self.assertEqual(self.page("robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://docs.example.org/qargi/sitemap.xml\n")
@@ -408,6 +651,30 @@ class Build(unittest.TestCase):
         for p, _ in C.FILES:
             self.assertIn("<code>%s</code>" % p, files)
 
+    def test_a_heading_called_main_does_not_repeat_the_template_id(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        pages = os.path.join(t, "pages")
+        shutil.copytree(PAGES, pages)
+        p = os.path.join(pages, "first-project.md")
+        spit(p, "\n## Main\n\nSee [it](#main) and [the same](#main-2).\n", "a")
+        rc, out, err = build(os.path.join(t, "o"), pages, "--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 1, out)                       # #main is the page's main element, not the heading
+        self.assertIn("link #main: no heading with that id", out)
+        text = slurp(p).replace("See [it](#main) and ", "See ")
+        spit(p, text)
+        rc, out, err = build(os.path.join(t, "o"), pages, "--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 0, out + err)
+        page = slurp(os.path.join(t, "o", "first-project", "index.html"))
+        self.assertIn('<h2 id="main-2">Main', page)
+        self.assertEqual(page.count('id="main"'), 1)
+        self.assertEqual(run("check-output", os.path.join(t, "o"))[0], 0)
+
+    def test_generated_pages_reserve_the_template_ids(self):
+        self.assertIn("main", S.RefBuilder(None).used)
+        d = MD.convert("## Main\n", ids=set(S.PAGE_IDS))
+        self.assertEqual(d.headings[0][1], "main-2")
+
     def test_the_releases_page_lists_every_released_version_and_not_unreleased(self):
         t = self.page("releases/index.html")
         self.assertIn('<h2 id="v%s">' % RELEASE.replace(".", "-"), t)
@@ -433,9 +700,9 @@ class Build(unittest.TestCase):
         self.addCleanup(shutil.rmtree, t, True)
         o = os.path.join(t, "o")
         pages = os.path.join(self.tmp, "fix", "pages")        # not in a git repository: no commit dates
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o)
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, *pg(pages), "--out", o)
         self.assertEqual(rc, 1)
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o, "--allow-unreleased")
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, *pg(pages), "--out", o, "--allow-unreleased")
         self.assertEqual(rc, 0, out + err)
         self.assertIn("qargi (unreleased)", slurp(os.path.join(o, "index.html")))
         self.assertIn("Checked against qargi (unreleased).", slurp(os.path.join(o, "index.html")))
@@ -465,7 +732,7 @@ class Build(unittest.TestCase):
         self.assertIn("&lt;/title&gt;&lt;script&gt;", html_)
         m = re.search(r'<script type="application/ld\+json">(.*?)</script>', html_, re.S)
         self.assertNotIn("</", m.group(1))
-        self.assertEqual(json.loads(m.group(1))["name"], "qargi")
+        self.assertEqual(json.loads(m.group(1))["@graph"][0]["name"], "qargi")
         rc, out, _ = run("check-output", os.path.join(t, "o2"))
         self.assertEqual(rc, 0, out)
 
@@ -498,14 +765,72 @@ class LastMod(unittest.TestCase):
         self.assertEqual(rc, 0, so + se)
         root = ET.parse(os.path.join(out, "sitemap.xml")).getroot()
         ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
-        lm = {u.find(ns + "loc").text: u.find(ns + "lastmod").text for u in root}
+        lm = {u.find(ns + "loc").text: getattr(u.find(ns + "lastmod"), "text", None) for u in root}
         self.assertEqual(lm["https://docs.example.org/qargi/first-project/"], "2026-03-02")
-        self.assertEqual(lm["https://docs.example.org/qargi/"], RELEASE_DATE)        # fell back to the release date
+        self.assertIsNone(lm["https://docs.example.org/qargi/"])                      # modified: no date to give, none invented
         self.assertEqual(lm["https://docs.example.org/qargi/releases/"], RELEASE_DATE)
+        self.assertIn("note: index.md: no commit date", so)
         ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
         art = json.loads(ld)["@graph"][0]
         self.assertEqual((art["dateModified"], art["datePublished"]), ("2026-03-02", "2026-01-15"))
+        page = slurp(os.path.join(out, "first-project", "index.html"))
+        self.assertIn('<p class="dates">Published <time datetime="2026-01-15">2026-01-15</time> · Updated <time datetime="2026-03-02">2026-03-02</time></p>', page)
         self.assertEqual(run("check-output", out)[0], 0)
+        spit(os.path.join(out, "first-project", "index.html"), page.replace('<time datetime="2026-03-02">', '<time datetime="2026-03-03">'))
+        rc, so, se = run("check-output", out)
+        self.assertEqual(rc, 1, so)
+        self.assertIn("dateModified 2026-03-02 is not shown on the page", so)
+
+    def make_repo(self, t):
+        f = os.path.join(t, "f")
+        shutil.copytree(FIX, f)
+        self.git(f, "init", "-q", "-b", "main")
+        self.git(f, "add", "-A")
+        self.git(f, "commit", "-q", "-m", "first", date="2026-01-15T10:00:00+00:00")
+        return f
+
+    def test_a_shallow_clone_has_no_page_dates_and_says_so(self):
+        if not shutil.which("git"):
+            self.skipTest("git is not installed")
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        f = self.make_repo(t)
+        spit(os.path.join(f, "unrelated.txt"), "x")
+        self.git(f, "add", "-A")
+        self.git(f, "commit", "-q", "-m", "second", date="2026-11-01T10:00:00+00:00")
+        self.git(t, "clone", "-q", "--depth", "1", "file://" + f, "c")
+        c = os.path.join(t, "c")
+        out = os.path.join(t, "o")
+        rc, so, se = build(out, os.path.join(c, "pages"))
+        self.assertEqual(rc, 0, so + se)
+        self.assertIn("warning: pages: shallow clone", so)
+        root = ET.parse(os.path.join(out, "sitemap.xml")).getroot()
+        ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+        for u in root:                                 # not the tip commit's date, which says nothing about the page
+            self.assertEqual(u.find(ns + "lastmod").text, RELEASE_DATE, u.find(ns + "loc").text)
+        ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
+        self.assertNotIn("datePublished", ld)
+        self.assertEqual(run("check-output", out)[0], 0)
+
+    def test_git_runs_nothing_the_repository_configures(self):
+        if not shutil.which("git"):
+            self.skipTest("git is not installed")
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        f = self.make_repo(t)
+        marker = os.path.join(t, "ran")
+        script = os.path.join(t, "evil.sh")
+        spit(script, "#!/bin/sh\necho ran >> %s\nexit 1\n" % marker)
+        os.chmod(script, 0o755)
+        self.git(f, "config", "core.fsmonitor", script)
+        self.git(f, "config", "filter.evil.clean", script)
+        self.git(f, "config", "core.hooksPath", os.path.join(t, "hooks"))
+        spit(os.path.join(f, ".gitattributes"), "*.md filter=evil\n")
+        self.git(f, "config", "core.fsmonitor", script)
+        before = os.path.exists(marker)
+        rc, so, se = build(os.path.join(t, "o"), os.path.join(f, "pages"))
+        self.assertEqual(rc, 0, so + se)
+        self.assertFalse(os.path.exists(marker) and not before, "the repository's fsmonitor or filter program ran")
 
 
 class Safety(unittest.TestCase):
@@ -523,12 +848,12 @@ class Safety(unittest.TestCase):
         os.makedirs(pages)
         shutil.copy(os.path.join(PAGES, "index.md"), pages)
         os.symlink("/etc/hostname", os.path.join(pages, "evil.md"))
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", pages)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages))
         self.assertEqual(rc, 2, out)
         self.assertIn("symbolic link", err)
         link = os.path.join(self.tmp, "link")
         os.symlink("/etc", link)
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", link)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(link))
         self.assertEqual(rc, 2)
         self.assertIn("outside the allowed roots", err)
 
@@ -568,6 +893,205 @@ class Safety(unittest.TestCase):
         rc, so, se = run("build", "--release", RELEASE, "--source", ROOT, "--out", os.path.join(self.tmp, "o"), "--url", "https://x.example/")
         self.assertEqual(rc, 0, so + se)           # no hand pages: a generated home page lists the others
         self.assertEqual(run("check-output", os.path.join(self.tmp, "o"))[0], 0)
+
+
+class ConfigTrust(unittest.TestCase):
+    """B1, S10, N2: where site.json and static/ come from, and who may own them."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, self.f)
+        self.pages = os.path.join(self.f, "pages")
+        self.cfg = os.path.join(self.f, "site.json")
+
+    def raw(self, *extra, pages=None):
+        return run("build", "--release", RELEASE, "--source", ROOT, "--pages", pages or self.pages, "--out", os.path.join(self.tmp, "o"), *extra)
+
+    def test_no_site_json_is_taken_from_the_parent_folder(self):
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 2, out)                      # the parent's site.json (and its url) are not used
+        self.assertIn("site address", err)
+        rc, out, err = self.raw("--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 0, out + err)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "verify-acme.html")))     # nor its static/ folder
+        self.assertNotIn("github.com", slurp(os.path.join(self.tmp, "o", "index.html")))
+
+    def test_the_config_comes_from_config_or_pages(self):
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "o", "verify-acme.html")))
+        shutil.rmtree(os.path.join(self.tmp, "o"))
+        shutil.copy(self.cfg, self.pages)
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("github.com/example/qargi", slurp(os.path.join(self.tmp, "o", "index.html")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "verify-acme.html")))     # static/ is beside the config, here pages/static
+
+    def test_a_symlinked_config_is_refused(self):
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(os.path.join(other, "static"))
+        spit(os.path.join(other, "static", "from-other.txt"), "x")
+        shutil.copy(self.cfg, os.path.join(other, "site.json"))
+        os.symlink(os.path.join(other, "site.json"), os.path.join(self.pages, "site.json"))
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+        rc, out, err = self.raw("--config", os.path.join(self.pages, "site.json"))
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+
+    def test_a_pages_folder_that_is_a_symlink_is_refused(self):
+        link = os.path.join(self.tmp, "link")
+        os.symlink(self.pages, link)
+        rc, out, err = self.raw("--config", self.cfg, pages=link)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+
+    def test_a_config_folder_others_can_write_is_refused(self):
+        os.chmod(self.f, 0o757)
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("can be written by other users", err)
+        os.chmod(self.f, 0o755)
+        os.chmod(os.path.join(self.f, "static"), 0o757)
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("static", err)
+
+    def test_a_config_or_static_file_of_another_user_is_refused(self):
+        from unittest import mock
+        roots = S.allowed_roots(ROOT, [self.tmp])
+
+        class A:
+            config = self.cfg
+        with mock.patch.object(S.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.find_config(A, self.pages, roots)
+            self.assertIn("owned by another user", str(cm.exception))
+        with mock.patch.object(S.os, "getegid", return_value=os.getegid() + 1):
+            os.chmod(self.f, 0o775)
+            with self.assertRaises(S.Refusal) as cm:
+                S.find_config(A, self.pages, roots)
+            self.assertIn("written by other users", str(cm.exception))      # group-writable, and the group is not the user's own
+        os.chmod(self.f, 0o775)
+        self.assertIsNotNone(S.find_config(A, self.pages, roots))          # the user's own group may write
+
+    def test_a_hard_linked_static_file_is_refused(self):
+        outside = os.path.join(self.tmp, "outside.txt")
+        spit(outside, "secret")
+        os.link(outside, os.path.join(self.f, "static", "hl.txt"))
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("hard link", err)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o")))
+
+
+class StaticAndOut(unittest.TestCase):
+    """S2, N1, N2: static files against generated paths, building in a temporary folder, --out placement."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, self.f)
+        self.static = os.path.join(self.f, "static")
+        self.out = os.path.join(self.tmp, "o")
+
+    def b(self, *extra):
+        return build(self.out, os.path.join(self.f, "pages"), *extra)
+
+    def test_a_static_file_on_a_generated_path_is_an_error_before_anything_is_written(self):
+        for name in ["first-project", "assets", "reference", "releases", "sitemap.xml", "Index.html", "FIRST-PROJECT", "404.html", "index.html/x"]:
+            d = os.path.join(self.f, "static", *name.split("/")[:-1])
+            os.makedirs(d, exist_ok=True)
+            spit(os.path.join(self.static, *name.split("/")), "x")
+            rc, out, err = self.b()
+            self.assertEqual((rc, "Traceback" in err), (1, False), "%s: %s%s" % (name, out, err))
+            self.assertIn("static/%s: collides with a generated file or folder" % name, out)
+            self.assertFalse(os.path.exists(self.out), name)
+            shutil.rmtree(self.static)
+            shutil.copytree(os.path.join(FIX, "static"), self.static)
+
+    def test_two_static_files_that_differ_only_by_case_are_an_error(self):
+        spit(os.path.join(self.static, "Notes.txt"), "a")
+        spit(os.path.join(self.static, "notes.txt"), "b")
+        rc, out, err = self.b()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("differs only by case", out)
+
+    def test_a_failed_build_leaves_nothing_and_a_good_one_leaves_only_the_site(self):
+        from unittest import mock
+        argv = ["build", "--release", RELEASE, "--source", ROOT, "--pages", os.path.join(self.f, "pages"), "--config", os.path.join(self.f, "site.json"), "--out", self.out]
+        with mock.patch.object(S, "render_page", side_effect=S.Refusal("boom")):
+            self.assertEqual(S.main(argv), 2)
+        self.assertEqual(os.listdir(self.tmp), ["f"])
+        os.makedirs(self.out)                                  # an empty folder that existed stays empty
+        with mock.patch.object(S, "render_page", side_effect=S.Refusal("boom")):
+            self.assertEqual(S.main(argv), 2)
+        self.assertEqual(os.listdir(self.out), [])
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["f", "o"])
+        self.assertEqual(S.main(argv), 0)
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["f", "o"])
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "index.html")))
+        self.assertTrue(os.stat(self.out).st_mode & 0o005)      # readable by a web server: not the private mode of a temporary folder
+
+    def test_out_inside_pages_or_static_is_refused(self):
+        for sub in [os.path.join(self.f, "pages", "site"), os.path.join(self.static, "out"), self.static]:
+            rc, out, err = build(sub, os.path.join(self.f, "pages"))
+            self.assertEqual(rc, 2, sub + out)
+            self.assertIn("would be inside", err)
+            self.assertFalse(os.path.exists(os.path.join(sub, "index.html")))
+
+    def test_well_known_is_copied_other_hidden_folders_are_reported_and_readme_is_not_published(self):
+        os.makedirs(os.path.join(self.static, ".well-known"))
+        spit(os.path.join(self.static, ".well-known", "security.txt"), "Contact: mailto:security@example.org\n")
+        os.makedirs(os.path.join(self.static, ".hidden"))
+        spit(os.path.join(self.static, ".hidden", "x.txt"), "x")
+        spit(os.path.join(self.static, "README.md"), "# Notes for the maintainers\n")
+        rc, out, err = self.b()
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.isfile(os.path.join(self.out, ".well-known", "security.txt")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, ".hidden")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, "README.md")))
+        self.assertIn("warning: static/.hidden: a hidden folder is not published", out)
+        self.assertIn("note: static/README.md: not published", out)
+        self.assertEqual(run("check-output", self.out)[0], 0)
+
+
+class SmallInputs(unittest.TestCase):
+    """N3, N5, N6."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_control_and_direction_characters_are_refused_in_the_site_address(self):
+        for bad in ["https://example.org/a\x01b/", "https://example.org/a\x7fb/", "https://example.org/a\u202eb/"]:
+            with self.assertRaises(S.Refusal, msg=repr(bad)):
+                S.normalize_url(bad)
+        self.assertEqual(S.normalize_url("https://example.org/a"), "https://example.org/a/")
+
+    def test_a_page_listed_twice_in_the_menu_is_an_error(self):
+        f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, f)
+        cfgp = os.path.join(f, "site.json")
+        data = json.loads(slurp(cfgp))
+        data["pages"] = ["first-project", "first-project"]
+        spit(cfgp, json.dumps(data))
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("error: site.json: pages lists 'first-project' twice", out)
+
+    def test_an_address_with_a_path_says_where_robots_txt_is_read(self):
+        f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, f)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("note: url: the address has a path: crawlers read robots.txt only at the root of the host", out)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")), "--url", "https://docs.example.org/")
+        self.assertNotIn("note: url", out)
 
 
 class CheckOutput(unittest.TestCase):
@@ -617,10 +1141,22 @@ class CheckOutput(unittest.TestCase):
             ("desc", self.sub("first-project/index.html", '<meta name="description" content="Set up', '<meta name="x" content="Set up'), "no meta description"),
             ("ld", self.sub("first-project/index.html", '"headline":"Your first project"', '"headline":"Something else"'), "headline"),
             ("js", self.sub("first-project/index.html", 'href="../releases/"', 'href="javascript:alert(1)"'), "javascript: links"),
+            ("data", self.sub("first-project/index.html", 'href="../releases/"', 'href="data:text/html,x"'), "data:"),
+            ("vbs", self.sub("first-project/index.html", 'href="../releases/"', 'href="vbscript:msgbox(1)"'), "scheme"),
+            ("jsmixed", self.sub("first-project/index.html", 'href="../releases/"', 'href=" Java&#10;Script:alert(1)"'), "javascript: links"),
+            ("ftp", self.sub("first-project/index.html", 'href="../releases/"', 'href="ftp://example.org/x"'), "scheme"),
+            ("onclick", self.sub("first-project/index.html", "<article>", '<article onclick="x()">'), "event handler"),
+            ("inline", self.sub("first-project/index.html", "<article>", "<article><script>alert(1)</script>"), "script that is not JSON-LD"),
+            ("iframe", self.sub("first-project/index.html", "<article>", '<article><iframe src="https://evil.example/"></iframe>'), "<iframe> is not allowed"),
+            ("noindex", self.sub("first-project/index.html", "</head>", '<meta name="robots" content="noindex"></head>'), "noindex"),
+            ("graph", self.sub("first-project/index.html", '"@graph":[', '"@graph":[7,"x",null,'), "not an object"),
+            ("graphstr", self.sub("first-project/index.html", '"@graph":[', '"@graph":"x","y":['), "@graph"),
+            ("website", self.sub("index.html", '"@type":"WebSite"', '"@type":"Thing"'), "and WebSite JSON-LD"),
+            ("shown", self.sub("reference/set-up/index.html", '<time datetime="%s">' % RELEASE_DATE, '<time datetime="2000-01-01">'), "is not shown on the page"),
             ("sitemap", self.sub("sitemap.xml", "<loc>https://docs.example.org/qargi/first-project/</loc>", "<loc>https://docs.example.org/qargi/gone/</loc>"), "is not listed"),
             ("lastmod", self.sub("sitemap.xml", "<lastmod>%s</lastmod>" % RELEASE_DATE, "<lastmod>tomorrow</lastmod>"), "not YYYY-MM-DD"),
             ("robots", self.sub("robots.txt", "Sitemap:", "Nothing:"), "no Sitemap line"),
-            ("noindex", self.sub("404.html", '<meta name="robots" content="noindex">', ""), "must be noindex"),
+            ("noindex404", self.sub("404.html", '<meta name="robots" content="noindex">', ""), "must be noindex"),
             ("xml", self.sub("sitemap.xml", "</urlset>", ""), "not well-formed"),
         ]
         for name, edit, frag in cases:

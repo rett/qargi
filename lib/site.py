@@ -13,6 +13,10 @@ description) converted by lib/site_md.py. `check` validates the hand pages again
 `build` runs the same checks and then writes the site; `check-output` validates a built tree; `diff` lists what
 changed in the command line between two sources and which hand pages still name what is gone.
 
+Trust: reading the command line IMPORTS lib/commands.py of --source (and --source-old/--source-new for `diff`), which runs
+that source's code. Give only a source you trust. The import happens in a boxed child (python -I -S -B, an empty working
+folder, a minimal environment, limits on cpu time, memory, output size and time), which limits the damage but is not a sandbox.
+
 Exit status: 0 ok, 1 errors found (warnings never fail), 2 a usage error or a refusal (an unsafe path).
 Run it as `python3 -I lib/site.py ...`: it loads its own parts by path and needs nothing installed.
 """
@@ -26,6 +30,8 @@ import os
 import posixpath
 import re
 import shlex
+import shutil
+import stat
 import string
 import subprocess
 import sys
@@ -42,9 +48,10 @@ MAX_PAGE_BYTES = 512 * 1024
 MAX_STATIC_BYTES = 5 * 1024 * 1024
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 RESERVED = ("reference", "releases", "assets", "404")
+PAGE_IDS = ("main",)     # ids the page template uses; no heading may take one
 FRONT_KEYS = ("title", "description", "doctype", "nav")
 DOCTYPES = ("tutorial", "how-to", "reference", "explanation")
-CODE_SHELL = ("bash", "sh", "shell", "console", "zsh")
+CODE_SHELL = ("bash", "sh", "shell", "console", "shell-session", "zsh")
 SITE_NAME = "qargi"
 
 
@@ -68,6 +75,10 @@ class Report:
     def __init__(self):
         self.errors = []
         self.warnings = []
+        self.notes = []
+
+    def note(self, where, msg):
+        self.notes.append("%s: %s" % (where, msg))
 
     def err(self, where, msg):
         self.errors.append("%s: %s" % (where, msg))
@@ -76,6 +87,8 @@ class Report:
         self.warnings.append("%s: %s" % (where, msg))
 
     def show(self, label, file=sys.stdout):
+        for n in self.notes:
+            print("note: " + n, file=file)
         for w in self.warnings:
             print("warning: " + w, file=file)
         for e in self.errors:
@@ -102,14 +115,29 @@ def allowed_roots(source, extra):
 
 
 def safe_dir(path, roots, what):
-    """The real path of an existing directory that lies inside one of the allowed roots."""
+    """The real path of an existing directory that lies inside one of the allowed roots and is not a symbolic link."""
     rp = _real(path)
     if not os.path.isdir(rp):
         raise Refusal("%s %s is not a directory" % (what, path))
     if not any(_inside(rp, r) for r in roots):
         raise Refusal("%s %s is outside the allowed roots (the source tree, the current directory, the temporary directory, --allow-root): "
                       "refused" % (what, path))
+    if os.path.islink(path.rstrip(os.sep) or path):
+        raise Refusal("%s %s is a symbolic link: refused" % (what, path))
     return rp
+
+
+def check_trusted(path, what):
+    """Refuse a symbolic link, a path owned by someone other than this user (or root), and a folder that others can
+    write: a group-writable folder is accepted only when the group is this user's own. Returns the lstat result."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode):
+        raise Refusal("%s %s is a symbolic link: refused" % (what, path))
+    if st.st_uid not in (os.geteuid(), 0):
+        raise Refusal("%s %s is owned by another user: refused" % (what, path))
+    if stat.S_ISDIR(st.st_mode) and (st.st_mode & stat.S_IWOTH or (st.st_mode & stat.S_IWGRP and st.st_gid != os.getegid())):
+        raise Refusal("%s %s can be written by other users: refused" % (what, path))
+    return st
 
 
 def safe_file(path, roots, what):
@@ -119,6 +147,28 @@ def safe_file(path, roots, what):
     if not any(_inside(rp, r) for r in roots):
         raise Refusal("%s %s is outside the allowed roots: refused" % (what, path))
     return rp
+
+
+def check_static_file(full):
+    """Refuse a static file that is not a plain file of this user's, or that has another name elsewhere (a hard link)."""
+    st = check_trusted(full, "static file")
+    if not stat.S_ISREG(st.st_mode):
+        raise Refusal("static file %s is not a regular file: refused" % full)
+    if st.st_nlink > 1:
+        raise Refusal("static file %s is a hard link (it has %d names): refused; copy the file instead" % (full, st.st_nlink))
+
+
+def read_static(full):
+    """The bytes of a static file, opened without following a link and checked again on the open file."""
+    try:
+        fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        raise Refusal("static file %s cannot be read (%s): refused" % (full, e.strerror))
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or st.st_uid not in (os.geteuid(), 0):
+            raise Refusal("static file %s changed while building: refused" % full)
+        return f.read(MAX_STATIC_BYTES + 1)
 
 
 def read_text(path, limit=MAX_PAGE_BYTES):
@@ -132,11 +182,14 @@ def read_text(path, limit=MAX_PAGE_BYTES):
         raise Refusal("%s is not UTF-8 text (%s)" % (path, e))
 
 
-def read_tree(root, suffix):
-    """Regular files under root with the suffix, as sorted relative paths; a symlink anywhere is a refusal."""
+def read_tree(root, suffix, keep=(), skipped=None):
+    """Regular files under root with the suffix, as sorted relative paths; a symlink anywhere is a refusal.
+    Hidden folders are left out, except those named in keep; the left-out ones are appended to skipped."""
     out = []
     for dirpath, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        if skipped is not None:
+            skipped.extend(os.path.relpath(os.path.join(dirpath, d), root).replace(os.sep, "/") for d in sorted(dirs) if d.startswith(".") and d not in keep)
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") or d in keep)
         for name in sorted(dirs) + sorted(files):
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
@@ -147,23 +200,46 @@ def read_tree(root, suffix):
     return sorted(out)
 
 
-def prepare_out(out, roots_forbidden):
-    """--out must be absent or an empty directory, and must not contain the source or the pages."""
+def prepare_out(out, roots_forbidden, inside_forbidden=()):
+    """--out must be absent or an empty directory; it must not contain the source or the pages, and must not lie inside
+    the pages or the static folder (the next build would take the site as input). Returns its final path; nothing is created."""
     p = os.path.abspath(out)
     rp = _real(os.path.dirname(p))
     final = os.path.join(rp, os.path.basename(p))
     if final == os.sep or final == _real(os.path.expanduser("~")):
         raise Refusal("--out %s: refused" % out)
+    for r in roots_forbidden:
+        if r and _inside(r, final):
+            raise Refusal("--out %s would contain %s: refused" % (out, r))
+    for r in inside_forbidden:
+        if r and _inside(final, r):
+            raise Refusal("--out %s would be inside %s: refused" % (out, r))
     if os.path.lexists(final):
         if os.path.islink(final) or not os.path.isdir(final):
             raise Refusal("--out %s exists and is not a directory" % out)
         if os.listdir(final):
             raise Refusal("--out %s is not empty: give a new or empty directory" % out)
-    for r in roots_forbidden:
-        if r and _inside(r, final):
-            raise Refusal("--out %s would contain %s: refused" % (out, r))
-    os.makedirs(final, exist_ok=True)
     return final
+
+
+def build_into(final, writer):
+    """Run writer(directory) in a private folder next to `final`, then move it to `final` in one step; on any failure
+    remove it, so a failed build leaves no half-written site (and an existing empty `final` stays empty)."""
+    parent = os.path.dirname(final)
+    os.makedirs(parent, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=".site-build-", dir=parent)
+    try:
+        result = writer(tmp)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(tmp, 0o777 & ~mask)
+        if os.path.isdir(final):
+            os.rmdir(final)
+        os.rename(tmp, final)
+        return result
+    except BaseException:
+        shutil.rmtree(tmp, True)
+        raise
 
 
 class Writer:
@@ -187,9 +263,17 @@ class Writer:
 
 
 # ------------------------------------------------------------------ the source
+CHILD_CPU_SECONDS = 30                      # limits for the child that reads lib/commands.py
+CHILD_MEMORY_BYTES = 1024 * 1024 * 1024
+CHILD_OUTPUT_BYTES = 8 * 1024 * 1024
+CHILD_TIMEOUT = 60
 _LOADER = (
-    "import json, sys\n"
-    "sys.path.insert(0, sys.argv[1])\n"
+    "import json, resource, sys\n"
+    "lib = sys.argv[1]\n"
+    "cpu, mem, out = (int(x) for x in sys.argv[2:5])\n"
+    "for what, n in ((resource.RLIMIT_CPU, cpu), (resource.RLIMIT_AS, mem), (resource.RLIMIT_FSIZE, out), (resource.RLIMIT_CORE, 0)):\n"
+    "    resource.setrlimit(what, (n, n))\n"
+    "sys.path.insert(0, lib)\n"
     "import commands as C\n"
     "keys = ('TAGLINE', 'INTRO', 'COMMANDS', 'GROUPS', 'TOPICS', 'ENVIRONMENT', 'FILES', 'WORKFLOW')\n"
     "print(json.dumps({k: getattr(C, k) for k in keys}))\n"
@@ -227,21 +311,44 @@ class Cmds:
         return {o["flag"]: o for o in spec.get("opts", [])}
 
 
+def _plain(s, limit=200):
+    """One line of text from another program's output that is safe to print: printable ASCII only, cut short."""
+    s = re.sub(r"[^\x20-\x7e]", "?", s.strip())
+    return s if len(s) <= limit else s[:limit] + "..."
+
+
 def load_commands(source):
+    """Read the command line from lib/commands.py of the source. THIS RUNS THE SOURCE'S CODE (importing commands.py runs
+    its module-level code and that of the modules it imports), so only a source you trust may be given. The child is
+    boxed in: python -I -S -B, an empty working folder that is also its HOME, a minimal environment, limits on cpu
+    time, memory and output size, and a time limit; what it reports back is cleaned before it is shown."""
     lib = os.path.join(source, "lib")
     if not os.path.isfile(os.path.join(lib, "commands.py")):
         raise Refusal("%s has no lib/commands.py" % source)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"}
+    work = tempfile.mkdtemp(prefix="site-source-")
     try:
-        r = subprocess.run([sys.executable, "-I", "-B", "-c", _LOADER, lib], capture_output=True, text=True, env=env, timeout=120)
-    except subprocess.TimeoutExpired:
-        raise Refusal("loading %s/commands.py timed out" % lib)
-    if r.returncode != 0:
-        raise Refusal("cannot load %s/commands.py: %s" % (lib, r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "exit %d" % r.returncode))
+        env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": work}
+        cmd = [sys.executable, "-I", "-S", "-B", "-c", _LOADER, lib, str(CHILD_CPU_SECONDS), str(CHILD_MEMORY_BYTES), str(CHILD_OUTPUT_BYTES)]
+        with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
+            try:
+                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fo, stderr=fe, env=env, cwd=work, timeout=CHILD_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                raise Refusal("loading %s/commands.py timed out after %d seconds" % (lib, CHILD_TIMEOUT))
+            fe.seek(0, os.SEEK_END)
+            fe.seek(max(0, fe.tell() - 4096))
+            err = fe.read().decode("utf-8", "replace")
+            fo.seek(0)
+            raw = fo.read(CHILD_OUTPUT_BYTES + 1)
+        if r.returncode != 0:
+            last = [ln for ln in err.splitlines() if ln.strip()]
+            why = _plain(last[-1]) if last else ("stopped by signal %d (a time, memory or size limit)" % -r.returncode if r.returncode < 0 else "exit %d" % r.returncode)
+            raise Refusal("cannot load %s/commands.py: %s" % (lib, why))
+    finally:
+        shutil.rmtree(work, True)
     try:
-        return Cmds(json.loads(r.stdout))
+        return Cmds(json.loads(raw.decode("utf-8")))
     except (ValueError, KeyError) as e:
-        raise Refusal("lib/commands.py of %s does not describe the command line as expected (%s)" % (source, e))
+        raise Refusal("lib/commands.py of %s does not describe the command line as expected (%s)" % (source, _plain(str(e))))
 
 
 _REL_HEAD = re.compile(r"^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?[ ]*$")
@@ -311,7 +418,7 @@ class Config:
     def __init__(self, data, where):
         if not isinstance(data, dict):
             raise Refusal("%s: not an object" % where)
-        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name"}
+        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name", "author"}
         extra = set(data) - known
         if extra:
             raise Refusal("%s: unknown key(s) %s" % (where, ", ".join(sorted(extra))))
@@ -323,6 +430,14 @@ class Config:
         self.repo = data.get("repo")
         self.og_image = data.get("og_image")
         self.name = data.get("name", SITE_NAME)
+        self.author = None
+        if "author" in data:
+            a = data["author"]
+            if not isinstance(a, dict) or set(a) - {"name", "url"} or not isinstance(a.get("name"), str) or not a["name"].strip():
+                raise Refusal('%s: author must be an object {"name": "...", "url": "https://..."} (url is optional)' % where)
+            if "url" in a:
+                normalize_url(a["url"] if isinstance(a["url"], str) else "", "%s: author url" % where)
+            self.author = a
         for k, t in (("pages", list), ("forbidden", list)):
             v = data.get(k, t())
             if not isinstance(v, t) or not all(isinstance(x, str) and x for x in v):
@@ -337,20 +452,25 @@ def normalize_url(url, what="url"):
     u = urllib.parse.urlsplit(url or "")
     if u.scheme != "https" or not u.netloc or u.query or u.fragment or u.username or u.password:
         raise Refusal("%s %r must be an https:// address without a query or fragment" % (what, url))
-    if re.search(r"[\s<>\"'\\]", url):
+    if re.search(r"[\s<>\"'\\\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]", url):
         raise Refusal("%s %r has characters that do not belong in a url" % (what, url))
     return url if url.endswith("/") else url + "/"
 
 
 def find_config(args, pages_dir, roots):
+    """The site.json named by --config, else the one in the --pages folder; never one from a folder above it."""
     cand = []
     if args.config:
         cand = [args.config]
     elif pages_dir:
-        cand = [os.path.join(pages_dir, "site.json"), os.path.join(pages_dir, "..", "site.json")]
+        cand = [os.path.join(pages_dir, "site.json")]
     for c in cand:
-        if os.path.isfile(c):
+        if os.path.lexists(c):
+            if os.path.islink(c):
+                raise Refusal("config %s is a symbolic link: refused" % c)
             rp = safe_file(c, roots, "config")
+            check_trusted(rp, "config")
+            check_trusted(os.path.dirname(rp), "config folder")
             try:
                 cfg = Config(json.loads(read_text(rp, 1024 * 1024)), rp)
             except ValueError as e:
@@ -380,6 +500,7 @@ class Page:
         self.lastmod = None
         self.published = None
         self.toc = True
+        self.links = []                   # (line, url) of links to resolve, for pages that are not hand pages
 
     @property
     def file(self):
@@ -404,26 +525,37 @@ def hrefs_to(html_text, fn):
 
 
 def git_dates(path):
-    """(last commit date, first commit date) of a tracked, unmodified file, as YYYY-MM-DD, else (None, None)."""
+    """(last commit date, first commit date, why not) of a tracked, unchanged file, as YYYY-MM-DD. When no date can be trusted
+    the dates are None and why says so: "shallow" (a shallow clone gives every file the tip commit's date), "not in a git
+    repository", "not tracked" or "changed since its last commit". git runs without the repository's fsmonitor, hooks or
+    filters, with no optional lock and a minimal environment; the file is compared with its committed blob without filters."""
     d, name = os.path.dirname(path), os.path.basename(path)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": "/nonexistent",
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": "/nonexistent", "GIT_OPTIONAL_LOCKS": "0",
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+    base = ["git", "-C", d, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.untrackedCache=false"]
 
     def run(*a):
         try:
-            r = subprocess.run(["git", "-C", d] + list(a), capture_output=True, text=True, env=env, timeout=30)
+            r = subprocess.run(base + list(a), capture_output=True, text=True, env=env, timeout=30, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return r.stdout if r.returncode == 0 else None
-    st = run("status", "--porcelain", "--", name)
-    if st is None or st.strip():
-        return None, None
+    shallow = run("rev-parse", "--is-shallow-repository")
+    if shallow is None:
+        return None, None, "not in a git repository"
+    if shallow.strip() != "false":
+        return None, None, "shallow"
+    committed = run("rev-parse", "HEAD:./" + name)
+    if committed is None:
+        return None, None, "not tracked"
+    if committed.strip() != (run("hash-object", "--no-filters", "--", name) or "").strip():
+        return None, None, "changed since its last commit"
     last = run("log", "-1", "--format=%cs", "--", name)
-    first = run("log", "--diff-filter=A", "--format=%cs", "--", name)
+    first = run("log", "--follow", "--diff-filter=A", "--format=%cs", "--", name)
     ok = lambda s: s and re.match(r"^\d{4}-\d{2}-\d{2}$", s.strip().splitlines()[-1] if s.strip() else "")
     if not ok(last):
-        return None, None
-    return last.strip().splitlines()[0], (first.strip().splitlines()[-1] if ok(first) else None)
+        return None, None, "not tracked"
+    return last.strip().splitlines()[0], (first.strip().splitlines()[-1] if ok(first) else None), None
 
 
 def gather_hand(pages_dir, rep):
@@ -466,7 +598,7 @@ def gather_hand(pages_dir, rep):
             rep.err(rel, "the page has no text")
             continue
         try:
-            doc = MD.convert(body, start_level=2, first_line=used + 1)
+            doc = MD.convert(body, start_level=2, first_line=used + 1, ids=set(PAGE_IDS))
         except MD.MdError as e:
             rep.err("%s:%d" % (rel, e.line), e.msg)
             continue
@@ -483,17 +615,18 @@ def gather_hand(pages_dir, rep):
 
 
 def h_html(level, sid, inner):
-    return '<h%d id="%s">%s <a class="anchor" href="#%s" aria-label="Link to this section">#</a></h%d>' % (level, esc(sid), inner, esc(sid), level)
+    text = html.unescape(re.sub(r"<[^>]+>", "", inner))
+    return '<h%d id="%s">%s %s</h%d>' % (level, esc(sid), inner, MD.anchor_html(sid, text), level)
 
 
 def code_block(text, lang="text", label=None):
-    return '<pre class="code" tabindex="0" aria-label="%s"><code class="language-%s">%s</code></pre>' % (esc(label or lang + " code"), esc(lang), esc(text))
+    return MD.pre_html(lang, text, label)
 
 
 def table(head, rows):
     th = "".join('<th scope="col">%s</th>' % h for h in head)
     tr = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % c for c in r) for r in rows)
-    return '<div class="table-wrap"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (th, tr)
+    return MD.table_html(th, tr)
 
 
 # ---- the reference, from the command description
@@ -535,7 +668,7 @@ def sentence(s):
 class RefBuilder:
     def __init__(self, cmds):
         self.cmds = cmds
-        self.used = set()
+        self.used = set(PAGE_IDS)
 
     def uid(self, base):
         if base in self.used:
@@ -649,7 +782,7 @@ def generated_pages(src, rep, repo=None):
                       "The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.",
                       "\n".join(body), heads, ref_crumb[:1] + [("Command reference", "reference/")]))
     # releases
-    body, heads, ids = [], [], set()
+    body, heads, ids, links = [], [], set(PAGE_IDS), []
     released = [s for s in src.sections if s[0].lower() != "unreleased"]
     if not released:
         rep.err("CHANGELOG.md", "no released section to build the releases page from")
@@ -671,12 +804,14 @@ def generated_pages(src, rep, repo=None):
             rep.err("CHANGELOG.md:%d" % e.line, e.msg)
             continue
         body.append(doc.html)
+        links += doc.links
         heads += [(lv, i, t) for lv, i, t, _ in doc.headings]
     first_v = released[0][0] if released else "?"
     last_v = released[-1][0] if released else "?"
     pages.append(Page("releases/", "releases", "Releases",
                       "Release notes for qargi, from %s back to %s: what was added, changed, removed, fixed and secured in each version, from the changelog." % (first_v, last_v),
                       "\n".join(body), heads, [("Home", ""), ("Releases", "releases/")]))
+    pages[-1].links = links
     return pages
 
 
@@ -693,6 +828,9 @@ def build_model(args, rep):
     url = args.url or (cfg.url if cfg else None)
     if url:
         site.url = normalize_url(url)
+    if site.url and urllib.parse.urlsplit(site.url).path not in ("", "/"):
+        rep.note("url", "the address has a path: crawlers read robots.txt only at the root of the host, so serve a copy of robots.txt "
+                        "there, or submit sitemap.xml to the search engines directly")
     if cfg and cfg.release and cfg.release != args.release:
         rep.err("site.json", "release is %s but --release is %s" % (cfg.release, args.release))
     hand = gather_hand(pages_dir, rep) if pages_dir else []
@@ -709,6 +847,9 @@ def build_model(args, rep):
     # order: the home page, hand pages in the configured order, then the generated ones
     order = list(cfg.pages) if cfg else []
     hand_by_slug = {p.slug: p for p in hand if p.path}
+    for k, s in enumerate(order):
+        if s in order[:k]:
+            rep.err("site.json", "pages lists %r twice" % s)
     for s in order:
         if s != "index" and s not in hand_by_slug:
             rep.err("site.json", "pages lists %r, which is not a page in --pages" % s)
@@ -721,10 +862,20 @@ def build_model(args, rep):
         p.crumbs = [("Home", ""), (p.title, p.path)]
     if "" in pages:
         pages[""].crumbs = [("Home", "")]
+    shallow = []
     for p in pages.values():
-        if p.src:
-            p.lastmod, p.published = git_dates(p.src)
-        if not p.lastmod:
+        if not p.src:
+            p.lastmod = src.release_date            # a generated page is as new as the release
+            continue
+        p.lastmod, p.published, why = git_dates(p.src)
+        if why == "shallow":
+            shallow.append(p)
+        elif why:
+            rep.note(p.rel, "no commit date (%s): no lastmod for this page" % why)
+    if shallow:
+        rep.warn("pages", "shallow clone: the commit dates of %d hand page(s) are unknown, so they carry the release date (%s); "
+                          "clone with full history to get each page's own date" % (len(shallow), src.release_date or "none"))
+        for p in shallow:
             p.lastmod = src.release_date
     pages["404"] = Page("404", "notfound", "Page not found", "The page you asked for is not part of the qargi documentation. Use the links below to reach the home page, the reference or the releases.", "")
     validate(site, hand, rep)
@@ -735,8 +886,8 @@ def default_home(src, hand):
     c = src.cmds
     items = ["<li><a href=\"/%s\">%s</a></li>" % (esc(p.path), esc(p.title)) for p in sorted(hand, key=lambda p: p.slug) if p.path]
     items += ['<li><a href="/reference/">Command reference</a></li>', '<li><a href="/releases/">Releases</a></li>']
-    body = "<p>%s</p>\n<p>%s</p>\n<h2 id=\"pages\">Pages <a class=\"anchor\" href=\"#pages\" aria-label=\"Link to this section\">#</a></h2>\n<ul>%s</ul>" % (
-        esc(c.intro), esc(sentence(c.tagline)), "".join(items))
+    body = "<p>%s</p>\n<p>%s</p>\n<h2 id=\"pages\">Pages %s</h2>\n<ul>%s</ul>" % (
+        esc(c.intro), esc(sentence(c.tagline)), MD.anchor_html("pages", "Pages"), "".join(items))
     p = Page("", "home", "qargi documentation", "Documentation for qargi, which hands development tasks to sandboxed agents and takes the work back as patches you review and apply yourself.", body, [(2, "pages", "Pages")])
     p.toc = False
     return p
@@ -765,20 +916,25 @@ def is_placeholder(tok):
     return bool(PLACEHOLDER.match(tok)) or tok.startswith("$")
 
 
+_SEPARATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", ";;", ";&", ";;&"}
+_HEREDOC = re.compile(r"(?<!<)<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_WRAPPERS = {"sudo", "env", "exec", "command", "time", "nohup", "nice", "then", "do", "else", "elif", "if", "while", "until", "!", "{"}
+_SUDO_ARG = {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"}
+
+
 def tokens_of(line):
-    """Split one shell-like line into commands (lists of words) at ; & | and friends; raises ValueError."""
-    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    """Split one shell-like line into commands (lists of words) at ; & | ( ) and command substitutions; raises ValueError.
+    A redirection and its target are dropped, and the words after them stay in the same command."""
+    lex = shlex.shlex(re.sub(r"`|\$\(", " ; ", line), posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     segs, cur = [], []
-    for t in lex:
+    toks = iter(lex)
+    for t in toks:
         if set(t) <= set(";&|()<>"):
-            if t in ("<", ">", ">>", "<<", "<<<"):
-                # a redirection ends the command's words; the target is not one
-                segs.append(cur)
-                cur = []
-                nxt = next(lex, None)
-                if nxt is None:
-                    break
+            if "<" in t or ">" in t:
+                next(toks, None)                      # the target (or the heredoc word, or the descriptor of 2>&1)
+                if cur and re.fullmatch(r"\d+", cur[-1]):
+                    cur.pop()                         # the descriptor in 2> or 2>&1
                 continue
             segs.append(cur)
             cur = []
@@ -786,6 +942,28 @@ def tokens_of(line):
             cur.append(t)
     segs.append(cur)
     return [s for s in segs if s]
+
+
+def qargi_words(seg):
+    """The words after `qargi` when the command is qargi (also as ./bin/qargi, after sudo, env, VAR=x, if, then, ...), else None."""
+    i = 0
+    while i < len(seg):
+        w = seg[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):
+            i += 1
+        elif w in _WRAPPERS:
+            i += 1
+            if w == "sudo":
+                while i < len(seg) and seg[i].startswith("-"):
+                    i += 2 if seg[i] in _SUDO_ARG else 1
+            elif w == "env":
+                while i < len(seg) and (seg[i].startswith("-") or "=" in seg[i]):
+                    i += 2 if seg[i] in ("-u", "-C", "-S") else 1
+        else:
+            break
+    if i < len(seg) and os.path.basename(seg[i]) == "qargi":
+        return seg[i + 1:]
+    return None
 
 
 def check_words(cmds, words):
@@ -835,11 +1013,12 @@ def check_words(cmds, words):
     else:
         allowed = cmds.opts_of(spec)
         where = "qargi " + t0
-    skip = False
-    for w in rest:
-        if skip:
-            skip = False
-            continue
+    k = 0
+    while k < len(rest):
+        w = rest[k]
+        k += 1
+        if w == "--":
+            break                                       # what follows is not an option
         if not w.startswith("-") or w == "-" or re.match(r"^-\d", w) or is_placeholder(w):
             continue
         name = w.split("=", 1)[0]
@@ -849,12 +1028,17 @@ def check_words(cmds, words):
             near = difflib.get_close_matches(name, list(allowed), 1)
             return "%s has no option %s%s" % (where, name, " (did you mean %s?)" % near[0] if near else "")
         if allowed[name]["arg"] and "=" not in w:
-            skip = True
+            nxt = rest[k] if k < len(rest) else None
+            if nxt is not None and nxt.startswith("--") and nxt != "--" and not is_placeholder(nxt):
+                return "%s: option %s needs a value (got %s)" % (where, name, nxt)
+            k += 1
     return None
 
 
 def check_code(cmds, kind, text, line):
-    """Yield (line, message) for the qargi commands and options in one code span or fenced block."""
+    """Yield (line, message) for the qargi commands and options in one code span or fenced block.
+    Only qargi command lines are checked: in a shell block, the lines that are commands (not comments, the bodies of heredocs
+    or the rest of a quoted string), in a console block only the lines that start with `$ `."""
     if kind == "span":
         t = text.strip()
         if t == "qargi" or t.startswith("qargi "):
@@ -864,45 +1048,59 @@ def check_code(cmds, kind, text, line):
                 yield line, "cannot read `%s` (%s)" % (t, e)
                 return
             for seg in segs:
-                if seg and seg[0] == "qargi":
-                    msg = check_words(cmds, seg[1:])
+                words = qargi_words(seg)
+                if words is not None:
+                    msg = check_words(cmds, words)
                     if msg:
                         yield line, "`%s`: %s" % (t, msg)
-        else:
-            m = re.match(r"^(--[a-z0-9][a-z0-9-]*)(?:[= ]|$)", t)
-            if m and m.group(1) not in cmds.all_flags and m.group(1) != "--help":
-                near = difflib.get_close_matches(m.group(1), sorted(cmds.all_flags), 1)
-                yield line, "no qargi command has the option %s%s" % (m.group(1), " (did you mean %s?)" % near[0] if near else "")
         return
     lang = kind.split(":", 1)[1]
     if lang not in CODE_SHELL:
         return
+    console = lang in ("console", "shell-session")
     lines = text.split("\n")
     i = 0
     while i < len(lines):
         start = i
-        cur = lines[i]
-        while cur.rstrip().endswith("\\") and i + 1 < len(lines):
-            i += 1
-            cur = cur.rstrip()[:-1] + " " + lines[i].strip()
+        s = lines[i].strip()
         i += 1
-        s = cur.strip()
+        if s.startswith("$ "):
+            s = s[2:].strip()
+        elif console:
+            continue
         if not s or s.startswith("#"):
             continue
-        if s.startswith("$ "):
-            s = s[2:]
-        if "qargi" not in s:
-            continue
-        try:
-            segs = tokens_of(s)
-        except ValueError as e:
-            yield line + 1 + start, "cannot read the command line (%s)" % e
+        heredocs = [m.group(2) for m in _HEREDOC.finditer(s)]
+        segs, problem = [], None
+        if "qargi" in s:
+            while True:
+                if re.search(r"(?<!\\)(?:\\\\)*\\$", s):                         # a trailing backslash continues the command
+                    if i < len(lines):
+                        s = s[:-1] + " " + lines[i].strip()
+                        heredocs += [m.group(2) for m in _HEREDOC.finditer(lines[i])]
+                        i += 1
+                        continue
+                    s = s[:-1]
+                try:
+                    segs = tokens_of(s)
+                except ValueError as e:
+                    if "closing quotation" in str(e) and i < len(lines) and not (console and lines[i].lstrip().startswith("$ ")):
+                        s += "\n" + lines[i]                                    # a quoted string that goes on to the next line
+                        i += 1
+                        continue
+                    problem = str(e)
+                break
+        for word in heredocs:                                                    # the body of a heredoc is text
+            while i < len(lines) and lines[i].strip() != word:
+                i += 1
+            i += 1
+        if problem:
+            yield line + 1 + start, "cannot read the command line (%s)" % problem
             continue
         for seg in segs:
-            while seg and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[0]):
-                seg = seg[1:]
-            if seg and seg[0] == "qargi":
-                msg = check_words(cmds, seg[1:])
+            words = qargi_words(seg)
+            if words is not None:
+                msg = check_words(cmds, words)
                 if msg:
                     yield line + 1 + start, msg
 
@@ -912,29 +1110,82 @@ def split_target(url):
     return path, frag
 
 
+def check_links(site, page, links, where, files, rep):
+    """Report the (line, url) links of a page that do not resolve: a page, a file or a heading of the site."""
+    pages = site.pages
+    for line, url in links:
+        if site.url and url.startswith(site.url):
+            rep.err("%s:%d" % (where, line), "link to %s: write the site path (/%s) so the generator can resolve it" % (url, url[len(site.url):]))
+            continue
+        if url.startswith(("https://", "http://", "mailto:")):
+            continue
+        path, frag = split_target(url)
+        if path == "":
+            if frag and frag not in page.ids:
+                rep.err("%s:%d" % (where, line), "link %s: no heading with that id on this page (ids: %s)" % (url, ", ".join(sorted(page.ids)) or "none"))
+            continue
+        key = path[1:]
+        if key in files:
+            if frag:
+                rep.err("%s:%d" % (where, line), "link %s: a fragment on a file" % url)
+            continue
+        if key not in pages or pages[key].kind == "notfound":
+            known = sorted("/" + k for k in pages if k != "404")
+            near = difflib.get_close_matches(path, known, 1)
+            rep.err("%s:%d" % (where, line), "link %s: no such page%s" % (url, " (did you mean %s?)" % near[0] if near else ""))
+            continue
+        if frag and frag not in pages[key].ids:
+            near = difflib.get_close_matches(frag, sorted(pages[key].ids), 1)
+            rep.err("%s:%d" % (where, line), "link %s: page %s has no heading with id '%s'%s" % (url, path, frag, " (did you mean #%s?)" % near[0] if near else ""))
+
+
 def validate(site, hand, rep):
     cmds = site.src.cmds
     cfg = site.cfg
     pages = site.pages
     files = {"sitemap.xml", "robots.txt", "assets/site.css", ".nojekyll"}
+    gen = files | {p.file for p in pages.values()}
+    gen_dirs = {"/".join(f.split("/")[:k]) for f in gen for k in range(1, f.count("/") + 1)}
+    gen_lower = {g.lower() for g in gen | gen_dirs}
     if cfg and cfg.dir:
         sd = os.path.join(cfg.dir, "static")
         if os.path.islink(sd):
             raise Refusal("%s is a symbolic link: refused" % sd)
         if os.path.isdir(sd):
-            for rel in read_tree(sd, ""):
+            check_trusted(sd, "static folder")
+            checked = {sd}
+            skipped = []
+            lower = {}
+            for rel in read_tree(sd, "", keep=(".well-known",), skipped=skipped):
+                parts = rel.split("/")
+                for k in range(1, len(parts)):
+                    d = os.path.join(sd, *parts[:k])
+                    if d not in checked:
+                        check_trusted(d, "static folder")
+                        checked.add(d)
+                full = os.path.join(sd, *parts)
+                check_static_file(full)
                 if not re.match(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$", rel):
                     rep.err("static/" + rel, "file names use letters, digits, dot, hyphen and underscore")
                     continue
-                full = os.path.join(sd, *rel.split("/"))
+                if parts[-1] == "README.md":
+                    rep.note("static/" + rel, "not published (a README is for the people who keep the folder)")
+                    continue
                 if os.path.getsize(full) > MAX_STATIC_BYTES:
                     rep.err("static/" + rel, "larger than %d bytes" % MAX_STATIC_BYTES)
                     continue
-                if rel in files or rel.endswith("/index.html") or rel == "404.html" or rel == "index.html":
-                    rep.err("static/" + rel, "collides with a generated file")
+                prefixes = {"/".join(parts[:k]) for k in range(1, len(parts) + 1)}
+                if rel.lower() in gen_lower or any(x in gen for x in prefixes) or rel.endswith("/index.html"):
+                    rep.err("static/" + rel, "collides with a generated file or folder")
                     continue
+                if rel.lower() in lower:
+                    rep.err("static/" + rel, "differs only by case from static/%s (they would be one file on some systems)" % lower[rel.lower()])
+                    continue
+                lower[rel.lower()] = rel
                 site.static[rel] = full
                 files.add(rel)
+            for d in skipped:
+                rep.warn("static/" + d, "a hidden folder is not published (only .well-known is)")
     if cfg and cfg.og_image and cfg.og_image not in site.static:
         rep.err("site.json", "og_image %r is not a file in static/" % cfg.og_image)
     titles, descs = {}, {}
@@ -961,31 +1212,10 @@ def validate(site, hand, rep):
         for line, kind, text in p.doc.code:
             for ln, msg in check_code(cmds, kind, text, line):
                 rep.err("%s:%d" % (where, ln), msg)
-        # links
-        for line, url in p.doc.links:
-            if site.url and url.startswith(site.url):
-                rep.err("%s:%d" % (where, line), "link to %s: write the site path (/%s) so the generator can resolve it" % (url, url[len(site.url):]))
-                continue
-            if url.startswith(("https://", "http://", "mailto:")):
-                continue
-            path, frag = split_target(url)
-            if path == "":
-                if frag and frag not in p.ids:
-                    rep.err("%s:%d" % (where, line), "link %s: no heading with that id on this page (ids: %s)" % (url, ", ".join(sorted(p.ids)) or "none"))
-                continue
-            key = path[1:]
-            if key in files:
-                if frag:
-                    rep.err("%s:%d" % (where, line), "link %s: a fragment on a file" % url)
-                continue
-            if key not in pages or pages[key].kind == "notfound":
-                known = sorted("/" + k for k in pages if k != "404")
-                near = difflib.get_close_matches(path, known, 1)
-                rep.err("%s:%d" % (where, line), "link %s: no such page%s" % (url, " (did you mean %s?)" % near[0] if near else ""))
-                continue
-            if frag and frag not in pages[key].ids:
-                near = difflib.get_close_matches(frag, sorted(pages[key].ids), 1)
-                rep.err("%s:%d" % (where, line), "link %s: page %s has no heading with id '%s'%s" % (url, path, frag, " (did you mean #%s?)" % near[0] if near else ""))
+        check_links(site, p, p.doc.links, where, files, rep)
+    for p in pages.values():
+        if p.kind == "releases":
+            check_links(site, p, p.links, "CHANGELOG.md", files, rep)
     if cfg and cfg.repo:
         try:
             normalize_url(cfg.repo, "site.json repo")
@@ -1037,8 +1267,8 @@ def render_page(site, p):
     nav_items = [("Home", "")] + [(h.nav, h.path) for h in site.hand_order] + [("Reference", "reference/"), ("Releases", "releases/")]
     lis = []
     for label, path in nav_items:
-        cur = (p.path == path) or (path == "reference/" and p.kind == "reference")
-        lis.append('<li><a href="%s"%s>%s</a></li>' % (esc(L(path)), ' aria-current="page"' if cur else "", esc(label)))
+        cur = ' aria-current="page"' if p.path == path else ' aria-current="true"' if path == "reference/" and p.kind == "reference" else ""
+        lis.append('<li><a href="%s"%s>%s</a></li>' % (esc(L(path)), cur, esc(label)))
     nav = "<ul>\n%s\n</ul>" % "\n".join(lis)
     # breadcrumb
     crumb = ""
@@ -1054,9 +1284,20 @@ def render_page(site, p):
     toc = ""
     h2 = [(i, t) for lv, i, t in p.headings if lv == 2]
     if p.toc and len(h2) >= 3:
-        toc = '<details class="toc" open><summary>On this page</summary><ul>%s</ul></details>' % "".join(
+        toc = '<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul>%s</ul></details></nav>' % "".join(
             '<li><a href="#%s">%s</a></li>' % (esc(i), esc(t)) for i, t in h2)
     body = hrefs_to(p.body, L)
+    intro = ""
+    if p.kind != "notfound":
+        intro = '<p class="lede">%s</p>' % esc(p.description)
+        if p.kind != "home":
+            dates = []
+            if p.published:
+                dates.append('Published <time datetime="%s">%s</time>' % (esc(p.published), esc(p.published)))
+            if p.lastmod:
+                dates.append('Updated <time datetime="%s">%s</time>' % (esc(p.lastmod), esc(p.lastmod)))
+            if dates:
+                intro += '\n<p class="dates">%s</p>' % " · ".join(dates)
     # head
     title = page_title(site, p)
     canon = url + p.path
@@ -1078,6 +1319,9 @@ def render_page(site, p):
     # footer
     foot = ["<p>Checked against %s.</p>" % esc(site.src.stamp)]
     bits = []
+    if cfg and cfg.author:
+        a = cfg.author
+        bits.append("By " + ('<a href="%s">%s</a>' % (esc(a["url"]), esc(a["name"])) if a.get("url") else esc(a["name"])) + ".")
     if site.src.license_id:
         bits.append("Licensed under the %s License." % esc(site.src.license_id))
     if repo:
@@ -1089,29 +1333,39 @@ def render_page(site, p):
     page = tmpl("page.html").substitute(
         title=esc(title), description=esc(p.description), robots=head_robots, canonical=head_canon,
         css=esc(L("assets/site.css")), social=social, jsonld=ld, home=esc(L("")), site_name=esc(site.name),
-        stamp=esc(site.src.stamp), nav=nav, breadcrumb=crumb, h1=esc(p.title), toc=toc, body=body, footer="\n".join(foot))
+        stamp=esc(site.src.stamp), nav=nav, breadcrumb=crumb, h1=esc(p.title), intro=intro, toc=toc, body=body, footer="\n".join(foot))
     return page
 
 
 def jsonld_for(site, p, canon, repo):
+    """Structured data for what the page shows: its title, description (the lede), dates (the Updated line), breadcrumb,
+    version and licence (header and footer), and an author only when site.json names one that the footer shows."""
     url = site.url
     ctx = "https://schema.org"
-    org = {"@type": "Organization", "name": SITE_NAME}
+    cfg = site.cfg
+    author = None
+    if cfg and cfg.author:
+        author = {"@type": "Organization", "name": cfg.author["name"]}
+        if cfg.author.get("url"):
+            author["url"] = cfg.author["url"]
     if p.kind == "home":
-        app = {"@context": ctx, "@type": "SoftwareApplication", "name": SITE_NAME, "description": p.description, "url": canon,
-               "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux", "softwareVersion": site.src.release,
-               "author": org, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}
+        app = {"@type": "SoftwareApplication", "name": SITE_NAME, "description": p.description, "url": canon,
+               "applicationCategory": "DeveloperApplication", "softwareVersion": site.src.release}
+        if author:
+            app["author"] = author
         if site.src.license_id == "MIT":
             app["license"] = "https://opensource.org/licenses/MIT"
         if repo:
             app["downloadUrl"] = repo + "/releases"
-        return app
+        return {"@context": ctx, "@graph": [{"@type": "WebSite", "name": site.name, "url": url}, app]}
     items = []
     for k, (t, path) in enumerate(p.crumbs, 1):
         items.append({"@type": "ListItem", "position": k, "name": t, "item": url + path})
     art = {"@type": "TechArticle", "headline": p.title, "description": p.description, "url": canon, "inLanguage": "en",
-           "author": org, "isPartOf": {"@type": "WebSite", "name": site.name, "url": url},
+           "isPartOf": {"@type": "WebSite", "name": site.name, "url": url},
            "about": {"@type": "SoftwareApplication", "name": SITE_NAME}}
+    if author:
+        art["author"] = author
     if p.lastmod:
         art["dateModified"] = p.lastmod
     if p.published:
@@ -1144,14 +1398,17 @@ def write_site(site, out):
     w.write("robots.txt", tmpl("robots.txt").substitute(sitemap=site.url + "sitemap.xml"))
     w.write(".nojekyll", b"")
     for rel, full in sorted(site.static.items()):
-        with open(full, "rb") as f:
-            w.write(rel, f.read())
+        data = read_static(full)
+        if len(data) > MAX_STATIC_BYTES:
+            raise Refusal("static file %s is larger than %d bytes" % (full, MAX_STATIC_BYTES))
+        w.write(rel, data)
     return w
 
 
 # ------------------------------------------------------------------ check-output
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
-LOCAL_SCHEMES = ("mailto:", "tel:", "data:")
+LOCAL_SCHEMES = ("mailto:", "tel:")
+BANNED_TAGS = ("iframe", "frame", "frameset", "object", "embed", "applet", "form", "base")
 
 
 class Tree(HTMLParser):
@@ -1168,6 +1425,7 @@ class Tree(HTMLParser):
         self.title = ""
         self.lang = None
         self.scripts = []
+        self.times = []       # datetime attributes of <time> elements
         self._cap = None
         self._script = None
         self._title = False
@@ -1186,8 +1444,19 @@ class Tree(HTMLParser):
                 self.err("id %r is empty or has whitespace" % a["id"])
         if tag == "html":
             self.lang = a.get("lang")
+        if any(k.lower().startswith("on") for k in names):
+            self.err("<%s> has an event handler attribute" % tag)
+        if tag in BANNED_TAGS:
+            self.err("<%s> is not allowed in the output" % tag)
+        if tag == "meta" and "http-equiv" in a:
+            self.err("<meta http-equiv> is not allowed in the output")
+        if tag == "time" and a.get("datetime"):
+            self.times.append(a["datetime"])
+        if tag == "script" and (a.get("type") != "application/ld+json" or "src" in a):
+            self.err("a script that is not JSON-LD")
+        icon = tag == "link" and a.get("rel") == "icon" and a.get("href") == "data:,"       # the one data: address the pages use
         for attr in ("href", "src"):
-            if attr in a and a[attr] is not None:
+            if attr in a and a[attr] is not None and not icon:
                 self.links.append((self.getpos()[0], tag, attr, a[attr]))
         if tag == "img" and not a.get("alt") and "alt" not in a:
             self.imgs_noalt.append(self.getpos()[0])
@@ -1327,6 +1596,8 @@ def check_output(out):
             if "noindex" not in t.meta.get("robots", ""):
                 rep.err(rel, "the 404 page must be noindex")
         else:
+            if "noindex" in t.meta.get("robots", "").lower():
+                rep.err(rel, "a page that is in the sitemap is marked noindex")
             expect = (site_url or "") + (rel[:-len("index.html")] if rel.endswith("index.html") else rel)
             if t.rels.get("canonical") != expect:
                 rep.err(rel, "canonical is %r, expected %r" % (t.rels.get("canonical"), expect))
@@ -1356,34 +1627,52 @@ def _check_jsonld(rel, t, rep, canon):
         except ValueError as e:
             rep.err(rel, "JSON-LD is not valid JSON (%s)" % e)
             continue
-        nodes = data.get("@graph", [data]) if isinstance(data, dict) else []
-        types = [n.get("@type") for n in nodes if isinstance(n, dict)]
+        graph = data.get("@graph", [data]) if isinstance(data, dict) else None
+        if not isinstance(graph, list):
+            rep.err(rel, "JSON-LD @graph is not a list")
+            continue
+        if not all(isinstance(n, dict) for n in graph):
+            rep.err(rel, "JSON-LD @graph holds a value that is not an object")
+        nodes = [n for n in graph if isinstance(n, dict)]
+        types = [n.get("@type") for n in nodes]
         if rel == "index.html":
-            if "SoftwareApplication" not in types:
-                rep.err(rel, "the home page needs SoftwareApplication JSON-LD")
+            if "SoftwareApplication" not in types or "WebSite" not in types:
+                rep.err(rel, "the home page needs SoftwareApplication and WebSite JSON-LD")
         else:
             if "TechArticle" not in types or "BreadcrumbList" not in types:
                 rep.err(rel, "JSON-LD needs TechArticle and BreadcrumbList")
         for n in nodes:
             if n.get("@type") == "TechArticle" and n.get("headline") not in h1:
                 rep.err(rel, "TechArticle headline %r is not the page's h1 %r" % (n.get("headline"), h1))
+            if n.get("@type") == "TechArticle":
+                for key in ("dateModified", "datePublished"):
+                    if key in n and n[key] not in t.times:
+                        rep.err(rel, "%s %s is not shown on the page (JSON-LD describes only what the page shows)" % (key, n[key]))
             if n.get("@type") == "BreadcrumbList":
-                pos = [i.get("position") for i in n.get("itemListElement", [])]
+                items = n.get("itemListElement")
+                if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                    rep.err(rel, "BreadcrumbList itemListElement is not a list of objects")
+                    continue
+                pos = [i.get("position") for i in items]
                 if pos != list(range(1, len(pos) + 1)):
                     rep.err(rel, "BreadcrumbList positions are not 1..n")
-                for i in n.get("itemListElement", []):
+                for i in items:
                     if i.get("name") is None or not str(i.get("item", "")).startswith("https://"):
                         rep.err(rel, "BreadcrumbList item needs a name and an https url")
 
 
 def _local_target(rel, val, site_url):
     """(path in the output, is a directory, fragment) of a link; None when it leaves the site; an error string."""
-    if val.startswith(LOCAL_SCHEMES):
+    seen = re.sub(r"[\t\r\n]", "", val).lstrip("".join(chr(c) for c in range(33))).lower()     # as a browser reads the scheme
+    if seen.startswith(LOCAL_SCHEMES):
         return None
-    if val.lower().startswith("javascript:"):
+    if seen.startswith("javascript:"):
         return "javascript: links are not allowed"
     path, _, frag = val.partition("#")
     path = path.split("?", 1)[0]
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*):", seen)
+    if m and m.group(1) not in ("http", "https"):
+        return "link %s: the scheme %s: is not allowed (only https, http, mailto and tel)" % (val, m.group(1))
     if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", path) or path.startswith("//"):
         if site_url and path.startswith(site_url):
             rest = path[len(site_url):]
@@ -1554,9 +1843,9 @@ def run_diff(args):
 # ------------------------------------------------------------------ command line
 def common(p):
     p.add_argument("--release", required=True, help="the release the source is, X.Y.Z")
-    p.add_argument("--source", required=True, help="a checkout or extracted archive of that release")
+    p.add_argument("--source", required=True, help="a checkout or extracted archive of that release; its lib/commands.py is imported, which runs its code: only a source you trust")
     p.add_argument("--pages", help="the directory of hand pages (Markdown with front matter) and its site.json")
-    p.add_argument("--config", help="the site.json (default: site.json in --pages or beside it)")
+    p.add_argument("--config", help="the site.json (default: site.json in --pages; a site.json in a folder above is never used); its static/ folder is published as is")
     p.add_argument("--url", help="the site address, https://...; overrides site.json url")
     p.add_argument("--allow-unreleased", action="store_true", help="accept a source whose VERSION is not --release")
     p.add_argument("--allow-root", action="append", default=[], help="another directory --pages and --config may be under")
@@ -1592,8 +1881,9 @@ def main(argv=None):
         if rep.errors or args.verb == "check":
             return rep.show("check")
         source_roots = [_real(args.source)] + ([_real(args.pages)] if args.pages else [])
-        out = prepare_out(args.out, source_roots)
-        write_site(site, out)
+        inside = ([_real(args.pages)] if args.pages else []) + ([_real(os.path.join(site.cfg.dir, "static"))] if site.cfg and site.cfg.dir else [])
+        out = prepare_out(args.out, source_roots, inside)
+        build_into(out, lambda d: write_site(site, d))
         rc = rep.show("build")
         print("built %d page(s) in %s" % (len([k for k in site.pages]), out))
         return rc

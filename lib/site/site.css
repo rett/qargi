@@ -74,7 +74,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2rem 0; }
 code { font: 0.9em/1.4 var(--mono); background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; }
 pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; overflow-x: auto; }
 pre code { background: none; padding: 0; font-size: 0.875rem; white-space: pre; }
-.usage code { display: inline-block; max-width: 100%; overflow-x: auto; vertical-align: bottom; }
+.usage code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; vertical-align: bottom; }
 
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; min-width: 100%; font-size: 0.95rem; }
@@ -85,7 +85,8 @@ td:first-child code { white-space: nowrap; }
 .toc { border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 1rem; background: var(--head-bg); }
 .toc summary { cursor: pointer; font-weight: 600; }
 .toc ul { margin: 0.5rem 0 0.25rem; }
-.summary { color: var(--muted); font-size: 1.05rem; }
+.summary, .lede { color: var(--muted); font-size: 1.05rem; }
+.dates { color: var(--muted); font-size: 0.9rem; }
 .release-meta { color: var(--muted); }
 
 .site-footer { border-top: 1px solid var(--border); background: var(--head-bg); color: var(--muted); font-size: 0.9rem; }
