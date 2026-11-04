@@ -12,7 +12,9 @@
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #   release.sh status VERSION [--hotfix]    for an existing tag also warns: no GitHub release for it (gh release view, through
-#                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it
+#                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
+#                                           with release.sign set and no release yet it says "awaiting signature" until `sign` recorded
+#                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
@@ -108,6 +110,19 @@ open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPRE
 RS=$(dirname "$0")/release_sign.py
 SIGNREC=$DA_STATE/release/$PROJ-$VER.sign.json
 sign_configured() { jq -e '(.release // {}) | has("sign")' "$af" >/dev/null 2>&1; }
+# sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
+# and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
+sign_status() {
+  local tc s
+  sign_configured || return 0
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  [ "${GHS:-}" != found ] || return 0
+  python3 -I "$RS" config "$af" >/dev/null 2>&1 || { echo "warning: the release answers of $PROJ are not valid (qargi project validate $PROJ), so the signature of $VER was not checked"; return 0; }
+  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
+  echo "awaiting signature: $s"
+  sign_gate
+  if [ -z "$SG_WHY" ]; then echo "$VER is ready for signing: qargi release sign $VER"; else echo "  not ready for signing: $SG_WHY"; fi
+}
 # sign_gate: sets SG_WHY to why the repository is not in a state to sign VER (empty when it is). The files are built from the tagged commit, so
 # the repository's HEAD must be that commit, on master or detached (a develop, feature or other branch is refused) with no tracked file modified.
 sign_gate() {
@@ -204,6 +219,7 @@ PY
       echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: $(v=$(verified "$BASE"); if [ -z "$v" ]; then echo "not run"; elif [ "${v%% *}" = "$(sha_of "$BASE")" ]; then echo "${v##* } at this head"; else echo "${v##* } at an older head"; fi)"
       remote_report "$BASE"
       tag_checks
+      sign_status
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
@@ -211,7 +227,8 @@ PY
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
-    tag_checks;;
+    tag_checks
+    sign_status;;
   verify)
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     on=$BR; branch_exists "$BR" || on=$BASE

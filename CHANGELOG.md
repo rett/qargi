@@ -63,6 +63,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--notes-file FILE` (or the answer `release.notes_file`, `{version}` replaced) gives the notes instead of the changelog section.
   When `release.sign` is set it refuses until `qargi release sign VERSION` recorded an ok for the tag and none of the signed files
   or signatures changed since (the plan notes a signed file whose `.sig` is not among the assets).
+- `qargi release status VERSION` says `awaiting signature` for a tag of a project with `release.sign` until `release sign`
+  recorded a signature that still holds (no signed file or signature changed), then `VERSION is ready for signing:
+  qargi release sign VERSION` when the repository is at the tag with the files built, or what stands in the way. It stays
+  silent about signing once GitHub has the release.
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.

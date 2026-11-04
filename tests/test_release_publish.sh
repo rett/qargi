@@ -128,9 +128,19 @@ setans ".release.sign={key:\"$T/relkey\", namespace:\"relsign\", files:[\"dist/S
 mode missing
 out=$($REL publish 0.1.0 --asset dist/b.zip 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "awaiting signature: no signature is recorded" <<<"$out" && ! grep -q "plan token" <<<"$out" && [ "$(creates)" = 0 ] && ok "publish refuses until the tag is signed" || no "unsigned: rc=$rc $out"
+out=$($REL status 0.1.0 2>&1)
+grep -q "^awaiting signature: no signature is recorded" <<<"$out" && grep -q "^0.1.0 is ready for signing: qargi release sign 0.1.0\$" <<<"$out" && ok "status says awaiting signature and that the release is ready for signing" || no "status unsigned: $out"
+git -C "$R" checkout -q --detach 0.3.0
+out=$($REL status 0.1.0 2>&1)
+grep -q "^awaiting signature: " <<<"$out" && ! grep -q "is ready for signing" <<<"$out" && grep -q "^  not ready for signing: HEAD of .* not the tag 0.1.0" <<<"$out" && ok "status does not say ready when the repository is not at the tag" || no "status off tag: $out"
+git -C "$R" checkout -q master
+mode found; out=$($REL status 0.1.0 2>&1); ! grep -q "awaiting signature" <<<"$out" && ok "status is silent about signing once GitHub has the release" || no "status found: $out"
+mode missing
 SIGN="python3 $ROOT/tests/pty_run.py $ROOT/bin/qargi release sign 0.1.0"
 out=$($SIGN 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(cat "$T/keygen.log")" = "-Y sign -f $T/relkey -n relsign $RR/dist/SHA256SUMS" ] && ok "release sign signs the file (fake ssh-keygen)" || no "sign: rc=$rc $out | $(cat "$T/keygen.log")"
+out=$($REL status 0.1.0 2>&1)
+grep -q "^signature: signed and verified at" <<<"$out" && ! grep -q "awaiting signature" <<<"$out" && ok "status shows the recorded signature" || no "status signed: $out"
 out=$($REL publish 0.1.0 --asset dist/b.zip --asset dist/SHA256SUMS 2>&1); t=$(tok <<<"$out")
 grep -q "^signature: signed and verified at .*dist/SHA256SUMS" <<<"$out" && grep -q "note: dist/SHA256SUMS.sig is not among the assets" <<<"$out" && ok "the plan shows the signature and warns about an unattached .sig" || no "signed plan: $out"
 $REL publish 0.1.0 --asset dist/b.zip --asset dist/SHA256SUMS --asset dist/SHA256SUMS.sig --plan "$(tok <<<"$($REL publish 0.1.0 --asset dist/b.zip --asset dist/SHA256SUMS --asset dist/SHA256SUMS.sig)")" --approved go > "$T/o" 2>&1; rc=$?
@@ -139,6 +149,7 @@ mode missing
 echo "tampered" >> "$R/dist/SHA256SUMS"
 out=$($REL publish 0.1.0 --asset dist/b.zip 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "dist/SHA256SUMS changed since it was signed" <<<"$out" && [ "$(creates)" = 0 ] && ok "publish refuses when a signed file changed after the signature" || no "tampered: rc=$rc $out"
+out=$($REL status 0.1.0 2>&1); grep -q "^awaiting signature: dist/SHA256SUMS changed since it was signed" <<<"$out" && ok "status says awaiting signature again after a signed file changed" || no "status tampered: $out"
 sed -i '$d' "$R/dist/SHA256SUMS"; echo "forged" > "$R/dist/SHA256SUMS.sig"
 out=$($REL publish 0.1.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "dist/SHA256SUMS.sig changed since it was recorded" <<<"$out" && ok "publish refuses when a signature file changed" || no "forged sig: rc=$rc $out"
