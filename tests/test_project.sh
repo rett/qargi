@@ -27,6 +27,17 @@ chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
+SIGN='{key:"~/.ssh/relkey",namespace:"relsign",files:["dist/release/SHA256SUMS"],verify_command:["make","release-verify"]}'
+chk "release signing answers"       0 ".release={sign:$SIGN, assets:[\"dist/release/a.tar.gz\"], notes_file:\"dist/NOTES-{version}.md\"}"
+chk "release: unknown key"          1 '.release={sing:{}}'
+chk "release.sign: a public key"    1 ".release={sign:($SIGN|.key=\"~/.ssh/relkey.pub\")}"
+chk "release.sign: a relative key"  1 ".release={sign:($SIGN|.key=\"relkey\")}"
+chk "release.sign: no namespace"    1 ".release={sign:($SIGN|del(.namespace))}"
+chk "release.sign: a file outside"  1 ".release={sign:($SIGN|.files=[\"../SHA256SUMS\"])}"
+chk "release.sign: absolute file"   1 ".release={sign:($SIGN|.files=[\"/etc/passwd\"])}"
+chk "release.sign: verify is text"  1 ".release={sign:($SIGN|.verify_command=\"make release-verify\")}"
+chk "release.assets: a label (#)"   1 '.release={assets:["a.tar.gz#label"]}'
+chk "release.notes_file: absolute"  1 '.release={notes_file:"/tmp/notes.md"}'
 chk "bad memory.tiers key"          1 '.memory.tiers={bogus:{path:"/x"}}'
 chk "absolute repo tier path"       1 '.memory.tiers={repo:{path:"/abs/mem"}}'
 # profiles: each bad shape is refused with its own message
