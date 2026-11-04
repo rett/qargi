@@ -77,10 +77,13 @@ blk=$(sed '1,/^TASK-BLOCK PATHS$/d' <<<"$out")
 CTD=$(sed -n 's/^CONTRACT=//p' <<<"$blk")
 [ -n "$CTD" ] && [ "$CTD" = "$P1/contract" ] && cmp -s "$CTD/contract.md" contract/contract.md && cmp -s "$CTD/output-format.md" contract/output-format.md && [ "$(grep -c '^CONTRACT=' <<<"$blk")" = 1 ] \
   && ok "the block names the run's contract directory (CONTRACT=, a copy of contract.md and output-format.md)" || no "CONTRACT: '$CTD' in $blk"
+top=$(sed '/^$/,$d' <<<"$out")
+[ "$(sed -n 's/^CONTRACT=//p' <<<"$top")" = "$P1/contract" ] && ! grep -q '^ABILITY=' <<<"$top" \
+  && ok "the eval-able block names CONTRACT too, and no longer prints the retired ABILITY alias" || no "eval block: $top"
 [ "$(ls "$CTD")" = "$(printf 'contract.md\noutput-format.md')" ] && ok "a repository that is in no project gets no runtime addendum (no runtime is assumed)" || no "contract dir without a project: $(ls "$CTD")"
 # a repository of a stored project: the contract directory also holds the addenda of the project's local runtime
 out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug adn --scratch "$T"); PA=$(runof <<<"$out")
-CTA=$(sed -n 's/^CONTRACT=//p' <<<"$out")
+CTA=$(sed -n 's/^CONTRACT=//p' <<<"$out" | tail -1)   # the paths block's (the first block names it too)
 [ "$CTA" = "$PA/contract" ] && [ -s "$CTA/runtime-addenda.md" ] && [ "$(python3 -I lib/provider.py addenda claude-code local)" = "$(cat "$CTA/runtime-addenda.md")" ] && grep -q "run_in_background" "$CTA/runtime-addenda.md" \
   && ok "the contract directory of a Claude Code project holds the claude-code addenda (runtime-addenda.md)" || no "addenda: $(ls "$CTA") in $out"
 ./bin/qargi local clean "$PA" --discard >/dev/null 2>&1; [ ! -e "$PA" ] && ok "clean removes the run's copy of the contract with it" || no "clean left $PA"
@@ -203,6 +206,11 @@ QARGI_PROJECT=rproj $Q agent add reviewer --project rproj >/dev/null 2>&1; QARGI
 out=$($Q local prepare --repo "$T/r" --base main --slug pf1 --scratch "$T" --role review --profile advisor 2>&1); PR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 [ "$(cat "$PR/profile" 2>/dev/null)" = advisor ] && grep -qx 'PROFILE=advisor' <<<"$out" && grep -qx 'MEMBER=reviewer' <<<"$out" && grep -qx 'MODEL=opus' <<<"$out" && grep -q '^EFFORT=.' <<<"$out" \
   && ok "--profile records RUN/profile and prints PROFILE, MEMBER, MODEL, EFFORT" || no "profile: $out"
+hlp=$($Q help local prepare 2>&1); miss=''
+for k in $(sed '/^$/,$d' <<<"$out" | grep -E '^[A-Z_]+=' | cut -d= -f1); do
+  grep -qw "$k" <<<"$hlp" || miss="$miss help:$k"; grep -q "\`$k\`" skills/qargi-task/SKILL.md || miss="$miss skill:$k"
+done
+[ -z "$miss" ] && ok "every key prepare prints is named in the help text and in the qargi-task skill" || no "keys not documented:$miss"
 [ "$(jq -r 'select(.slug=="pf1") | .profile' "$T/s/local-runs.jsonl")" = advisor ] && ok "the run line carries the profile" || no "jsonl profile"
 n1=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)
 out=$($Q local prepare --repo "$T/r" --base main --slug pf2 --scratch "$T" --role build --profile auditor 2>&1); rcp=$?

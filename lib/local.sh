@@ -277,7 +277,6 @@ WRAP
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
-    echo "ABILITY=$ABILITY"
     echo "ROLE=$ABILITY"
     echo "CLASS=$CLASS"
     echo "PROFILE=$PROFILE"
@@ -288,6 +287,7 @@ WRAP
     echo "GIT=$RUN/git"
     BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     echo "BASE_SHA=$BSHA"
+    echo "CONTRACT=$RUN/contract"
     echo
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
