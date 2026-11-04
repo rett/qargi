@@ -2120,6 +2120,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    # qargi env: show only reads files, so a member may run it (nothing is refused here). The verbs plan and apply (lib/env.py LEAD_ONLY) run
+    # a project's bootstrap and are the lead's: when they are built, refuse them here for every member, found like the other verbs held in a variable
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb not in FEATURE_OPEN:

@@ -935,6 +935,33 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP
+.B qargi env
+What a repository declares about its development environment.
+.PP
+qargi defines no file for this. A project declares its environment with a section of AGENTS.md (or README.md) headed Development environment, Environment or Setup, the version pins in the standard files, and two runnable targets: bootstrap (install or update, idempotent) and doctor (check only). qargi reads them; see qargi help environment.
+.RS
+.TP
+.B show
+Print what was found (section, pins, submodules, runner, targets) and the commands in effect.
+.br
+Read\-only, and a member may run it. Nothing is executed: make, just, task and mise are never run, their files are read as text (at most 1 MB each; a symbolic link that leaves the repository is refused). The commands are derived from the targets (make bootstrap, make \-n bootstrap, make doctor) and replaced by the project's answers env.doctor_command, env.bootstrap_command and env.dry_run_command; env.known_failures lists doctor lines accepted on this host. Each line says where it came from.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-repo " "DIR"
+the repository directory (default: the project's repo.path, else the repository around here).
+.RE
+.RS
+.TP
+.B \-\-json
+print the result as JSON.
+.RE
+.RE
+.TP
 .B qargi instances
 Register, inspect and manage agent instances.
 .PP
