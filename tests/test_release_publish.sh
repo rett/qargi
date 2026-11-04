@@ -117,6 +117,13 @@ grep -q "^notes (the file dist/NOTES-0.1.0.md):" <<<"$out" && [ "$(cat "$T/notes
 out=$($REL publish 0.1.0 --notes-file dist/EMPTY.md 2>&1) && no "an empty notes file was accepted" || { grep -q "notes file dist/EMPTY.md is empty" <<<"$out" && ok "an empty notes file is refused" || no "empty notes: $out"; }
 out=$($REL publish 0.1.0 --notes-file /etc/passwd 2>&1) && no "a notes file outside the repository was accepted" || ok "a notes file outside the repository is refused"
 setans 'del(.release.notes_file)'
+# signing is opt-in: with no release.sign (the default) status has no signing line and publish waits for nothing
+mode missing; out=$($REL status 0.1.0 2>&1)
+! grep -qi "signature\|signing\|awaiting" <<<"$out" && ok "without release.sign, status has no signing line" || no "status without sign: $out"
+out=$($REL publish 0.1.0 --asset dist/b.zip 2>&1); t=$(tok <<<"$out")
+[ -n "$t" ] && ! grep -qi "signature\|awaiting" <<<"$out" && ok "without release.sign, the publish plan has no signature line and no gate" || no "plan without sign: $out"
+$REL publish 0.1.0 --asset dist/b.zip --plan "$t" --approved go >/dev/null 2>&1 && [ "$(creates)" = 1 ] && ok "without release.sign, publish applies with no signature" || no "apply without sign: $(cat "$T/gh.log")"
+mode missing
 # the signature gate
 cat > "$T/fakebin/ssh-keygen" <<G
 #!/usr/bin/env bash
