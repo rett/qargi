@@ -43,6 +43,7 @@ MAX_PAGE_BYTES = 512 * 1024
 MAX_STATIC_BYTES = 5 * 1024 * 1024
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
 RESERVED = ("reference", "releases", "assets", "404")
+PAGE_IDS = ("main",)     # ids the page template uses; no heading may take one
 FRONT_KEYS = ("title", "description", "doctype", "nav")
 DOCTYPES = ("tutorial", "how-to", "reference", "explanation")
 CODE_SHELL = ("bash", "sh", "shell", "console", "zsh")
@@ -509,7 +510,7 @@ def gather_hand(pages_dir, rep):
             rep.err(rel, "the page has no text")
             continue
         try:
-            doc = MD.convert(body, start_level=2, first_line=used + 1)
+            doc = MD.convert(body, start_level=2, first_line=used + 1, ids=set(PAGE_IDS))
         except MD.MdError as e:
             rep.err("%s:%d" % (rel, e.line), e.msg)
             continue
@@ -578,7 +579,7 @@ def sentence(s):
 class RefBuilder:
     def __init__(self, cmds):
         self.cmds = cmds
-        self.used = set()
+        self.used = set(PAGE_IDS)
 
     def uid(self, base):
         if base in self.used:
@@ -692,7 +693,7 @@ def generated_pages(src, rep, repo=None):
                       "The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.",
                       "\n".join(body), heads, ref_crumb[:1] + [("Command reference", "reference/")]))
     # releases
-    body, heads, ids = [], [], set()
+    body, heads, ids = [], [], set(PAGE_IDS)
     released = [s for s in src.sections if s[0].lower() != "unreleased"]
     if not released:
         rep.err("CHANGELOG.md", "no released section to build the releases page from")

@@ -416,6 +416,30 @@ class Build(unittest.TestCase):
         for p, _ in C.FILES:
             self.assertIn("<code>%s</code>" % p, files)
 
+    def test_a_heading_called_main_does_not_repeat_the_template_id(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        pages = os.path.join(t, "pages")
+        shutil.copytree(PAGES, pages)
+        p = os.path.join(pages, "first-project.md")
+        spit(p, "\n## Main\n\nSee [it](#main) and [the same](#main-2).\n", "a")
+        rc, out, err = build(os.path.join(t, "o"), pages, "--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 1, out)                       # #main is the page's main element, not the heading
+        self.assertIn("link #main: no heading with that id", out)
+        text = slurp(p).replace("See [it](#main) and ", "See ")
+        spit(p, text)
+        rc, out, err = build(os.path.join(t, "o"), pages, "--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 0, out + err)
+        page = slurp(os.path.join(t, "o", "first-project", "index.html"))
+        self.assertIn('<h2 id="main-2">Main', page)
+        self.assertEqual(page.count('id="main"'), 1)
+        self.assertEqual(run("check-output", os.path.join(t, "o"))[0], 0)
+
+    def test_generated_pages_reserve_the_template_ids(self):
+        self.assertIn("main", S.RefBuilder(None).used)
+        d = MD.convert("## Main\n", ids=set(S.PAGE_IDS))
+        self.assertEqual(d.headings[0][1], "main-2")
+
     def test_the_releases_page_lists_every_released_version_and_not_unreleased(self):
         t = self.page("releases/index.html")
         self.assertIn('<h2 id="v%s">' % RELEASE.replace(".", "-"), t)
