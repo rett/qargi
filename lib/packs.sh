@@ -194,6 +194,15 @@ effective() { # project role -> "kind:name" lines
     | unique | map(select(. as $x | ($off | index($x)) | not)) | .[]' "$LINKS"
 }
 
+# True when no pack reaches any role of the project (effective() is empty for every role): the case where a check would only say that nothing was rendered.
+none_linked() { # project
+  local r
+  for r in $(jq -r '.roles | keys[]' "$DA_CONF/projects/$1.json" 2>/dev/null | grep -vx lead); do
+    [ -z "$(effective "$1" "$r")" ] || return 1
+  done
+  return 0
+}
+
 # The packs of effective() that the project's provider can use. SURFACES is local, cloud or local,cloud (a pack is used when its
 # declaration matches the runtime of at least one of them). CP_OK gets the kind:name lines to attach, CP_SKIP one "kind<TAB>name<TAB>why"
 # per pack the project's provider cannot use. Only a pack that DECLARES a list the provider is not on is skipped: a pack in the links
@@ -341,6 +350,7 @@ rn_main() { # verb: apply|check
     # read only: the section of the skills a session would load follows; only a drifted one adds to the exit status
     local rc=0
     prov_need "$prj" "list the skills a session would load" project_skills_dir
+    ! none_linked "$prj" || echo "no pack is linked to any role of $prj (qargi skill link NAME --scope project --project $prj)"
     python3 -I "$PY" check "$RN_W/in.json" || rc=1
     [ -n "$RENDER_ONLY" ] || au_report "$RN_W/in.json" "$RN_W" || rc=1
     exit $rc
@@ -756,7 +766,9 @@ case "$VERB" in
       if [ -n "$want" ] && [ "$want" != "$have" ]; then echo "FAIL $e: content changed since it was approved (drift: $want -> $have); review it and re-import"; rc=1; fi
       if out=$(review "$KIND" "$P" 2>&1); then echo "ok   $e"; else echo "$out" | grep -E '^FAIL' | sed "s/^/$e: /"; rc=1; fi
     done
-    [ -n "$any" ] || echo "no $KIND packs reach $PRJ/$ROL"
+    if [ -n "$any" ]; then :
+    elif none_linked "$PRJ"; then echo "no pack is linked to any role of $PRJ"
+    else echo "no $KIND packs reach $PRJ/$ROL"; fi
     exit $rc;;
   remove)
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"

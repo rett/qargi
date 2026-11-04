@@ -313,6 +313,9 @@ mkdir -p "$CS"; cp -r "$T/c/packs/skills/s-cp" "$CS/s-cp"; rm -f "$CS/s-cp/.pack
 rm -rf "$CS"; $DA skill unlink s-cp --scope project --project alpha >/dev/null; $DA skill remove s-cp >/dev/null
 $DA packs apply --target claude-code alpha --plan "$($DA packs apply --target claude-code alpha | tok_of)" --approved test >/dev/null
 mk "$CS" mine; mk "$CS" other-mine
+# a project no pack is linked to says so, before the missing render
+out=$(chk beta); grep -q "^no pack is linked to any role of beta" <<<"$out" && grep -q "manifest missing" <<<"$out" && ok "packs check on a project with no linked pack says so (and that the render is missing)" || no "beta check: $out"
+chk alpha | grep -q "^no pack is linked" && no "the line appears for a project with packs" || ok "and not for a project that has packs"
 
 # --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
 mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi
