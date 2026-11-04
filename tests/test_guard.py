@@ -2749,6 +2749,45 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(self.not_refused(cmds), [])
         for c in ("exec 3<%s/credentials/other; cat <&3", "<%s/credentials/other cat", "ls %s/credentials/marshal_ed25519", "< %s/credentials/other cat"):
             self.assertEqual(self.not_allowed([c % self.conf]), [], c)
+    # --- finding 2: a cd is followed only when it is a plain command of the top level
+    MAYBE_CD = ("(cd D); %s", "if false; then cd D; fi; %s", ": $(cd D); %s", "echo `cd D`; %s", "false && cd D; %s", "true || cd D; %s", "cd D & %s", "cd D | cat; %s",
+                "for i in 1; do cd D; done; %s", "while false; do cd D; done; %s", "case x in y) cd D;; esac; %s", "f() { cd D; }; %s", "cd /nonexistent-zz; %s", "(cd /tmp; cd D) ; %s",
+                "echo 'x\ncd D\ny'; %s", "# cd D\n%s", "true # ; cd D\n%s", "cat <<E\ncd D\nE\n%s")
+
+    def test_a_cd_that_may_not_happen_does_not_move_the_judgment_of_the_next_write(self):
+        """From the clone, under the read-only class, `(cd ../../out); echo x > a` writes into the clone; so does every form where the cd may not have changed
+        the directory the next command runs in (a subshell, a substitution, a condition, a loop, a pipe, a background job, a directory that does not exist)."""
+        want = ("echo x > a", "git commit -am x", "sed -i s/a/b/ x.sh", "cp /etc/hostname f", "touch n")
+        cmds = [form.replace("D", "../../out") % w for form in self.MAYBE_CD for w in want[:2]]
+        self.assertEqual(self.not_refused(cmds, cls="read-only"), [])
+
+    def test_a_cd_into_a_protected_directory_followed_by_a_cd_that_may_not_happen_is_still_a_write_there(self):
+        spots = [os.path.join(self.conf, "packs"), os.path.join(self.home, ".claude/skills"), os.path.join(self.home, ".claude/agents"), os.path.join(self.home, ".claude/plugins"),
+                 os.path.join(self.conf, "credentials"), os.path.join(self.state, "features")]
+        forms = ("cd %s && if false; then cd /tmp; fi; echo payload > evil.md", "cd %s; (cd /tmp); echo payload > evil.md", "cd %s; : $(cd /tmp); echo payload > evil.md",
+                 "cd %s; false && cd /tmp; echo payload > evil.md", "cd %s; cd /tmp & echo payload > evil.md", "cd %s; cd /tmp | cat; echo payload > evil.md",
+                 "cd %s; for i in 1; do cd /tmp; done; echo payload > evil.md", "cd %s; echo `cd /tmp`; cp /etc/hostname evil.md", "cd %s\n(cd /tmp)\ntee evil.md < /dev/null",
+                 "cd %s; cd /nonexistent-zz; echo payload > evil.md", "cd %s; (cd /tmp; true); rm -rf evil.md", "pushd %s; (pushd /tmp); echo payload > evil.md")
+        cmds = [f % d for d in spots for f in forms]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(cmds, cls=cls), [], cls)
+        cmds = ["cd %s; echo payload > evil.md" % os.path.join(self.state, "x")]
+        os.makedirs(os.path.join(self.state, "x"))
+        self.assertEqual(self.not_allowed(cmds), [])
+
+    def test_a_plain_cd_is_followed_and_a_line_is_not_read_twice_from_the_directory_it_left(self):
+        """The line is cut more than once (with its substitutions left whole, and each substitution on its own): a relative cd applied once per cut would
+        judge the next write from a directory that is not the one the shell is in."""
+        ok = ("cd ../../out; echo x > report.md", "cd ../../out && echo x > report.md", "cd ../../out\necho x > report.md", "cd ../../out; echo \"$(date)\" > report.md",
+              "cd ../../out && echo \"$(date)\" > report.md", "cd ../../out; echo `date` > report.md", "cd ../../out; echo $(true) x > report.md", "cd ../../out; cd .; echo x > report.md",
+              "cd ../../out; cat <(echo a) > report.md", "cd -P ../../out; echo x > report.md", "cd -- ../../out; echo x > report.md", "cd ../../out || true; echo x > report.md",
+              "cd ../../out; cd ../clone; cd ../out; echo x > report.md",
+              "pushd ../../out; echo x > report.md; popd", "cd ../../out; mkdir -p d; cd d; echo x > report.md")
+        self.assertEqual(self.not_allowed(ok, cls="read-only"), [])
+        for c in ("cd ../../out; cd ..; cd clone; echo x > a", "cd ../../out; echo \"$(date)\" > ../clone/a", "cd ../../out; cd - ; echo x > a", "pushd ../../out; popd; echo x > a",
+                  "cd ../../out; cd ../clone/sub; echo \"$(date)\" > a"):
+            self.assertEqual(self.not_refused([c], cls="read-only"), [], c)
+
 
 
 if __name__ == "__main__":
