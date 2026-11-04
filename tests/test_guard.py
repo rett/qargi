@@ -2056,6 +2056,25 @@ class BashText(unittest.TestCase):
         self.assertEqual(self.bash("grep -n 'ssh host' f").returncode, 0)               # one command whose program is grep
 
 
+class TrimmedExpansions(unittest.TestCase):
+    """${var%%:*}, ${var%/*} and ${var##*/} cut a part off the variable's own value: the * and the / belong to the pattern, so the word is no glob on the
+    signing key. A default (${X:-dir}) or a recursive reader still is."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_a_trimming_expansion_is_no_glob_on_the_key(self):
+        for c in ('f=a:b; echo "${f%%:*}"', "f=a:b; x=${f%%:*}; echo $x", 'echo "${f%%:*}" > out.txt', "d=${PWD%%/*}; ls $d", "echo ${f%:*} ${g##*/} ${h#*:}",
+                  "for f in a:b; do echo ${f%%:*}; done", "p=${f%/*}/other; cat $p", "n=${f##*/}; echo $n", 'echo "${f%%:*}=${f#*:}"'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_default_a_glob_or_a_recursive_reader_is_still_refused(self):
+        for c in ("cat ${X:-/nowhere}/marshal_x", "cat ${X:-dir}/marshal_*", "cat ${f%%:*}/marshal_*", "cat ${f%%:*}/${X:-marshal_*}", "cat ${X:-d}/${f%%:*}*",
+                  "cp -r ${f%%:*} out", "tar cf x.tar ${f%%:*}", "cat ${f%%:*}/marshal_?"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+
 class _Judge:
     """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
     judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None."""

@@ -1741,6 +1741,9 @@ def brace_expand(word, limit=MAX_BRACE):
     return tuple(out)
 
 
+TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${NAME%%PATTERN}, ${NAME#PATTERN}, ${NAME##PATTERN}: a part of the variable's own value
+
+
 @functools.cache                                     # the files do not change while one command is judged
 def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
@@ -1754,8 +1757,10 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
-            if "${" in b and (bool(recursive) or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
-                return b                                      # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
+            if "${" in b:
+                base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
+                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", base):
+                    return b                                  # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
