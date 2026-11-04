@@ -304,5 +304,37 @@ out=$($F finish q3); t=$(tok <<<"$out")
 grep -q "has commits the feature lacks" <<<"$out" && ! grep -q "delete origin/feature/q3" <<<"$out" && ok "a branch on origin with commits the feature lacks is not offered for deletion" || no "plan q3: $out"
 $F finish q3 --plan "$t" --approved go >/dev/null 2>&1; [ -n "$(oref feature/q3)" ] && ok "and stays on origin" || no "q3 deleted"
 feat6 q4; t=$($F finish q4 | tok); $F finish q4 --plan "$t" --approved go >/dev/null 2>&1 && ok "a feature that origin never had finishes with local+remote" || no "q4"
+# --- the worktree root: feature start --worktree, finish removes it, a worktree outside the root is flagged
+R7=$T/app7; git init -q -b master "$R7"; echo 0.1.0 > "$R7/VERSION"; git -C "$R7" add -A && git -C "$R7" commit -q -m one && git -C "$R7" branch develop
+git -C "$R7" checkout -q -b parked
+jq -n --arg p "$R7" '{schema:1, project:"app7", methodology:"gitflow", repo:{url:"https://github.com/acme/app7", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app7.json"
+export QARGI_PROJECT=app7
+out=$($F start w0 --worktree 2>&1)
+grep -q "^worktree: $T/s/worktrees/app7/feature/w0\$" <<<"$out" && [ "$(git -C "$T/s/worktrees/app7/feature/w0" branch --show-current)" = feature/w0 ] && ok "feature start --worktree makes the worktree under <state>/worktrees/PROJECT/<branch> by default and prints it" || no "default root: $out"
+git -C "$R7" worktree remove "$T/s/worktrees/app7/feature/w0"; git -C "$R7" branch -q -D feature/w0
+WR=$T/wtroot; jq --arg r "$WR" '.worktrees={root:$r}' "$T/c/projects/app7.json" > "$T/c/projects/app7.new" && mv "$T/c/projects/app7.new" "$T/c/projects/app7.json"
+$F start w1 --worktree --purpose "in a worktree" 2>&1 | grep -q "^worktree: $WR/feature/w1\$" && ok "worktrees.root moves the root" || no "custom root"
+mkdir -p "$WR/feature/w4"; out=$($F start w4 --worktree 2>&1) && no "a start over an existing path was accepted" || { grep -q "exists already" <<<"$out" && ! git -C "$R7" rev-parse -q --verify refs/heads/feature/w4 >/dev/null && ok "a path in the way is refused before the branch is made" || no "w4: $out"; }
+rmdir "$WR/feature/w4"
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R7" worktree add -q "$w" -b agent/wa develop; echo a > "$w/a.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task wa"; git -C "$R7" worktree remove --force "$w"
+$F merge w1 agent/wa >/dev/null 2>&1; rc=$?
+[ $rc = 0 ] && [ -f "$WR/feature/w1/a.txt" ] && [ "$(git -C "$WR/feature/w1" rev-parse HEAD)" = "$(git -C "$R7" rev-parse feature/w1)" ] && [ "$(git -C "$WR/feature/w1" branch --show-current)" = feature/w1 ] && ok "a merge into a feature whose worktree is under the root brings the worktree along" || no "merge with worktree rc=$rc"
+echo wip > "$WR/feature/w1/wip.txt"
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R7" worktree add -q "$w" -b agent/wb develop; echo b > "$w/b.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task wb"; git -C "$R7" worktree remove --force "$w"
+out=$($F merge w1 agent/wb 2>&1) && no "a merge went under a dirty worktree" || { grep -q "uncommitted changes" <<<"$out" && ok "a dirty worktree of the feature stops a merge into it" || no "dirty merge: $out"; }
+$F verify w1 >/dev/null 2>&1
+out=$($F finish w1 2>&1) && no "finish planned over a dirty worktree" || { grep -q "uncommitted changes" <<<"$out" && ok "and the finish, before any plan" || no "dirty finish: $out"; }
+rm "$WR/feature/w1/wip.txt"
+t=$($F finish w1 | tok); out=$($F finish w1 --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$WR/feature/w1" ] && ! git -C "$R7" rev-parse -q --verify refs/heads/feature/w1 >/dev/null && git -C "$R7" worktree prune && [ -z "$(git -C "$R7" worktree list | sed -n '2,$p')" ] && ok "feature finish removes the qargi-made worktree of the branch and deletes the branch" || no "finish worktree rc=$rc: $out"
+git -C "$R7" cat-file -e develop:a.txt && ok "(and the merge landed)" || no "merge missing"
+# a worktree outside the root is flagged by list and status
+$F start w5 >/dev/null 2>&1; git -C "$R7" worktree add -q "$T/elsewhere" feature/w5
+mkdir -p "$R7/.claude/worktrees"; git -C "$R7" worktree add -q --detach "$R7/.claude/worktrees/runtime" develop
+out=$($F list 2>&1)
+grep -q "worktree outside the root: $T/elsewhere (feature/w5): mkdir -p $WR/feature && git worktree move $T/elsewhere $WR/feature/w5" <<<"$out" && ok "feature list flags a worktree outside the root with the git worktree move that fixes it" || no "list: $out"
+! grep -q "\.claude/worktrees" <<<"$out" && ! grep -q "outside the root: $R7 " <<<"$out" && ok "but not the runtime's own worktrees nor the main checkout" || no "false flag: $out"
+$F status w5 2>&1 | grep -q "worktree outside the root: $T/elsewhere" && ok "feature status flags it too" || no "status flag"
+mkdir -p "$WR/feature" && git -C "$R7" worktree move "$T/elsewhere" "$WR/feature/w5" && out=$($F list 2>&1) && ! grep -q "outside the root" <<<"$out" && ok "after the move nothing is flagged" || no "after move: $out"
 rm -rf "$T"
 exit $fail

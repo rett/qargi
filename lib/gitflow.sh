@@ -90,6 +90,41 @@ need_free() { # BRANCH... -> dies when one is checked out anywhere; for the proj
     die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"
   done
 }
+# Worktrees. qargi makes them under the root (answers worktrees.root, default <state>/worktrees/<project>), one per branch at ROOT/<branch>
+# (feature start --worktree), so every worktree of the project is found in one place.
+wt_path() { readlink -f -m -- "$1"; }
+wt_in_root() { case $(wt_path "$1") in "$(wt_path "$WT_ROOT")"/*) return 0;; esac; return 1; }   # PATH is under the root
+# wt_of BRANCH -> the worktree holding BRANCH, only when it is under the root (a worktree qargi made); nothing otherwise
+wt_of() { local w; w=$(held "$1"); [ -n "$w" ] && wt_in_root "$w" && echo "$w"; return 0; }
+# need_free_wt BRANCH -> like need_free, but a clean worktree under the root may hold it (it is brought up to date by wt_follow); a dirty one dies
+need_free_wt() {
+  local w; w=$(wt_of "$1")
+  if [ -n "$w" ]; then
+    [ -z "$(git -C "$w" status --porcelain 2>/dev/null)" ] || die "$1 is checked out in $w, which has uncommitted changes: commit or discard them there first"
+    return 0
+  fi
+  need_free "$1"
+}
+# wt_follow BRANCH NEW -> after BRANCH moved to NEW by update-ref: the clean worktree under the root that holds it is brought along
+wt_follow() { local w; w=$(wt_of "$1"); [ -z "$w" ] || git -C "$w" reset -q --hard "$2" || echo "qargi: warning: could not bring the worktree $w up to date with $1" >&2; }
+# wt_drop BRANCH -> detaches and removes the worktree under the root that holds BRANCH (it is clean: need_free_wt checked), before the branch is deleted
+wt_drop() {
+  local w; w=$(wt_of "$1"); [ -n "$w" ] || return 0
+  git -C "$w" checkout -q --detach 2>/dev/null
+  if g worktree remove "$w" 2>/dev/null; then echo "removed the worktree $w"; rmdir -p "$(dirname "$w")" 2>/dev/null || true
+  else echo "qargi: warning: could not remove the worktree $w; remove it yourself: git worktree remove $w" >&2; fi
+}
+# wt_outside_report -> a line for each worktree of the project that is not under the root, with the git worktree move that fixes it. Not
+# reported: the main checkout, the runtime's own .claude/worktrees directories and qargi's temporary worktrees under the state directory.
+wt_outside_report() {
+  local w first=1 b
+  while IFS=$'\t' read -r w b; do
+    if [ -n "$first" ]; then first=''; continue; fi
+    wt_in_root "$w" && continue
+    case $(wt_path "$w") in */.claude/worktrees/*) continue;; "$(wt_path "$DA_STATE")"/*) continue;; esac
+    echo "worktree outside the root: $w (${b:-detached}): mkdir -p $(dirname "$WT_ROOT/${b:-$(basename "$w")}") && git worktree move $w $WT_ROOT/${b:-$(basename "$w")}"
+  done < <(g worktree list --porcelain | awk '/^worktree /{if (w != "") print w "\t" b; w=substr($0,10); b=""} $1=="branch"{b=$2; sub("^refs/heads/","",b)} END{if (w != "") print w "\t" b}')
+}
 # push_feature BRANCH -> pushes a feature branch the flow just created or moved, as the answers branches.push_features say: never (the
 # default), when-shared (only when origin already has the branch: it is live-checked) or always. A plain push, never forced; a failure
 # is a warning. Nothing but a feature branch is pushed here (develop and master keep their plans and tokens).
@@ -212,6 +247,8 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch
   PUSH_FEATURES=$(jq -r '.branches.push_features // "never"' "$af")   # never | when-shared | always: whether the flow pushes feature branches
+  WT_ROOT=$(jq -r '.worktrees.root // ""' "$af"); WT_ROOT=${WT_ROOT/#\~/$HOME}   # where qargi makes worktrees: ROOT/<branch>
+  [ -n "$WT_ROOT" ] || WT_ROOT=$DA_STATE/worktrees/$PROJ
   PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }

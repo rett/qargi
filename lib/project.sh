@@ -157,6 +157,17 @@ if isinstance(brs, dict):
         if k not in ("delete_merged", "push_features"): bad.append("branches.%s: unknown key (delete_merged, push_features)" % k)
     need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
     need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
+# worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
+wts = c.get("worktrees", {})
+need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
+if isinstance(wts, dict) and "root" in wts:
+    import os
+    wr = wts["root"]
+    if not (isinstance(wr, str) and wr.strip() and (wr.startswith("/") or wr.startswith("~/"))):
+        bad.append("worktrees.root: an absolute path (or ~/...) such as /home/you/work/worktrees (default: the state directory's worktrees/PROJECT)")
+    elif isinstance(repo.get("path"), str) and repo["path"]:
+        rr = os.path.realpath(os.path.expanduser(repo["path"])); wp = os.path.realpath(os.path.expanduser(wr))
+        if wp == rr or wp.startswith(rr + os.sep): bad.append("worktrees.root: %s is inside the repository; a worktree inside the working tree is a mess" % wr)
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess

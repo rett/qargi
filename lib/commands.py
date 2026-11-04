@@ -217,10 +217,13 @@ COMMANDS = {
                  "and an approval."),
         "scripts": ["feature.sh"],
         "verbs": {
-            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT")],
+            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT"),
+                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path")],
                           desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached)."),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
-                         desc="Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another."),
+                         desc=("Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. "
+                               "It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that "
+                               "fixes it; the main checkout, the runtime's own .claude/worktrees directories and qargi's temporary worktrees are not flagged.")),
             "park": verb("Put the project's main checkout on its parking branch, reset to develop", [], [PROJECT_OPT],
                          desc=("qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a "
                                "parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout -B BRANCH develop in the main checkout, creating the "
@@ -235,14 +238,15 @@ COMMANDS = {
                                 "release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. "
                                 "For a feature, --plan and --approved are not used.")),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
-                           desc=REMOTE_NOTE),
+                           desc=REMOTE_NOTE + " Flags worktrees outside the worktree root like list."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT]),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
                                  "it and its token covers origin's tip. The answer branches.push_features (never, when-shared, always; default never) decides whether feature start, "
-                                 "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. " + REMOTE_NOTE + " A merge that conflicts changes "
+                                 "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the "
+                                 "worktree root is detached and removed after the merge, when the branch is deleted. " + REMOTE_NOTE + " A merge that conflicts changes "
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge.")),
         },
