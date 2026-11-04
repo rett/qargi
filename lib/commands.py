@@ -327,11 +327,17 @@ COMMANDS = {
                                "Refused (exit 1) when stdin is no terminal, HEAD is not exactly the tag VERSION, on a branch other than master, or a tracked file is modified; "
                                "refused (exit 2) in a member run or when QARGI_NESTED is set. A member run cannot sign. The answers: release.sign.key (an ssh private key), "
                                "release.sign.namespace, release.sign.files (relative to the repository) and optionally release.sign.verify_command.")),
-            "publish": verb("Create the GitHub release of an existing tag, with its changelog section as the notes", [("VERSION", "none")], [PROJECT_OPT, PLAN, APPROVED],
+            "publish": verb("Create the GitHub release of an existing tag, with its changelog section (or a notes file) as the notes and the assets attached", [("VERSION", "none")],
+                            [PROJECT_OPT, PLAN, APPROVED,
+                             opt("--asset", "attach this file (relative to the repository, inside it) to the release; repeat for several, on top of the answer release.assets", "FILE"),
+                             opt("--notes-file", "take the notes from this file (relative to the repository) instead of the changelog section; the answer release.notes_file does the same", "FILE")],
                             desc=("For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, "
-                                  "the VERSION section of CHANGELOG.md at the tag and the command: gh release create VERSION --verify-tag --title \"PROJECT VERSION\" --notes-file FILE "
-                                  "(gh is run through QARGI_GH, default gh, and must be logged in). It refuses when GitHub has the release already, when the tag is missing, "
-                                  "and when the changelog section is empty; --verify-tag makes gh refuse a tag that is not on origin. Needs the plan token and an approval; a member run cannot publish.")),
+                                  "the notes (the VERSION section of CHANGELOG.md at the tag, or the notes file), the sha256 of every asset and the command: gh release create VERSION "
+                                  "--verify-tag --title \"PROJECT VERSION\" --notes-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers "
+                                  "the notes and the assets. The assets are --asset and release.assets, regular files inside the repository, attached by the same call that creates the release. "
+                                  "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
+                                  "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since; --verify-tag makes gh refuse a tag that is not on origin. "
+                                  "Needs the plan token and an approval; a member run cannot publish.")),
         },
     },
     "provision": {
