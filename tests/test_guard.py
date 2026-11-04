@@ -2012,6 +2012,70 @@ class BashText(unittest.TestCase):
             self.assertIn("Agents never push", r.stderr)
 
 
+class _Judge:
+    """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
+    judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None."""
+    managed = []
+
+    def __init__(self, lib, name, cwd):
+        self.lib, self.cwd, self.mods = lib, cwd, {}
+        _Judge.managed.append(lib)
+        self.m = self.run(lambda: self.load(name))
+
+    def load(self, name):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(self.lib, "guard.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    @staticmethod
+    def owned(lib):
+        return {k: v for k, v in list(sys.modules.items()) if getattr(v, "__file__", None) and os.path.dirname(os.path.abspath(v.__file__)) == lib}
+
+    def run(self, fn):
+        stashed = {}
+        for lib in _Judge.managed:
+            stashed.update(self.owned(lib))
+        for k in stashed:
+            sys.modules.pop(k, None)
+        sys.modules.update(self.mods)
+        sys.path.insert(0, self.lib)
+        try:
+            return fn()
+        finally:
+            self.mods = self.owned(self.lib)
+            for k in self.mods:
+                sys.modules.pop(k, None)
+            sys.modules.update(stashed)
+            while self.lib in sys.path:
+                sys.path.remove(self.lib)
+
+    def judge(self, command, cls=""):
+        def go():
+            self.m.CLASS = cls
+            try:
+                return self.m.judge(self.m.Call("shell", "Bash", command, "", self.cwd))
+            except Exception as e:                               # the hook ends in a refusal on an exception
+                return "exception %s: %s" % (type(e).__name__, e)
+        return self.run(go)
+
+
+def old_lib(test, rev="2b41028"):
+    """The lib directory of the repository at rev (the guard whose plain split on every separator is the conservative reading), or skip the test."""
+    root = os.path.dirname(os.path.dirname(BIN))
+    r = subprocess.run(["git", "-C", root, "archive", rev, "lib"], capture_output=True)
+    if r.returncode:
+        test.skipTest("the history before %s is not available here (%s)" % (rev, r.stderr.decode(errors="replace").strip()[:100]))
+    d = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, d, True)
+    tar = tarfile.open(fileobj=io.BytesIO(r.stdout))
+    try:
+        tar.extractall(d, filter="data")
+    except TypeError:
+        tar.extractall(d)
+    return os.path.join(d, "lib")
+
+
 class ReviewedReading(unittest.TestCase):
     """The adversarial review of the Bash reader: commands that the guard before it (the plain split on every separator, now the fallback) refused and the
     quote-aware reading let through while they still run a refused verb or git push. The quote-aware reading applies only to a command whose every
@@ -2176,6 +2240,173 @@ class ReviewedReading(unittest.TestCase):
                   "cat > a.sh <<'E'\n@@\nE\nsh a.sh", "echo a\\ #; @@", "echo ${x:-1}\n@@", "echo $[1<<2]\n@@\n2]")
         wrong = [c for c, r in self.verdicts([s.replace("@@", p) for s in shapes for p in ("true; qargi upgrade; true", "true; git push; true")]) if r.returncode != 2]
         self.assertEqual(wrong, [])
+
+
+class ReaderUnits(unittest.TestCase):
+    """segments() in the process: what it returns, once per command, and how fast."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.J = _Judge(LIBDIR, "guard_units", cls.tmp)
+        cls.G = cls.J.m
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_quote_aware_reading_is_only_for_commands_that_run_nothing_from_their_words(self):
+        G = self.G
+        texts, exact = G.segments('git commit -m "a; qargi upgrade"')
+        self.assertTrue(exact)
+        self.assertEqual(list(texts), ['git commit -m "a; qargi upgrade"'])
+        for c in ('sh -c "a; b"', 'eval "a; b"', 'trap "a; b" EXIT', 'X="a; b"; eval $X', 'find . -exec sh -c "a; b" \\;', 'git -c alias.z="!a; b" z',
+                  'git rebase --exec "a; b" HEAD', 'env sh -c "a; b"', 'python3 -c "a; b"', 'awk \'BEGIN{system("a; b")}\'', 'f() { git log; }; echo "a; b"',
+                  'alias z="a; b"', 'echo "a; b"; unknown-program', 'echo "$x" | bash', '$x "a; b"', 'echo ${x:-"a; b"}', 'echo $((1 + 2)); echo "a; b"',
+                  'echo $[1 + 2]; echo "a; b"', 'echo "a; b"\r\nls', 'cat <<E\n$(ls)\nE\nsh'):
+            texts, exact = G.segments(c)
+            self.assertFalse(exact, c)
+        texts, exact = G.segments('echo "a; b"; sh -c x')
+        self.assertFalse(exact)
+        self.assertIn('b"', [t.strip() for t in texts])                          # the plain split cuts at every separator, quotes or not
+
+    def test_a_program_found_after_assignments_keywords_and_redirects_decides(self):
+        G = self.G
+        for c in ("FOO=1 git status", "if git status; then echo ok; fi", "{ git log; }", "(git log)", "! git diff", ">/dev/null git status", "2>&1 echo hi",
+                  "while git diff --quiet; do sleep 1; done", "git -C /x status", "git --no-pager log -3", "x=1", "cd /x && git status"):
+            self.assertTrue(G.segments(c + " # 'x'")[1] or c.startswith("while"), c)
+        for c in ("FOO=1 sh x", "BASH_ENV=a git log", "GIT_PAGER=less git log", "PATH=. git log", "git -c core.pager=x log", "git --exec-path=x log", "git rebase -i",
+                  "git config alias.z '!x'", "git diff --ext-diff-x; python3 -c x", "rg --pre x y", "sort --compress-program x", "printf -v 'a[1]' x",
+                  "test -v a[1]", "[[ x ]]", "((x))", "let x=1", "a[1]=2", "function f { git log; }", "f() { git log; }", "case x in x) git log;; esac", "x=1 y=2 make", "git log; make",
+                  "cat > .git/hooks/post-commit <<'E'\nhi\nE", "git commit -m x > .git/config"):
+            self.assertFalse(G.segments(c + " # 'x'")[1], c)
+
+    def test_segments_is_read_once_per_command(self):
+        G, calls = self.G, []
+        real = G.read_segments
+        G.read_segments = lambda c: calls.append(c) or real(c)
+        try:
+            c = 'git status; echo "a; b"\n# once %s' % time.time()
+            self.assertIs(G.segments(c), G.segments(c))
+            self.assertEqual(len(calls), 1)
+            calls.clear()
+            c2 = 'echo "a; b"; git status # twice %s' % time.time()
+            why = self.J.judge(c2)
+            self.assertIsNone(why, why)
+            self.assertEqual(len(calls), 1, calls)
+        finally:
+            G.read_segments = real
+
+    def test_a_huge_command_is_read_by_the_plain_split(self):
+        G = self.G
+        text = "echo 'a; b'\n" * 20000
+        self.assertGreater(len(text), 200000)
+        self.assertFalse(G.segments(text)[1])
+        self.assertTrue(G.segments("echo 'a; b'\n" * 100)[1])
+
+    def test_a_nul_byte_refuses_and_so_does_a_carriage_return_in_the_reading(self):
+        why = self.J.judge("echo hi\x00; git status")
+        self.assertTrue(why and "NUL" in why, why)
+        self.assertFalse(self.G.segments("echo hi\r\nls")[1])
+
+    def test_comments_start_at_the_beginning_of_a_word_only(self):
+        G = self.G
+        for c, has in (("echo a #; ls", False), ("echo a\\ #; ls", True), ("echo a\\\n#; ls", True), ("echo a\\\t#; ls", True), ("echo a#; ls", True),
+                       ("echo $#; ls", True), ("echo 'a'#; ls", True), ("echo \"a\"#; ls", True), ("echo a;#; ls", False), ("echo a&#; ls", False), ("echo a\n#; ls", False),
+                       ("echo a>#; ls", True), ("echo a<#; ls", True)):
+            self.assertEqual(any(t.strip() == "ls" for t in G.segments(c)[0]), has, c)
+
+    def test_two_thousand_heredocs_and_a_megabyte_are_read_in_seconds(self):
+        """The hook has 20 seconds and a hook that times out does not block. The quote-aware reading and the plain split, a command of 2000 small heredocs
+        and commands of a size near the limit, in the process (the callers of segments() included); a megabyte is refused at once."""
+        inert = "".join("cat > f%d <<'E'\nbody %d\nE\n" % (i, i) for i in range(2000))
+        shapes = {"2000 heredocs, quote-aware": (inert, None), "2000 heredocs, plain split": (inert + "make\n", None),
+                  "150 KB heredoc body, quote-aware": ("cat <<'E'\n" + "a line of text; and more text %d\n" * 5000 % tuple(range(5000)) + "E\n", None),
+                  "200 KB of words": ("echo " + "word " * 40000, None),
+                  "100 KB heredoc body, plain split": ("cat <<'E'\n" + "a line of text; and more text %d\n" * 3500 % tuple(range(3500)) + "E\nmake\n", None),
+                  "120 KB of commands, plain split": ("".join("git status %d; " % i for i in range(7000)) + "make", None),
+                  "1 MB heredoc body": ("cat <<'E'\n" + "a line of text; and more text\n" * 35000 + "E\n", "cannot be checked"),
+                  "1 MB of commands": ("git status; " * 80000, "cannot be checked"),
+                  "1 MB of pipes": ("echo x | " * 120000 + "sh", "cannot be checked"),
+                  "1 MB of words": ("echo " + "word " * 200000, "cannot be checked")}
+        for name, (c, refused) in shapes.items():
+            t0 = time.perf_counter()
+            why = self.J.judge(c)
+            took = time.perf_counter() - t0
+            self.assertLess(took, 2.0, "%s: %.1f s" % (name, took))
+            if refused:
+                self.assertIn(refused, why or "", name)
+            else:
+                self.assertIsNone(why, (name, why))
+        t0 = time.perf_counter()
+        self.G.read_segments(inert)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertEqual(self.G.read_segments(inert)[1], True)
+
+    def test_a_command_that_takes_too_long_to_check_is_refused_not_let_through(self):
+        G = self.G
+        real = G.BUDGET
+        G.BUDGET = 0.0
+        try:
+            why = self.J.judge("git status; echo hi; git log %s" % time.time())
+        finally:
+            G.BUDGET = real
+        self.assertIn("took longer", why or "")
+
+
+class OldReading(unittest.TestCase):
+    """The anti-regression property of the Bash reader: every command that the guard of 2b41028 refused (it cut a command at every separator, whatever the
+    quotes) is refused now, except the commands that only carry text for a program that runs nothing from its words (NARROWED)."""
+    PAYLOADS = ("qargi upgrade", "true; qargi upgrade; true", "git push", "true; git push origin x; true", "qargi packs seed")
+    NARROWED = ('echo "@@"', "echo '@@'", 'git commit -m "@@"', "git commit -m '@@'", "printf '%s\\n' '@@'", "grep -n '@@' f", "cat <<'E'\n@@\nE",
+                "git log --format='@@' -3", "git commit -F - <<'E'\n@@\nE", "cat <<'E' > n.txt\n@@\nE", "echo hi # @@")
+    RUNNING = ('sh -c "@@"', "bash -c '@@'", 'eval "@@"', "eval @@", 'env sh -c "@@"', 'sudo -u root sh -c "@@"', 'timeout 5 sh -c "@@"', 'nice -n 5 sh -c "@@"',
+               'nohup sh -c "@@" &', 'xargs -I% sh -c "@@"', 'find . -maxdepth 0 -exec sh -c "@@" \\;', "python3 -c '@@'", "perl -e 'system \"@@\"'",
+               "ruby -e 'system(\"@@\")'", "awk 'BEGIN{system(\"@@\")}'", "node -e 'require(\"child_process\").execSync(\"@@\")'", 'trap "@@" EXIT',
+               'X="@@"; eval $X', 'X="@@"\neval $X', "alias z='@@'\nz", 'f() { eval "$1"; }; f "@@"', 'su -c "@@"', 'watch "@@"', 'flock l -c "@@"',
+               "script -qc '@@' /dev/null", "busybox sh -c '@@'", "fish -c '@@'", 'git -c alias.z="!@@" z', "git rebase --exec '@@' HEAD",
+               "echo '@@' | sh", "echo '@@' | bash -s", "printf '%s' '@@' | xargs sh -c", "sh <<'E'\n@@\nE", "bash <<E\n@@\nE", "python3 <<'E'\n@@\nE",
+               "cat <<'E' | sh\n@@\nE", "cat > a.sh <<'E'\n@@\nE\nsh a.sh", "cat > a <<'E'\n@@\nE\nbash <a", "cat > a <<'E'\n@@\nE\ncp a b; sh b",
+               "echo '@@' > a.sh; sh a.sh", "cat > Makefile <<'E'\nall:\n\t@@\nE\nmake", "for x in 1; do @@; done", "{ @@; }", "(@@)", "if true; then @@; fi",
+               "x=$(@@)", "echo $(@@)", "echo `@@`", 'echo "$(@@)"', "diff <(@@) x", "cat <<E\n$(@@)\nE", "echo a\\ #; @@", "echo ${x:-1}\n@@",
+               "echo $[1<<2]\n@@\n2]", "echo hi\n@@", "echo 'x' #\"\n@@", "echo '@@' ; @@")
+
+    def corpus(self):
+        out = list(BashText.REFUSED) + list(ReviewedReading.REFUSED) + list(ReviewedReading.CONSERVATIVE)
+        out += [t.replace("@@", p) for t in self.RUNNING for p in self.PAYLOADS]
+        return list(dict.fromkeys(out))
+
+    def test_the_new_refusals_contain_the_old_ones_but_the_narrowed(self):
+        lib = old_lib(self)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old, new = _Judge(lib, "guard_old", tmp), _Judge(LIBDIR, "guard_new", tmp)
+        narrowed = {t.replace("@@", p) for t in self.NARROWED for p in self.PAYLOADS}
+        corpus = self.corpus() + sorted(narrowed)
+        self.assertGreaterEqual(len(corpus), 150)
+        refused_by_old = [c for c in corpus if old.judge(c)]
+        self.assertGreaterEqual(len(refused_by_old), 150, "the corpus must be mostly commands the old guard refused")
+        lost = [c for c in refused_by_old if c not in narrowed and not new.judge(c)]
+        self.assertEqual(lost, [], "the old guard refused these, the new one allows them")
+        lost_narrowed = [c for c in narrowed if not old.judge(c) and new.judge(c)]
+        self.assertEqual(lost_narrowed, [], "the new guard refuses text the old one allowed")
+
+    def test_the_fallback_cuts_where_the_old_split_cut(self):
+        """Without the history: the plain split of 2b41028 (its SEGMENT, vendored) cut a command into pieces; every piece is a piece (or a part of one) of the
+        fallback, and every command of the review is read by the fallback."""
+        old_split = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        G = _Judge(LIBDIR, "guard_fallback", tmp).m
+        subst = re.compile(r"\$\(|`")
+        for c in self.corpus():
+            texts, exact = G.segments(c)
+            if exact:
+                continue
+            have = {t.strip() for t in texts}
+            for piece in old_split.split(subst.sub(";", c.replace("\\\n", ""))):
+                for part in (g.text for g in G.plain_segments(piece)):
+                    self.assertIn(part.strip(), have | {""}, c)
+        self.assertEqual([c for c in ReviewedReading.REFUSED if G.segments(c)[1]], [])
 
 
 class LibraryScripts(unittest.TestCase):
