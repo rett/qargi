@@ -205,6 +205,48 @@ M $t0 set f7 --as mallory --note "$LONG"
 M $t0 status f7 --as bob; c=$(grep -oE 'Q{100,}' "$T/o" | tr -d '\n' | wc -c)
 [ "$c" -le 2000 ] && [ "$c" -ge 1990 ] && ok "long note: status prints at most 2000 characters of it" || no "SPEC cap: status printed $c of 5000 characters (want about 2000)"
 
+# --- succession: a restarted lead (new id, same host, OS user and work tree, stale lease) continues without a takeover
+for n in sc1 sc2 sc3 sc4; do feat "$n"; done
+M $t0 claim sc1 --as alice --goal "keep the goal"; M $t0 set sc1 --as alice --plan "keep the plan" --note "keep the note"
+jq -e '.lead.worktree | test("^[0-9a-f]{16}$")' "$(rec sc1)" >/dev/null && ok "succession: the lead record carries a digest of the work tree, not a path" || no "SPEC lead worktree digest: $(j sc1 .lead)"
+M $((t0 + 10)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && grep -qi "still live" <(out) && [ "$(j sc1 .lead.id)" = alice ] && ok "succession: a live old lease is refused (the old session may still run)" || no "SPEC succession live: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob --as-successor-of carol; rc=$?
+[ $rc = 1 ] && grep -q "is alice, not carol" <(out) && [ "$(j sc1 .lead.id)" = alice ] && ok "succession: the old id must be the record's lead" || no "SPEC succession wrong id: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob; [ $? = 1 ] && ok "succession: a plain claim of a stale lead still needs a takeover" || no "SPEC plain claim"
+M $((t0 + TTL)) check sc1 --as bob; rc=$?
+[ $rc = 0 ] && grep -q "marshal claim sc1 --as-successor-of alice" "$T/e" && ok "succession: check names the command when you look like the restarted lead" || no "SPEC succession hint: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 0 ] && [ "$(j sc1 .lead.id)" = bob ] && [ "$(j sc1 .lead.succeeds)" = alice ] && [ "$(j sc1 .status)" = active ] && ok "succession: a stale lead on this host, user and work tree is succeeded" || no "SPEC succession: rc=$rc $(out)"
+[ "$(j sc1 .goal)" = "keep the goal" ] && [ "$(j sc1 .plan)" = "keep the plan" ] && [ "$(j sc1 .note)" = "keep the note" ] && ok "succession: goal, plan and note stay" || no "SPEC succession keeps text: $(cat "$(rec sc1)")"
+grep -q "marshal:succession" "$AUDIT" && grep -q "sc1 old=alice new=bob" "$AUDIT" && ok "succession: the audit log names the old and the new lead" || no "SPEC succession audit: $(cat "$AUDIT" 2>&1)"
+M $((t0 + TTL)) status sc1 --as bob; grep -q "succeeded alice" "$T/o" && ok "succession: status shows it" || no "SPEC succession status: $(out)"
+M $((t0 + TTL + 5)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && ok "succession: the old lead is not the lead any more (refused)" || no "SPEC succession twice: rc=$rc"
+# anything that is not the same lead is the owner's takeover
+for what in host user worktree; do
+  rm -f "$(rec sc2)"; M $t0 claim sc2 --as alice >/dev/null
+  case $what in
+    host) jq '.lead.host = "other-machine"' "$(rec sc2)" > "$T/r.tmp";;
+    user) jq '.lead.user = "someone-else"' "$(rec sc2)" > "$T/r.tmp";;
+    worktree) jq '.lead.worktree = "0000000000000000"' "$(rec sc2)" > "$T/r.tmp";;
+  esac
+  mv "$T/r.tmp" "$(rec sc2)"
+  M $((t0 + TTL)) claim sc2 --as bob --as-successor-of alice; rc=$?
+  [ $rc = 1 ] && grep -qiE "another (host|user|work tree)" <(out) && [ "$(j sc2 .lead.id)" = alice ] && ok "succession: another $what is refused" || no "SPEC succession $what: rc=$rc $(out)"
+  M $((t0 + TTL)) check sc2 --as bob; grep -q "as-successor-of" "$T/e" && no "SPEC succession hint must not show for another $what" || ok "succession: no hint for another $what"
+done
+M $((t0 + TTL)) takeover sc2 --as bob --approved "the owner says so" >/dev/null; [ "$(j sc2 .lead.id)" = bob ] && ok "succession: the owner's takeover still covers what it refuses" || no "SPEC takeover after refused succession"
+M $t0 claim sc3 --as alice >/dev/null; jq 'del(.lead.worktree)' "$(rec sc3)" > "$T/r.tmp"; mv "$T/r.tmp" "$(rec sc3)"
+M $((t0 + TTL)) claim sc3 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && grep -q "names no work tree" <(out) && ok "succession: a record without a work tree is not succeeded" || no "SPEC succession no worktree: rc=$rc $(out)"
+M $t0 claim sc3 --as alice >/dev/null; M $t0 release sc3 --as alice --note n >/dev/null
+M $t0 claim sc3 --as bob --as-successor-of alice; [ $? = 1 ] && ok "succession: a released feature has no lead to succeed" || no "SPEC succession released"
+M $t0 claim sc4 --as alice >/dev/null
+printf 'set -u\n. "%s/lib/lib.sh"; . "%s/lib/marshal.sh"\nmarshal_start app sc4 restart\n' "$TOOL" "$TOOL" > "$T/start.sh"
+QARGI_MARSHAL_NOW=$((t0 + TTL)) QARGI_LEAD=bob bash "$T/start.sh" >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && [ "$(j sc4 .lead.id)" = bob ] && [ "$(j sc4 .lead.succeeds)" = alice ] && grep -q "sc4 old=alice new=bob" "$AUDIT" && ok "succession: marshal_start (feature start) continues on its own, and audits it" || no "SPEC succession start: rc=$rc $(out) $(cat "$(rec sc4)")"
+
 # --- the shell API and the renewer (real time; ttl 1 minute; renews every second)
 ttl 1
 export QARGI_LEAD=holder QARGI_MARSHAL_RENEW_SEC=1

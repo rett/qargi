@@ -1775,6 +1775,8 @@ The marshal keeps one record per open feature: its lead (identity and lease), st
 .TP
 .BI "claim " "NAME"
 Become the lead of feature NAME (creates the record; refuses when another lead holds it).
+.br
+With \-\-as\-successor\-of ID you take over from the lead ID without the owner's words when that lead's lease is stale and its host, OS user and work tree are yours (a restart gives the session a new id and nothing else that tells it apart). The record keeps its goal, plan and note and names the succession; it is audited as marshal:succession. Any other case is refused: the owner's marshal takeover covers it. feature start continues the same way on its own, and status and check name the command when you look like the restarted lead.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1789,6 +1791,11 @@ act as this lead identity (default: the session id in QARGI_LEAD, else user@host
 .TP
 .BI "\-\-goal " "TEXT"
 what the feature is to achieve.
+.RE
+.RS
+.TP
+.BI "\-\-as\-successor\-of " "ID"
+continue as the lead after a restart: the old lead's id (see marshal handoff).
 .RE
 .RE
 .RS
@@ -2096,7 +2103,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "handoff " "[NAME]"
 Print the note a fresh session starts from, built only from stored facts.
 .br
-Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. Per feature it has the tip, whether the whole\-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). Output is capped at 16 KiB. \-\-write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi\-session skill says what to do with the note.
+Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. Per feature it has the tip, whether the whole\-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. For a feature this identity leads it names the claim \-\-as\-successor\-of command a restarted session runs. It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). Output is capped at 16 KiB. \-\-write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi\-session skill says what to do with the note.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
