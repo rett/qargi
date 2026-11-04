@@ -198,13 +198,81 @@ class CommandChecks(unittest.TestCase):
             self.assertTrue(msgs and frag in msgs[0], "%s -> %s" % (line, msgs))
 
     def test_spans_and_blocks(self):
-        got = list(S.check_code(self.cmds, "span", "--asked REQUEST", 3))
-        self.assertEqual(got, [])
-        got = list(S.check_code(self.cmds, "span", "--nope", 3))
-        self.assertEqual(got[0][0], 3)
+        self.assertEqual(list(S.check_code(self.cmds, "span", "--asked REQUEST", 3)), [])
+        self.assertEqual(list(S.check_code(self.cmds, "span", "--nope", 3)), [])          # options are checked on qargi command lines only
+        self.assertEqual(list(S.check_code(self.cmds, "span", "install.sh --user", 3)), [])
+        self.assertEqual(len(list(S.check_code(self.cmds, "span", "qargi project init --nope", 3))), 1)
         self.assertEqual(list(S.check_code(self.cmds, "fence:text", "qargi nonesuch", 1)), [])      # output blocks are not checked
         got = list(S.check_code(self.cmds, "fence:bash", "# qargi nonesuch\nqargi project \\\n  frob\nFOO=1 qargi nope", 10))
         self.assertEqual([g[0] for g in got], [12, 14])
+
+
+class ShellChecks(unittest.TestCase):
+    """S6: fenced shell blocks, read the way a shell reads them."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cmds = S.load_commands(ROOT)
+
+    def lines(self, kind, text):
+        return [(ln, m) for ln, m in S.check_code(self.cmds, kind, text, 0)]
+
+    def ok(self, text, kind="fence:bash"):
+        self.assertEqual(self.lines(kind, text), [], text)
+
+    def bad(self, text, frag, line=None, kind="fence:bash"):
+        got = self.lines(kind, text)
+        self.assertTrue(got and frag in got[0][1], "%r -> %r" % (text, got))
+        if line is not None:
+            self.assertEqual(got[0][0], line, text)
+
+    def test_text_that_is_not_a_command_is_not_checked(self):
+        self.ok("cat <<EOF\nqargi nonesuch\nEOF\nqargi project init acme")
+        self.ok("cat <<'EOF' > f\nqargi nonesuch\n  EOF\nEOF\n")
+        self.ok("cat <<-EOF\n\tqargi nonesuch\n\tEOF\nqargi --version")
+        self.ok("qargi send x \"line one\nline two\" --label y")
+        self.ok("$ qargi --version\nqargi 0.2.0\n$ qargi project init acme\nreview: ok", kind="fence:console")
+        self.ok("$ qargi --version\nqargi 0.2.0", kind="fence:shell-session")
+        self.ok("qargi project init acme -- --literal")
+        self.ok("qargi project init acme \\")
+        self.ok("sudo ./install.sh --user\n./install.sh --user && qargi --version\ncurl -fsSL https://example.org/i.sh | sh -s -- --user")
+
+    def test_the_continuation_of_a_command_is_one_command(self):
+        self.bad("qargi project init acme \\\n  --nope", "--nope", line=1)
+        self.bad("echo hi\nqargi project \\\n  frobnicate", "frobnicate", line=2)
+        self.bad("$ qargi project init acme \\\n  --nope", "--nope", kind="fence:console")
+
+    def test_wrappers_paths_and_substitutions_are_followed(self):
+        for line in ["sudo qargi nonesuch", "sudo -u build qargi nonesuch", "env A=1 qargi nonesuch", "env -i A=1 qargi nonesuch", "if qargi nonesuch; then echo y; fi",
+                     "for x in a b; do qargi nonesuch; done", "echo `qargi nonesuch`", "echo $(qargi nonesuch)", "./bin/qargi nonesuch", "/usr/local/bin/qargi nonesuch",
+                     "A=1 time qargi nonesuch", "nohup qargi nonesuch &", "! qargi nonesuch", "(qargi nonesuch)"]:
+            self.bad(line, "no command 'nonesuch'")
+
+    def test_words_after_a_redirection_still_belong_to_the_command(self):
+        self.bad("qargi project init acme > log --nope", "--nope")
+        self.bad("qargi project init acme 2>&1 --nope", "--nope")
+        self.bad("qargi project init acme &> log --nope", "--nope")
+        self.ok("qargi project init acme > log 2>&1")
+        self.ok("qargi project template acme >> out.json && qargi project init acme")
+
+    def test_an_option_value_that_is_missing_is_found(self):
+        self.bad("qargi project init acme --answers --force", "--answers needs a value")
+        self.ok("qargi project init acme --answers")                    # a span or a line may name an option without its value
+        self.ok("qargi project init acme --answers a.json --force")
+        self.ok("qargi project init acme --answers=a.json")
+        self.ok("qargi project init acme --answers FILE")
+
+    def test_an_unreadable_command_line_is_reported(self):
+        self.bad("qargi send x 'never closed\nsecond", "cannot read", line=1)
+
+    def test_check_options_only_on_qargi_lines_in_a_page(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        pages = os.path.join(t, "pages")
+        shutil.copytree(PAGES, pages)
+        spit(os.path.join(pages, "first-project.md"), "\n## Install\n\nRun `install.sh --user` and then:\n\n```bash\n./install.sh --user\nqargi --version\n```\n\nThe `--user` option belongs to the installer.\n", "a")
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages))
+        self.assertEqual((rc, err), (0, ""), out)
 
 
 class Check(unittest.TestCase):
@@ -221,14 +289,13 @@ class Check(unittest.TestCase):
                 "broken.md:11: qargi project has no verb 'frobnicate'",
                 "broken.md:12: qargi agent add has no option --no-such-option",
                 "broken.md:15: `qargi nonesuch run`: qargi has no command 'nonesuch'",
-                "broken.md:15: no qargi command has the option --also-missing",
                 "broken.md:19: link /no-such-page/: no such page",
                 "broken.md:19: link /reference/set-up/#no-such-heading: page /reference/set-up/ has no heading with id 'no-such-heading'",
                 "broken.md:19: link #nowhere: no heading with that id on this page"]
         for w in want:
             self.assertIn("error: " + w, out)
         self.assertNotIn("broken.md:10", out)      # the valid command on line 10 is not reported
-        self.assertIn("9 error(s)", out)
+        self.assertIn("8 error(s)", out)
 
     def test_build_refuses_what_check_refuses(self):
         t = tempfile.mkdtemp()

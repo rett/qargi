@@ -51,7 +51,7 @@ RESERVED = ("reference", "releases", "assets", "404")
 PAGE_IDS = ("main",)     # ids the page template uses; no heading may take one
 FRONT_KEYS = ("title", "description", "doctype", "nav")
 DOCTYPES = ("tutorial", "how-to", "reference", "explanation")
-CODE_SHELL = ("bash", "sh", "shell", "console", "zsh")
+CODE_SHELL = ("bash", "sh", "shell", "console", "shell-session", "zsh")
 SITE_NAME = "qargi"
 
 
@@ -880,20 +880,25 @@ def is_placeholder(tok):
     return bool(PLACEHOLDER.match(tok)) or tok.startswith("$")
 
 
+_SEPARATORS = {";", "&", "&&", "|", "||", "|&", "(", ")", ";;", ";&", ";;&"}
+_HEREDOC = re.compile(r"(?<!<)<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_WRAPPERS = {"sudo", "env", "exec", "command", "time", "nohup", "nice", "then", "do", "else", "elif", "if", "while", "until", "!", "{"}
+_SUDO_ARG = {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"}
+
+
 def tokens_of(line):
-    """Split one shell-like line into commands (lists of words) at ; & | and friends; raises ValueError."""
-    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    """Split one shell-like line into commands (lists of words) at ; & | ( ) and command substitutions; raises ValueError.
+    A redirection and its target are dropped, and the words after them stay in the same command."""
+    lex = shlex.shlex(re.sub(r"`|\$\(", " ; ", line), posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     segs, cur = [], []
-    for t in lex:
+    toks = iter(lex)
+    for t in toks:
         if set(t) <= set(";&|()<>"):
-            if t in ("<", ">", ">>", "<<", "<<<"):
-                # a redirection ends the command's words; the target is not one
-                segs.append(cur)
-                cur = []
-                nxt = next(lex, None)
-                if nxt is None:
-                    break
+            if "<" in t or ">" in t:
+                next(toks, None)                      # the target (or the heredoc word, or the descriptor of 2>&1)
+                if cur and re.fullmatch(r"\d+", cur[-1]):
+                    cur.pop()                         # the descriptor in 2> or 2>&1
                 continue
             segs.append(cur)
             cur = []
@@ -901,6 +906,28 @@ def tokens_of(line):
             cur.append(t)
     segs.append(cur)
     return [s for s in segs if s]
+
+
+def qargi_words(seg):
+    """The words after `qargi` when the command is qargi (also as ./bin/qargi, after sudo, env, VAR=x, if, then, ...), else None."""
+    i = 0
+    while i < len(seg):
+        w = seg[i]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", w):
+            i += 1
+        elif w in _WRAPPERS:
+            i += 1
+            if w == "sudo":
+                while i < len(seg) and seg[i].startswith("-"):
+                    i += 2 if seg[i] in _SUDO_ARG else 1
+            elif w == "env":
+                while i < len(seg) and (seg[i].startswith("-") or "=" in seg[i]):
+                    i += 2 if seg[i] in ("-u", "-C", "-S") else 1
+        else:
+            break
+    if i < len(seg) and os.path.basename(seg[i]) == "qargi":
+        return seg[i + 1:]
+    return None
 
 
 def check_words(cmds, words):
@@ -950,11 +977,12 @@ def check_words(cmds, words):
     else:
         allowed = cmds.opts_of(spec)
         where = "qargi " + t0
-    skip = False
-    for w in rest:
-        if skip:
-            skip = False
-            continue
+    k = 0
+    while k < len(rest):
+        w = rest[k]
+        k += 1
+        if w == "--":
+            break                                       # what follows is not an option
         if not w.startswith("-") or w == "-" or re.match(r"^-\d", w) or is_placeholder(w):
             continue
         name = w.split("=", 1)[0]
@@ -964,12 +992,17 @@ def check_words(cmds, words):
             near = difflib.get_close_matches(name, list(allowed), 1)
             return "%s has no option %s%s" % (where, name, " (did you mean %s?)" % near[0] if near else "")
         if allowed[name]["arg"] and "=" not in w:
-            skip = True
+            nxt = rest[k] if k < len(rest) else None
+            if nxt is not None and nxt.startswith("--") and nxt != "--" and not is_placeholder(nxt):
+                return "%s: option %s needs a value (got %s)" % (where, name, nxt)
+            k += 1
     return None
 
 
 def check_code(cmds, kind, text, line):
-    """Yield (line, message) for the qargi commands and options in one code span or fenced block."""
+    """Yield (line, message) for the qargi commands and options in one code span or fenced block.
+    Only qargi command lines are checked: in a shell block, the lines that are commands (not comments, the bodies of heredocs
+    or the rest of a quoted string), in a console block only the lines that start with `$ `."""
     if kind == "span":
         t = text.strip()
         if t == "qargi" or t.startswith("qargi "):
@@ -979,45 +1012,59 @@ def check_code(cmds, kind, text, line):
                 yield line, "cannot read `%s` (%s)" % (t, e)
                 return
             for seg in segs:
-                if seg and seg[0] == "qargi":
-                    msg = check_words(cmds, seg[1:])
+                words = qargi_words(seg)
+                if words is not None:
+                    msg = check_words(cmds, words)
                     if msg:
                         yield line, "`%s`: %s" % (t, msg)
-        else:
-            m = re.match(r"^(--[a-z0-9][a-z0-9-]*)(?:[= ]|$)", t)
-            if m and m.group(1) not in cmds.all_flags and m.group(1) != "--help":
-                near = difflib.get_close_matches(m.group(1), sorted(cmds.all_flags), 1)
-                yield line, "no qargi command has the option %s%s" % (m.group(1), " (did you mean %s?)" % near[0] if near else "")
         return
     lang = kind.split(":", 1)[1]
     if lang not in CODE_SHELL:
         return
+    console = lang in ("console", "shell-session")
     lines = text.split("\n")
     i = 0
     while i < len(lines):
         start = i
-        cur = lines[i]
-        while cur.rstrip().endswith("\\") and i + 1 < len(lines):
-            i += 1
-            cur = cur.rstrip()[:-1] + " " + lines[i].strip()
+        s = lines[i].strip()
         i += 1
-        s = cur.strip()
+        if s.startswith("$ "):
+            s = s[2:].strip()
+        elif console:
+            continue
         if not s or s.startswith("#"):
             continue
-        if s.startswith("$ "):
-            s = s[2:]
-        if "qargi" not in s:
-            continue
-        try:
-            segs = tokens_of(s)
-        except ValueError as e:
-            yield line + 1 + start, "cannot read the command line (%s)" % e
+        heredocs = [m.group(2) for m in _HEREDOC.finditer(s)]
+        segs, problem = [], None
+        if "qargi" in s:
+            while True:
+                if re.search(r"(?<!\\)(?:\\\\)*\\$", s):                         # a trailing backslash continues the command
+                    if i < len(lines):
+                        s = s[:-1] + " " + lines[i].strip()
+                        heredocs += [m.group(2) for m in _HEREDOC.finditer(lines[i])]
+                        i += 1
+                        continue
+                    s = s[:-1]
+                try:
+                    segs = tokens_of(s)
+                except ValueError as e:
+                    if "closing quotation" in str(e) and i < len(lines) and not (console and lines[i].lstrip().startswith("$ ")):
+                        s += "\n" + lines[i]                                    # a quoted string that goes on to the next line
+                        i += 1
+                        continue
+                    problem = str(e)
+                break
+        for word in heredocs:                                                    # the body of a heredoc is text
+            while i < len(lines) and lines[i].strip() != word:
+                i += 1
+            i += 1
+        if problem:
+            yield line + 1 + start, "cannot read the command line (%s)" % problem
             continue
         for seg in segs:
-            while seg and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[0]):
-                seg = seg[1:]
-            if seg and seg[0] == "qargi":
-                msg = check_words(cmds, seg[1:])
+            words = qargi_words(seg)
+            if words is not None:
+                msg = check_words(cmds, words)
                 if msg:
                     yield line + 1 + start, msg
 
