@@ -28,24 +28,31 @@
 #                                           terminal, in a member run and when QARGI_NESTED is set (exit 2); the guard refuses it to a member too.
 #                                           The verify command is an argv list, run without a shell in the repository.
 #
-#   release.sh publish VERSION [--plan T --approved W]
+#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--notes-file FILE]
 #                                           create the GitHub release of the tag VERSION (gh release create --verify-tag, through
 #                                           QARGI_GH) with the tag's changelog section as notes; for a tag pushed before the release
 #                                           workflow existed. Refuses when the release exists, the tag is missing or the section is empty.
+#                                           The files of --asset and of the answer release.assets (relative to the repository, inside it)
+#                                           are attached by the same gh release create. The notes are --notes-file, else the answer
+#                                           release.notes_file ({version} replaced), else the changelog section. When release.sign is
+#                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
+#                                           plan token covers the notes and the hash of every asset.
 #
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY=''
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT=''; ASSETS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
+[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
 [ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]"
@@ -329,10 +336,34 @@ PY
     esac;;
   publish)
     tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it)"
+    python3 -I "$RS" config "$af" || die "the release answers of $PROJ are not valid (qargi project validate $PROJ)"
     notes=$(mktemp "$DA_STATE/.release-notes.XXXXXX")
-    g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
-    sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
-    printf '%s\n' "$sect" > "$notes"
+    # the notes: --notes-file, else the answer release.notes_file, else the VER section of CHANGELOG.md at the tag
+    nfile=$NOTES_OPT
+    [ -n "$nfile" ] || { nfile=$(jq -r '.release.notes_file // ""' "$af"); nfile=${nfile//\{version\}/$VER}; }
+    if [ -n "$nfile" ]; then
+      out=$(python3 -I "$RS" resolve "$REPO" "$nfile") || die "the notes file cannot be used"
+      IFS=$'\t' read -r _ nabs nrel <<<"$out"
+      cp "$nabs" "$notes"
+      grep -q '[^[:space:]]' "$notes" || die "the notes file $nrel is empty: nothing to publish"
+      nsrc="the file $nrel"
+    else
+      g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
+      sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
+      printf '%s\n' "$sect" > "$notes"
+      nsrc="the $VER section of CHANGELOG.md at the tag"
+    fi
+    # the assets: release.assets and every --asset, each a regular file inside the repository; attached by the same gh release create
+    mapfile -t alist < <(jq -r '(.release.assets // [])[]' "$af")
+    alist+=("${ASSETS[@]}")
+    assets=(); ahash=; arel=; declare -A seen
+    if [ "${#alist[@]}" -gt 0 ]; then
+      out=$(python3 -I "$RS" resolve "$REPO" "${alist[@]}") || die "an asset cannot be used; nothing was published"
+      while IFS=$'\t' read -r h abs rel; do
+        [ -z "${seen[$abs]:-}" ] || continue; seen[$abs]=1   # named twice (the answers and --asset)
+        assets+=("$abs"); ahash+="$h $rel"$'\n'; arel+="$rel"$'\n'
+      done <<<"$out"
+    fi
     title="$PROJ $VER"
     gh_release_state "$VER"
     case $GHS in
@@ -341,11 +372,28 @@ PY
       noauth) echo "note: gh is not authenticated, so whether GitHub has a release for tag $VER was not checked; applying needs it (gh auth login)" >&2;;
       unchecked) echo "note: could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer})" >&2;;
     esac
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" | plan_token)
+    # when the project signs its releases, nothing is published before the signature of this tag is recorded ok and the signed files are as signed
+    signline=''; stok=''
+    if sign_configured; then
+      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc") \
+        || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
+      stok=$(sha256sum < "$SIGNREC")
+    fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$(sha256sum < "$notes")" "$title" "$ahash" "$stok" | plan_token)
     echo "publish the GitHub release of tag $VER of $PROJ: tag at ${tc:0:7} ($(g log -1 --format=%s "$tc"))"
-    echo "notes (the $VER section of CHANGELOG.md at the tag):"
+    echo "notes ($nsrc):"
     sed 's/^/  | /' "$notes"
-    echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES"
+    if [ "${#assets[@]}" -gt 0 ]; then
+      echo "assets (${#assets[@]}), attached by the same gh release create:"
+      sed 's/^\([0-9a-f]*\) /  | \1  /' <<<"${ahash%$'\n'}"
+    fi
+    if [ -n "$signline" ]; then
+      echo "signature: $signline"
+      while IFS= read -r f; do
+        grep -qxF -- "$f.sig" <<<"$arel" || echo "note: $f.sig is not among the assets: attach it with --asset $f.sig or release.assets"
+      done < <(jq -r '.files | keys[]' "$SIGNREC")
+    fi
+    echo "run: $GH -R $(repo_slug) release create $VER --verify-tag --title \"$title\" --notes-file NOTES$([ "${#assets[@]}" -eq 0 ] || printf ' %s' "${assets[@]}")"
     echo "(--verify-tag: the tag must already be on origin; NOTES holds the text above)"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release publish $VER --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
@@ -355,8 +403,8 @@ PY
       noauth) die "gh is not authenticated (gh auth login); nothing was published";;
       *) die "could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer}); nothing was published";;
     esac
-    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
-    audit_log "release:publish" "$PROJ $VER"
+    out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
+    audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
     echo "published the release of tag $VER: $out";;
   *) die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]";;
 esac

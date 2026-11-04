@@ -58,6 +58,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `state/release/`. Only from the tag (HEAD is the commit of VERSION, on master or detached, no tracked file modified), after
   `finish` and before `publish`; refused when stdin is no terminal, in a member run and when `QARGI_NESTED` is set (exit 2), and
   the member guard refuses it.
+- `qargi release publish` attaches assets in the same `gh release create` call: `--asset FILE` (repeatable) and the answer
+  `release.assets`, regular files inside the repository; the plan lists each with its sha256 and the token covers them.
+  `--notes-file FILE` (or the answer `release.notes_file`, `{version}` replaced) gives the notes instead of the changelog section.
+  When `release.sign` is set it refuses until `qargi release sign VERSION` recorded an ok for the tag and none of the signed files
+  or signatures changed since (the plan notes a signed file whose `.sig` is not among the assets).
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.
