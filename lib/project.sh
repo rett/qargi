@@ -141,6 +141,12 @@ if cf:
         inside = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
         if inside.returncode == 0 and inside.stdout.strip() == "true":
             bad.append("repo.credential_file: %s is inside a git working tree; keep it outside every repository" % cf)
+mz = c.get("marshal")
+if mz is not None:
+    need(isinstance(mz, dict), "marshal: an object (the only answer in it is lease_minutes)")
+    ls = mz.get("lease_minutes") if isinstance(mz, dict) else None
+    if ls is not None:
+        need(isinstance(ls, int) and not isinstance(ls, bool) and 1 <= ls <= 1440, "marshal.lease_minutes: a whole number of minutes from 1 to 1440 (default 15)")
 cl = c.get("cloud")
 if cl is not None:
     need(isinstance(cl, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", str(cl.get("profile", ""))) and re.fullmatch(r"wrkspc_[A-Za-z0-9]{10,}", str(cl.get("workspace_id", ""))),
@@ -610,7 +616,7 @@ PY
     [ -n "$path" ] && [ -n "$val" ] || usage_die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
-    case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
+    case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
