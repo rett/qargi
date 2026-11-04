@@ -277,9 +277,13 @@ class ShellChecks(unittest.TestCase):
 
 class Check(unittest.TestCase):
     def test_clean_pages_pass(self):
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(PAGES))
+        t = tempfile.mkdtemp()                      # a copy outside git: the result does not depend on how the checkout was made
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "f"))
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(t, "f", "pages")))
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
+        self.assertIn("note: index.md: no commit date (not in a git repository): no lastmod for this page", out)
 
     def test_bad_pages_are_reported_with_line_numbers(self):
         rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(BAD))
@@ -538,9 +542,11 @@ class Build(unittest.TestCase):
         self.assertIn("https://docs.example.org/qargi/reference/set-up/", urls)
         self.assertNotIn("https://docs.example.org/qargi/404.html", urls)
         self.assertEqual(len(urls), 14)
-        # the generated pages carry the release date; the hand pages (untracked or modified here) fall back to it too, never to the build time
+        # the generated pages carry the release date; a hand page with no commit date (these are copies outside git) has no lastmod, never a guess
         for loc, u in urls.items():
-            self.assertEqual(u.find(ns + "lastmod").text, RELEASE_DATE, loc)
+            hand = loc in ("https://docs.example.org/qargi/", "https://docs.example.org/qargi/first-project/")
+            lm = u.find(ns + "lastmod")
+            self.assertEqual(None if hand else RELEASE_DATE, None if lm is None else lm.text, loc)
             self.assertIsNone(u.find(ns + "priority"))
             self.assertIsNone(u.find(ns + "changefreq"))
         self.assertEqual(self.page("robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://docs.example.org/qargi/sitemap.xml\n")
@@ -697,14 +703,66 @@ class LastMod(unittest.TestCase):
         self.assertEqual(rc, 0, so + se)
         root = ET.parse(os.path.join(out, "sitemap.xml")).getroot()
         ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
-        lm = {u.find(ns + "loc").text: u.find(ns + "lastmod").text for u in root}
+        lm = {u.find(ns + "loc").text: getattr(u.find(ns + "lastmod"), "text", None) for u in root}
         self.assertEqual(lm["https://docs.example.org/qargi/first-project/"], "2026-03-02")
-        self.assertEqual(lm["https://docs.example.org/qargi/"], RELEASE_DATE)        # fell back to the release date
+        self.assertIsNone(lm["https://docs.example.org/qargi/"])                      # modified: no date to give, none invented
         self.assertEqual(lm["https://docs.example.org/qargi/releases/"], RELEASE_DATE)
+        self.assertIn("note: index.md: no commit date", so)
         ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
         art = json.loads(ld)["@graph"][0]
         self.assertEqual((art["dateModified"], art["datePublished"]), ("2026-03-02", "2026-01-15"))
         self.assertEqual(run("check-output", out)[0], 0)
+
+    def make_repo(self, t):
+        f = os.path.join(t, "f")
+        shutil.copytree(FIX, f)
+        self.git(f, "init", "-q", "-b", "main")
+        self.git(f, "add", "-A")
+        self.git(f, "commit", "-q", "-m", "first", date="2026-01-15T10:00:00+00:00")
+        return f
+
+    def test_a_shallow_clone_has_no_page_dates_and_says_so(self):
+        if not shutil.which("git"):
+            self.skipTest("git is not installed")
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        f = self.make_repo(t)
+        spit(os.path.join(f, "unrelated.txt"), "x")
+        self.git(f, "add", "-A")
+        self.git(f, "commit", "-q", "-m", "second", date="2026-11-01T10:00:00+00:00")
+        self.git(t, "clone", "-q", "--depth", "1", "file://" + f, "c")
+        c = os.path.join(t, "c")
+        out = os.path.join(t, "o")
+        rc, so, se = build(out, os.path.join(c, "pages"))
+        self.assertEqual(rc, 0, so + se)
+        self.assertIn("warning: pages: shallow clone", so)
+        root = ET.parse(os.path.join(out, "sitemap.xml")).getroot()
+        ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+        for u in root:                                 # not the tip commit's date, which says nothing about the page
+            self.assertEqual(u.find(ns + "lastmod").text, RELEASE_DATE, u.find(ns + "loc").text)
+        ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
+        self.assertNotIn("datePublished", ld)
+        self.assertEqual(run("check-output", out)[0], 0)
+
+    def test_git_runs_nothing_the_repository_configures(self):
+        if not shutil.which("git"):
+            self.skipTest("git is not installed")
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        f = self.make_repo(t)
+        marker = os.path.join(t, "ran")
+        script = os.path.join(t, "evil.sh")
+        spit(script, "#!/bin/sh\necho ran >> %s\nexit 1\n" % marker)
+        os.chmod(script, 0o755)
+        self.git(f, "config", "core.fsmonitor", script)
+        self.git(f, "config", "filter.evil.clean", script)
+        self.git(f, "config", "core.hooksPath", os.path.join(t, "hooks"))
+        spit(os.path.join(f, ".gitattributes"), "*.md filter=evil\n")
+        self.git(f, "config", "core.fsmonitor", script)
+        before = os.path.exists(marker)
+        rc, so, se = build(os.path.join(t, "o"), os.path.join(f, "pages"))
+        self.assertEqual(rc, 0, so + se)
+        self.assertFalse(os.path.exists(marker) and not before, "the repository's fsmonitor or filter program ran")
 
 
 class Safety(unittest.TestCase):

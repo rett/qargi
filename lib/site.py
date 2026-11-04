@@ -517,26 +517,37 @@ def hrefs_to(html_text, fn):
 
 
 def git_dates(path):
-    """(last commit date, first commit date) of a tracked, unmodified file, as YYYY-MM-DD, else (None, None)."""
+    """(last commit date, first commit date, why not) of a tracked, unchanged file, as YYYY-MM-DD. When no date can be trusted
+    the dates are None and why says so: "shallow" (a shallow clone gives every file the tip commit's date), "not in a git
+    repository", "not tracked" or "changed since its last commit". git runs without the repository's fsmonitor, hooks or
+    filters, with no optional lock and a minimal environment; the file is compared with its committed blob without filters."""
     d, name = os.path.dirname(path), os.path.basename(path)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": "/nonexistent",
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": "/nonexistent", "GIT_OPTIONAL_LOCKS": "0",
            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0"}
+    base = ["git", "-C", d, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.untrackedCache=false"]
 
     def run(*a):
         try:
-            r = subprocess.run(["git", "-C", d] + list(a), capture_output=True, text=True, env=env, timeout=30)
+            r = subprocess.run(base + list(a), capture_output=True, text=True, env=env, timeout=30, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return r.stdout if r.returncode == 0 else None
-    st = run("status", "--porcelain", "--", name)
-    if st is None or st.strip():
-        return None, None
+    shallow = run("rev-parse", "--is-shallow-repository")
+    if shallow is None:
+        return None, None, "not in a git repository"
+    if shallow.strip() != "false":
+        return None, None, "shallow"
+    committed = run("rev-parse", "HEAD:./" + name)
+    if committed is None:
+        return None, None, "not tracked"
+    if committed.strip() != (run("hash-object", "--no-filters", "--", name) or "").strip():
+        return None, None, "changed since its last commit"
     last = run("log", "-1", "--format=%cs", "--", name)
-    first = run("log", "--diff-filter=A", "--format=%cs", "--", name)
+    first = run("log", "--follow", "--diff-filter=A", "--format=%cs", "--", name)
     ok = lambda s: s and re.match(r"^\d{4}-\d{2}-\d{2}$", s.strip().splitlines()[-1] if s.strip() else "")
     if not ok(last):
-        return None, None
-    return last.strip().splitlines()[0], (first.strip().splitlines()[-1] if ok(first) else None)
+        return None, None, "not tracked"
+    return last.strip().splitlines()[0], (first.strip().splitlines()[-1] if ok(first) else None), None
 
 
 def gather_hand(pages_dir, rep):
@@ -836,10 +847,20 @@ def build_model(args, rep):
         p.crumbs = [("Home", ""), (p.title, p.path)]
     if "" in pages:
         pages[""].crumbs = [("Home", "")]
+    shallow = []
     for p in pages.values():
-        if p.src:
-            p.lastmod, p.published = git_dates(p.src)
-        if not p.lastmod:
+        if not p.src:
+            p.lastmod = src.release_date            # a generated page is as new as the release
+            continue
+        p.lastmod, p.published, why = git_dates(p.src)
+        if why == "shallow":
+            shallow.append(p)
+        elif why:
+            rep.note(p.rel, "no commit date (%s): no lastmod for this page" % why)
+    if shallow:
+        rep.warn("pages", "shallow clone: the commit dates of %d hand page(s) are unknown, so they carry the release date (%s); "
+                          "clone with full history to get each page's own date" % (len(shallow), src.release_date or "none"))
+        for p in shallow:
             p.lastmod = src.release_date
     pages["404"] = Page("404", "notfound", "Page not found", "The page you asked for is not part of the qargi documentation. Use the links below to reach the home page, the reference or the releases.", "")
     validate(site, hand, rep)
