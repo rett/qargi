@@ -24,7 +24,7 @@ runtime; one that does not is **skipped** with a note, never attached silently.
 
 - `qargi skill|tool new NAME --compatible LIST` and `import SOURCE --compatible LIST` take it, and
   so does the install verb of `qargi discover` (it asks when the catalog entry has none).
-- A pack made before this has none and fails review: `qargi skill|tool seal NAME --compatible LIST`
+- A pack with none fails review: `qargi skill|tool seal NAME --compatible LIST`
   adds it.
 - Ask the person what a pack really needs. Plain text works with `any`; a skill that calls a tool
   or a file layout of one runtime names that runtime or its family.

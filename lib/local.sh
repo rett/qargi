@@ -73,7 +73,7 @@ journaled() {
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
   local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
-  # refs/qargi/ is dropped on both sides, so a snapshot taken before this rule existed compares the same way
+  # refs/qargi/ is dropped on both sides
   if ! diff -u <(grep -v "$hd" "$ref" | drop_qargi_refs) <(grep -v "$hd" "$aft" | drop_qargi_refs); then bad=1; fi
   if [ -n "$strict" ]; then
     # strict: a local branch may differ only as far as the lead's ref journal explains it; nothing else (no fast-forward rule)
@@ -109,8 +109,8 @@ compare() {
 check_run() {
   local run=$1 repo='' ref strict=1
   ref=$run/refs.before
-  # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; an older run falls back to refs.before
-  JSTART=$(cat "$run/started" 2>/dev/null || stat -c %Y "$run/refs.before" 2>/dev/null || true)
+  # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; with none, no change is journaled
+  JSTART=$(cat "$run/started" 2>/dev/null || true)
   [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
   if [ -f "$run/repo.url" ]; then
     snapshot_url "$(cat "$run/repo.url")" "$(cat "$run/cred.path" 2>/dev/null)" > "$run/refs.after"
@@ -440,7 +440,7 @@ WRAP
     for d in ${runs[@]+"${runs[@]}"}; do
       sl=$(jq -r --arg r "$d" 'select(.run == $r) | .slug' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
       [ -n "$sl" ] || sl=$(git -C "$d/clone" branch --show-current 2>/dev/null | sed 's|^agent/||')
-      st=$(cat "$d/started" 2>/dev/null || stat -c %Y "$d/refs.before" 2>/dev/null || echo "$nowe"); age=$((nowe - st))
+      st=$(cat "$d/started" 2>/dev/null || echo "$nowe"); age=$((nowe - st))
       if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
       ap=no; mg=no
       if [ -f "$d/applied" ]; then

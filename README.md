@@ -253,7 +253,7 @@ Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` d
 | `/qargi-provision` | `plan`, `apply`, `add-reference` |
 | `/qargi-packs` | skills and tools in one library, attached by scope (user, user-role, project, project-role), declared compatible with the runtimes that may use them, reviewed at import, checked for drift |
 | `/qargi-providers` | the lead's guide to runtimes: add one with data only, review and seal it, verification and `attest`, extensions, the runtime of each surface |
-| `/qargi-memory` | `lint`, `get`, the canon (`check`, `plan`, `apply`, `import`, `promote`), the session-start autoload |
+| `/qargi-memory` | `lint`, `get`, the canon (`check`, `plan`, `apply`, `promote`), the session-start autoload |
 | `/qargi-verify` | the coordinator's procedure for verifying and applying returned patches |
 | `/qargi-flow` | the lead's git-flow process: features, tasks, releases, hotfixes and resolving conflicts |
 | `/qargi-team` | a team on one task: a lead coordinating members for build, write and review; led by this session, a cloud lead, or a lead started in the console |

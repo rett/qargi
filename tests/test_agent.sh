@@ -269,17 +269,10 @@ jq -e --arg f "$MD/lk.toml" '.projects.linkp.lk | .file == $f and has("project")
 mkdir -p "$T/repo-l/.fake/agents"; ln -s "$MD/lk.toml" "$T/repo-l/.fake/agents/lk.toml"
 out=$($DA agent refresh lk --project linkp 2>&1); grep -q "is current" <<<"$out" && ! grep -q "does not see" <<<"$out" && ok "linked runtime: no note once the checkout has the link" || no "link note when linked: $out"
 $DA agent rename lk lk2 --project linkp >/dev/null 2>&1; [ -f "$MD/lk2.toml" ] && [ ! -e "$MD/lk.toml" ] && jq -e '.projects.linkp.lk2.file == "'"$MD"'/lk2.toml"' "$T/c/agents.json" >/dev/null && ok "linked runtime: rename keeps the member in the render" || no "linked rename: $(ls "$MD")"
-# a member an earlier version wrote into the checkout is moved to the render by refresh (the old file only while it is what qargi wrote)
 mkdir -p "$T/repo-l/.fake/agents"; rm -f "$T/repo-l/.fake/agents/lk.toml"
-$DA agent add old1 --roles build --project linkp >/dev/null 2>&1; $DA agent add old2 --roles build --project linkp >/dev/null 2>&1
-for m in old1 old2; do cp "$MD/$m.toml" "$T/repo-l/.fake/agents/$m.toml"; rm -f "$MD/$m.toml"; jq --arg m "$m" --arg f "$T/repo-l/.fake/agents/$m.toml" '.projects.linkp[$m].file = $f' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"; done
-echo '# by hand' >> "$T/repo-l/.fake/agents/old2.toml"
-out=$($DA agent refresh old1 --project linkp 2>&1)
-{ [ -f "$MD/old1.toml" ] && [ ! -e "$T/repo-l/.fake/agents/old1.toml" ] && jq -e '.projects.linkp.old1.file == "'"$MD"'/old1.toml"' "$T/c/agents.json" >/dev/null && grep -q "now in the member render" <<<"$out"; } && ok "refresh moves a member written into the checkout to the render and removes the unmodified old file" || no "refresh move: $out"
-out=$($DA agent refresh old2 --project linkp 2>&1)
-{ [ -f "$MD/old2.toml" ] && [ -f "$T/repo-l/.fake/agents/old2.toml" ] && grep -q "edited by hand and is left" <<<"$out"; } && ok "and leaves an old file that was edited by hand" || no "refresh move edited: $out"
+$DA agent add old1 --roles build --project linkp >/dev/null 2>&1
 out=$($DA agent remove old1 --project linkp 2>&1); grep -q "project link linkp --resource agents" <<<"$out" && [ ! -e "$MD/old1.toml" ] && ok "remove deletes the render's file and says to run project link" || no "remove: $out"
-$DA agent remove old2 --project linkp >/dev/null 2>&1; $DA agent remove lk2 --project linkp >/dev/null 2>&1
+$DA agent remove lk2 --project linkp >/dev/null 2>&1
 
 # a base name takes only the abilities of its class
 $DA agent add worker --project pbase --roles review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"

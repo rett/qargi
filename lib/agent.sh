@@ -672,23 +672,6 @@ case $verb in
     prov=$(provider_for "$mproj" local) || exit $?
     r=$(render_member "$n" "$(jq -r '.roles | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" local | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
-    # a member whose runtime links the project's agents belongs in the member render: a file written to the checkout by an earlier version is moved there
-    # (the old file is removed only while it is what qargi wrote)
-    if [ "$(link_mode "$r")" != none ]; then
-      nf=$(agents_dir "$mproj" "$r")/$(jq -r .path <<<"$r") || exit 1
-      if [ "$nf" != "$f" ]; then
-        [ ! -e "$nf" ] && [ ! -L "$nf" ] || die "$nf exists already"
-        write_member "$r" "$nf"
-        gone="the old file $f is gone"
-        if [ -f "$f" ] && [ ! -L "$f" ]; then
-          if [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$(jq -r '.render.hash // ""' <<<"$rec")" ]; then rm -f "$f"
-          else gone="the old file $f was edited by hand and is left where it is"; fi
-        fi
-        json_update "$MEMBERS_FILE" '.projects[$p][$n] += {file: $f, provider: $v, surface: "local", render: $r}' --arg p "$mproj" --arg n "$n" --arg f "$nf" --arg v "$prov" --argjson r "$(member_record "$r")"
-        echo "refreshed member $n: now in the member render ($nf); $gone"
-        link_note "$mproj" "$r" "$nf"; exit 0
-      fi
-    fi
     # the file is the render's bytes: written again unless it is already those (a hand-edited file is replaced, and the output says so)
     drift=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
     [ -z "$want" ] || [ ! -f "$f" ] || [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$want" ] || drift=1
