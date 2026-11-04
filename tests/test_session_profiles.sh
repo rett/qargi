@@ -6,7 +6,7 @@
 # stdin only, a reviewer needs the project's acceptance of the missing read-only barrier, and an idle session is reused only
 # for the same role, profile, model and effort. The legacy role instances (<project>-build ...) start exactly as before.
 # Hermetic, offline: a fake `ant`, and a copy of the tool whose descriptor has the per-dispatch overrides verified (the
-# shipped one has not, so the checkout itself falls back to the legacy instances). Run: tests/test_session_profiles.sh
+# shipped one has not, so the checkout itself refuses a start of the base). Run: tests/test_session_profiles.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
@@ -118,7 +118,7 @@ out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --profile test --asked "x" 2>&1)
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-build --role build --asked "x" 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'are for the bases' <<<"$out"; } && ok "--role is for the bases: a legacy instance refuses it" || no "legacy with --role (rc=$rc): $out"
 out=$(QARGI_DRY_RUN=1 "$SHIP" start alpha-worker --role build --asked "x" 2>&1); rc=$?
-{ [ $rc != 0 ] && ! jq -e . <<<"$out" >/dev/null 2>&1 && grep -q 'not usable yet' <<<"$out"; } && ok "the shipped tool (overrides unverified) falls back to the legacy instance: the base is refused" || no "legacy fallback (rc=$rc): $out"
+{ [ $rc = 2 ] && ! jq -e . <<<"$out" >/dev/null 2>&1 && grep -q 'cannot set the model and effort per dispatch' <<<"$out" && ! grep -q 'alpha-build' <<<"$out"; } && ok "the shipped tool (overrides unverified): the base is refused, with the reason, and no role instance takes its place" || no "unverified base (rc=$rc): $out"
 [ "$(n_creates)" = 0 ] && ok "none of these created a session" || no "a refused start created a session"
 
 # --- really creating: the body goes to ant on stdin only, the session is tracked with its role, profile, model and effort

@@ -31,17 +31,19 @@ qargi lead grant and revoke are interactive instead: you confirm each step at th
 .PP
 The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The \-\-approved text is recorded, not verified: it is not proof that a person agreed. Never allow\-list a gated verb in the runtime's settings: the permission prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person (what the member's guard refuses: qargi help guard).
 .SH GUARD
-The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of what the member returned is the backstop.
+qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier against mistakes, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link, unlink and migrate\-render; project set (models answers), init, link and unlink; every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
 .PP
-It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.
+It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin directories, the installed copy of the tool, and the render, marshal and feature directories of the state, its ref journal and its registry of local runs. Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.
 .PP
-The read\-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.
+A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text on the command line. Write the message to a file, commit with git commit \-F FILE. A cd is followed only when sure; else both directories are judged. A check over 5 seconds is refused.
 .PP
-Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.
+The read\-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through a name the guard cannot read that could be the run's record. Nobody copies, extracts or links into the run directory.
 .PP
-A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it.
+Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.
+.PP
+A refusal is a result: report it and the verb you needed, and do not work around it.
 .SH NAMING
 Project and role are single lower\-case tokens. An instance is <project>\-<role>, for example acme\-build. A session is <instance>\-<task\-slug>, and the agent's branch is agent/<task\-slug>.
 .PP
@@ -482,7 +484,7 @@ a profile of the role's class (a shipped one such as auditor, advisor or researc
 .RS
 .TP
 .BI "\-\-surface " "SURFACE"
-local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member.
+local (default) or cloud: with cloud, resolve the registered base instance (<project>\-worker or \-reviewer) instead of a member; needs \-\-project.
 .RE
 .RS
 .TP
@@ -492,7 +494,7 @@ cloud only: confirm an opt\-in profile such as researcher.
 .RS
 .TP
 .B \-\-json
-machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort).
+machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class).
 .RE
 .RE
 .TP
@@ -1561,23 +1563,6 @@ the plan token printed by the same command without \-\-approved.
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
-.RS
-.TP
-.B migrate\-render
-Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
-.br
-Prints the move and a plan token; with \-\-plan and \-\-approved it moves the directory, re\-points the checkout's skills link only when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.
-.RS
-.TP
-.BI "\-\-plan " "TOKEN"
-the plan token printed by the same command without \-\-approved.
-.RE
-.RS
-.TP
-.BI "\-\-approved " "WORDS"
-your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
 .TP
 .B qargi discover
 Find, recommend and install tools for the roles of a project.
@@ -2526,7 +2511,7 @@ the request, in your words, that names the cloud instance; recorded in the audit
 .RE
 .TP
 .B qargi local
-Prepare, verify and clean a local run that has no way to push.
+Prepare, verify, list and clean a local run that has no way to push.
 .PP
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
@@ -2571,7 +2556,7 @@ print the argv, the working directory and the prompt, and run nothing.
 .B prepare
 Make the clone and the wrapper for a local agent.
 .br
-Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT: the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime\-addenda.md) to copy into the task. A caller that evals the output must stop at the blank line.
+Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless \-\-profile), MEMBER, MODEL and EFFORT (only with \-\-profile), CLONE, OUT, TMP, GIT, BASE_SHA and CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime\-addenda.md). Then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK\-BLOCK MEMORY block. A caller that evals the output must stop at the blank line.
 When the project (found by matching the repository against the stored answers) has a Claude Code render (packs apply \-\-target claude\-code) that has drifted, prepare also prints a WARNING block to stderr with the findings and the fix, packs apply \-\-target claude\-code PROJECT. The run goes on, and stdout and the TASK\-BLOCK PATHS block are unchanged.
 .RS
 .TP
@@ -2623,14 +2608,36 @@ Exits 2 when refs changed (1 before). After a passing verify the run records RUN
 .RE
 .RS
 .TP
-.BI "clean " "RUN_DIR"
+.BI "clean " "[RUN_DIR]"
 Remove a collected, verified run and its temporary directory.
 .br
-Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake.
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path; \-\-applied takes no RUN_DIR and no \-\-discard.
 .RS
 .TP
 .B \-\-discard
-also clean a run whose output holds no manifest, or whose commits were never merged (dropped on purpose).
+drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning).
+.RE
+.RS
+.TP
+.B \-\-applied
+clean every run under \-\-scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept.
+.RE
+.RS
+.TP
+.BI "\-\-scratch " "DIR"
+with \-\-applied: the directory the runs were prepared in; only the run directories directly under it are looked at.
+.RE
+.RE
+.RS
+.TP
+.B list
+List the local runs: role, slug, age, whether applied and merged.
+.br
+Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on.
+.RS
+.TP
+.BI "\-\-scratch " "DIR"
+the directory the runs were prepared in (default: the runs of the registry that still exist).
 .RE
 .RE
 .TP
