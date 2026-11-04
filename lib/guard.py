@@ -416,12 +416,13 @@ BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")      
 def skip_wrappers(toks):
     """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
     redirections written before the program (> f, 2>&1)."""
-    i = 0
+    i, env = 0, False
     while i < len(toks):
         t = toks[i]
-        if t in ("-C", "--chdir") and any(os.path.basename(w) == "env" for w in toks[:i]):
+        if t in ("-C", "--chdir") and env:
             i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
         elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+            env = env or os.path.basename(t) == "env"
             i += 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
@@ -658,6 +659,20 @@ def moved(dirs, args, certain, visited, cdpath=False):
     return new
 
 
+def env_chdir(toks, i):
+    """The directory `env -C DIR` or `env --chdir=DIR` among the words before the program (toks[:i]) names, else None: the program runs there."""
+    env = False
+    for k in range(min(i, len(toks))):
+        t = toks[k]
+        if os.path.basename(t) == "env":
+            env = True
+        elif env and t in ("-C", "--chdir") and k + 1 < len(toks):
+            return toks[k + 1]
+        elif env and t.startswith("--chdir="):
+            return t.split("=", 1)[1]
+    return None
+
+
 def walk(command, here):
     """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, texts, text, dirs). texts: the pieces of the
     cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
@@ -677,9 +692,7 @@ def walk(command, here):
         for n, piece in enumerate(ps):
             tick()
             toks, i = parsed(piece.text)
-            chdir = next((toks[k + 1] for k in range(min(i, len(toks)))
-                          if toks[k] in ("-C", "--chdir") and k + 1 < len(toks) and any(os.path.basename(w) == "env" for w in toks[:k])), None)
-            chdir = chdir or next((t.split("=", 1)[1] for t in toks[:i] if t.startswith("--chdir=")), None)
+            chdir = env_chdir(toks, i)
             yield n, texts, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
@@ -2144,9 +2157,11 @@ def protected_write(toks, i, here):
             cands += [(prog, c) for c in {t, t.split("=", 1)[-1], t[2:] if t.startswith("-") and not t.startswith("--") else t}]
     if prog == "ln":                                         # ln -s PROT DST; echo x > DST/x: the link is a name the guard has not seen when the write is judged
         links = [a for a in (args if any(t in ("-t", "--target-directory") or t.startswith("--target-directory=") for t in rest) else args[:-1])]
+        beside = os.path.dirname(resolve(here, args[-1])) if args else here
         for a in links:
+            tick()
             for one in brace_expand(a):
-                heres = [here] + ([os.path.dirname(resolve(here, args[-1]))] if args and not one.startswith(("/", "~")) else [])
+                heres = [here] + ([beside] if not one.startswith(("/", "~")) else [])
                 root = next((r for r in (protected(resolve(h, one), True) for h in heres) if r), None)
                 if root and root not in key_dirs():              # a link to the credentials directory is the signing key's own refusal (key_read), with its own reason
                     return OwnReason("ln of %s makes a link to %s (or a directory that holds it), a protected location, under a name the guard cannot follow in the same command line; "

@@ -3322,6 +3322,19 @@ class FifthReview(unittest.TestCase):
         G.clear_caches()
         self.assertEqual((G._RESOURCE_DIRS, G._ROOTS, G._KEY_DIRS, G._STATE), ([], {}, [], {}))
 
+    # --- the patterns the fifth audit added stay linear: no run of blanks, quotes, at signs or repeated words costs the hook its time
+    def test_the_new_patterns_do_not_cost_quadratic_time(self):
+        J = _Judge(LIBDIR, "guard_linear", self.clone)
+        cases = {"blanks": "git" + " " * 150000 + "status", "push words": "git " + "push " * 30000, "dollar quotes": "$'" * 60000, "dollar quote escapes": "$'\\x" * 40000,
+                 "at signs": "rsync " + "@" * 100000 + ":", "user at host": "rsync " + "a@" * 80000, "alias dots": "git -c alias." + "." * 100000 + "x s", "diff dots": "git -c diff." + "." * 100000 + " s",
+                 "find -exec": "find . " + "-exec echo {} + " * 20000, "find -exec blanks": "find ." + " " * 100000 + "-exec " + " " * 100000 + "echo", "cd words": "cd " + "$d " * 20000,
+                 "env -C": "env " + "-C x " * 20000 + "ls", "braces": "echo ${x:-" + "a" * 100000 + "}", "ln": "ln -s " + "a " * 30000 + "b"}
+        for name, command in cases.items():
+            t0 = time.perf_counter()
+            J.judge(command)
+            took = time.perf_counter() - t0
+            self.assertLess(took, 15.0, "%s: %.1f s" % (name, took))
+
 
 if __name__ == "__main__":
     unittest.main()
