@@ -55,7 +55,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
     without a space), tee, cp, mv, rm, ln, install, rsync, touch, mkdir, chmod, chown, truncate, shred, patch,
     `sed|perl -i`, `dd of=`, a git command that changes the tree, find with -delete or -exec, and any argument of
-    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed. What an agent edits in its own clone, the
+    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
+    directory when nothing in the command could set it; a cd only as the next paragraph says). What an agent edits in its own clone, the
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
@@ -82,7 +83,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     shared-refs backend: found and decided like features/, reading stays allowed;
   - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
     it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
-    accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
+    accepts as lead-side changes; and the same for the registry of local runs ($QARGI_STATE/local-runs.jsonl and the files like it), which names the
+    temporary directory `qargi local clean` removes for each run. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
     directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
     records are a later feature);
   - the verbs of the signed records: qargi marshal key|signers|resign (the lead's signing key, the allowed signers, a record signed
@@ -93,7 +95,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read, NotebookRead and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
-  globs and symbolic links are resolved, in a `<` redirection, an `--opt=path` and in the text of a `-c` program. A directory that holds the key
+  globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
   look at it and stay allowed; the other credentials stay readable.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
@@ -106,24 +108,32 @@ Not covered: code that writes or reads a file itself (python -c, perl -e, node -
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
-Reading a Bash command (segments()): the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
+Reading a Bash command (passes(), segments()): the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
 A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. No file is guessed to be run later.
-A NUL byte, a command over 262144 characters, checks that take over 8 seconds and a glob that needs more than GLOB_ENTRIES directory entries read are
-refused, since a hook that times out does not block.
-Write targets (write_targets()): a redirection (> >> >| <> &> >&FILE, N-prefixed, stuck to its word or not), tee, cp mv ln install rsync (every operand of mv:
-the sources are removed; -t DIR), dd of=, sort -o|--output, uniq INPUT OUTPUT, sed|perl -i, git --output=FILE, format-patch -o, archive -o, bundle create, and the
+Where the shell is: the line is cut more than once (the substitutions cut out, left whole, and each on its own), and every cut starts in the directory of
+the call. A plain `cd DIR` at the top level (and pushd, popd, and a cd after an && whose chain is cds alone) changes the directory of what follows when DIR
+is there; any other cd (inside ( ), a substitution, if/for/while/case, braces, a function, after || or `cmd &&`, before a pipe or &, in quoted text, a
+here-document or a comment, an option, two directories, a DIR that is not there yet) leaves the old directory among those the shell may be in, `cd -` is
+any directory the line has been in, and each command is judged from each of them (walk(); more than MAX_DIRS at once is refused).
+A NUL byte, a command over 262144 characters, checks that take over BUDGET seconds (read inside the loops over words, targets, braces and project words, not
+once per segment), a brace word that stands for more than MAX_BRACE words (or MAX_BRACE_WORK in all) and a glob that needs more than GLOB_ENTRIES directory
+entries read are refused, since a hook that times out does not block.
+Write targets (write_targets()): a redirection (> >> >| <> &> >&FILE, N-prefixed, stuck to its word or not, alone or in front of the program), tee, cp mv ln
+install rsync ditto (every operand of mv: the sources are removed; -t DIR, also in a cluster: -rt DIR), tar and unzip extraction (below -C / -d, else where the
+shell is), curl and wget output, patch (where the shell is, or -d DIR), git apply --directory, clone, init and worktree add DIR, dd of=, sort -o|--output, uniq INPUT OUTPUT, sed|perl -i, git --output=FILE, format-patch -o, archive -o, bundle create, and the
 git subcommands that change the tree or the repository. A target the shell would expand and the guard cannot read (a glob or a variable, a command
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. Under the read-only class the
 variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
 a git configuration or hook file in a command that also runs git is refused for every member.
-The run: a directory is a run when it holds any file `qargi local prepare` makes there (RUN_MARKERS), or the clone and out directories beside any other file of
-the record (RUN_CONTROL). RUN_CONTROL files are not written, moved, removed, copied or linked, and the run directory is not removed or moved; under
+The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
+below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
+the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, what a pipe or a here-string hands a shell (`echo qargi upgrade | sh`,
 `bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
@@ -138,17 +148,18 @@ agent file run only after the workspace trust dialog is accepted (https://code.c
 then the subagent runs without this guard."""
 import collections, fnmatch, functools, json, os, re, shlex, sys, time
 
-SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*")      # the plain split on every separator (segments())
-NOCLOBBER = re.compile(r"\s*(?:&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))\s*")   # the same, with >| left whole: it is a redirection
+SEPARATOR = re.compile(r"(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))")           # the separators, kept (re.split hands them back between the pieces); no \s* around them: a long run of blanks made that quadratic
+NOCLOBBER_SEPARATOR = re.compile(r"(&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))")
 SUBST = re.compile(r"\$\(|`|[<>]\(")                       # command substitution and process substitution start a command of their own
-HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
-PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
-AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*[^;&|\n]*(?:\$\(|`)")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
+HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
+PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
+AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
-COPIERS = {"cp", "mv", "ln", "install", "rsync"}            # the last argument is the destination
+COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
+TARS = {"tar", "gtar", "bsdtar"}
 INPLACE = {"sed", "perl"}                                   # with -i
 GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm", "mv", "stash", "merge", "rebase",
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
@@ -195,12 +206,18 @@ FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fp
 MAX_COMMAND = 262144                                         # a longer command cannot be checked in the time the hook has, so it is refused
 MAX_NESTED = 40                                              # substitutions inside substitutions, at most; the texts of nested ones hold each other, so the cost grows with the square of the depth
 GLOB_ENTRIES = 4000                                          # directory entries read, in all, to expand the globs of one word (the key checks); a pattern that needs more is refused
-BUDGET = 8.0                                                 # seconds of checking before a call is refused: the hook is killed at its timeout, and a hook that times out does not block
+BUDGET = 5.0                                                 # seconds of checking before a call is refused, counted from the start of judge() and checked in every loop (tick): the hook is killed at its timeout, and a hook that times out does not block
+MAX_BRACE = 256                                              # words one brace expression may stand for; more is refused, not cut (the words past the cut would be unchecked)
+MAX_BRACE_WORK = 20000                                       # brace words, in all, that one call may expand
 _DEADLINE = [None]
 
 
 class TooSlow(Exception):
     """The checks of one call took longer than BUDGET: the call is refused, as a hook that is killed would let it through."""
+
+
+class TooManyBraces(TooSlow):
+    """A brace expression that stands for more than MAX_BRACE words, or braces that together stand for more than MAX_BRACE_WORK: the call is refused."""
 
 
 class TooNested(TooSlow):
@@ -216,6 +233,20 @@ def tick():
         raise TooSlow()
 
 
+SUBST_START = re.compile(r"\$\(|`")
+
+
+def word_then_subst(word, text):
+    """True when a command (the text between separators) has the pattern word and, after its first occurrence, a command substitution (`handoff ... $(...)`).
+    The first occurrence is the one with the most text after it, so this is what the pattern word followed by [^;&|\\n]* and a substitution said, in one pass and
+    not one scan of the rest of the command per occurrence (a long run of the word took minutes)."""
+    for chunk in re.split(r"[;&|\n]", text):
+        m = word.search(chunk)
+        if m and SUBST_START.search(chunk, m.end()):
+            return True
+    return False
+
+
 def blocked(command, depth=0):
     seen = set()
     for seg in segments(command):
@@ -223,8 +254,7 @@ def blocked(command, depth=0):
         if seg in seen:
             continue
         seen.add(seg)
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
+        toks, i = parsed(seg)
         if i >= len(toks):
             continue
         prog = os.path.basename(toks[i])
@@ -276,6 +306,13 @@ def skip_wrappers(toks):
         else:
             break
     return i
+
+
+@functools.cache
+def parsed(seg):
+    """(the words of a segment, the index of its program): cmd_tokens and skip_wrappers, once per text (every check asks). The list is shared: not to be changed."""
+    toks = list(_cmd_tokens(seg))
+    return toks, skip_wrappers(toks)
 
 
 def cmd_tokens(seg):
@@ -350,38 +387,204 @@ def substitutions(text, depth=0):
     return out
 
 
-def cut(text):
-    """The text cut at every separator, quotes or not, with each substitution made a command of its own: the plain split. `>|` is a redirection and is not cut."""
-    return (NOCLOBBER if ">|" in text else SEGMENT).split(SUBST.sub(";", text))
+Piece = collections.namedtuple("Piece", "text top chained")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&
+SEQUENCE = ("", ";")                                         # separators after which a command runs whatever came before (a newline strips to "")
+KEYWORDS_OPEN, KEYWORDS_CLOSE = ("if", "while", "until", "for", "select", "case"), ("fi", "done", "esac")
+
+
+def subst_cut(text):
+    """text with the start of every substitution replaced by `;` (the line cut at them), and where: the position in the new text of each replaced
+    character, with 1 for the start of a command of its own and -1 for the backtick that closes a pair."""
+    out, marks, last, length, in_backtick = [], [], 0, 0, False
+    for m in SUBST.finditer(text):
+        out.append(text[last:m.start()])
+        length += len(out[-1])
+        if m.group() == "`":
+            in_backtick = not in_backtick
+        marks.append((length, 1 if m.group() != "`" or in_backtick else -1))
+        out.append(";")
+        length += 1
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out), marks
+
+
+def quote_after(text, quote):
+    """The quote ('', "'" or '"') that is open at the end of text, given the one open at its start."""
+    k = 0
+    while k < len(text):
+        c = text[k]
+        if quote == "'":
+            quote = "" if c == "'" else quote
+        elif c == "\\":
+            k += 1
+        elif c == "'" and quote == "":
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote else '"'
+        k += 1
+    return quote
+
+
+def pieces(text, whole=False, top=True):
+    """The pieces of the line (the plain split on every separator, whatever the quotes), each with whether it is certainly run at the top level of the
+    line, in order and unconditionally. The text of a piece is the cut that was always made: with the substitutions cut out (cut), or left whole
+    (whole). top is False for a piece a cd in which may not change the directory of what follows: one that comes after || | or & (not after &&: see
+    walk), or before a | or & (a pipeline and a background job run in a subshell), one inside ( ), a substitution, if/while/for/case, braces or a function, one after a quote that
+    is still open, a here-document or a comment, or one cut off from the rest of its command by a substitution (`cd $(x)/y`)."""
+    body, marks = (text, []) if whole else subst_cut(text)
+    parts = (NOCLOBBER_SEPARATOR if ">|" in text else SEPARATOR).split(body)
+    ends, pos = [], 0                                        # where each part ends, to find the separator a substitution's `;` is in
+    for part in parts:
+        pos += len(part)
+        ends.append(pos)
+    counted, j = {}, 1                                       # separator index -> [substitutions it starts, backticks it ends]
+    for at, kind in marks:
+        while ends[j] <= at:
+            j += 2
+        counted.setdefault(j, [0, 0])[0 if kind > 0 else 1] += 1
+    out, depth, quote, heredoc, comment = [], 0, "", False, False
+    for k in range(0, len(parts), 2):
+        tick()
+        piece = parts[k]
+        before, after = (parts[k - 1] if k else ""), (parts[k + 1] if k + 1 < len(parts) else "")
+        opens, closes = counted.get(k - 1, (0, 0))
+        ahead = counted.get(k + 1, (0, 0))[0]                # a substitution starts behind this piece: its command goes on after it
+        if "\n" in before:
+            comment = False
+        depth = max(0, depth + opens - closes)
+        top_level = (top and depth == 0 and not quote and not heredoc and not comment and before.strip() in SEQUENCE + ("&&",) and after.strip() not in ("|", "&")
+                     and not ahead and not opens and not closes)
+        if piece.strip():
+            out.append(Piece(piece.strip(), top_level, before.strip() == "&&"))
+        words = piece.split()
+        first = words[0] if words else ""
+        depth = max(0, depth + piece.count("(") - piece.count(")") + (first in KEYWORDS_OPEN) - (first in KEYWORDS_CLOSE) + words.count("{") - words.count("}"))
+        comment = comment or (not quote and bool(re.search(r"(?:^|\s)#", piece)))
+        heredoc = heredoc or bool(re.search(r"<<(?!<)", piece))
+        quote = quote_after(piece, quote)
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=64)
+def passes(command):
+    """The cuts of a Bash command line, read once per command (the checks of one call all ask): [(kind, pieces)], kind "main" for a cut of the whole line
+    (every one starts in the directory the call does) and "inner" for the text of a substitution cut on its own (it runs wherever the line was). The line
+    is cut at every ; && || | & and newline whatever the quotes, a comment or a heredoc body; a $( ), <( ), >( ) or backtick substitution is cut off as a
+    command of its own, and the text inside each is also cut on its own; the cut with the substitutions left whole is read too (`git $(true) push`); a line
+    continuation is read both ways, joined (the shell joins the lines) and as the newline it is in a comment."""
+    out = []
+    for form in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
+        tick()
+        out.append(("main", pieces(form)))
+        if SUBST.search(form):                               # and the line cut with its substitutions whole: a word a substitution builds stays in the command it belongs to
+            out.append(("main", pieces(form, whole=True)))
+        for inner in substitutions(form):
+            out.append(("inner", pieces(inner, top=False)))
+    return tuple(out)
 
 
 @functools.lru_cache(maxsize=64)
 def segments(command):
-    """The commands of a Bash command line, read once per command (the checks of one call all ask). The line is cut at every ; && || | & and newline
-    whatever the quotes, a comment or a heredoc body (it reads text as commands, which refuses more and never less than the shell would: a verb in
-    quoted text is refused too); a $( ), <( ), >( ) or backtick substitution is cut off as a command of its own, and the text inside each is also cut
-    on its own (so `echo "$(qargi upgrade) x"` shows `qargi upgrade`), and the cut with the substitutions left whole is read too (`git $(true) push`); a line continuation is read both ways, joined (the shell joins the lines) and as
-    the newline it is in a comment."""
-    texts = []
-    for form in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
+    """The commands of a Bash command line as texts, in the order of passes() (the plain, conservative split: a verb in quoted text is found too). Read once per
+    command (the checks of one call all ask)."""
+    return tuple(p.text for _, ps in passes(command) for p in ps)
+
+
+MAX_DIRS = 24                                                # directories the shell may be in at once, at most: a cd that may or may not happen doubles them
+CD_FLAGS = ("-P", "-L", "-e", "-@", "--")
+PLAIN_CD = re.compile(r"\s*(?:cd|pushd|popd)(?:\s|$)")
+
+
+class TooManyDirs(TooSlow):
+    """A command line that changes directory in more than MAX_DIRS ways that cannot be told apart (each cd that may not happen doubles the places the next
+    command may run in): the call is refused, not judged from some of them."""
+
+
+def moved(dirs, args, certain, visited):
+    """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
+    directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
+    the directory it was in as well. `cd -` is any directory the line has been in."""
+    ops = [t for t in args if t not in CD_FLAGS]
+    if ops == ["-"]:
+        return list(dict.fromkeys(dirs + visited))
+    target = ops[0] if ops else "~"
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not UNKNOWN.search(expand_path(target))
+    new = []
+    for d in dirs:
         tick()
-        texts += cut(form)
-        if SUBST.search(form):                               # and the line cut with its substitutions whole: a word a substitution builds stays in the command it belongs to
-            texts += (NOCLOBBER if ">|" in form else SEGMENT).split(form)
-        for inner in substitutions(form):
-            texts += cut(inner)
-    return tuple(texts)
+        r = resolve(d, target)
+        new += [r] if certain and os.path.isdir(r) else [d, r]
+    new = list(dict.fromkeys(new))
+    if len(new) > MAX_DIRS:
+        raise TooManyDirs()
+    return new
 
 
-RUN_MARKERS = ("ability", "refs.before", "refs.after", "refs.diff", "repo.path", "repo.url", "cred.path", "tmpdir")   # files only `qargi local prepare` makes in a run directory
+def walk(command, here):
+    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, texts, text, dirs). texts: the pieces of the
+    cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
+    them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
+    subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
+    leaves the directory it was in among them, and every command is judged from each. pushd and popd are followed like cd. Each cut starts in the
+    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command."""
+    start = list(dict.fromkeys([here] if isinstance(here, str) else here))
+    visited = list(start)
+    for kind, ps in passes(command):
+        dirs = list(start) if kind == "main" else list(visited)
+        if len(dirs) > MAX_DIRS:
+            raise TooManyDirs()
+        stack, ran = [], False                               # ran: the piece before was a cd that is certain
+        texts = [p.text for p in ps]
+        for n, piece in enumerate(ps):
+            tick()
+            yield n, texts, piece.text, dirs
+            toks, i = parsed(piece.text)
+            prog = os.path.basename(toks[i]) if i < len(toks) else ""
+            if prog not in ("cd", "pushd", "popd"):
+                ran = False
+                continue
+            certain, rest = piece.top and bool(PLAIN_CD.match(piece.text)) and (ran or not piece.chained), toks[i + 1:]    # after &&, only when everything before it in the chain is such a cd
+            ran = certain
+            if prog == "cd":
+                dirs = moved(dirs, rest, certain, visited)
+            elif prog == "pushd":
+                named = [t for t in rest if not t.startswith(("-", "+"))]
+                if named and "-n" not in rest:
+                    stack.append(dirs)
+                    dirs = moved(dirs, named[:1], certain, visited)
+                elif not named:
+                    dirs = list(dict.fromkeys(dirs + visited))
+            elif stack and "-n" not in rest:
+                popped = stack.pop()
+                dirs = popped if certain else list(dict.fromkeys(dirs + popped))
+            visited += [d for d in dirs if d not in visited]
+
+
+@functools.cache                                     # the files do not change while one command is judged
+def run_like(p):
+    """True when the directory p holds the record `qargi local prepare` makes: ability and refs.before, or the clone and out directories beside any
+    other file of the record (so a run whose two files were moved away is still a run)."""
+    if os.path.lexists(os.path.join(p, "ability")) and os.path.lexists(os.path.join(p, "refs.before")):
+        return True
+    return os.path.isdir(os.path.join(p, "clone")) and os.path.isdir(os.path.join(p, "out")) and any(os.path.lexists(os.path.join(p, m)) for m in RUN_CONTROL)
+
+
+@functools.cache
+def in_a_clone(p):
+    """True when p lies below the clone directory of a directory that holds a run's record. A clone is the repository's content, and a repository may hold
+    a docs/tmpdir or a whole docs/ability + docs/refs.before: they are not a run, and the member that edits them is not editing the record."""
+    q = os.path.dirname(p)
+    while q != os.path.dirname(q):
+        if os.path.basename(q) == "clone" and run_like(os.path.dirname(q)):
+            return True
+        q = os.path.dirname(q)
+    return False
 
 
 def is_run(p):
-    """True when the directory p is a run directory: it holds any file `qargi local prepare` makes there, or the clone and out directories beside any
-    other file of the run's record. Not only ability and refs.before, so a run whose two files were moved away is still a run."""
-    if any(os.path.lexists(os.path.join(p, m)) for m in RUN_MARKERS):
-        return True
-    return os.path.isdir(os.path.join(p, "clone")) and os.path.isdir(os.path.join(p, "out")) and any(os.path.lexists(os.path.join(p, m)) for m in RUN_CONTROL)
+    """True when the directory p is a run directory: it holds the record (run_like) and does not lie inside the clone of another run."""
+    return run_like(p) and not in_a_clone(p)
 
 
 @functools.cache                                     # the files do not change while one command is judged
@@ -437,6 +640,18 @@ def control_refusal(full):
     return None
 
 
+def run_dir_refusal(full):
+    """The reason a write to the real path full is a write to the run directory itself, or None. A copy over the directory (`cp -r Y/. ..`), an
+    extraction (`tar -C .. -xf`, `cd .. && tar xf`, `unzip -d ..`), `install -Dt ..`, a move or a link into it names no file: the files are made under the
+    names they have in the source, which can be the run's record. Refused whatever way the path to it is written (`.`, `..`, a trailing `/.`, a
+    relative path from where the shell is), for every member. A file with a name of its own in the run directory is the record's names (control_refusal)
+    and nothing else; OUT, the clone and TMP are the member's."""
+    run = run_dir(full if os.path.isdir(full) else os.path.dirname(full))
+    if run and full == run:
+        return "%s is the run directory: a copy, an extraction, a link or a move into it can make any file of the run's record; name the files in out/ or the clone" % full
+    return None
+
+
 def run_refusal(full, here):
     """The reason a command that removes or moves the path full takes the run directory (or a directory above it) away, with the record in it, or None."""
     run = run_dir(here)
@@ -445,6 +660,7 @@ def run_refusal(full, here):
     return None
 
 
+@functools.cache
 def run_class(run):
     try:
         with open(os.path.join(run, "class")) as f:
@@ -453,6 +669,7 @@ def run_class(run):
         return ""
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def ability_of(run):
     try:
         with open(os.path.join(run, "ability")) as f:
@@ -465,17 +682,64 @@ def inside(path, base):
     return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
 
 
+_OUT = [None]                                        # the run's out directory, for a command that uses $OUT and nothing in it could set it (out_dir)
+SETTERS = re.compile(r"\b(?:eval|declare|typeset|readonly|export|local|read|mapfile|readarray|getopts|let|source|env|set|printf\s+-v)\b|\$\{!|(?:^|[\s;&|(])\.\s|"
+                     r"\b(?:sh|bash|zsh|dash|ksh)\b")      # what can set a variable by a name the text does not show
+
+
+def out_dir(call):
+    """The out directory of the run the call is made in when the command writes through $OUT or ${OUT}, the hook's environment has no OUT, and nothing in the
+    command could give it a value (no other mention of the name, no eval, export, read, source, sh -c ...), else None. The task block names OUT, and a
+    member that has it in its shell uses it; the guard cannot expand it and refused it. A value the command gives it is a path the guard cannot read."""
+    c = call.command or ""
+    if call.kind != "shell" or "OUT" in os.environ or "OUT" not in c:
+        return None
+    if re.search(r"(?<![A-Za-z0-9_])OUT(?![A-Za-z0-9_])", re.sub(r"\$\{OUT\}|\$OUT(?![A-Za-z0-9_])", "", c)) or SETTERS.search(c):
+        return None
+    run = run_dir(call.cwd)
+    return os.path.join(run, "out") if run else None
+
+
 def expand_path(p):
     """p with ~ and the variables of the environment expanded, except PWD and OLDPWD (the shell sets those, the hook's own are another directory's) and
-    the variables the environment lacks, which stay as written."""
-    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: m.group(0) if (m.group(1) or m.group(2)) in ("PWD", "OLDPWD") else os.environ.get(m.group(1) or m.group(2), m.group(0)),
-                  os.path.expanduser(p))
+    the variables the environment lacks, which stay as written (OUT is the run's out directory, see out_dir)."""
+    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: m.group(0) if (m.group(1) or m.group(2)) in ("PWD", "OLDPWD")
+                  else os.environ.get(m.group(1) or m.group(2), _OUT[0] if (m.group(1) or m.group(2)) == "OUT" and _OUT[0] else m.group(0)), os.path.expanduser(p))
+
+
+@functools.cache
+def real_dir(d):
+    return os.path.realpath(d)
 
 
 @functools.cache                                     # the files do not change while one command is judged
 def resolve(here, p):
-    """The real path of p (with ~ and environment variables expanded) as seen from the directory here."""
-    return os.path.realpath(os.path.join(here, expand_path(p)))
+    """The real path of p (with ~ and environment variables expanded) as seen from the directory here. The directory part is resolved once for all the names
+    in it: a name below it that is no link is the directory's real path and the name."""
+    q = expand_path(p)
+    head, _, base = q.rpartition("/")
+    if base not in ("", ".", ".."):
+        full = os.path.join(real_dir(os.path.join(here, head) if head else here if not q.startswith("/") else "/"), base)
+        if not os.path.islink(full):
+            return full
+    return os.path.realpath(os.path.join(here, q))
+
+
+def operands(words, stdin_names=False):
+    """The words of a command that are its operands: no option, and no redirection with the file it names (`< r.md`, `0<r.md`, `> f`, `2>&1`, `<<< text`).
+    stdin_names: the command is run by xargs, whose operands come from its standard input, so a `< FILE` may be them: only the output redirections are left out."""
+    if stdin_names:
+        return [t for t in words if not t.startswith("-") and not REDIR.match(t)]
+    out, k = [], 0
+    while k < len(words):
+        t = words[k]
+        if BARE_REDIR.match(t):                               # the operator alone: its target is the next word
+            k += 2
+            continue
+        if not t.startswith("-") and not LEADING_REDIR.match(t) and not REDIR.match(t):
+            out.append(t)
+        k += 1
+    return out
 
 
 def redirect_dest(toks, k):
@@ -520,6 +784,8 @@ def write_targets(toks, i):
     target left in the segment. Sources that a command removes (mv, rm) are targets too."""
     targets, gitdir = [], None
     for k, t in enumerate(toks):                       # redirections anywhere in the segment
+        if not k % 64:
+            tick()
         dest = redirect_dest(toks, k)
         if dest is None:
             dest = attached_dest(t)
@@ -527,22 +793,32 @@ def write_targets(toks, i):
             targets.append(("a redirection", dest))
     if i < len(toks):
         prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-        args = [t for t in rest if not t.startswith("-") and not REDIR.match(t)]
+        args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
         if prog in WRITERS:
             targets += [(prog, a) for a in args]
+            if prog == "patch" and not any(cluster_value(rest, k, "d") is not None for k in range(len(rest))):
+                targets.append((prog, "."))                                   # patch writes the files the patch names, below where the shell is (or -d DIR)
         elif prog in COPIERS and args:
             targets.append((prog, args[-1]))
             if prog == "mv":
                 targets += [(prog, a) for a in args[:-1]]                 # the sources are removed
             if prog == "rsync" and any(t.startswith("--remove-source") for t in rest):
                 targets += [(prog, a) for a in args[:-1]]
-            for k in range(len(rest)) if prog != "rsync" else ():         # -t DIR, --target-directory=DIR, -tDIR (rsync -t keeps times)
+            for k in range(len(rest)) if prog != "rsync" else ():         # -t DIR, --target-directory=DIR, -tDIR, -rt DIR, -Dt DIR (rsync -t keeps times)
                 v = option_value(rest, k, ("--target-directory", "-t"))
+                v = cluster_value(rest, k, "t") if v is None else v
                 if v is not None:
                     targets.append((prog, v))
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
             scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
             targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
+        elif prog in TARS and tar_extracts(rest):
+            targets += [("tar", d) for d in tar_dirs(rest)] or [("tar", ".")]          # an archive is extracted below -C DIR, else below where the shell is
+        elif prog == "unzip" and not set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t))) & set("lptZvcz"):
+            dirs = [v for v in (cluster_value(rest, k, "d") for k in range(len(rest))) if v is not None]
+            targets += [("unzip", d) for d in dirs] or [("unzip", ".")]               # unzip -d DIR, else where the shell is (-l, -p, -t ... only look)
+        elif prog in ("curl", "wget"):
+            targets += download_targets(prog, rest)
         elif prog == "dd":
             targets += [(prog, t[3:]) for t in rest if t.startswith("of=")]
         elif prog == "sort":
@@ -561,13 +837,68 @@ def write_targets(toks, i):
             sub = rest[k] if k < len(rest) else ""
             if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                 targets.append(("git " + sub, gitdir or "."))
-            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE
-                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()))
+            places = [t for t in rest[k + 1:] if not t.startswith("-")]
+            if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
+                targets.append(("git clone", places[-1]))
+            elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
+                targets.append(("git " + sub, places[sub == "worktree":][0]))
+            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
+                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
                 if v is not None:
                     targets.append(("git " + sub + " --output", v))
             if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
                 targets.append(("git bundle create", rest[k + 2]))
     return targets
+
+
+def cluster_value(rest, k, letter):
+    """The value of the short option LETTER when rest[k] is a cluster of short options that holds it (`-d DIR`, `-dDIR`, `-od DIR`, `-rt DIR`, `-tDIR`): the
+    rest of the cluster after the letter, else the next word. None when rest[k] is no such cluster."""
+    m = re.match(r"^-[A-Za-z0-9]*?" + re.escape(letter) + r"(.*)$", rest[k])
+    if not m:
+        return None
+    return m.group(1) or (rest[k + 1] if k + 1 < len(rest) else None)
+
+
+def tar_extracts(rest):
+    """True when the tar command line extracts (x, --extract, --get)."""
+    modes = [t.lstrip("-") for k, t in enumerate(rest) if re.match(r"^-?[A-Za-z]+$", t) and (k == 0 or t.startswith("-"))]
+    return any("x" in m for m in modes) or any(t.split("=")[0] in ("--extract", "--get") for t in rest if t.startswith("--"))
+
+
+def tar_dirs(rest):
+    """The directories a tar command is told to extract into (-C DIR, -CDIR, --directory=DIR, --directory DIR). A cluster that holds C (`-xCf DIR x.tar`)
+    leaves it open which word is the directory, so every word after it counts."""
+    out = []
+    for k, t in enumerate(rest):
+        if t == "--directory" and k + 1 < len(rest):
+            out.append(rest[k + 1])
+        elif t.startswith("--directory="):
+            out.append(t.split("=", 1)[1])
+        elif re.fullmatch(r"-[A-Za-z]+", t) and "C" in t and t != "-C":
+            out += [w for w in rest[k + 1:] if not w.startswith("-")]
+        elif t == "-C" and k + 1 < len(rest):
+            out.append(rest[k + 1])
+        elif t.startswith("-C") and len(t) > 2 and not t.startswith("--"):
+            out.append(t[2:])
+    return out
+
+
+def download_targets(prog, rest):
+    """What curl and wget write: the file or the directory an option names, else a file in the directory the shell is in (curl -O, wget); curl with no
+    output option and wget -O - write to the terminal."""
+    out, names, stdout = [], False, False
+    for k, t in enumerate(rest):
+        if prog == "curl":
+            v = option_value(rest, k, ("--output", "--output-dir", "-o")) or cluster_value(rest, k, "o")
+            names = names or t in ("-O", "--remote-name", "--remote-name-all") or bool(re.fullmatch(r"-[A-Za-z]*O[A-Za-z]*", t))
+        else:
+            v = option_value(rest, k, ("--output-document", "--directory-prefix", "-O", "-P")) or cluster_value(rest, k, "O") or cluster_value(rest, k, "P")
+            stdout = stdout or v == "-"
+            names = True
+        if v and v != "-":
+            out.append((prog, v))
+    return out if out or stdout and not names else [(prog, ".")] if names else out
 
 
 TAG_FLAGS = {"list", "ignore-case", "omit-empty", "no-omit-empty", "color", "no-color", "column", "no-column", "no-sort", "no-format"}   # change nothing
@@ -732,7 +1063,7 @@ def review_refusal(call):
         if not fp:
             return None
         full = os.path.realpath(os.path.join(cwd, fp))
-        why = control_refusal(full)
+        why = control_refusal(full) or run_dir_refusal(full)
         if why:
             return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
@@ -743,23 +1074,19 @@ def review_refusal(call):
         return None
     if call.kind != "shell":
         return None
-    here, seen, places, runs_git = cwd, set(), [], False
-    for seg in segments(call.command):
-        tick()
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
-        if i < len(toks) and toks[i] == "cd" and i + 1 < len(toks):
-            here = os.path.realpath(os.path.join(here, expand_path(toks[i + 1])))
-            continue
-        if (seg, here) in seen:                              # the same text from the same directory has been judged
-            continue
-        seen.add((seg, here))
-        why = review_segment(toks, i, here, seg)
-        if why:
-            return why
+    seen, places, runs_git = set(), [], False
+    for n, texts, seg, dirs in walk(call.command, cwd):
+        toks, i = parsed(seg)
         prog = os.path.basename(toks[i]) if i < len(toks) else ""
-        runs_git = runs_git or prog == "git" or (prog in SHELLS or prog in ("eval", "xargs", "find", "make")) and bool(re.search(r"\bgit\b", seg))
-        places += [dest for what, dest in write_targets(toks, i) if dest and GIT_PLACE.search(resolve(here, dest))]
+        for here in dirs:                                    # a cd that may not happen leaves several: each is judged
+            if (seg, here) in seen:                          # the same text from the same directory has been judged
+                continue
+            seen.add((seg, here))
+            why = review_segment(toks, i, here, seg)
+            if why:
+                return why
+            runs_git = runs_git or prog == "git" or (prog in SHELLS or prog in ("eval", "xargs", "find", "make")) and bool(re.search(r"\bgit\b", seg))
+            places += [dest for what, dest in write_targets(toks, i) if dest and GIT_PLACE.search(resolve(here, dest))]
     if places and runs_git:
         return OwnReason("%s is where git reads its configuration or its hooks from, and this command also runs git: what it holds, git would run; write it in a command of its own "
                          "or not at all" % places[0])
@@ -778,32 +1105,34 @@ def review_segment(toks, i, here, text=""):
         if bad:
             return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
     ro = reading(run_dir(here))
-    for what, dest in write_targets(toks, i):
-        why = unreadable_target(what, dest, here)
-        if why:
-            return why
-        if ro and UNKNOWN.search(expand_path(dest).rpartition("/")[0]) and not DEVICE.match(dest):
-            return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
-                             "to tell the clone from OUT; write the path out" % (what, dest))
-        full = resolve(here, dest)
-        why = control_refusal(full)
-        if why:
-            return why
-        run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
-        if CLASS == "read-only" and not run:
-            return OwnReason(NO_RUN)
-        if what.split()[0] in DESTRUCTIVE:
-            why = run_refusal(full, here)
+    for what, braced in write_targets(toks, i):
+        for dest in brace_expand(braced):                  # echo x > OUT/{a,../clone/b}: each word it stands for
+            tick()
+            why = unreadable_target(what, dest, here)
             if why:
                 return why
-        if run and reading(run) and inside(full, os.path.join(run, "clone")):
-            return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
+            if ro and UNKNOWN.search(expand_path(dest).rpartition("/")[0]) and not DEVICE.match(dest):
+                return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
+                                 "to tell the clone from OUT; write the path out" % (what, dest))
+            full = resolve(here, dest)
+            why = control_refusal(full) or (None if what == "git config" and dest == "." else run_dir_refusal(full))     # git config --list in the run directory reads: its "." is where it was run
+            if why:
+                return why
+            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
+            if CLASS == "read-only" and not run:
+                return OwnReason(NO_RUN)
+            if what.split()[0] in DESTRUCTIVE:
+                why = run_refusal(full, here)
+                if why:
+                    return why
+            if run and reading(run) and inside(full, os.path.join(run, "clone")):
+                return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
     if prog in TOUCHERS or prog == "find":                    # the sources of cp, mv and ln, and every file a command takes away, are the run's record too
         rest = toks[i + 1:]
-        operands = [t for t in rest if not t.startswith("-") and not REDIR.match(t)] + [t[3:] for t in rest if t.startswith(("if=", "of="))]
+        files = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i])) + [t[3:] for t in rest if t.startswith(("if=", "of="))]
         if prog == "find" and not any(t in FIND_ACTIONS for t in rest):
-            operands = []
-        for a in operands[:200]:
+            files = []
+        for a in files[:200]:
             why = unreadable_target(prog + " (operand)", a, here) or control_refusal(resolve(here, a))
             if why:
                 return why
@@ -958,6 +1287,7 @@ def memory_roots(P=None, home=None):
 
 
 JOURNAL = "ref-journal.jsonl"
+REGISTRY = "local-runs.jsonl"                                # the lead's registry of local runs: which temporary directory `qargi local clean` removes for each
 
 
 _STATE = {}
@@ -978,21 +1308,25 @@ def state_dirs(P=None, home=None):
 
 
 def journal_roots(P=None, home=None):
-    """The lead's ref journal of the state and its lock (real paths). Rotated and temporary files next to it are found by
-    journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
-    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock")}
+    """The lead's ref journal of the state and its lock, and the registry of local runs and its lock (real paths). Rotated and temporary files next to
+    them are found by journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
+    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock", REGISTRY, REGISTRY + ".lock")}
 
 
 def journal_sibling(full):
-    """The journal root when full is a file next to the journal named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
+    """The journal (or registry) root when full is a file next to it named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
     for st in state_dirs():
-        if os.path.dirname(full) == st and os.path.basename(full).startswith(JOURNAL):
-            return os.path.join(st, JOURNAL)
+        for n in (JOURNAL, REGISTRY):
+            if os.path.dirname(full) == st and os.path.basename(full).startswith(n):
+                return os.path.join(st, n)
     return None
 
 
 def refusal_text(what, dest, root):
     """The sentence for a refused write: the generic one, or for the render and the marshal's records the reason."""
+    if os.path.basename(root).startswith(REGISTRY) and (root in journal_roots() or journal_sibling(root)):
+        return MarshalReason("%s on %s would change %s, the lead's registry of local runs (it says which temporary directory `qargi local clean` removes for each run); %s"
+                             % (what, dest, root, MARSHAL_NOTE))
     if root in journal_roots() or journal_sibling(root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     name = os.path.basename(dest.rstrip("/"))
@@ -1078,17 +1412,30 @@ def glob_paths(pattern, limit=200):
     return found
 
 
-def brace_expand(word, limit=64):
-    """The words a simple shell brace expression stands for (a{b,c}d -> abd, acd); one level per pass, at most limit words."""
+_BRACE_WORK = [0]
+
+
+@functools.cache
+def brace_expand(word, limit=MAX_BRACE):
+    """The words a simple shell brace expression stands for (a{b,c}d -> abd, acd); one level per pass. A word that stands for more than limit words is
+    refused (TooManyBraces), and so are braces that together stand for more than MAX_BRACE_WORK: cutting the list would leave the words past it unchecked."""
+    if "{" not in word:
+        return (word,)
     words, out = [word], []
-    while words and len(out) < limit:
+    while words:
+        tick()
         w = words.pop()
         m = re.search(r"\{([^{}]*,[^{}]*)\}", w)
         if not m:
             out.append(w)
         else:
             words += [w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(",")]
-    return out
+        if len(words) + len(out) > limit:
+            raise TooManyBraces()
+    _BRACE_WORK[0] += len(out)
+    if _BRACE_WORK[0] > MAX_BRACE_WORK:
+        raise TooManyBraces()
+    return tuple(out)
 
 
 @functools.cache                                     # the files do not change while one command is judged
@@ -1096,7 +1443,8 @@ def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
     is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
     `<path` redirection are read as their path too."""
-    cands = {word, word.lstrip("<"), word.split("=", 1)[-1]}
+    tick()
+    cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
         cands.add(word[2:])
     for c in cands:
@@ -1107,7 +1455,7 @@ def key_named(word, here, recursive):
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
             paths = glob_paths(os.path.join(here, b)) if re.search(r"[*?\[]", b) else []
-            for full in [os.path.realpath(os.path.join(here, b))] + [os.path.realpath(x) for x in paths]:
+            for full in [resolve(here, b)] + [os.path.realpath(x) for x in paths]:
                 if is_key(full) or (recursive and holds_key(full)):
                     return b
     return None
@@ -1118,13 +1466,14 @@ def key_refusal_text(prog, word, tool=None):
 
 
 def key_read(toks, i, here):
-    """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program."""
-    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-    if prog in KEY_METADATA:
-        return None
+    """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
+    (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
+    in front of them is."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
     recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
     recursive = recursive or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest))
-    for t in [toks[i]] + rest if any(d + os.sep + KEY_PREFIX in toks[i] for d in key_dirs()) else rest:    # a `;` in quoted code split it: its tail is a "program"
+    for t in toks[:i] if prog in KEY_METADATA else toks:
+        tick()
         named = key_named(t, here, recursive)
         if named:
             return key_refusal_text(prog, named)
@@ -1193,57 +1542,41 @@ def lead_refusal(prog, rest, pre):
 
 def bash_skill_refusal(command, here, depth):
     joined = command.replace("\\\n", "")                 # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
-    if HANDOFF_SUBST.search(joined):
+    if word_then_subst(HANDOFF_SUBST, joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
-    if PROJECT_SET_SUBST.search(joined):
+    if word_then_subst(PROJECT_SET_SUBST, joined):
         return "qargi project set with a command substitution in its arguments takes a path the guard cannot read, which could be a models answer, and is not available to an agent"
-    if AUDIT_SUBST.search(joined):
+    if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
-    segs = segments(command)
-    stack, seen = [], set()                              # the directories pushd left behind; the (text, directory) pairs judged
-    for n, seg in enumerate(segs):
-        tick()
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
+    seen = set()                                         # the (text, directory) pairs judged
+    for n, texts, seg, dirs in walk(command, here):
+        toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
         why = lead_refusal(prog, rest, toks[:i + 1])
         if why:
             return why
-        if i >= len(toks):
-            continue
-        if prog == "cd" and rest:
-            here = resolve(here, rest[0])
-            continue
-        if prog == "pushd":                              # like cd, and popd goes back; -n changes the stack only, and the words are read as paths either way
-            dirs = [t for t in rest if not t.startswith("-") and not t.startswith("+")]
-            if dirs and "-n" not in rest:
-                stack.append(here)
-                here = resolve(here, dirs[0])
-            continue
-        if prog == "popd":
-            if stack and "-n" not in rest:
-                here = stack.pop()
-            continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
-        if (seg, here) in seen:                              # judged already
-            continue
-        seen.add((seg, here))
-        why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=here, exe=toks[i])
-        if why:
-            return why
-        inner = shell_string(prog, rest) if depth < 3 else None
-        if inner is not None:
-            inner += " ; " + " ; ".join(segs[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the segments that follow as part of it
-            why = bash_skill_refusal(inner, here, depth + 1)
+        for at in dirs:                                      # a cd that may not happen leaves several directories: each is judged
+            if (seg, at) in seen:                            # judged already
+                continue
+            seen.add((seg, at))
+            if i < len(toks) and prog not in ("cd", "pushd", "popd"):
+                why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=at, exe=toks[i])
+                if why:
+                    return why
+                inner = shell_string(prog, rest) if depth < 3 else None
+                if inner is not None:
+                    inner += " ; " + " ; ".join(texts[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
+                    why = bash_skill_refusal(inner, [at], depth + 1)
+                    if why:
+                        return why
+            why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
-        why = protected_write(toks, i, here) or key_read(toks, i, here)
-        if why:
-            return why
     return unreadable_project_verb(command)
 
 
@@ -1305,14 +1638,21 @@ def unreadable_project_verb(command):
         for form in forms:
             words = lex(form)
             names = [re.sub(r"[)`;&]+$", "", w) for w, _ in words]
+            expands, xargs = any(e for _, e in words), False
             for k, w in enumerate(names):
-                if os.path.basename(w) not in ("project", "project.sh"):
-                    continue
-                rest = [(n, e) for n, (_, e) in zip(names[k + 1:], words[k + 1:]) if not n.startswith("-")]
-                named = [n for n, _ in rest[:3] if n in PROJECT_VERBS]
-                if (named or (rest and rest[0][1])) and (any(e for _, e in words) or any(os.path.basename(n) == "xargs" for n in names[:k])):
-                    return ("qargi project %s with a variable, a substitution, a brace, a glob or xargs in the command takes words the guard cannot read, and project set of a models answer, "
-                            "project init and project link are not available to an agent" % (named[0] if named else "(a verb the shell builds)"))
+                tick()
+                if os.path.basename(w) in ("project", "project.sh"):
+                    rest = []                                # the first three words after it that are no option
+                    for j in range(k + 1, len(names)):
+                        if not names[j].startswith("-"):
+                            rest.append((names[j], words[j][1]))
+                            if len(rest) == 3:
+                                break
+                    named = [n for n, _ in rest if n in PROJECT_VERBS]
+                    if (named or (rest and rest[0][1])) and (expands or xargs):
+                        return ("qargi project %s with a variable, a substitution, a brace, a glob or xargs in the command takes words the guard cannot read, and project set of a models answer, "
+                                "project init and project link are not available to an agent" % (named[0] if named else "(a verb the shell builds)"))
+                xargs = xargs or os.path.basename(w) == "xargs"
     return None
 
 
@@ -1448,9 +1788,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
 
 
 def protected_write(toks, i, here):
-    """The reason a segment writes under a protected location, or None (the heuristic the docstring describes)."""
-    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-    args = [t for t in rest if not t.startswith("-") and not REDIR.match(t)]
+    """The reason a segment writes under a protected location, or None (the heuristic the docstring describes). i is past the last word when the segment
+    is redirections alone."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
+    args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
     cands = list(write_targets(toks, i))
     if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
         words = args if prog in SCRIPTS else args[1:]
@@ -1464,14 +1805,16 @@ def protected_write(toks, i, here):
         for t in rest:
             cands += [(prog, c) for c in {t, t.split("=", 1)[-1], t[2:] if t.startswith("-") and not t.startswith("--") else t}]
     for what, dest in cands:
+        tick()
         if not dest or dest.startswith("-") and dest != "-":
             continue
-        why = glob_root(what, dest, here)
-        if why:
-            return why
-        root = protected(resolve(here, dest), what.split()[0] in DESTRUCTIVE)
-        if root:
-            return refusal_text(what, dest, root)
+        for one in brace_expand(dest):                       # cp a DIR/{x,packs}/: each word it stands for
+            why = glob_root(what, one, here)
+            if why:
+                return why
+            root = protected(resolve(here, one), what.split()[0] in DESTRUCTIVE)
+            if root:
+                return refusal_text(what, dest, root)
     return None
 
 
@@ -1682,6 +2025,13 @@ def hook_of(name):
 
 # --- the decisions
 
+def clear_caches():
+    """Forget what was read from the files and the environment: a call is judged from one reading of them (a hook is one call; a test judges many)."""
+    _BRACE_WORK[0] = 0
+    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand):
+        f.cache_clear()
+
+
 def judge(call):
     """The refusal (a sentence for the member, ending in what to do instead) a Call earns, or None. The neutral core."""
     if call.kind == "shell" and "\0" in (call.command or ""):
@@ -1689,8 +2039,10 @@ def judge(call):
     if call.kind == "shell" and len(call.command or "") > MAX_COMMAND:
         return ("qargi guard: a command of more than %d characters cannot be checked in the time the hook has, so it is not available to an agent. "
                 "Write the text to a file with the Write tool, or run it in parts." % MAX_COMMAND)
+    clear_caches()
     _DEADLINE[0] = time.monotonic() + BUDGET
     try:
+        _OUT[0] = out_dir(call)
         return decide_call(call)
     except TooNested:
         return ("qargi guard: substitutions nested more than %d deep cannot be checked in the time the hook has, so the command is not available to an agent. "
@@ -1698,11 +2050,17 @@ def judge(call):
     except TooBroad:
         return ("qargi guard: a glob in this command names too many directories to check (more than %d entries to read), so it is not available to an agent. "
                 "Write a narrower path." % GLOB_ENTRIES)
+    except TooManyBraces:
+        return ("qargi guard: a brace expression in this command stands for more than %d words (or the braces of the command for more than %d), which cannot be checked one by one "
+                "in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts." % (MAX_BRACE, MAX_BRACE_WORK))
+    except TooManyDirs:
+        return ("qargi guard: this command changes directory in more than %d ways the guard cannot tell apart (a cd inside ( ), a substitution, a condition or a pipe may "
+                "or may not change where the next command runs), so it is not available to an agent. Write it in parts." % MAX_DIRS)
     except TooSlow:
         return ("qargi guard: checking this command took longer than %d seconds, so it is not available to an agent. "
                 "Run it in smaller parts." % BUDGET)
     finally:
-        _DEADLINE[0] = None
+        _DEADLINE[0] = _OUT[0] = None
 
 
 QUOTED = re.compile(r"[\"']|<<")
