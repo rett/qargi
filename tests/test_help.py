@@ -129,7 +129,7 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 330)
+        self.assertLessEqual(len(text.split()), 334)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
@@ -151,6 +151,7 @@ class Render(unittest.TestCase):
         pairs = re.findall(r'\("([a-z]+)", "([a-z-]+)"\)', m.group(1))
         self.assertGreaterEqual(len(pairs), 6)
         refused |= {v for _, v in pairs}
+        refused |= set(G.ENV_LEAD)                                         # env plan and apply
         refused |= {"publish", "login", "unset", "accept"}                # release publish, cloud set|unset|login, provider accept
         missing = sorted(v for v in refused if v not in words and v not in self.GUARD_TOPIC_EXEMPT)
         self.assertFalse(missing, "the guard topic does not name %s (add them to the topic, or to GUARD_TOPIC_EXEMPT with a reason)" % missing)

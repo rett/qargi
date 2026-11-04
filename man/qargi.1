@@ -33,7 +33,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home directory is not. It refuses git push, git remote changes, git \-c alias.*, gh, ssh, scp, sftp and rsync to a host.
 .PP
@@ -986,6 +986,65 @@ seconds the doctor may run (default 300, at most 3600).
 .TP
 .B \-\-json
 print the result as JSON.
+.RE
+.RE
+.RS
+.TP
+.B plan
+Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code).
+.br
+A dry run is not harmless: make \-n still expands $(shell ...) and runs recipe lines marked + or holding $(MAKE), and the dry run of the other runners evaluates project code too. So the plan itself runs project code, and needs \-\-approve\-exec naming the executable; read the project's files first. The command runs without a shell, in the repository, with standard input from /dev/null, a minimal environment (PATH with absolute entries, HOME, USER, LOGNAME, LANG, LC_ALL, LC_CTYPE, TERM, TZ, TMPDIR) and a limit of QARGI_ENV_TIMEOUT seconds (default 120). Its output is shown line by line, the privileged lines (a command in the line is sudo, doas, pkexec, su or run0) apart from the others, then the executables seen in the lines. Lines and executables are read from the text, best effort: a recipe can run more than its dry run shows. The plan token is a hash over the output, the commands, the repository and its HEAD, and the host name. A member's guard refuses it.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-repo " "DIR"
+the repository directory (default: the project's repo.path, else the repository around here).
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAME"
+the executable of the dry\-run command (make for make \-n bootstrap); without it nothing is run and the exit status is 2.
+.RE
+.RE
+.RS
+.TP
+.B apply
+Run the bootstrap command once, for a plan you showed (the lead's).
+.br
+Runs the dry run again (project code, as plan does) and refuses when its token is not \-\-plan, when \-\-approve\-exec does not name the two executables, and when the plan has privileged lines and \-\-allow\-root is not given. Then the bootstrap command runs once, without a shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check, or says to run it. QARGI_DRY_RUN stops it after the checks, before the bootstrap runs. A member's guard refuses it.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-repo " "DIR"
+the repository directory (default: the project's repo.path, else the repository around here).
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RS
+.TP
+.BI "\-\-approve\-exec " "NAMES"
+name the executables of the dry\-run and the bootstrap commands, separated by commas (others the plan listed may be added).
+.RE
+.RS
+.TP
+.B \-\-allow\-root
+allow a plan that has privileged lines (sudo, doas, ...).
 .RE
 .RE
 .TP
@@ -3504,7 +3563,10 @@ the project to use when the current directory is not inside its repository.
 the list of work roles (default: build review write test).
 .TP
 .B QARGI_DRY_RUN
-print a session request, with secrets masked, instead of sending it.
+print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap.
+.TP
+.B QARGI_ENV_TIMEOUT
+seconds the dry run of qargi env plan and apply may take (default 120).
 .TP
 .B NO_COLOR
 turn off bold in the terminal help.
