@@ -1035,23 +1035,24 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier against mistakes, not a wall.",
+        "qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
-        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
-        "directories, the installed copy of the tool, and the render, marshal and feature directories of the state, its ref journal and its registry of local runs. "
-        "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
+        "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
+        "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
+        "lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). "
+        "Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home "
+        "directory is not. It refuses git push, git remote changes, git -c alias.*, gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
-        "on the command line. Write the message to a file, commit with git commit -F FILE. A cd is followed only when sure; else both "
-        "directories are judged. A check over 5 seconds is refused.",
-        "The read-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through "
-        "a name the guard cannot read that could be the run's record. Nobody copies, extracts or links into the run directory.",
+        "on the command line. Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
+        "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through "
+        "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
-        "A refusal is a result: report it and the verb you needed, and do not work around it."]),
+        "A refusal is a result: report it; do not work around it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
