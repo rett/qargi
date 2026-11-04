@@ -906,15 +906,55 @@ def write_targets(toks, i):
     return targets
 
 
-TAG_CHANGES = re.compile(r"^-[A-Za-z]*[dasufmFe]|^--(?:delete|annotate|sign|no-sign|local-user|force|message|file|edit|create-reflog|cleanup)")   # an option that makes, replaces or deletes a tag
+TAG_FLAGS = {"list", "ignore-case", "omit-empty", "no-omit-empty", "color", "no-color", "column", "no-column", "no-sort", "no-format"}   # change nothing
+TAG_FILTERS = {"sort", "format", "points-at", "contains", "no-contains", "merged", "no-merged"}       # list options that take a value (the next word)
+TAG_CHANGES = {"annotate", "no-annotate", "sign", "no-sign", "local-user", "force", "no-force", "delete", "no-delete", "verify", "no-verify", "message", "file", "edit",
+               "no-edit", "cleanup", "create-reflog", "no-create-reflog", "trailer", "no-trailer"}   # make, replace, delete or check a tag (or take a value for one)
+
+
+def tag_option(name):
+    """The long option of git tag that NAME (without the dashes) stands for, an exact name or a unique abbreviation among those git knows, or None."""
+    known = TAG_FLAGS | TAG_FILTERS | TAG_CHANGES
+    if name in known:
+        return name
+    found = [k for k in known if k.startswith(name)]
+    return found[0] if len(found) == 1 and name else None
 
 
 def lists_tags(args):
-    """True when `git tag ARGS` only lists tags: no tag name given, or -l/--list and no option that makes, replaces or deletes one."""
-    opts = [a for a in args if a.startswith("-")]
-    if any(TAG_CHANGES.match(a) for a in opts):
-        return False
-    return not [a for a in args if not a.startswith("-")] or any(a == "--list" or re.match(r"^-[A-Za-z]*l[A-Za-z]*$", a) for a in opts)
+    """True when `git tag ARGS` only lists tags: -l/--list or no tag name, and no option that makes, replaces or deletes one. Read the way git reads its
+    arguments: an option that takes a value (--format, --sort, --contains, --points-at, --merged ...) takes the next word, a long option may be abbreviated
+    (--form, --del, --anno), words after -- are names, and an option this does not know is a change."""
+    listing, names, k = False, 0, 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            names += len(args) - k - 1
+            break
+        if a.startswith("--"):
+            name, eq, _ = a[2:].partition("=")
+            opt = tag_option(name)
+            if opt is None or opt in TAG_CHANGES or (eq and opt not in ("color", "column", "sort", "format", "points-at", "contains", "no-contains", "merged", "no-merged")):
+                return False
+            listing = listing or opt == "list"
+            if opt in TAG_FILTERS and not eq:
+                k += 1
+        elif a.startswith("-") and a != "-":
+            for n, ch in enumerate(a[1:]):
+                if ch == "l":
+                    listing = True
+                elif ch == "i":
+                    continue
+                elif ch == "n":                              # -n[NUM]: the number is stuck to it
+                    if not a[n + 2:].isdigit() and a[n + 2:]:
+                        return False
+                    break
+                else:
+                    return False
+        else:
+            names += 1
+        k += 1
+    return listing or names == 0
 
 
 def review_refusal(call):

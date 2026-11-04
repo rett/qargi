@@ -141,6 +141,25 @@ class Review(unittest.TestCase):
         with open(pr) as f:
             self.assertEqual(f.read().strip(), "advisor")
 
+    TAG_LISTS = ("git tag", "git tag -l", "git tag --list 'v*'", "git tag -l --sort=-creatordate", "git tag --contains HEAD", "git tag -n", "git tag -n5 -l", "git tag --points-at HEAD",
+                 "git tag -l -i V1", "git tag -l --column", "git tag --merged main", "git tag --no-merged main -l", "git tag --format '%(refname)'",
+                 "git tag --sort -creatordate", "git tag v1 -l", "git tag -l v1 HEAD", "git tag --list --points-at HEAD v1", "git -C . tag -l", "git tag --lis", "git tag --sort=x --contains HEAD",
+                 "git tag -l --color=always", "git tag --no-column -l", "git tag -l -- v1 -d")
+    TAG_CHANGES = ("git tag v1", "git tag --format -l NAME", "git tag --form -l NAME", "git tag --trailer -l NAME", "git tag --trailer=-l -l v3", "git tag -l --del NAME",
+                   "git tag -l --anno NAME", "git tag -l --create-reflog v4", "git tag -lf v5", "git tag -l -d v1", "git tag -lm x v1", "git tag -s -l v1", "git tag --list --delete v1",
+                   "git tag --no-create-reflog v16", "git tag -- -l", "git tag --list=v1", "git tag --contains HEAD v1", "git tag --sort -l v1", "git tag -l --foo v1", "git tag -l --no-c v1",
+                   "git tag -ln -f v1", "git tag -l -u key v1", "git tag --local-user key -l v1", "git tag -F f -l", "git tag --file f -l", "git tag --message m -l", "git tag --cleanup=strip -l v1",
+                   "git tag -m x", "git tag -a v1", "git tag --edit -l", "git tag -l -e", "git tag --sign -l", "git tag --force -l v1", "git tag -v v1", "git tag --verify v1",
+                   "git tag -n 5", "git tag --points-at HEAD v1", "git tag --merged main v1")
+
+    def test_tag_listing_is_allowed_and_every_option_that_makes_changes_or_deletes_a_tag_is_not(self):
+        for setup in (lambda: (self.ability("review"), ()), lambda: (self.ability("build"), ("--class", "read-only"))):
+            _, cls = setup()
+            wrong = [c for c in self.TAG_LISTS if self.call("Bash", {"command": c}, None, *cls).returncode != 0]
+            self.assertEqual(wrong, [], "a listing was refused")
+            wrong = [c for c in self.TAG_CHANGES if self.call("Bash", {"command": c}, None, *cls).returncode != 2]
+            self.assertEqual(wrong, [], "a tag was made, changed or deleted")
+
     def test_review_sees_a_change_that_a_careless_reading_of_the_text_would_miss(self):
         self.ability("review")
         for c in ("echo a\\ #; touch newfile", "echo a\\\n#; git commit -qam x", 'trap "true; git commit -qam x; true" EXIT', "echo $[1<<2]\ntouch newfile\n2]",
