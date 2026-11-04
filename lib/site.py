@@ -457,6 +457,7 @@ class Page:
         self.lastmod = None
         self.published = None
         self.toc = True
+        self.links = []                   # (line, url) of links to resolve, for pages that are not hand pages
 
     @property
     def file(self):
@@ -726,7 +727,7 @@ def generated_pages(src, rep, repo=None):
                       "The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.",
                       "\n".join(body), heads, ref_crumb[:1] + [("Command reference", "reference/")]))
     # releases
-    body, heads, ids = [], [], set(PAGE_IDS)
+    body, heads, ids, links = [], [], set(PAGE_IDS), []
     released = [s for s in src.sections if s[0].lower() != "unreleased"]
     if not released:
         rep.err("CHANGELOG.md", "no released section to build the releases page from")
@@ -748,12 +749,14 @@ def generated_pages(src, rep, repo=None):
             rep.err("CHANGELOG.md:%d" % e.line, e.msg)
             continue
         body.append(doc.html)
+        links += doc.links
         heads += [(lv, i, t) for lv, i, t, _ in doc.headings]
     first_v = released[0][0] if released else "?"
     last_v = released[-1][0] if released else "?"
     pages.append(Page("releases/", "releases", "Releases",
                       "Release notes for qargi, from %s back to %s: what was added, changed, removed, fixed and secured in each version, from the changelog." % (first_v, last_v),
                       "\n".join(body), heads, [("Home", ""), ("Releases", "releases/")]))
+    pages[-1].links = links
     return pages
 
 
@@ -989,6 +992,35 @@ def split_target(url):
     return path, frag
 
 
+def check_links(site, page, links, where, files, rep):
+    """Report the (line, url) links of a page that do not resolve: a page, a file or a heading of the site."""
+    pages = site.pages
+    for line, url in links:
+        if site.url and url.startswith(site.url):
+            rep.err("%s:%d" % (where, line), "link to %s: write the site path (/%s) so the generator can resolve it" % (url, url[len(site.url):]))
+            continue
+        if url.startswith(("https://", "http://", "mailto:")):
+            continue
+        path, frag = split_target(url)
+        if path == "":
+            if frag and frag not in page.ids:
+                rep.err("%s:%d" % (where, line), "link %s: no heading with that id on this page (ids: %s)" % (url, ", ".join(sorted(page.ids)) or "none"))
+            continue
+        key = path[1:]
+        if key in files:
+            if frag:
+                rep.err("%s:%d" % (where, line), "link %s: a fragment on a file" % url)
+            continue
+        if key not in pages or pages[key].kind == "notfound":
+            known = sorted("/" + k for k in pages if k != "404")
+            near = difflib.get_close_matches(path, known, 1)
+            rep.err("%s:%d" % (where, line), "link %s: no such page%s" % (url, " (did you mean %s?)" % near[0] if near else ""))
+            continue
+        if frag and frag not in pages[key].ids:
+            near = difflib.get_close_matches(frag, sorted(pages[key].ids), 1)
+            rep.err("%s:%d" % (where, line), "link %s: page %s has no heading with id '%s'%s" % (url, path, frag, " (did you mean #%s?)" % near[0] if near else ""))
+
+
 def validate(site, hand, rep):
     cmds = site.src.cmds
     cfg = site.cfg
@@ -1062,31 +1094,10 @@ def validate(site, hand, rep):
         for line, kind, text in p.doc.code:
             for ln, msg in check_code(cmds, kind, text, line):
                 rep.err("%s:%d" % (where, ln), msg)
-        # links
-        for line, url in p.doc.links:
-            if site.url and url.startswith(site.url):
-                rep.err("%s:%d" % (where, line), "link to %s: write the site path (/%s) so the generator can resolve it" % (url, url[len(site.url):]))
-                continue
-            if url.startswith(("https://", "http://", "mailto:")):
-                continue
-            path, frag = split_target(url)
-            if path == "":
-                if frag and frag not in p.ids:
-                    rep.err("%s:%d" % (where, line), "link %s: no heading with that id on this page (ids: %s)" % (url, ", ".join(sorted(p.ids)) or "none"))
-                continue
-            key = path[1:]
-            if key in files:
-                if frag:
-                    rep.err("%s:%d" % (where, line), "link %s: a fragment on a file" % url)
-                continue
-            if key not in pages or pages[key].kind == "notfound":
-                known = sorted("/" + k for k in pages if k != "404")
-                near = difflib.get_close_matches(path, known, 1)
-                rep.err("%s:%d" % (where, line), "link %s: no such page%s" % (url, " (did you mean %s?)" % near[0] if near else ""))
-                continue
-            if frag and frag not in pages[key].ids:
-                near = difflib.get_close_matches(frag, sorted(pages[key].ids), 1)
-                rep.err("%s:%d" % (where, line), "link %s: page %s has no heading with id '%s'%s" % (url, path, frag, " (did you mean #%s?)" % near[0] if near else ""))
+        check_links(site, p, p.doc.links, where, files, rep)
+    for p in pages.values():
+        if p.kind == "releases":
+            check_links(site, p, p.links, "CHANGELOG.md", files, rep)
     if cfg and cfg.repo:
         try:
             normalize_url(cfg.repo, "site.json repo")
