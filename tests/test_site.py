@@ -26,6 +26,7 @@ def slurp(p):
 
 
 RELEASE = slurp(os.path.join(ROOT, "VERSION")).strip()
+RELEASE_DATE = re.search(r"## \[%s\] - (\d{4}-\d{2}-\d{2})" % re.escape(RELEASE), slurp(os.path.join(ROOT, "CHANGELOG.md"))).group(1)
 
 
 def load(name, path):
@@ -362,10 +363,9 @@ class Build(unittest.TestCase):
         self.assertIn("https://docs.example.org/qargi/reference/set-up/", urls)
         self.assertNotIn("https://docs.example.org/qargi/404.html", urls)
         self.assertEqual(len(urls), 14)
-        release_date = re.search(r"## \[%s\] - (\d{4}-\d{2}-\d{2})" % re.escape(RELEASE), slurp(os.path.join(ROOT, "CHANGELOG.md"))).group(1)
         # the generated pages carry the release date; the hand pages (untracked or modified here) fall back to it too, never to the build time
         for loc, u in urls.items():
-            self.assertEqual(u.find(ns + "lastmod").text, release_date, loc)
+            self.assertEqual(u.find(ns + "lastmod").text, RELEASE_DATE, loc)
             self.assertIsNone(u.find(ns + "priority"))
             self.assertIsNone(u.find(ns + "changefreq"))
         self.assertEqual(self.page("robots.txt"), "User-agent: *\nAllow: /\n\nSitemap: https://docs.example.org/qargi/sitemap.xml\n")
@@ -432,9 +432,10 @@ class Build(unittest.TestCase):
         t = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, t, True)
         o = os.path.join(t, "o")
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES, "--out", o)
+        pages = os.path.join(self.tmp, "fix", "pages")        # not in a git repository: no commit dates
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o)
         self.assertEqual(rc, 1)
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES, "--out", o, "--allow-unreleased")
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o, "--allow-unreleased")
         self.assertEqual(rc, 0, out + err)
         self.assertIn("qargi (unreleased)", slurp(os.path.join(o, "index.html")))
         self.assertIn("Checked against qargi (unreleased).", slurp(os.path.join(o, "index.html")))
@@ -499,8 +500,8 @@ class LastMod(unittest.TestCase):
         ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
         lm = {u.find(ns + "loc").text: u.find(ns + "lastmod").text for u in root}
         self.assertEqual(lm["https://docs.example.org/qargi/first-project/"], "2026-03-02")
-        self.assertEqual(lm["https://docs.example.org/qargi/"], "2026-11-02")        # fell back to the release date
-        self.assertEqual(lm["https://docs.example.org/qargi/releases/"], "2026-11-02")
+        self.assertEqual(lm["https://docs.example.org/qargi/"], RELEASE_DATE)        # fell back to the release date
+        self.assertEqual(lm["https://docs.example.org/qargi/releases/"], RELEASE_DATE)
         ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
         art = json.loads(ld)["@graph"][0]
         self.assertEqual((art["dateModified"], art["datePublished"]), ("2026-03-02", "2026-01-15"))
@@ -617,7 +618,7 @@ class CheckOutput(unittest.TestCase):
             ("ld", self.sub("first-project/index.html", '"headline":"Your first project"', '"headline":"Something else"'), "headline"),
             ("js", self.sub("first-project/index.html", 'href="../releases/"', 'href="javascript:alert(1)"'), "javascript: links"),
             ("sitemap", self.sub("sitemap.xml", "<loc>https://docs.example.org/qargi/first-project/</loc>", "<loc>https://docs.example.org/qargi/gone/</loc>"), "is not listed"),
-            ("lastmod", self.sub("sitemap.xml", "<lastmod>2026-11-02</lastmod>", "<lastmod>tomorrow</lastmod>"), "not YYYY-MM-DD"),
+            ("lastmod", self.sub("sitemap.xml", "<lastmod>%s</lastmod>" % RELEASE_DATE, "<lastmod>tomorrow</lastmod>"), "not YYYY-MM-DD"),
             ("robots", self.sub("robots.txt", "Sitemap:", "Nothing:"), "no Sitemap line"),
             ("noindex", self.sub("404.html", '<meta name="robots" content="noindex">', ""), "must be noindex"),
             ("xml", self.sub("sitemap.xml", "</urlset>", ""), "not well-formed"),
