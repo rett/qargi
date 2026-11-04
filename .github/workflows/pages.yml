@@ -1,0 +1,90 @@
+# Build and publish the qargi documentation site.
+#
+# This branch (gh-pages) holds the hand-written pages and site.json only. The generator, the stylesheet and the
+# generated reference come from the main repository, at the release tag named in site/site.json, or from develop
+# while that release has no tag that carries the generator (the build then passes --allow-unreleased and the
+# pages say "unreleased"). Nothing built is ever committed.
+#
+# Pull requests into gh-pages run check, build and check-output and publish nothing. A push to gh-pages, or a manual
+# run, also uploads the built site and deploys it. The repository setting Pages > Source must be "GitHub Actions"
+# and the github-pages environment must allow the gh-pages branch to deploy.
+#
+# The actions are named by version tag. Before this workflow is trusted, replace each tag with the full commit SHA
+# of that release (uses: owner/action@FULL_SHA # vN) and let a bot or a person move them on purpose.
+name: pages
+
+on:
+  push:
+    branches: [gh-pages]
+  pull_request:
+    branches: [gh-pages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0   # the page dates in the sitemap come from this branch's history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch the generator and the sources of the release
+        shell: bash
+        run: |
+          set -euo pipefail
+          rel=$(python3 -I -c 'import json; print(json.load(open("site/site.json"))["release"])')
+          [[ "$rel" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "site.json release is not X.Y.Z: $rel"; exit 1; }
+          flags=""
+          if git fetch --no-tags --depth 1 origin "refs/tags/$rel:refs/tags/$rel" && git cat-file -e "refs/tags/$rel:lib/site.py"; then
+            ref="refs/tags/$rel"
+          else
+            echo "release $rel has no tag with the generator: building from develop, unreleased"
+            git fetch --no-tags --depth 1 origin develop
+            ref=FETCH_HEAD
+            flags="--allow-unreleased"
+          fi
+          mkdir src
+          git archive "$ref" lib CHANGELOG.md VERSION LICENSE README.md | tar -x -C src
+          { echo "REL=$rel"; echo "FLAGS=$flags"; } >> "$GITHUB_ENV"
+      - name: Check the pages
+        shell: bash
+        run: python3 -I src/lib/site.py check --release "$REL" --source src --pages site/pages --config site/site.json $FLAGS
+      - name: Build the site
+        shell: bash
+        run: python3 -I src/lib/site.py build --release "$REL" --source src --pages site/pages --config site/site.json --out _site $FLAGS
+      - name: Check the built site
+        shell: bash
+        run: python3 -I src/lib/site.py check-output _site
+      - name: Upload the site
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
