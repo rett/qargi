@@ -104,7 +104,8 @@ case $verb in
     # the marshal keeps the record (purpose, started) and makes this identity the lead; the feature exists either way
     marshal_start "$PROJ" "$NAME_ARG" "$PURPOSE" || echo "qargi: warning: the marshal record of $NAME_ARG was not written (see above); $BR exists" >&2
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
-    echo "tasks branch from here: dispatch them with --base $BR";;
+    echo "tasks branch from here: dispatch them with --base $BR"
+    push_feature "$BR";;
   merge)
     [ -z "$DET" ] || { [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"; merge_detached; exit 0; }
     marshal_gate "$NAME_ARG"
@@ -118,7 +119,8 @@ case $verb in
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
     journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:merge
     merge_forget "feature-$NAME_ARG-merge-${EXTRA//\//_}"
-    echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
+    echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head"
+    push_feature "$BR";;
   sync)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
@@ -129,7 +131,8 @@ case $verb in
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
     journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:sync
     merge_forget "feature-$NAME_ARG-sync"
-    echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head";;
+    echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head"
+    push_feature "$BR";;
   list)
     branches=$(g for-each-ref --format='%(refname:short)' 'refs/heads/feature/*')
     [ -n "$branches" ] || { echo "no open features (qargi feature start NAME)"; exit 0; }
@@ -178,8 +181,19 @@ case $verb in
       if g rev-parse -q --verify refs/remotes/origin/develop >/dev/null; then g merge-base --is-ancestor origin/develop develop || die "develop is behind or differs from origin/develop: reconcile them first"; fi
     fi
     detached_mix "$BR" develop
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" | plan_token)
-    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
+    # branches.delete_merged local+remote: the feature branch is deleted on origin too, when origin has it (asked live) and everything on
+    # it is in the feature. The plan says so and its token covers the remote tip, so a branch that moved there is a new plan.
+    rdel='' rnote=''
+    if [ -z "$KEEP" ] && [ "$DELETE_MERGED" = local+remote ] && g remote get-url origin >/dev/null 2>&1; then
+      remote_tip "$BR"
+      case $RSTATE in
+        found) if g merge-base --is-ancestor "$RTIP" "$h" 2>/dev/null; then rdel=$RTIP; else rnote="origin/$BR (${RTIP:0:7}) has commits the feature lacks: it is not deleted there"; fi;;
+        unchecked) rnote="origin could not be asked ($RWHY): origin/$BR is not deleted";;
+      esac
+    fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" | plan_token)
+    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
+    [ -z "$rnote" ] || echo "  note: $rnote"
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
@@ -203,7 +217,9 @@ case $verb in
     echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
     parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
-      if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
+      if [ -n "$rdel" ]; then
+        g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null && echo "deleted origin/$BR" || echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2
+      fi
       echo "pushed develop"
     fi;;
   *) die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;

@@ -90,6 +90,16 @@ need_free() { # BRANCH... -> dies when one is checked out anywhere; for the proj
     die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"
   done
 }
+# push_feature BRANCH -> pushes a feature branch the flow just created or moved, as the answers branches.push_features say: never (the
+# default), when-shared (only when origin already has the branch: it is live-checked) or always. A plain push, never forced; a failure
+# is a warning. Nothing but a feature branch is pushed here (develop and master keep their plans and tokens).
+push_feature() {
+  case ${PUSH_FEATURES:-never} in never) return 0;; when-shared|always) ;; *) return 0;; esac
+  g remote get-url origin >/dev/null 2>&1 || return 0
+  if [ "$PUSH_FEATURES" = when-shared ]; then remote_tip "$1"; [ "$RSTATE" = found ] || return 0; fi
+  if g push -q origin "refs/heads/$1:refs/heads/$1" 2>/dev/null; then echo "pushed $1 to origin (branches.push_features: $PUSH_FEATURES)"
+  else echo "qargi: warning: could not push $1 to origin (branches.push_features: $PUSH_FEATURES); origin is unchanged" >&2; fi
+}
 # parking_follow -> one status line. After qargi moved develop: the main checkout on the parking branch, clean and with no commit
 # of its own, is fast-forwarded to develop (git merge --ff-only in that checkout); otherwise the line says why it was left. The
 # parking branch is never pushed and never merged anywhere.
@@ -200,6 +210,8 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   METH=$(jq -r '.methodology // "gitflow"' "$af")
   TESTCMD=$(jq -r '.test_command // ""' "$af")
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
+  DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch
+  PUSH_FEATURES=$(jq -r '.branches.push_features // "never"' "$af")   # never | when-shared | always: whether the flow pushes feature branches
   PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }

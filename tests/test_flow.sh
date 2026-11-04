@@ -264,5 +264,45 @@ out=$($F finish p4 --plan "$t" --approved go 2>&1)
 grep -q "parking branch scratch: fast-forwarded to develop" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ -z "$(git -C "$R5" status --porcelain)" ] && ok "after a finish, a clean main checkout on the parking branch is fast-forwarded to develop" || no "ff finish: $out"
 [ -z "$(git -C "$O5" for-each-ref refs/heads/scratch)" ] && ok "the parking branch is never pushed" || no "scratch pushed"
 $F park >/dev/null 2>&1 && jq '.repo.parking_branch = "rest"' "$T/c/projects/app5.json" > "$T/c/projects/app5.new" && mv "$T/c/projects/app5.new" "$T/c/projects/app5.json" && $F park >/dev/null 2>&1 && [ "$(git -C "$R5" branch --show-current)" = rest ] && ok "repo.parking_branch names another branch" || no "custom parking branch"
+# --- branch lifecycle answers: branches.delete_merged and branches.push_features
+R6=$T/app6; O6=$T/origin6.git; git init -q -b master "$R6"; git init -q --bare "$O6"
+echo 0.1.0 > "$R6/VERSION"; git -C "$R6" add -A && git -C "$R6" commit -q -m one && git -C "$R6" branch develop && git -C "$R6" remote add origin "$O6" && git -C "$R6" push -q origin master develop
+git -C "$R6" checkout -q -b parked
+jq -n --arg p "$R6" '{schema:1, project:"app6", methodology:"gitflow", repo:{url:"https://github.com/acme/app6", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app6.json"
+export QARGI_PROJECT=app6
+setans() { jq "$1" "$T/c/projects/app6.json" > "$T/c/projects/app6.new" && mv "$T/c/projects/app6.new" "$T/c/projects/app6.json"; }
+oref() { git -C "$O6" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
+feat6() { # name: a verified feature with one commit
+  $F start "$1" >/dev/null 2>&1; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R6" worktree add -q "$w" "feature/$1"
+  echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "feature $1"; git -C "$R6" worktree remove --force "$w"; $F verify "$1" >/dev/null 2>&1
+}
+$F start never >/dev/null 2>&1
+[ -z "$(oref feature/never)" ] && ok "branches.push_features defaults to never: feature start pushes nothing" || no "pushed by default"
+setans '.branches={push_features:"when-shared"}'; $F start shared1 >/dev/null 2>&1
+[ -z "$(oref feature/shared1)" ] && ok "when-shared: a branch origin does not have is not pushed" || no "when-shared pushed a new branch"
+git -C "$R6" push -q origin feature/shared1; task6() { git -C "$R6" branch "agent/$1" "feature/shared1"; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R6" worktree add -q "$w" "agent/$1"; echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R6" worktree remove --force "$w"; }
+task6 s1; $F merge shared1 agent/s1 >/dev/null 2>&1
+[ "$(oref feature/shared1)" = "$(git -C "$R6" rev-parse feature/shared1)" ] && ok "when-shared: a branch origin has is pushed after a merge into it" || no "when-shared did not push"
+setans '.branches={push_features:"always"}'; $F start pushed1 >/dev/null 2>&1
+[ "$(oref feature/pushed1)" = "$(git -C "$R6" rev-parse feature/pushed1)" ] && ok "always: feature start pushes the new branch" || no "always did not push"
+setans '.branches={}'
+# default: finish deletes the local branch only; origin keeps its copy
+feat6 q1; git -C "$R6" push -q origin feature/q1; t=$($F finish q1 | tok)
+$F finish q1 | grep -q "delete origin/" && no "the default plan deletes on origin" || ok "by default the finish plan does not delete the branch on origin"
+$F finish q1 --plan "$t" --approved go >/dev/null 2>&1; rc=$?
+[ $rc = 0 ] && ! git -C "$R6" rev-parse -q --verify refs/heads/feature/q1 >/dev/null && [ -n "$(oref feature/q1)" ] && ok "branches.delete_merged local: the local branch goes and origin keeps its copy" || no "default finish rc=$rc"
+setans '.branches={delete_merged:"local+remote"}'
+feat6 q2; git -C "$R6" push -q origin feature/q2; out=$($F finish q2); t=$(tok <<<"$out")
+grep -q "delete origin/feature/q2" <<<"$out" && ok "local+remote: the finish plan shows the deletion on origin" || no "plan: $out"
+$F finish q2 --plan "$t" --approved go >/dev/null 2>&1; rc=$?
+[ $rc = 0 ] && [ -z "$(oref feature/q2)" ] && ! git -C "$R6" rev-parse -q --verify refs/heads/feature/q2 >/dev/null && ok "and the finish deletes the branch on origin too" || no "remote delete rc=$rc"
+feat6 q3; git -C "$R6" push -q origin feature/q3; out=$($F finish q3); t=$(tok <<<"$out")
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R6" worktree add -q --detach "$w" feature/q3; echo extra > "$w/extra.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "pushed by somebody else"
+git -C "$w" push -q origin HEAD:refs/heads/feature/q3; git -C "$R6" worktree remove --force "$w"
+$F finish q3 --plan "$t" --approved go >/dev/null 2>&1 && no "a plan made before origin's branch moved was applied" || ok "the plan token covers origin's tip: a branch that moved there is a new plan"
+out=$($F finish q3); t=$(tok <<<"$out")
+grep -q "has commits the feature lacks" <<<"$out" && ! grep -q "delete origin/feature/q3" <<<"$out" && ok "a branch on origin with commits the feature lacks is not offered for deletion" || no "plan q3: $out"
+$F finish q3 --plan "$t" --approved go >/dev/null 2>&1; [ -n "$(oref feature/q3)" ] && ok "and stays on origin" || no "q3 deleted"
+feat6 q4; t=$($F finish q4 | tok); $F finish q4 --plan "$t" --approved go >/dev/null 2>&1 && ok "a feature that origin never had finishes with local+remote" || no "q4"
 rm -rf "$T"
 exit $fail

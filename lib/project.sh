@@ -149,6 +149,14 @@ if branch_name(pk):
     if pk in FLOW_NAMES or pk.startswith(FLOW_PREFIXES): bad.append("repo.parking_branch: %s is a git-flow branch; use a branch of its own such as scratch" % pk)
     if isinstance(ll, list) and pk in ll: bad.append("repo.parking_branch: %s is also in repo.long_lived; the parking branch is reset to develop, so it is not long-lived" % pk)
     if isinstance(det, list) and pk in det: bad.append("repo.parking_branch: %s is also in repo.detached" % pk)
+# branches.delete_merged and branches.push_features: what the flow does with feature branches on origin (lib/feature.sh)
+brs = c.get("branches", {})
+need(isinstance(brs, dict), "branches: an object like {delete_merged: local, push_features: never}")
+if isinstance(brs, dict):
+    for k in brs:
+        if k not in ("delete_merged", "push_features"): bad.append("branches.%s: unknown key (delete_merged, push_features)" % k)
+    need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
+    need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess
