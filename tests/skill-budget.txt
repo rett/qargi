@@ -15,7 +15,7 @@ packs/skills/keep-a-changelog/SKILL.md 317
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
-packs/skills/shellcheck-gate/SKILL.md 335
+packs/skills/shellcheck-gate/SKILL.md 358 # raised: two lines of guidance (a disable names the shellcheck version that introduced the code; the project's own lint severity wins); for the lead's review
 provision/templates/base-system.md 89
 provision/templates/cloud-preamble.md 139
 roles/build/ROLE.md 144
