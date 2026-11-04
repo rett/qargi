@@ -287,6 +287,22 @@ done
 SX=$(applied "$LX" agent/lx); git -C "$T/r6" update-ref refs/heads/feature/lx "$SX"
 out=$(./bin/qargi local list --scratch "$T/ls4" 2>&1)
 [ "$(awk '$2=="lx"{print $4,$5}' <<<"$out")" = "yes yes" ] && ok "a full commit name still shows merged" || no "list after fix: $out"
+# the registry decides what a run is: a directory a member makes beside its own run (refs.before, ability ...) is not listed and not cleaned, and what a
+# run's files hold never reaches the lead's shell (`started` is read as a number; text in an array subscript would run a command substitution)
+mkdir -p "$T/ls6"; LG=$(lrun lg "$T/ls6"); FG=$T/ls6/qargi.forged
+mkdir -p "$FG/out"; cat "$LG/refs.before" > "$FG/refs.before"; echo build > "$FG/ability"; echo '{}' > "$FG/out/manifest.json"
+printf 'a[$(touch %s/pwn-forged)]\n' "$T" > "$FG/started"; printf 'agent/lg %s now\n' "$(git -C "$T/r6" rev-parse main)" > "$FG/applied"
+echo "$T/r6" > "$FG/repo.path"; cat "$FG/refs.before" > "$FG/verified"
+LGS=$(applied "$LG" agent/lg); git -C "$T/r6" update-ref refs/heads/feature/lg "$LGS"
+printf 'a[$(touch %s/pwn-reg)]\n' "$T" > "$LG/started"
+out=$(./bin/qargi local list --scratch "$T/ls6" 2>&1); outr=$(./bin/qargi local list 2>&1)
+{ [ ! -e "$T/pwn-forged" ] && [ ! -e "$T/pwn-reg" ] && ! grep -q forged <<<"$out$outr" && [ "$(awk '$2=="lg"{print $3}' <<<"$out")" = '?' ] && [ "$(awk '$2=="lg"{print $3}' <<<"$outr")" = '?' ]; } \
+  && ok "list: a sibling directory the registry does not name is not listed, and a started file with a command substitution runs nothing (age ?)" || no "list forged: $out; $outr; $(ls "$T" | grep pwn)"
+out=$(./bin/qargi local clean --applied --scratch "$T/ls6" 2>&1); out2=$(./bin/qargi local clean --stale 0 --scratch "$T/ls6" --yes 2>&1)
+{ [ -d "$FG" ] && [ ! -e "$T/pwn-forged" ] && [ ! -e "$T/pwn-reg" ] && ! grep -q forged <<<"$out$out2"; } \
+  && ok "clean --applied and --stale leave a directory the registry does not name alone" || no "clean forged: $out; $out2"
+[ ! -e "$LG" ] && ok "and still clean the registered run" || no "the registered run was not cleaned: $out"
+rm -rf "$FG" "$T/ls6"
 # clean --stale DAYS --scratch DIR: a plan of the finished runs older than DAYS, cleaned only with --yes, each by the rules of clean
 mkdir -p "$T/ls5"
 SOLD=$(lrun so "$T/ls5"); SKEEP=$(lrun sk "$T/ls5"); SNEW=$(lrun sn "$T/ls5"); SPROG=$(lrun sp "$T/ls5"); rm -f "$SPROG/verified"

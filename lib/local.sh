@@ -187,6 +187,31 @@ project_of() {
   return 0
 }
 
+# reg_load -> fills REG (real path of each run directory the lead's registry, $DA_STATE/local-runs.jsonl, names -> its last line) and REG_ORDER
+# (those paths, first seen first). The registry is the lead's: a directory that looks like a run (it holds refs.before and ability) is one only when
+# the registry names it, because a member can write next to its own run and make a sibling directory that looks like one. Nothing a member can write
+# is read here.
+declare -A REG=()
+REG_ORDER=()
+reg_load() {
+  local f=$DA_STATE/local-runs.jsonl r line rr
+  REG=(); REG_ORDER=()
+  [ -f "$f" ] || return 0
+  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
+  while IFS=$'\t' read -r r line; do
+    r=${r//\\\\/\\}; line=${line//\\\\/\\}
+    rr=$(readlink -f -- "$r" 2>/dev/null) || continue
+    [ -n "$rr" ] || continue
+    [ -n "${REG[$rr]+x}" ] || REG_ORDER+=("$rr")
+    REG[$rr]=$line
+  done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
+}
+# reg_has DIR -> 0 when the registry names the directory DIR (compared by real path)
+reg_has() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 1; [ -n "${REG[$rr]+x}" ]; }
+# reg_get DIR FIELD -> the text of FIELD in the registry's line for DIR (empty when absent or not a string)
+reg_get() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 0; [ -n "${REG[$rr]+x}" ] || return 0
+  jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${REG[$rr]}" 2>/dev/null || true; }
+
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -365,9 +390,9 @@ WRAP
       case $STALE in ''|*[!0-9]*) die "clean --stale needs a whole number of days, got '$STALE'";; esac
       [ -n "$SCR" ] || die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
       [ -d "$SCR" ] || die "clean --stale: no such directory $SCR"
-      scr=$(readlink -f "$SCR"); nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
+      scr=$(readlink -f "$SCR"); nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0; reg_load
       for d in "$scr"/qargi.??????; do
-        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] || continue   # a directory prepare made, directly under DIR
+        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         [ -f "$d/verified" ] || [ -f "$d/applied" ] || continue                                      # a run still in progress is never stale
         st=$(cat "$d/started" 2>/dev/null || true); case $st in ''|*[!0-9]*) st=$(stat -c %Y "$d/refs.before" 2>/dev/null || echo "$nowe");; esac
         age=$(( (nowe - st) / 86400 )); [ "$age" -ge "$STALE" ] || continue
@@ -385,9 +410,9 @@ WRAP
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
-      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0
+      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; reg_load
       for d in "$scr"/qargi.??????; do
-        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] || continue   # a directory prepare made, directly under DIR
+        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         if [ ! -f "$d/applied" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
         if [ ! -f "$d/repo.path" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
@@ -464,21 +489,23 @@ WRAP
     while [ $# -gt 0 ]; do
       case $1 in --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";; *) die "list: unknown option $1";; esac
     done
-    runs=()
+    runs=(); reg_load
     if [ -n "$SCR" ]; then
       [ -d "$SCR" ] || die "list: no such directory $SCR"
-      for d in "$(readlink -f "$SCR")"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && runs+=("$d"); done
-    elif [ -f "$DA_STATE/local-runs.jsonl" ]; then
-      while read -r d; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done < <(jq -r '.run // empty' "$DA_STATE/local-runs.jsonl" 2>/dev/null | awk '!seen[$0]++')
+      for d in "$(readlink -f "$SCR")"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" && runs+=("$d"); done
+    else
+      for d in ${REG_ORDER[@]+"${REG_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
     fi
     printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
     nowe=$(date +%s)
     plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
     for d in ${runs[@]+"${runs[@]}"}; do
-      sl=$(jq -r --arg r "$d" 'select(.run == $r) | .slug' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
-      [ -n "$sl" ] || sl=$(git -C "$d/clone" branch --show-current 2>/dev/null | sed 's|^agent/||')
-      st=$(cat "$d/started" 2>/dev/null || echo "$nowe"); age=$((nowe - st))
-      if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
+      sl=$(reg_get "$d" slug)
+      st=$(cat "$d/started" 2>/dev/null || true)
+      if [[ $st =~ ^[0-9]{1,12}$ ]]; then   # the file is a member's: only digits ever reach the arithmetic
+        age=$((nowe - st))
+        if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
+      else ag='?'; fi
       ap=no; mg=no
       if [ -f "$d/applied" ]; then
         ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(cat "$d/repo.path" 2>/dev/null || true)

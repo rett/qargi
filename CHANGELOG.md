@@ -137,6 +137,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The judgement of a local run made before `RUN/class` and `RUN/started` existed: a run directory with no `class` file counts as read-only (it was judged by its `ability` file), and one with no `started` file has no ref-journal entry to explain a moved branch (it used the time of `refs.before`). `local prepare` writes both.
 - `qargi canon import` (the merge of a store with the old numbered documentation layout, `--map docs-v0`, under a role) with `canon.py import`, the `imports` list of `canon/layout.json` and the section of the canon that described it: `canon import` is an unknown verb. Move the notes of such a store into the layout by hand.
 
+### Security
+- `qargi local list --scratch DIR`, `local clean --applied --scratch DIR` and `local clean --stale DAYS --scratch DIR` act only on a directory under DIR whose real path the lead's registry (`state/local-runs.jsonl`) names. They took any `DIR/qargi.XXXXXX` that held `refs.before` and `ability`, so a member could make a sibling directory like that and have the lead list it, run git in a repository path it chose, and clean it. `list` reads `started` as a number (up to 12 digits) and prints `?` for anything else: the text was used in shell arithmetic, where `a[$(command)]` runs the command in the lead's shell. The slug in `list` comes from the registry only (it no longer asks the member's clone for the branch name).
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
