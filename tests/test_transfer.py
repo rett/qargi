@@ -458,6 +458,23 @@ class RoundTrip(Env):
         self.assertIn("the reader would refuse", r.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.t, "no.tar.gz")))
 
+    def test_a_symbolic_link_in_the_library_is_left_out_with_a_note(self):
+        os.symlink("/etc/hostname", os.path.join(self.conf, "packs/skills/example-skill/link.md"))
+        r = self.qargi(["export", "--only", "config", "--no-encrypt", "--out", os.path.join(self.t, "l.tar.gz")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("symbolic link", r.stderr)
+        self.assertNotIn("config/packs/skills/example-skill/link.md", self.members(os.path.join(self.t, "l.tar.gz")))
+
+    def test_a_memory_note_with_an_unreadable_name_is_left_out_with_a_note(self):
+        self.put_store(self.fake, "memstore_A", {"/odd/./note.md": "x"})
+        arc = os.path.join(self.t, "m.tar.gz")
+        r = self.qargi(["export", "--only", "memories", "--no-encrypt", "--out", arc])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("left out", r.stderr)
+        names = self.members(arc)
+        self.assertIn("memories/alpha/memory/README.md", names)
+        self.assertFalse([n for n in names if "odd" in n])
+
 
 class Hostile(Env):
     def archive(self, entries, manifest_files=None, fmt=1):

@@ -153,6 +153,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The export verb now checks every name it is about to write with the rule the reader applies. A name the reader would refuse (a library
   file with a space in its name, say) stops the export before anything is written, names the file and says how to go on (rename it, or
   leave its part out with `--only`), instead of producing an archive that cannot be read back.
+- The export verb says so when it leaves something out: a symbolic link in the pack library (an archive holds regular files only) and a
+  memory note whose name the reader would refuse (an empty or `.` segment, which used to be written and then refused on the way back).
 
 ### Removed
 - `qargi credential askpass FILE` (an internal verb nothing called) and the second, unreachable `version)` branch of `bin/qargi`.
