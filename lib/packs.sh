@@ -114,9 +114,15 @@ compat_need() { # the --compatible of a verb that makes a pack: parsed, or the v
 }
 # The content hash of a pack: its files, and compatible_providers (given as the second argument, else the record's own; a pack with no
 # declaration hashes as its files alone, and fails its review). The hash is what approval stores, so the declaration is approved with the content.
+# A directory pack's hash also covers what is not a regular file of one name: a link, a pipe, a socket, an empty directory, a file with a second name
+# (with its type, link count and link target). They fail the review, and a pack that gains one after approval is drift. A pack with none of them
+# hashes as its files alone, so every hash made without them is unchanged.
 content_hash() { # path [compat-json]
-  local h c
-  if [ -d "$1" ]; then h=$(cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+  local h c x
+  if [ -d "$1" ]; then
+    h=$(cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+    x=$(cd "$1" && find . ! -path . ! -name .pack.json \( \( ! -type f ! -type d \) -o \( -type d -empty \) -o \( -type f -links +1 \) \) -printf '%y %n %P -> %l\0' | LC_ALL=C sort -z | tr '\0' '\n')
+    [ -z "$x" ] || h=$({ printf '%s\nnon-regular entries\n' "$h"; printf '%s\n' "$x"; } | sha256sum | cut -c1-16)
   else h=$(sha256sum < "$1" | cut -c1-16); fi
   if [ $# -ge 2 ]; then c=$2; else c=$(compat_of "$1"); fi
   if [ -z "$c" ]; then echo "$h"; else printf '%s\ncompatible_providers=%s\n' "$h" "$c" | sha256sum | cut -c1-16; fi

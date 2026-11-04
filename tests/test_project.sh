@@ -296,6 +296,13 @@ out=$($DA project link lp --resource memory 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "$HOME/.fake is a symbolic link; refusing" <<<"$out" && [ -z "$(ls -A "$T/real-fake")" ]; } && ok "a symbolic link above the memory link is refused and nothing is written through it" || no "parent link: rc=$rc $out"
 rm -f "$HOME/.fake"
 
+# the project memory must lie in the memory root by its real path: a link below the root that leads outside it is outside
+mkdir -p "$T/mem-outside"; echo n > "$T/mem-outside/n.md"; ln -s "$T/mem-outside" "$HOME/.qargi/memory/vialink"
+jq --arg p "$HOME/.qargi/memory/vialink" '.memory.tiers = {project:{path:$p}}' "$T/c/projects/lp.json" > "$T/lp.tmp" && cp "$T/lp.tmp" "$T/c/projects/lp.json"
+out=$($DA project link lp --resource memory 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "is placed at" <<<"$out" && grep -q "outside" <<<"$out" && [ ! -e "$LD" ] && [ ! -L "$LD" ]; } && ok "a project memory path that is a link out of the memory root is refused as outside it" || no "memory via link: rc=$rc $out"
+rm -f "$HOME/.qargi/memory/vialink" "$T/lp.tmp"; rm -rf "$T/mem-outside"; lproj lp "$LR" fakelink
+
 # a worktree gets its links by running the verb inside it; nothing lists worktrees
 $DA project link lp --resource memory,agents --plan "$($DA project link lp --resource memory,agents | tokp)" --approved test >/dev/null 2>&1
 WT=$T/lwt; $G -C "$LR" worktree add -q "$WT" -b side

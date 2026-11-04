@@ -629,7 +629,7 @@ NO_RUN = ("under the read-only class nothing is written or changed here: no run 
           "so no write can be shown to be the report; run from the clone")
 
 
-RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git")
+RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git", "dispatch.json", "task.md", "refs.before.new")
 
 
 def control_refusal(full):
