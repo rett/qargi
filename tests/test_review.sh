@@ -114,6 +114,16 @@ out=$(cd "$T/scr" && $DA review apply "./$(basename "$R6")/" 2>&1); rc=$?
 R7=$(newrun forgedrepo); other=$T/other; git init -q -b master "$other"; echo "$other" > "$R7/repo.path"
 out=$($DA review apply "$R7" 2>&1); rc=$?
 [ $rc != 0 ] && echo "$out" | grep -q "registry" && ! git -C "$A" rev-parse -q --verify agent/forgedrepo >/dev/null && ok "a run whose repo.path differs from the registry's is refused and creates no branch" || no "forged repo.path: rc=$rc $out"
+# what apply records in the run directory (applied, the new snapshot) is not written through a link a member planted there
+R8=$(newrun linknew); ln -s "$T/victim8" "$R8/refs.before.new"
+out=$($DA review apply "$R8" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && grep -q "^local refs/heads/agent/linknew " "$R8/refs.before" && [ ! -L "$R8/refs.before" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
+  && ok "a refs.before.new that is a link is not written through: the snapshot is replaced by a rename from the lead's state directory" || no "link refs.before.new: rc=$rc $out"
+$DA local verify "$R8" >/dev/null 2>&1 && ok "and verify still accepts the run" || no "verify after apply"
+R9=$(newrun linkapplied); ln -s "$T/victim9" "$R9/applied"
+out=$($DA review apply "$R9" 2>&1); rc=$?
+{ [ $rc != 0 ] && [ ! -e "$T/victim9" ] && ! git -C "$A" rev-parse -q --verify agent/linkapplied >/dev/null && grep -q "applied" <<<"$out"; } \
+  && ok "an applied that is a (dangling) link refuses the apply before any branch is made" || no "link applied: rc=$rc $out"
 # --- qargi review prune: only merged agent/* branches, only with --yes
 git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
 git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master
