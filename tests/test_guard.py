@@ -425,6 +425,25 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_env_plan_and_apply_to_a_member(self):
+        """env plan runs the project's dry-run command and env apply its bootstrap: project code. Both verbs, a verb held in a variable, and the
+        scripts run directly are refused; env show (it only reads) and words in a quoted string stay allowed."""
+        for form in ("qargi env plan --approve-exec make", "qargi env apply --plan 0123456789ab --approved go --approve-exec make", "/opt/q/bin/qargi env plan",
+                     "sudo qargi env apply --plan x", "bash -c 'qargi env plan --approve-exec make'", "env FOO=1 qargi env plan", "cd src && qargi env apply",
+                     "echo $(qargi env plan --approve-exec make)", "qargi 'env' 'plan'", "eval 'qargi env apply --plan x'", "v=plan; qargi env $v",
+                     "qargi env ${V:-plan} --approve-exec make", "qargi env pl$()an", "qargi env plan --repo . --project p", "timeout 5 qargi env apply --plan x",
+                     "python3 -I %s/env.py plan --approve-exec make" % LibraryScripts.LIB, "python3 %s/env_apply.py" % LibraryScripts.LIB,
+                     "bash lib/env_apply.py apply", "cd %s && python3 env.py apply --plan x" % LibraryScripts.LIB):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi guard:", r.stderr)
+            self.assertIn("runs the project's dry-run or bootstrap command, which is project code", r.stderr, form)
+        for c in ("qargi env show", "qargi env show --json --repo $PWD", "qargi env show --project p", "python3 -I %s/env.py show" % LibraryScripts.LIB,
+                  "echo qargi env plan", "grep -n 'env apply' lib/commands.py", "qargi help env plan", "qargi env", "cat lib/env_apply.py",
+                  "python3 env.py plan", "FOO=1 python3 -I lib/other/env.py plan"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_packs_seed_to_a_member(self):
         for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
             r = self.bash(form)
