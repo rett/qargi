@@ -198,6 +198,16 @@ with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes no
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
 with `--resolved`.
 
+### Detached branches
+
+A long-lived branch that must never meet the git-flow branches, such as a documentation site, is listed in the answers as
+`repo.detached` (`qargi project set NAME repo.detached '["docs-site"]'`). qargi then refuses every merge between it and
+develop, master, a release, a hotfix or a feature branch, in either direction (`feature merge`, `feature sync`, `feature finish`,
+`release finish`), by name and by history: a branch cut from the detached branch cannot be merged into a feature, a branch cut from
+develop cannot be merged into the detached branch. `feature start` and the other feature verbs refuse its name. Tasks are cut
+from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
+into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
+
 ## Feature marshal
 
 When several sessions lead the same project, the marshal says who leads which open feature. It keeps one

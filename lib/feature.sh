@@ -6,7 +6,10 @@
 #   feature.sh start NAME [--purpose TEXT] [--project P]   feature/NAME from develop (a local branch); the purpose says what is related
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
 #   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed)
-#   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff
+#   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff. NAME may instead be a detached
+#                                                  long-lived branch (answers repo.detached): BRANCH must be an agent/* branch and the merge,
+#                                                  local only, takes --plan T --approved W. A detached branch never meets develop, master,
+#                                                  release, hotfix or feature branches: every merge between them is refused.
 #   feature.sh status NAME [--project P]
 #   feature.sh verify NAME [--project P]           the whole suite on the feature's head (the checkpoint before finishing)
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
@@ -29,13 +32,44 @@ done
 export PLAN_ARG   # need_plan reads it
 if [ "$verb" = list ]; then NAME_ARG=-; fi
 [ -n "$NAME_ARG" ] || die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
-[ "$verb" = list ] || printf '%s' "$NAME_ARG" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#NAME_ARG}" -le 40 ] || die "'$NAME_ARG' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
-case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
 export RESOLVED
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
+# NAME is a feature, or (feature merge only) a detached long-lived branch of the answers (repo.detached): the target of a merge, no feature
+DET=''
+if [ "$verb" != list ]; then
+  if is_detached "$NAME_ARG"; then
+    [ "$verb" = merge ] || die "$NAME_ARG is a detached long-lived branch (repo.detached): it has no feature flow. Cut tasks from it (--base $NAME_ARG) and merge them with qargi feature merge $NAME_ARG BRANCH"
+    DET=1
+  else
+    printf '%s' "$NAME_ARG" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#NAME_ARG}" -le 40 ] || die "'$NAME_ARG' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
+    case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
+  fi
+fi
 BR=feature/$NAME_ARG
+# merge_detached: feature merge DETACHED BRANCH -> an agent/* task branch merged into the detached branch with --no-ff, local only.
+# A long-lived branch, so it takes a plan token and an approval like a merge into develop; no marshal record (it is no feature).
+merge_detached() {
+  local d=$NAME_ARG h t tok
+  h=$(sha_of "$d"); [ -n "$h" ] || die "no detached branch $d (repo.detached names it, but the repository has no such branch)"
+  case $EXTRA in agent/*) ;; *) die "only an agent/* task branch is merged into the detached branch $d (not $EXTRA)";; esac
+  t=$(sha_of "$EXTRA"); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
+  g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
+  detached_mix "$EXTRA" "$d"
+  tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token)
+  echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
+  show_incoming "$d" "$EXTRA"
+  if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature merge $d $EXTRA --plan $tok --approved \"...\")"; return 0; fi
+  need_plan "$tok"
+  need_free "$d"
+  merge_step "$h" "refs/heads/$EXTRA" "detached-${d//\//_}-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $d"
+  g update-ref "refs/heads/$d" "$MERGED" "$h" || die "could not move $d (it changed meanwhile)"
+  journal_ref "$REPO" "refs/heads/$d" "$h" "$MERGED" feature:merge
+  merge_forget "detached-${d//\//_}-merge-${EXTRA//\//_}"
+  audit_log "feature:merge" "$PROJ $d $EXTRA"
+  echo "merged $EXTRA into the detached branch $d ($(g rev-parse --short "$d"))"
+}
 
 case $verb in
   start)
@@ -56,11 +90,13 @@ case $verb in
     echo "created $BR from develop ($(g rev-parse --short "$BR")); merge each verified task into it: qargi feature merge $NAME_ARG BRANCH"
     echo "tasks branch from here: dispatch them with --base $BR";;
   merge)
+    [ -z "$DET" ] || { [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"; merge_detached; exit 0; }
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
     g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $BR"
+    detached_mix "$EXTRA" "$BR"
     need_free "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
@@ -71,6 +107,7 @@ case $verb in
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     g merge-base --is-ancestor develop "$BR" && { echo "$BR already contains develop"; exit 0; }
+    detached_mix develop "$BR"
     need_free "$BR"
     merge_step "$h" refs/heads/develop "feature-$NAME_ARG-sync" "Merge branch 'develop' into $BR"
     g update-ref "refs/heads/$BR" "$MERGED" "$h" || die "could not move $BR (it changed meanwhile)"
@@ -124,6 +161,7 @@ case $verb in
       g fetch -q origin 2>/dev/null || die "fetch failed"
       if g rev-parse -q --verify refs/remotes/origin/develop >/dev/null; then g merge-base --is-ancestor origin/develop develop || die "develop is behind or differs from origin/develop: reconcile them first"; fi
     fi
+    detached_mix "$BR" develop
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" | plan_token)
     echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
     remote_report develop; remote_report "$BR"

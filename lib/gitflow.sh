@@ -80,6 +80,28 @@ worktree() { # commit-ish -> a detached temporary worktree there (WT)
 }
 held() { g worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{w=substr($0,10)} $1=="branch" && $2==b {print w}' | head -1; }
 need_free() { local b w; for b in "$@"; do w=$(held "$b"); [ -z "$w" ] || die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"; done; }
+# Detached long-lived branches (answers repo.detached) never meet the git-flow branches: no merge in either direction.
+is_detached() { [ -n "${DETACHED:-}" ] && printf '%s\n' "$DETACHED" | grep -Fxq -- "$1"; }
+# history_of SRC INTO OTHER -> 0 when merging SRC into INTO would bring in commits of OTHER that INTO lacks (a best common ancestor
+# of SRC and OTHER that INTO does not contain), so a branch cut from OTHER, or OTHER itself, is caught whatever it is called
+history_of() { local mb; for mb in $(g merge-base --all "$1" "$3" 2>/dev/null); do g merge-base --is-ancestor "$mb" "$2" || return 0; done; return 1; }
+# detached_mix SRC INTO -> dies when merging the branch SRC into the branch INTO would join a detached branch with develop, master,
+# a release, hotfix or feature branch. Nothing has changed when it dies. Merging an agent branch cut from a detached branch into it is fine.
+detached_mix() {
+  local src=$1 into=$2 x
+  [ -n "${DETACHED:-}" ] || return 0
+  if is_detached "$into"; then
+    is_detached "$src" || case $src in master|develop|release/*|hotfix/*|feature/*) die "$src is a git-flow branch and $into is a detached branch (repo.detached): they are never merged";; esac
+    for x in $(g for-each-ref --format='%(refname:short)' refs/heads/master refs/heads/develop 'refs/heads/release/*' 'refs/heads/hotfix/*' 'refs/heads/feature/*'); do
+      ! history_of "$src" "$into" "$x" || die "merging $src into $into would bring in history of $x; $into is a detached branch (repo.detached) and never meets develop, master, release, hotfix or feature branches. Task branches for it are cut from $into"
+    done
+  else
+    ! is_detached "$src" || die "$src is a detached branch (repo.detached) and $into is not: they are never merged"
+    for x in $DETACHED; do
+      ! branch_exists "$x" || ! history_of "$src" "$into" "$x" || die "merging $src into $into would bring in history of $x, a detached branch (repo.detached) that never meets develop, master, release, hotfix or feature branches"
+    done
+  fi
+}
 run_suite() { # runs the project's test command in the worktree WT without the project's cloud binding: the suite must not see it
   (cd "$WT" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT bash -c "$TESTCMD")
 }
@@ -148,6 +170,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "the answers for $PROJ name no local repository (repo.path)"
   METH=$(jq -r '.methodology // "gitflow"' "$af")
   TESTCMD=$(jq -r '.test_command // ""' "$af")
+  DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 
