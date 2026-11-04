@@ -3226,6 +3226,19 @@ class FifthReview(unittest.TestCase):
         for f in ("ability", "class", "tmpdir"):
             self.assertEqual(self.call("Write", {"file_path": os.path.join(self.run_dir, f)}, None, "read-only").returncode, 2, f)
 
+    # --- G7: a cd the guard cannot read leaves the directory unknown, and a relative write after it is refused
+    def test_a_cd_to_a_directory_the_guard_cannot_name_makes_a_relative_write_unreadable(self):
+        s = os.path.dirname(self.skill)
+        bad = ["cd $(dirname $PWD); echo x > ability", 'cd "$(echo %s)" && echo x > x/SKILL.md' % s, "cd `dirname $PWD` && echo x > class", "builtin cd .. && echo x > ability", "command cd .. && touch ability", "CDPATH=.. cd clone && echo x > ability", "export CDPATH=..; cd clone; echo x > ability",
+               "env -C .. touch ability", "env -C .. tee ability < /dev/null", "env --chdir=.. touch ability", "env -i -C .. touch ability", "env -C '$d' touch x",
+               "for d in $(ls ..); do cd $d; echo x > ability; done", "for d in a b; do cd $d; touch ability; done", 'cd "$d" && cp a b', "cd $UNSET_VAR && tar xf x.tar",
+               "cd $d && sed -i s/a/b/ ability", "cd ../* && echo x > ability"]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, self.clone, cls), [], cls)
+        ok = ["cd $(git rev-parse --show-toplevel) && git commit -m x", "cd $d && echo x > /tmp/ok", "cd $d && cat ability", "cd sub && echo x > f", "cd $d; cd %s; echo x > a.txt" % self.clone,
+              'cd "$HOME" && echo x > f', "cd $d && echo x > $HOME/f", "env -C sub touch f", "builtin cd sub && touch f"]
+        self.assertEqual(self.not_allowed(ok, self.clone, None), [])
+
 
 if __name__ == "__main__":
     unittest.main()
