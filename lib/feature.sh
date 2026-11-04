@@ -22,13 +22,13 @@ NAME_ARG='' EXTRA='' PROJ='' PLAN_ARG='' APPROVED='' KEEP='' RESOLVED='' PURPOSE
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --purpose) need_val "$1" $#; PURPOSE=$2; shift 2;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) if [ -z "$NAME_ARG" ]; then NAME_ARG=$1; else EXTRA=$1; fi; shift;;
   esac
 done
 export PLAN_ARG   # need_plan reads it
 if [ "$verb" = list ]; then NAME_ARG=-; fi
-[ -n "$NAME_ARG" ] || die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
+[ -n "$NAME_ARG" ] || usage_die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
 [ "$verb" = list ] || printf '%s' "$NAME_ARG" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' && [ "${#NAME_ARG}" -le 40 ] || die "'$NAME_ARG' is not a feature name: kebab-case, lower-case letters, digits and single '-' (at most 40)"
 case $NAME_ARG in master|develop) die "'$NAME_ARG' is a long-lived branch";; esac
 export RESOLVED
@@ -58,7 +58,7 @@ case $verb in
   merge)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
-    [ -n "$EXTRA" ] || die "usage: qargi feature merge $NAME_ARG BRANCH"
+    [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
     g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $BR"
     need_free "$BR"
@@ -151,5 +151,5 @@ case $verb in
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
       echo "pushed develop"
     fi;;
-  *) die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
+  *) usage_die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

@@ -17,7 +17,7 @@ here=$(dirname "$(readlink -f "$0")")
 store_verbs() {
   v=$1; shift
   unset QARGI_NESTED   # a caller that is itself approved has not approved this plan: the token is always needed
-  [ $# -ge 2 ] || die "usage: memory.sh $v FROM TO [options]"
+  [ $# -ge 2 ] || usage_die "usage: memory.sh $v FROM TO [options]"
   FROM=$1 TO=$2; shift 2
   PREFIX=() ROLE='' NKIND='' ARCHIVE='' POLICY=conflicts PLAN_ARG='' APPROVED=''
   export PLAN_ARG
@@ -30,7 +30,7 @@ store_verbs() {
       --policy) need_val "$1" $#; POLICY=$2; shift 2;;
       --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
       --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
-      *) die "unknown option $1";;
+      *) usage_die "unknown option $1";;
     esac
   done
   [ "$v" != split ] || [ "$POLICY" = conflicts ] || die "split puts a collision in /_conflicts/; --policy is for copy and merge"
@@ -68,8 +68,8 @@ case ${1:-} in tiers|check) exec python3 -I "$here/tiers.py" "$@";; esac   # the
 
 verb=${1:-}; store=${2:-}; shift 2 || true
 if [ "$verb" = get ]; then   # memory.sh get STORE_ID /path.md: read one note
-  case $store in memstore_*) ;; *) die "usage: memory.sh get memstore_ID /path.md";; esac
-  [ -n "${1:-}" ] || die "usage: memory.sh get memstore_ID /path.md"
+  case $store in memstore_*) ;; *) usage_die "usage: memory.sh get memstore_ID /path.md";; esac
+  [ -n "${1:-}" ] || usage_die "usage: memory.sh get memstore_ID /path.md"
   ant_ok
   id=$(mem_index "$store" | jq -r --arg p "$1" 'select(.path==$p) | .id' | head -1)
   [ -n "$id" ] || die "no such note: $1"
@@ -79,10 +79,10 @@ KIND=recipes
 while [ $# -gt 0 ]; do
   case $1 in
     --kind) need_val "$1" $#; KIND=$2; shift 2;;
-    *) die "unknown option $1";;
+    *) usage_die "unknown option $1";;
   esac
 done
-case $store in memstore_*) ;; *) die "usage: memory.sh lint|get memstore_ID [/path.md], or split|merge|copy FROM TO";; esac
+case $store in memstore_*) ;; *) usage_die "usage: memory.sh lint|get memstore_ID [/path.md], or split|merge|copy FROM TO";; esac
 [ -n "${QARGI_MEMORY_FIXTURE:-}" ] || ant_ok
 
 mem_list() {
@@ -224,5 +224,5 @@ print("\n".join(out) if out else "clean: %d memories" % len(mems))
 print("%d fail, %d warn, %d memories" % (len(fails), len(warns), len(mems)))
 sys.exit(1 if fails else 0)
 ';;
-  *) die "usage: memory.sh lint memstore_ID (stores are created and seeded by qargi canon)";;
+  *) usage_die "usage: memory.sh lint memstore_ID (stores are created and seeded by qargi canon)";;
 esac
