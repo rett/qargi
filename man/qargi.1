@@ -482,7 +482,7 @@ a profile of the role's class (a shipped one such as auditor, advisor or researc
 .RS
 .TP
 .BI "\-\-surface " "SURFACE"
-local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member.
+local (default) or cloud: with cloud, resolve the registered base instance (<project>\-worker or \-reviewer) instead of a member; needs \-\-project.
 .RE
 .RS
 .TP
@@ -492,7 +492,7 @@ cloud only: confirm an opt\-in profile such as researcher.
 .RS
 .TP
 .B \-\-json
-machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort).
+machine\-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class).
 .RE
 .RE
 .TP

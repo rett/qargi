@@ -22,7 +22,7 @@ roles/write/ROLE.md 167
 skills/qargi-flow/SKILL.md 944
 skills/qargi-flow/marshal.md 435
 skills/qargi-instances/SKILL.md 898
-skills/qargi-memory/SKILL.md 947
+skills/qargi-memory/SKILL.md 941
 skills/qargi-memory/curate.md 345
 skills/qargi-packs/SKILL.md 753
 skills/qargi-packs/apply.md 639
