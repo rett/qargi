@@ -669,8 +669,10 @@ COMMANDS = {
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
-                            desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA, CONTRACT: the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md) to copy into the task. A caller that evals the output must stop at the blank line.\n"
+                            desc=("Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless --profile), MEMBER, MODEL and EFFORT (only with --profile), CLONE, OUT, TMP, GIT, "
+                                  "BASE_SHA and CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md). "
+                                  "Then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK-BLOCK MEMORY block. "
+                                  "A caller that evals the output must stop at the blank line.\n"
                                   "When the project (found by matching the repository against the stored answers) has a Claude Code render "
                                   "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
                                   "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
