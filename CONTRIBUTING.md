@@ -23,7 +23,7 @@
 
 `bin/qargi` is the single command; `lib/` holds the scripts behind it;
 `skills/qargi-*` are the skills (each a short guide that calls the command; the
-abilities are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
+roles are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
 gets with its task block); `agents/member.json` and `agents/member.body.md` are the one neutral
 member definition `qargi agent add` renders, through the project's runtime, under the names users
 choose; `lib/providers/` holds the shipped runtime definitions and model catalogs; `provision/` the resource and memory
