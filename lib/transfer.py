@@ -450,6 +450,9 @@ def cmd_export(args):
         warns += w
     if not items:
         die("nothing to export for %s in %s" % (", ".join(projects), ", ".join(comps)))
+    bad = sorted(k for k in items if not valid_item(k))
+    if bad:   # the rule the reader applies: an archive it would refuse is not written
+        die("the reader would refuse %d name(s) in this archive, e.g. %r: rename the file (a name uses letters, digits and . _ @ + = -), or leave its part out with --only" % (len(bad), bad[0][:80]))
     data, manifest = build_archive(items, comps, projects)
     if len(data) > MAX_ARCHIVE:
         die("the archive would be larger than %d MB" % (MAX_ARCHIVE >> 20))
