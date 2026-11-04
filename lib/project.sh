@@ -224,6 +224,9 @@ if anb is not None:
                 need(isinstance(rec[k], str) and rec[k].strip(), "%s.%s: a non-empty string" % (p, k))
             need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
+if "env" in c:
+    import env as _env   # lib/env.py: the keys of the environment overrides and what each takes
+    bad.extend(_env.problems(c["env"]))
 m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
     v = m.get(k)
