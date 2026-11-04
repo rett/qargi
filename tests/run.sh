@@ -42,6 +42,7 @@ run bash tests/test_prompt.sh
 run python3 tests/test_guard.py
 run bash tests/test_agent.sh
 run bash tests/test_agent_cloud.sh
+run bash tests/test_valued_opts.sh
 run bash tests/test_role.sh
 run bash tests/test_cloud_bases.sh
 run bash tests/test_methodology.sh
@@ -53,6 +54,7 @@ run bash tests/test_changelog_section.sh
 run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run bash tests/test_release_publish.sh
+run bash tests/test_release_gh.sh
 run python3 tests/test_home.py
 run bash tests/test_install.sh
 run bash tests/test_project.sh

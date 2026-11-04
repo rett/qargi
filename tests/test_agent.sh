@@ -402,5 +402,21 @@ PY
 $DA agent list | grep 'rn1 ' | grep -q 'STALE\|unsealed\|changed' && ok "a changed extension makes its member STALE" || no "extension changed: $($DA agent list | grep rn1)"
 jq 'del(.models.extensions)' "$T/c/projects/rnp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/rnp.json"
 $DA agent list | grep 'rn1 ' | grep -q 'STALE' && ok "and so does disabling it" || no "extension disabled: $($DA agent list | grep rn1)"
+
+# --- one broken record of another project does not stop this project's work; rename keeps a hand-edited file
+jq '.projects.zbroken.bad = {file: "x.md"}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+out=$($DA agent for build --project pbase 2>&1); echo "$out" | grep -q 'agents.json:' && no "a broken record of another project blocks agent for: $out" || ok "agent for works in a project whose neighbour has a broken record"
+out=$($DA agent for build --project zbroken 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'member bad of project zbroken has no roles' <<<"$out"; } && ok "and the broken project itself is refused (exit 2)" || no "broken project: rc=$rc $out"
+out=$($DA agent list 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'member bad of project zbroken' <<<"$out"; } && ok "list without a project still checks every project" || no "list all: rc=$rc $out"
+$DA agent list --project pbase >/dev/null 2>&1 && ok "list --project checks that project only" || no "list --project pbase"
+jq 'del(.projects.zbroken)' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+$DA agent add hand1 --project pbase >/dev/null 2>&1 && echo "# my edit" >> "$A/hand1.md"
+out=$($DA agent rename hand1 hand2 2>&1); rc=$?
+{ [ $rc = 0 ] && [ -f "$A/hand2.md" ] && [ -f "$A/hand1.md" ] && grep -q '^# my edit' "$A/hand1.md" && grep -q 'hand1.md was edited by hand, so it was kept' <<<"$out"; } \
+  && ok "rename keeps a hand-edited file and says so" || no "rename of a DRIFT member: rc=$rc $out"
+$DA agent add clean1 --project pbase >/dev/null 2>&1; $DA agent rename clean1 clean2 >/dev/null 2>&1
+{ [ -f "$A/clean2.md" ] && [ ! -e "$A/clean1.md" ]; } && ok "and an unedited file is removed as before" || no "rename of a current member"
 rm -rf "$T"
 exit $fail

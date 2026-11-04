@@ -211,7 +211,7 @@ def compose_prompt(doc, task_text, cls, run, tmp):
 # ---- the process --------------------------------------------------------------------------------------------------------------------
 
 def child_env(run, tmp, passed):
-    env = {"HOME": os.path.join(run, "home"), "PATH": clean_path(), "LANG": "C.UTF-8", "TERM": "dumb", "TMPDIR": tmp,
+    env = {"HOME": os.path.join(run, "home"), "PATH": clean_path(), "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "TERM": "dumb", "TMPDIR": tmp,
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1", "GIT_SSH_COMMAND": "false", "GIT_TERMINAL_PROMPT": "0",
            "GIT_ASKPASS": "false", "GIT_AUTHOR_NAME": "qargi", "GIT_COMMITTER_NAME": "qargi",
            "GIT_AUTHOR_EMAIL": "qargi@example.invalid", "GIT_COMMITTER_EMAIL": "qargi@example.invalid", "GIT": os.path.join(run, "git")}

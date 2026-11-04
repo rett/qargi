@@ -190,13 +190,13 @@ verb=${1:-}; shift || true
 POS=() ROLES='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --roles) ROLES=$2; shift 2;;
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
-    --project) PROJ=$2; shift 2;;
-    --profile) PROFILE=$2; shift 2;;
+    --roles) need_val "$1" $#; ROLES=$2; shift 2;;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;;
+    --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
     --json) JSON=1; shift;;
-    --surface) SURFACE=${2:-}; shift 2;;
+    --surface) need_val "$1" $#; SURFACE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
@@ -624,8 +624,12 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
 # agents.json is {"schema": 2, "projects": {P: {NAME: record}}} (an empty object reads as no members). Any other shape is an earlier one: it is never
 # converted and never rewritten, the verbs stop (exit 2) and say what to do. So does a record without what the verbs need (a non-empty list of roles
 # and the path of its file): it would otherwise be refreshed as a read-only member, hide the others in `list`, or be written to a file called "null".
+# The records checked are those of the project the verb is about (--project, else the project in effect; `list` without --project shows every project, so it
+# checks every one): one hand-broken record of another project does not stop the work of this one.
+scope=$PROJ
+[ "$verb" = list ] || [ -n "$scope" ] || scope=$(python3 -I "$root/lib/help.py" infer 2>/dev/null) || scope=''
 members_shape_ok || { echo "qargi: agents.json is not in the current shape: move it aside and add the members again (qargi agent add NAME --project P)" >&2; exit 2; }
-bad=$(jq -r '(.projects // {}) | to_entries[] | .key as $p | .value | to_entries[] | .key as $n | .value
+bad=$(jq -r --arg scope "$scope" '(.projects // {}) | to_entries[] | select($scope == "" or .key == $scope) | .key as $p | .value | to_entries[] | .key as $n | .value
     | (if (.roles | type) != "array" or (.roles | length) == 0 or (.roles | any(type != "string")) then "roles (a non-empty list of role names)"
        elif (.file | type) != "string" or .file == "" then "file (the path of its definition)" else empty end) as $f
     | "member \($n) of project \($p) has no \($f)"' "$MEMBERS_FILE" | head -n 1)
@@ -658,11 +662,16 @@ case $verb in
     nf=$base/$(jq -r .path <<<"$r")
     [ ! -e "$nf" ] || die "$nf exists already"
     write_member "$r" "$nf"
-    [ ! -f "$f" ] || rm -f "$f"
+    # the old file goes unless it was edited by hand (what is on record is the render's hash, as refresh compares it): an edit is kept and named
+    kept=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
+    if [ -f "$f" ]; then
+      if [ -n "$want" ] && [ "$(sha256sum < "$f" | cut -d' ' -f1)" != "$want" ]; then kept=1; else rm -f "$f"; fi
+    fi
     [ "$(link_mode "$r")" != none ] || hide_in_git "$(repo_path "$mproj")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
     json_update "$MEMBERS_FILE" '.projects[$p][$new] = (.projects[$p][$old] | .file = $f | .provider = $v | .surface = "local" | .render = $r) | del(.projects[$p][$old])' \
       --arg p "$mproj" --arg old "$old" --arg new "$new" --arg f "$nf" --arg v "$prov" --argjson r "$(member_record "$r")"
     echo "renamed member $old -> $new in project $mproj ($nf)"
+    [ -z "$kept" ] || echo "qargi: note: $f was edited by hand, so it was kept (the new member is rendered from the definition); move your edits over and delete it" >&2
     link_note "$mproj" "$r" "$nf";;
   refresh)
     n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME [--project P]"

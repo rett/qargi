@@ -190,9 +190,9 @@ project_of() {
 verb=${1:-}; shift || true
 case $verb in
   prepare)
-    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ABILITY=build PROFILE=''
+    REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE=''
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --role) ABILITY=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --role) ROLE=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
@@ -201,8 +201,8 @@ case $verb in
     else
       [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
     fi
-    [ "$ABILITY" != lead ] && valid_role "$ABILITY" || die "--role: one of $DA_ROLES (qargi role list)"
-    CLASS=$(role_class "$ABILITY")
+    [ "$ROLE" != lead ] && valid_role "$ROLE" || die "--role: one of $DA_ROLES (qargi role list)"
+    CLASS=$(role_class "$ROLE")
     # a read-only role needs a read-only barrier on the local surface, or the project's recorded acceptance that there is none
     if [ "$CLASS" = read-only ]; then
       BPJ=$(project_of "$REPO" "$URL")
@@ -214,12 +214,12 @@ case $verb in
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
     MEMBER='' MODEL='' EFFORT=''
     if [ -n "$PROFILE" ]; then
-      PPJ=$(project_of "$REPO" "$URL"); pargs0=(for "$ABILITY" --profile "$PROFILE" --json)
+      PPJ=$(project_of "$REPO" "$URL"); pargs0=(for "$ROLE" --profile "$PROFILE" --json)
       [ -z "$PPJ" ] || pargs0+=(--project "$PPJ")
       PRES=$("$(dirname "$0")/agent.sh" "${pargs0[@]}" 2>&1 </dev/null) || die "${PRES#qargi: }"
       MEMBER=$(jq -r '.member // ""' <<<"$PRES"); MODEL=$(jq -r '.model // "-"' <<<"$PRES"); EFFORT=$(jq -r '.effort // "-"' <<<"$PRES")
     else
-      PROFILE=$ABILITY
+      PROFILE=$ROLE
     fi
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
@@ -256,7 +256,7 @@ case $verb in
     SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
-    printf '%s\n' "$ABILITY" > "$RUN/ability"
+    printf '%s\n' "$ROLE" > "$RUN/ability"
     printf '%s\n' "$CLASS" > "$RUN/class"
     [ -z "$MEMBER" ] || printf '%s\n' "$PROFILE" > "$RUN/profile"
     date +%s > "$RUN/started"   # the epoch the lead's ref journal is read from by `verify`
@@ -288,12 +288,12 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" \
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" \
       '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}' >> "$DA_STATE/local-runs.jsonl"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
-    echo "ROLE=$ABILITY"
+    echo "ROLE=$ROLE"
     echo "CLASS=$CLASS"
     echo "PROFILE=$PROFILE"
     [ -z "$MEMBER" ] || { echo "MEMBER=$MEMBER"; echo "MODEL=$MODEL"; echo "EFFORT=$EFFORT"; }
@@ -319,7 +319,7 @@ WRAP
     if [ -n "$PPROJ" ]; then
       tc=$(dirname "$(readlink -f "$0")")/tiercontext.py
       prel=$(timeout 3 python3 -I "$tc" repo-rel --project "$PPROJ" 2>/dev/null </dev/null) || prel=''
-      pargs=(--project "$PPROJ" --role "$ABILITY")
+      pargs=(--project "$PPROJ" --role "$ROLE")
       [ -z "$prel" ] || pargs+=(--repo-tier "$RUN/clone/$prel")
       [ -z "$REPO" ] || [ -z "$prel" ] || pargs+=(--checkout "$REPO")
       if pkt=$(timeout 8 python3 -I "$tc" packet "${pargs[@]}" </dev/null) && [ -n "$pkt" ]; then
