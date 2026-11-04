@@ -486,7 +486,7 @@ def moved(dirs, args, certain, visited):
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
-    certain = certain and len(ops) <= 1 and not target.startswith("-") and not UNKNOWN.search(target)
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not UNKNOWN.search(expand_path(target))
     new = []
     for d in dirs:
         tick()
@@ -657,11 +657,29 @@ def inside(path, base):
     return path == base or path.startswith(base.rstrip(os.sep) + os.sep)
 
 
+_OUT = [None]                                        # the run's out directory, for a command that uses $OUT and nothing in it could set it (out_dir)
+SETTERS = re.compile(r"\b(?:eval|declare|typeset|readonly|export|local|read|mapfile|readarray|getopts|let|source|env|set|printf\s+-v)\b|\$\{!|(?:^|[\s;&|(])\.\s|"
+                     r"\b(?:sh|bash|zsh|dash|ksh)\b")      # what can set a variable by a name the text does not show
+
+
+def out_dir(call):
+    """The out directory of the run the call is made in when the command writes through $OUT or ${OUT}, the hook's environment has no OUT, and nothing in the
+    command could give it a value (no other mention of the name, no eval, export, read, source, sh -c ...), else None. The task block names OUT, and a
+    member that has it in its shell uses it; the guard cannot expand it and refused it. A value the command gives it is a path the guard cannot read."""
+    c = call.command or ""
+    if call.kind != "shell" or "OUT" in os.environ or "OUT" not in c:
+        return None
+    if re.search(r"(?<![A-Za-z0-9_])OUT(?![A-Za-z0-9_])", re.sub(r"\$\{OUT\}|\$OUT(?![A-Za-z0-9_])", "", c)) or SETTERS.search(c):
+        return None
+    run = run_dir(call.cwd)
+    return os.path.join(run, "out") if run else None
+
+
 def expand_path(p):
     """p with ~ and the variables of the environment expanded, except PWD and OLDPWD (the shell sets those, the hook's own are another directory's) and
-    the variables the environment lacks, which stay as written."""
-    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: m.group(0) if (m.group(1) or m.group(2)) in ("PWD", "OLDPWD") else os.environ.get(m.group(1) or m.group(2), m.group(0)),
-                  os.path.expanduser(p))
+    the variables the environment lacks, which stay as written (OUT is the run's out directory, see out_dir)."""
+    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: m.group(0) if (m.group(1) or m.group(2)) in ("PWD", "OLDPWD")
+                  else os.environ.get(m.group(1) or m.group(2), _OUT[0] if (m.group(1) or m.group(2)) == "OUT" and _OUT[0] else m.group(0)), os.path.expanduser(p))
 
 
 @functools.cache
@@ -680,6 +698,23 @@ def resolve(here, p):
         if not os.path.islink(full):
             return full
     return os.path.realpath(os.path.join(here, q))
+
+
+def operands(words, stdin_names=False):
+    """The words of a command that are its operands: no option, and no redirection with the file it names (`< r.md`, `0<r.md`, `> f`, `2>&1`, `<<< text`).
+    stdin_names: the command is run by xargs, whose operands come from its standard input, so a `< FILE` may be them: only the output redirections are left out."""
+    if stdin_names:
+        return [t for t in words if not t.startswith("-") and not REDIR.match(t)]
+    out, k = [], 0
+    while k < len(words):
+        t = words[k]
+        if BARE_REDIR.match(t):                               # the operator alone: its target is the next word
+            k += 2
+            continue
+        if not t.startswith("-") and not LEADING_REDIR.match(t) and not REDIR.match(t):
+            out.append(t)
+        k += 1
+    return out
 
 
 def redirect_dest(toks, k):
@@ -733,9 +768,11 @@ def write_targets(toks, i):
             targets.append(("a redirection", dest))
     if i < len(toks):
         prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-        args = [t for t in rest if not t.startswith("-") and not REDIR.match(t)]
+        args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
         if prog in WRITERS:
             targets += [(prog, a) for a in args]
+            if prog == "patch" and not any(cluster_value(rest, k, "d") is not None for k in range(len(rest))):
+                targets.append((prog, "."))                                   # patch writes the files the patch names, below where the shell is (or -d DIR)
         elif prog in COPIERS and args:
             targets.append((prog, args[-1]))
             if prog == "mv":
@@ -1043,33 +1080,34 @@ def review_segment(toks, i, here, text=""):
         if bad:
             return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
     ro = reading(run_dir(here))
-    for what, dest in write_targets(toks, i):
-        tick()
-        why = unreadable_target(what, dest, here)
-        if why:
-            return why
-        if ro and UNKNOWN.search(expand_path(dest).rpartition("/")[0]) and not DEVICE.match(dest):
-            return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
-                             "to tell the clone from OUT; write the path out" % (what, dest))
-        full = resolve(here, dest)
-        why = control_refusal(full) or run_dir_refusal(full)
-        if why:
-            return why
-        run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
-        if CLASS == "read-only" and not run:
-            return OwnReason(NO_RUN)
-        if what.split()[0] in DESTRUCTIVE:
-            why = run_refusal(full, here)
+    for what, braced in write_targets(toks, i):
+        for dest in brace_expand(braced):                  # echo x > OUT/{a,../clone/b}: each word it stands for
+            tick()
+            why = unreadable_target(what, dest, here)
             if why:
                 return why
-        if run and reading(run) and inside(full, os.path.join(run, "clone")):
-            return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
+            if ro and UNKNOWN.search(expand_path(dest).rpartition("/")[0]) and not DEVICE.match(dest):
+                return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
+                                 "to tell the clone from OUT; write the path out" % (what, dest))
+            full = resolve(here, dest)
+            why = control_refusal(full) or run_dir_refusal(full)
+            if why:
+                return why
+            run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
+            if CLASS == "read-only" and not run:
+                return OwnReason(NO_RUN)
+            if what.split()[0] in DESTRUCTIVE:
+                why = run_refusal(full, here)
+                if why:
+                    return why
+            if run and reading(run) and inside(full, os.path.join(run, "clone")):
+                return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
     if prog in TOUCHERS or prog == "find":                    # the sources of cp, mv and ln, and every file a command takes away, are the run's record too
         rest = toks[i + 1:]
-        operands = [t for t in rest if not t.startswith("-") and not REDIR.match(t)] + [t[3:] for t in rest if t.startswith(("if=", "of="))]
+        files = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i])) + [t[3:] for t in rest if t.startswith(("if=", "of="))]
         if prog == "find" and not any(t in FIND_ACTIONS for t in rest):
-            operands = []
-        for a in operands[:200]:
+            files = []
+        for a in files[:200]:
             why = unreadable_target(prog + " (operand)", a, here) or control_refusal(resolve(here, a))
             if why:
                 return why
@@ -1728,7 +1766,7 @@ def protected_write(toks, i, here):
     """The reason a segment writes under a protected location, or None (the heuristic the docstring describes). i is past the last word when the segment
     is redirections alone."""
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-    args = [t for t in rest if not t.startswith("-") and not REDIR.match(t)]
+    args = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i]))
     cands = list(write_targets(toks, i))
     if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
         words = args if prog in SCRIPTS else args[1:]
@@ -1745,12 +1783,13 @@ def protected_write(toks, i, here):
         tick()
         if not dest or dest.startswith("-") and dest != "-":
             continue
-        why = glob_root(what, dest, here)
-        if why:
-            return why
-        root = protected(resolve(here, dest), what.split()[0] in DESTRUCTIVE)
-        if root:
-            return refusal_text(what, dest, root)
+        for one in brace_expand(dest):                       # cp a ~/.claude/{x,skills}/: each word it stands for
+            why = glob_root(what, one, here)
+            if why:
+                return why
+            root = protected(resolve(here, one), what.split()[0] in DESTRUCTIVE)
+            if root:
+                return refusal_text(what, dest, root)
     return None
 
 
@@ -1978,6 +2017,7 @@ def judge(call):
     clear_caches()
     _DEADLINE[0] = time.monotonic() + BUDGET
     try:
+        _OUT[0] = out_dir(call)
         return decide_call(call)
     except TooNested:
         return ("qargi guard: substitutions nested more than %d deep cannot be checked in the time the hook has, so the command is not available to an agent. "
@@ -1995,7 +2035,7 @@ def judge(call):
         return ("qargi guard: checking this command took longer than %d seconds, so it is not available to an agent. "
                 "Run it in smaller parts." % BUDGET)
     finally:
-        _DEADLINE[0] = None
+        _DEADLINE[0] = _OUT[0] = None
 
 
 QUOTED = re.compile(r"[\"']|<<")

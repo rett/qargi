@@ -2711,7 +2711,7 @@ class ThirdReview(unittest.TestCase):
         shutil.rmtree(self.t, ignore_errors=True)
 
     def env(self):
-        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME", "OUT")}
         e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
         return e
 
@@ -2985,6 +2985,52 @@ class ThirdReview(unittest.TestCase):
                 self.assertEqual(r.returncode, 2, (tool, path, r.stderr))
                 self.assertIn("registry of local runs", r.stderr)
         self.assertEqual(self.not_allowed(["cat %s" % reg, "jq -c . %s" % reg, "wc -l %s" % reg, "grep -c run %s" % reg, "jq -r .run %s | sort > %s/out/runs.txt" % (reg, self.run_dir)]), [])
+
+    # --- two refusals of work that is allowed (read-only class)
+    def test_tee_with_an_input_redirection_writes_only_what_it_names(self):
+        """`tee OUT/report.md < r.md`: the `<` and the file after it are no operand of tee, so no file named r.md is written (it is a file of the clone)."""
+        o = self.out
+        ok = ["tee %s/report.md < r.md" % o, "tee -a %s/report.md <r.md" % o, "tee %s/x 0< r.md" % o, "tee %s/x <<< hello" % o, "tee %s/x << EOF\nhi\nEOF" % o, "cat r.md | tee %s/x" % o,
+              "tee %s/a %s/b < r.md" % (o, o), "sort r.md | tee %s/s.txt < /dev/null" % o, "cp %s/a %s/b < /dev/null" % (o, o), "tee %s/x 2> /dev/null < r.md" % o]
+        self.assertEqual(self.not_allowed(ok, None, "read-only"), [])
+        bad = ["tee r.md < /dev/null", "tee %s/x r.md < r.md" % o, "tee %s/x < r.md > f" % o, "tee %s/x <r.md; tee f < /dev/null" % o, "tee 0< r.md f"]
+        self.assertEqual(self.not_refused(bad, None, "read-only"), [])
+
+    def test_a_command_whose_names_come_from_its_input_is_still_a_write_under_the_read_only_class(self):
+        """Leaving `< FILE` out of the operands of tee must not let through the commands whose input says what they write: patch writes the files the patch
+        names, and xargs hands the names of its command from its standard input. The old guard refused them only because it took `<` and FILE for operands."""
+        bad = ["patch -p1 < p", "patch < p", "patch -p1 <p", "xargs touch < l", "xargs rm < l", "xargs cp -t . < l", "xargs sed -i s/a/b/ < l", "patch -p0 -i p"]
+        self.assertEqual(self.not_refused(bad, None, "read-only"), [])
+        self.assertEqual(self.not_allowed(["patch -p1 -d %s < p" % self.out, "xargs touch < l", "patch -p1 < p"], None, None), [])
+
+    def test_a_brace_word_is_judged_as_the_words_it_stands_for(self):
+        """cp a ~/.claude/{x,skills}/ writes the skills directory, and echo x > OUT/{a,../clone/b} the clone: the word was judged as it is written."""
+        h, c, o = os.path.join(self.home, ".claude"), self.clone, self.out
+        bad = ["cp a %s/{x,skills}/" % h, "echo x > %s/{x,skills}/f" % h, "touch %s/{skills,x}/q" % h, "tee %s/{x,agents}/f < /dev/null" % h, "rm -rf %s/{x,plugins}" % h,
+               "cp a %s/{x,packs}/f" % self.conf, "tee %s/{x,packs}/f < /dev/null" % self.conf, "echo x > %s/{x,features}/f" % self.state, "mv a %s/{ref-journal.jsonl,y}" % self.state]
+        self.assertEqual(self.not_refused(bad), [])
+        ro = ["echo x > %s/{a,../clone/b}" % o, "touch %s/{a,../clone/b}" % o, "cp a %s/{,../clone/}a" % o, "echo x > %s/{a,b}" % c]
+        self.assertEqual(self.not_refused(ro, None, "read-only"), [])
+        self.assertEqual(self.not_allowed(["echo x > %s/{a,b}" % o, "touch %s/{a,b}{1,2}" % o, "cp a %s/{x,y}/f" % self.clone, "touch %s/{x,y}" % self.t], None, None), [])
+        self.assertEqual(self.not_allowed(["echo x > %s/{a,b}" % o, "touch %s/{a,b}{1,2}" % o], None, "read-only"), [])
+
+    OUT_WORDS = ('sort -o "$OUT/s.txt" r.md', 'git format-patch --binary BASE..HEAD -o "$OUT/patches"', 'git bundle create "$OUT/run.bundle" BASE..HEAD', "echo x > $OUT/report.md",
+                 "echo x > ${OUT}/report.md", 'git diff --output="$OUT/d.patch"', 'cp r.md "$OUT/"', 'git log > "${OUT}/log.txt"', "mkdir -p $OUT/patches && cp r.md $OUT/patches/", "cd $OUT; echo x > f", "cd $OUT && git log > report.md")
+
+    def test_out_is_the_runs_out_when_nothing_in_the_command_sets_it(self):
+        """$OUT is not in the hook's environment, so the guard cannot expand it and refused every write through it under the read-only class. It reads it
+        from the run record (RUN/out) when nothing in the command could set it."""
+        self.assertEqual(self.not_allowed(list(self.OUT_WORDS), None, "read-only"), [])
+        c = self.clone
+        bad = ["OUT=%s; echo x > $OUT/f" % c, "OUT=%s echo x > $OUT/f" % c, "export OUT=%s; echo x > $OUT/f" % c, 'eval "OUT=%s"; echo x > $OUT/f' % c, "declare OUT=%s; echo x > $OUT/f" % c,
+               "read OUT <<< %s; echo x > $OUT/f" % c, "printf -v OUT %%s %s; echo x > \"$OUT/f\"" % c, "echo x > ${OUT:-%s}/f" % c, "bash -c 'OUT=%s; echo x > $OUT/f'" % c,
+               "for OUT in %s; do echo x > $OUT/f; done" % c, "echo x > $OUT/../clone/f", "echo x > $OUT/../ability", "echo x > ${OUT}/../clone/f", "v=OUT; eval $v=%s; echo x > $OUT/f" % c,
+               "source ./set-out.sh; echo x > $OUT/f", ". ./set-out.sh; echo x > $OUT/f", "local OUT=%s; echo x > $OUT/f" % c,
+               "echo x > $OUT2/f", "echo x > $OUTPUT/f", "set -a; OUT=%s; echo x > $OUT/f" % c, "echo x > ${!v}/f"]
+        self.assertEqual(self.not_refused(bad, None, "read-only"), [])
+        self.assertEqual(self.not_refused(["echo x > $OUT/../clone/f"], self.out, "read-only"), [])
+        r = self.call("Bash", {"command": "echo x > $OUT/report.md"}, "/tmp", "read-only")                  # no run is found from here: nothing is guessed
+        self.assertEqual(r.returncode, 2, r.stderr)
 
 
 if __name__ == "__main__":
