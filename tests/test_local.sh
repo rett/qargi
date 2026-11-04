@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); fail=0
+T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T
 git init -q -b main "$T/r" && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 git init -q --bare "$T/remote.git" && git -C "$T/r" remote add origin "$T/remote.git" && git -C "$T/r" push -q origin main
