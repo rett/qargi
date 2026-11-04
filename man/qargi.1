@@ -1658,7 +1658,7 @@ A feature branch is cut from develop and can be as broad as a theme. The lead me
 .BI "start " "NAME"
 Cut feature/NAME from develop.
 .br
-Refuses a name origin already has (asked live with git ls\-remote), so another person's branch is not shadowed; fetch it instead.
+Refuses a name origin already has (asked live with git ls\-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached).
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1701,10 +1701,22 @@ use the merge you resolved and committed in the conflict worktree.
 .TP
 .BI "merge " "NAME BRANCH"
 Merge a verified task branch into feature/NAME with \-\-no\-ff.
+.br
+NAME may be a detached long\-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, and the merge, local only, prints a plan and token like a merge into develop (\-\-plan, \-\-approved). A detached branch never meets develop, master, release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. For a feature, \-\-plan and \-\-approved are not used.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RS
 .TP

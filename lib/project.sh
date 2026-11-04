@@ -129,6 +129,19 @@ repo = c.get("repo", {})
 need(isinstance(repo.get("url"), str) and repo["url"] and "OWNER/REPO" not in repo["url"], "repo.url is required (replace the placeholder)")
 ll = repo.get("long_lived", [])
 need(isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll), "repo.long_lived: the branches no agent may ever touch (e.g. master, develop)")
+# repo.detached: long-lived branches that never meet develop, master, release, hotfix or feature branches (a documentation site, say).
+# Names only: qargi refuses the merges between them and the git-flow branches (lib/gitflow.sh detached_mix)
+def branch_name(x):
+    return isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", x) and ".." not in x and "//" not in x and not x.endswith(("/", ".", ".lock"))
+FLOW_NAMES = ("master", "develop")
+FLOW_PREFIXES = ("feature/", "agent/", "release/", "hotfix/")
+det = repo.get("detached", [])
+need(isinstance(det, list) and all(branch_name(x) for x in det) and len(set(det)) == len(det),
+     "repo.detached: a list of distinct branch names (for example a documentation site's branch) that never merge with develop, master, release, hotfix or feature branches")
+if isinstance(det, list):
+    for x in det:
+        if isinstance(x, str) and (x in FLOW_NAMES or x.startswith(FLOW_PREFIXES)):
+            bad.append("repo.detached: %s is a git-flow branch (master, develop, feature/*, agent/*, release/*, hotfix/*); a detached branch is another long-lived branch" % x)
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess
