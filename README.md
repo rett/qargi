@@ -173,7 +173,7 @@ refusal changes nothing.
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
    Per task: `qargi review check RUN` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
-   `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi review prune [--yes]` to
+   `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
@@ -225,8 +225,7 @@ branches on origin, asked live) and the worktrees qargi made for them, with a to
 feature; a branch that only sits at the tip of develop or of a feature was never merged and is kept. It never deletes master,
 develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
-the reason. A remote branch is deleted as a lease on the tip the plan showed. `qargi review prune --yes` still deletes the
-merged `agent/*` branches of the local repository without a token.
+the reason. A remote branch is deleted as a lease on the tip the plan showed.
 
 ### The worktree root
 

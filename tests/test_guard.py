@@ -911,6 +911,32 @@ class Marshal(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_park_and_branch_prune_are_the_leads_with_wording_of_their_own(self):
+        """feature park moves the main checkout onto the parking branch and branch prune deletes branches, worktrees and (with --remote) branches on origin:
+        neither writes the marshal, so neither is refused with the marshal's sentence."""
+        park = ["qargi feature park", "qargi feature park --project proj", "/opt/q/bin/qargi feature park", "bin/qargi feature park", "env FOO=1 qargi feature park",
+                "sudo qargi feature park", "bash -c 'qargi feature park'", "eval 'qargi feature park'", "echo $(qargi feature park)", "true && qargi feature park",
+                "ls; qargi feature park", "qargi 'feature' 'park'", "bash lib/feature.sh park", "lib/feature.sh park", "nohup qargi feature park"]
+        prune = ["qargi branch prune", "qargi branch prune --remote", "qargi branch prune --plan abc --approved go", "/opt/q/bin/qargi branch prune", "bin/qargi branch prune",
+                 "env FOO=1 qargi branch prune", "sudo qargi branch prune", "bash -c 'qargi branch prune'", "eval 'qargi branch prune'", "echo $(qargi branch prune)",
+                 "true && qargi branch prune", "ls; qargi branch prune", "qargi 'branch' 'prune'", "bash lib/branch.sh prune", "lib/branch.sh prune", "python3 -I lib/branch.sh prune",
+                 "nohup qargi branch prune --remote", "qargi branch", "v=prune; qargi branch $v", "qargi branch $v", "xargs qargi branch prune"]
+        for c in park + prune:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        for c in park:
+            if "park" in c and "$(" not in c:
+                self.assertIn("qargi feature park resets the parking branch", self.bash(c).stderr, c)
+        for c in ("qargi branch prune", "bash lib/branch.sh prune", "qargi branch prune --remote"):
+            self.assertIn("qargi branch prune deletes merged branches", self.bash(c).stderr, c)
+        for c in ("git branch -a", "git branch --merged develop", "echo qargi branch prune", "grep -n 'branch prune' lib/commands.py", "ls lib/branch.sh", "cat lib/branch.sh",
+                  "qargi feature list", "qargi feature status f", "qargi feature merge f agent/x", "git log --grep 'feature park'"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_switch_directory_is_protected_like_features(self):
         """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
         m = os.path.join(self.state, "marshal")
@@ -1981,15 +2007,19 @@ class BashText(unittest.TestCase):
     )
 
 
-    # the same text, now refused: the quotes and the heredocs do not hide a verb
+    # the same text, still refused when a command of the line could run its text (a shell, make, a script), or the line holds a substitution, a comment or a
+    # quote that is never closed: the plain split reads it, and the sentence says what to do (text that only an echo, a cat, a commit message or a search holds is
+    # data: see OverRefusals)
     AS_TEXT = (
-        'git commit -m "Fix docs\n\nqargi packs seed now refuses X"',
-        'git commit -m "Docs; qargi packs seed is lead-only"',
-        "git commit -m 'Docs; qargi packs seed is lead-only'",
-        "echo 'run it; qargi upgrade later'",
-        "cat > notes.txt <<'E2'\nqargi provider enable x\nE2",
-        "cat <<'E' | tee notes.txt\nqargi upgrade\nE",
+        'git commit -m "Fix docs\n\nqargi packs seed now refuses X" && make',
+        'git commit -m "Docs; qargi packs seed is lead-only" && make',
+        "echo 'run it; qargi upgrade later' | sh",
+        "cat > notes.txt <<'E2'\nqargi provider enable x\nE2\nbash notes.txt",
+        "cat <<'E' | tee notes.txt\nqargi upgrade\nE\n./notes.txt",
         "echo '$(qargi upgrade)'",
+        'git commit -m "x; $(qargi upgrade)"',
+        "echo 'run it; qargi upgrade later' # a comment",
+        "echo 'run it; qargi upgrade later",
     )
 
     def verdicts(self, cmds):
@@ -2028,6 +2058,156 @@ class BashText(unittest.TestCase):
             self.assertEqual(r.returncode, 2, (c, r.stderr))
             self.assertIn("Agents never push", r.stderr)
         self.assertEqual(self.bash("grep -n 'ssh host' f").returncode, 0)               # one command whose program is grep
+
+
+class TrimmedExpansions(unittest.TestCase):
+    """${var%%:*}, ${var%/*} and ${var##*/} cut a part off the variable's own value: the * and the / belong to the pattern, so the word is no glob on the
+    signing key. A default (${X:-dir}) or a recursive reader still is."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_a_trimming_expansion_is_no_glob_on_the_key(self):
+        for c in ('f=a:b; echo "${f%%:*}"', "f=a:b; x=${f%%:*}; echo $x", 'echo "${f%%:*}" > out.txt', "d=${PWD%%/*}; ls $d", "echo ${f%:*} ${g##*/} ${h#*:}",
+                  "for f in a:b; do echo ${f%%:*}; done", "p=${f%/*}/other; cat $p", "n=${f##*/}; echo $n", 'echo "${f%%:*}=${f#*:}"'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_default_a_glob_or_a_recursive_reader_is_still_refused(self):
+        for c in ("cat ${X:-/nowhere}/marshal_x", "cat ${X:-dir}/marshal_*", "cat ${f%%:*}/marshal_*", "cat ${f%%:*}/${X:-marshal_*}", "cat ${X:-d}/${f%%:*}*",
+                  "cp -r ${f%%:*} out", "tar cf x.tar ${f%%:*}", "cat ${f%%:*}/marshal_?"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+
+class InPlaceScripts(unittest.TestCase):
+    """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_a_script_with_a_glob_a_variable_or_a_flag_is_no_file(self):
+        for c in ("sed -i -e 's/ -S[a-z]*//' -e 's/$X/y/' lib/x.sh", 'sed -i -e "s/$FLAGS -S/x/" lib/x.sh', "sed -i -f ./s*.sed lib/x.sh", "sed -ni -e 's/a/-S/p' lib/x.sh",
+                  "perl -pi -e 's/-S*/x/' lib/x.pl", "sed -i -e 's/git commit -S/git commit/' docs/a.md", "sed -i --expression 's/-S*/x/' lib/x.sh", "sed -i -es/-S*/x/ lib/x.sh",
+                  "sed -i -e 's/a/b/' -- lib/x.sh", "perl -pi -e 's/$x[0]/-S/' lib/x.pl"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_the_file_of_an_in_place_edit_is_still_judged(self):
+        for c in ("sed -i -e 's/a/b/' ~/.claude/settings.json", "sed -i -e 's/a/b/' -e 's/c/d/' ~/.bashrc", "sed -i --expression='s/a/b/' ~/.bashrc",
+                  "sed -i --expression 's/a/b/' ~/.bashrc", "sed -i -f s.sed ~/.bashrc", "perl -pi -e 's/a/b/' ~/.bashrc", "sed -ie 's/a/b/' ~/.bashrc",
+                  "sed -i -es/a/b/ ~/.bashrc", "sed -i -e 's/a/b/' $X", "sed -i -e 's/a/-S/' lib/*.sh ~/.bashrc", "sed -n -i s/a/b/ ~/.bashrc"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+
+
+class TextIsData(unittest.TestCase):
+    """Text inside a quoted argument or a heredoc body that mentions a verb is data when every command of the line only prints, writes or searches (echo,
+    printf, cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
+    text keeps the plain split: another program in the line, a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, an
+    assignment, a group, a keyword. Push, gh and ssh in text are refused as before."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    maxDiff = None
+
+    DATA = (
+        'git commit -m "Docs; qargi packs seed is lead-only"',
+        "git commit -m 'Docs; qargi packs seed is lead-only'",
+        'git commit -m "Fix docs\n\nqargi packs seed now refuses X"',
+        'git commit -am "a && qargi upgrade || b | c & d"',
+        "echo 'run it; qargi upgrade later'",
+        'echo "a && qargi upgrade | b"',
+        'echo "cost # 5; qargi upgrade"',
+        "echo 'a;b' 'c;d' > out.txt",
+        'echo 2>&1 "a; qargi upgrade"',
+        'echo "x; qargi upgrade" 2>&1 | tee out.log',
+        "grep -n 'a; qargi upgrade' f",
+        "git log --grep 'x; qargi upgrade' --oneline",
+        "cat > notes.txt <<'E2'\nqargi provider enable x\nE2",
+        "cat <<'E' | tee notes.txt\nqargi upgrade\nE",
+        "cat > msg.txt <<'E'\nqargi upgrade\nE\ngit commit -F msg.txt",
+        "git commit -F - <<'E'\nFix; qargi packs seed\n\nbody\nE",
+        "cat <<A <<B\nqargi upgrade\nA\nqargi packs seed\nB",
+        "cat <<-E\n\tqargi upgrade\n\tE",
+        "cat <<E\nqargi upgrade\nE",
+        "cat > a.txt <<'A'\nqargi upgrade\nA\ncat > b.txt <<'B'\nqargi packs seed\nB\ngit add a.txt b.txt",
+        "git commit -F - <<'E'\nqargi upgrade\nE\ngit log --oneline -1",
+    )
+    STILL = (
+        "git commit -m 'x; qargi upgrade' && make",
+        "git commit -m 'x; qargi upgrade' && python3 tests/x.py",
+        "echo 'x; qargi upgrade' | sh",
+        "echo 'x; qargi upgrade' | bash -s",
+        "echo 'x; qargi upgrade' | xargs sh -c",
+        "echo 'x; qargi upgrade' > s.sh; bash s.sh",
+        "echo 'x; qargi upgrade' > s.sh && ./s.sh",
+        "cat <<'E' | sh\nqargi upgrade\nE",
+        "cat > s.sh <<'E'\nqargi upgrade\nE\nsource s.sh",
+        "cat <<'E'\nx\nE\nqargi upgrade",
+        "cat <<'E' ; qargi upgrade\nx\nE",
+        "echo 'x'; qargi upgrade",
+        "echo 'x; y'; qargi upgrade",
+        "echo 'a;b' 'c;d'; qargi upgrade",
+        "echo hi # note\nqargi upgrade",
+        "echo 'x; qargi upgrade' # note",
+        "echo 'x; qargi upgrade",
+        'echo "x; qargi upgrade',
+        "cat <<'E'\nqargi upgrade",
+        "FOO=1 echo 'x; qargi upgrade'",
+        "if true; then echo 'x; qargi upgrade'; fi",
+        "{ echo 'x; qargi upgrade'; }",
+        "(echo 'x; qargi upgrade')",
+        "sudo echo 'x; qargi upgrade'",
+        "env echo 'x; qargi upgrade'",
+        "command echo 'x; qargi upgrade'",
+        "'echo' 'x; qargi upgrade'",
+        "git -c core.pager=x commit -m 'x; qargi upgrade'",
+        "git rebase --exec 'x; qargi upgrade' HEAD~1",
+        "echo 'x; qargi upgrade'; sh -c true",
+        "echo 'x; qargi upgrade' && eval true",
+        "echo hi > 'x; qargi upgrade'",
+        "echo 'x; $(qargi upgrade)'",
+        'echo "x; $(qargi upgrade)"',
+        "echo 'x; `qargi upgrade`'",
+        "echo $'x\\n'; qargi upgrade",
+        "echo 'x; qargi upgrade' \\\n; echo y",
+        "cat <<E\n$(qargi upgrade)\nE",
+        "echo '${X:-1}'; qargi upgrade",
+        "alias z='x; qargi upgrade'\nz",
+        "f() { echo 'x; qargi upgrade'; }; f",
+        "for i in 1; do echo 'x; qargi upgrade'; done",
+    )
+
+    def verdicts(self, cmds):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:
+            return list(zip(cmds, ex.map(self.bash, cmds)))
+
+    def test_text_that_only_an_echo_a_cat_a_commit_or_a_search_holds_is_data(self):
+        wrong = [(c, r.stderr[:100]) for c, r in self.verdicts(self.DATA) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text")
+
+    def test_text_in_a_line_that_could_run_it_is_read_by_the_plain_split(self):
+        wrong = [c for c, r in self.verdicts(self.STILL) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but the text could be run")
+
+    def test_a_real_verb_next_to_data_is_refused_and_so_is_a_real_write(self):
+        for c in ("echo 'a; b'; qargi upgrade", "git commit -m 'a; b' && qargi packs seed", "echo 'a; b' | qargi upgrade", "cat <<'E'\nbody\nE\nqargi upgrade",
+                  "echo 'a; b' > ~/.bashrc", "echo 'a; b' >> ~/.claude/settings.json", "cat <<'E' > ~/.bashrc\nx\nE", "git commit -m 'a; b' | tee ~/.bashrc",
+                  "echo 'a; b' > \"$HOME/.ssh/authorized_keys\""):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+
+    def test_push_gh_and_ssh_in_text_are_refused_as_before(self):
+        for c in ('git commit -m "x; git push"', "echo 'x; gh pr list'", "cat <<'E' > n.txt\ngit push origin main\nE", "grep -n 'a; ssh host' f"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("Agents never push", r.stderr, c)
+
+    def test_data_is_cut_in_linear_time(self):
+        for name, c in (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
+                        ("many heredocs", "".join("cat <<'E%d'\nqargi upgrade\nE%d\n" % (i, i) for i in range(3000))),
+                        ("a big heredoc", "cat <<'E'\n" + "qargi upgrade\n" * 15000 + "E"), ("many quotes", "echo " + "'a;b' " * 30000),
+                        ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000)):
+            t0 = time.perf_counter()
+            r = self.bash(c)
+            took = time.perf_counter() - t0
+            self.assertLess(took, 12.0, "%s: %.1f s" % (name, took))
+            self.assertIn(r.returncode, (0, 2), name)
 
 
 class _Judge:
@@ -2362,8 +2542,27 @@ class OldReading(unittest.TestCase):
         self.assertGreaterEqual(len(corpus), 300)
         refused_by_old = [c for c in corpus if old.judge(c)]
         self.assertGreaterEqual(len(refused_by_old), 300, "the corpus must be mostly commands the old guard refused")
-        lost = [c for c in refused_by_old if not new.judge(c)]
+        lost = [c for c in refused_by_old if not new.judge(c) and c not in self.data_texts()]
         self.assertEqual(lost, [], "the old guard refused these, the new one allows them")
+
+    # a verb in the text of an echo, a commit message or a heredoc is data now (TextIsData): the only commands the new guard lets through that the old refused
+    VERB_PAYLOADS = ("qargi upgrade", "true; qargi upgrade; true", "qargi packs seed")
+
+    def data_texts(self):
+        return [t.replace("@@", p) for t in self.TEXTS if "#" not in t and "\\" not in t for p in self.VERB_PAYLOADS]
+
+    def test_what_the_new_guard_lets_through_of_the_old_ones_is_only_text_of_an_inert_command(self):
+        lib = old_lib(self)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old, new = _Judge(lib, "guard_old", tmp), _Judge(LIBDIR, "guard_new", tmp)
+        data = [c for c in self.data_texts() if old.judge(c)]
+        self.assertGreaterEqual(len(data), 5)
+        self.assertEqual([c for c in data if new.judge(c)], [], "refused, but only text")
+        pushes = [t.replace("@@", p) for t in self.TEXTS for p in ("git push", "true; git push origin x; true")]
+        pushes = [c for c in pushes if old.judge(c)]                 # git push in the same text is refused as before
+        self.assertGreaterEqual(len(pushes), 5)
+        self.assertEqual([c for c in pushes if not new.judge(c)], [])
 
     def test_the_hardening_commands_the_old_guard_missed_are_refused_now(self):
         lib = old_lib(self)

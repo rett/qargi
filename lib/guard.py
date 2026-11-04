@@ -89,6 +89,9 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
     allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
     member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
+    `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
+    and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
+    lead's too, and are refused with wording of their own;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -123,8 +126,13 @@ names the key by its full path, a glob that expands to a protected path (for a w
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
-or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
-refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
+or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
+refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
+a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, printf, cat, tee, grep or git commit|log|status|diff|show|add
+(they print, write or search the text and run nothing from it), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
+`git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
+function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or the target of a
+redirection in quotes keeps the plain split. A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
@@ -185,7 +193,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
-           "agent.sh", "team.sh")
+           "agent.sh", "team.sh", "branch.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -638,6 +646,120 @@ def segments(command):
     return tuple(p.text for _, ps in passes(command) for p in ps)
 
 
+INERT = {"echo", "printf", "cat", "tee", "grep", "egrep", "fgrep"}   # programs that do nothing with the text of an argument or of their input but print, write or search it
+INERT_GIT = {"commit", "log", "status", "diff", "show", "add"}       # git subcommands that are in the same case (git commit -m TEXT, git commit -F -)
+MASK_BAIL = re.compile(r"[\\`\0\r\x0b\x0c]|\$[\[\x27\"({]|[<>]\(")  # a backslash, a substitution, $'..', $"..", ${..}, $[..], a control character: not read here
+MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.""", re.S)
+HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
+MASK_SEPARATORS = re.compile(r"[;|&\n]")
+
+
+def inert_command(words):
+    """True when the command whose words are given does nothing with the text of its arguments or its input (see mask_data)."""
+    return bool(words) and (words[0] in INERT or (words[0] == "git" and len(words) > 1 and words[1] in INERT_GIT))   # a quoted word carries \x01: it is no name here
+
+
+def mask_data(command):
+    """The command with its data made harmless to the plain split, or the command itself. The split (segments) cuts a line at every ; | & and newline,
+    inside quotes and heredocs too, so `git commit -m "Docs; qargi packs seed"` and a heredoc that a commit message is written from were refused as the
+    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, printf, cat, tee, grep, git commit|log|
+    status|diff|show|add), a quoted string of it cannot run anything, and a heredoc body is the input of such a command: the separators in the quoted
+    strings become blanks and the heredoc bodies are cut out (the delimiter line stays), and nothing else changes, so a redirection or a path in the
+    line is still judged. Any other command in the line (a shell, make, find, a script, a function, an assignment, a keyword, a group), a comment, a
+    backslash, a substitution, $'..', ${..}, a quote or heredoc that is never closed, a redirection's own target: the command is returned as it is, and
+    the plain split reads all of it. Used for the verbs that change a skill or the marshal, not for push/gh/ssh (blocked() reads the whole text)."""
+    if not QUOTED.search(command) or MASK_BAIL.search(command):
+        return command
+    n, pos, count = len(command), 0, 0
+    words, cur, spans, pending = [], "", [], []
+    quotes = []                                                 # (start, end) of the quoted strings that hold a separator
+
+    def end_word():
+        nonlocal cur
+        if cur:
+            words.append(cur)
+            cur = ""
+
+    while pos < n:
+        count += 1
+        if not count & 255:
+            tick()
+        t = MASK_TOKEN.match(command, pos).group()
+        end = pos + len(t)
+        if t in ("'", '"'):
+            j = command.find(t, end)
+            if j < 0:
+                return command                              # never closed
+            target = bool(re.match(r"\d*[<>]", cur)) or (not cur and bool(words) and bool(re.fullmatch(r"\d*[<>]+[|&]?", words[-1])))
+            if not target and MASK_SEPARATORS.search(command, end, j):
+                quotes.append((end, j))
+            cur += "\x01"
+            end = j + 1
+        elif t == "<<<":
+            end_word()
+            words.append(t)
+        elif t in ("<<", "<<-"):
+            end_word()
+            m = HEREDOC_WORD.match(command, end)
+            if not m:
+                return command
+            pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
+            end = m.end()
+        elif t == "(" or t == ")":
+            return command
+        elif t == "#":
+            if not cur:
+                return command                              # a comment
+            cur += t
+        elif t == "&" and (command[pos - 1:pos] in ("<", ">") or command[end:end + 1] == ">"):
+            cur += t                                        # 2>&1, <&3, &>file: a redirection, not a separator
+        elif t == "|" and command[pos - 1:pos] == ">":
+            cur += t                                        # >| file
+        elif t in (";", "|", "&", "\n"):
+            end_word()
+            if words and not inert_command(words):
+                return command
+            words = []
+            if t == "\n" and pending:
+                s = end
+                for delim, tabs in pending:
+                    body = s
+                    while True:
+                        nl = command.find("\n", s)
+                        line = command[s:n if nl < 0 else nl]
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                        if nl < 0:
+                            return command                  # the delimiter never comes
+                        s = nl + 1
+                        count += 1
+                        if not count & 255:
+                            tick()
+                    spans.append((body, s))
+                    s = n if nl < 0 else nl + 1
+                pending = []
+                end = s
+        elif t in (" ", "\t"):
+            end_word()
+        else:
+            cur += t
+        pos = end
+    end_word()
+    if pending or (words and not inert_command(words)):
+        return command
+    cuts = sorted([(a, b, False) for a, b in quotes] + [(a, b, True) for a, b in spans])
+    if not cuts:
+        return command
+    out, last = [], 0
+    for a, b, body in cuts:
+        out.append(command[last:a])
+        if not body:
+            out.append(MASK_SEPARATORS.sub(" ", command[a:b]))
+        last = b
+    out.append(command[last:])
+    return "".join(out)
+
+
 UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)
 MAX_DIRS = 24                                                # directories the shell may be in at once, at most: a cd that may or may not happen doubles them
 CD_FLAGS = ("-P", "-L", "-e", "-@", "--")
@@ -986,6 +1108,19 @@ def option_value(rest, k, names):
     return None
 
 
+def script_values_off(rest):
+    """rest without the words that -e, -f, --expression and --file hand a sed or perl script (or the file of one): they are no files to change, whatever
+    characters the script holds (a glob, a $, a -S)."""
+    out, skip = [], False
+    for t in rest:
+        if skip:
+            skip = False
+            continue
+        skip = t in ("--expression", "--file") or bool(re.match(r"^-[A-Za-z]*[ef]$", t))
+        out.append(t)
+    return out
+
+
 def write_targets(toks, i):
     """(what, destination) of everything a segment writes, by its redirections and its program (git included). A destination of "" is a redirection with no
     target left in the segment. Sources that a command removes (mv, rm) are targets too."""
@@ -1019,8 +1154,10 @@ def write_targets(toks, i):
         elif prog in ("awk", "gawk", "mawk") and any(t in ("inplace", "-iinplace", "--include=inplace") for t in rest):    # gawk -i inplace edits its files
             targets += [("awk -i inplace", a) for a in (args if any(t in ("-f", "--file") for t in rest) else args[1:])]
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
-            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
-            targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
+            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) or t.startswith(("--expression=", "--file="))
+                           or re.match(r"^-[A-Za-z]*[ef]\S", t) for t in rest)        # a script given by an option: every operand is a file (-es/a/b/ and -ifoo count too: more files, never fewer)
+            files = operands(script_values_off(rest), any(os.path.basename(t) == "xargs" for t in toks[:i]))     # sed -i -e SCRIPT FILE: the script is no file
+            targets += [(prog + " -i", a) for a in (files if scripted else args[1:])]
         elif prog in TARS and tar_extracts(rest):
             targets += [("tar", d) for d in tar_dirs(rest)] or [("tar", ".")]          # an archive is extracted below -C DIR, else below where the shell is
         elif prog == "unzip" and not set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t))) & set("lptZvcz"):
@@ -1738,6 +1875,9 @@ def brace_expand(word, limit=MAX_BRACE):
     return tuple(out)
 
 
+TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${NAME%%PATTERN}, ${NAME#PATTERN}, ${NAME##PATTERN}: a part of the variable's own value
+
+
 @functools.cache                                     # the files do not change while one command is judged
 def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
@@ -1751,8 +1891,10 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
-            if "${" in b and (bool(recursive) or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
-                return b                                      # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
+            if "${" in b:
+                base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
+                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", base):
+                    return b                                  # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
@@ -1874,7 +2016,7 @@ def skill_refusal(call):
         return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and below_key_dir(full))) else None
     if call.kind != "shell":
         return None
-    return bash_skill_refusal(call.command, call.cwd, 0)
+    return bash_skill_refusal(mask_data(call.command), call.cwd, 0)
 
 
 def names_lead(t):
@@ -2061,6 +2203,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["marshal"] + words
     if name == "feature.sh":
         words = ["feature"] + words
+    if name == "branch.sh":
+        words = ["branch"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
@@ -2093,6 +2237,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "branch":
+        return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
+                         "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
     if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
         return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
@@ -2122,6 +2269,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
+    if area == "feature" and verb == "park":
+        return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
+                         "report in your task output that the main checkout needs parking")
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
@@ -2483,7 +2633,8 @@ def judge(call):
 
 
 QUOTED = re.compile(r"[\"']|<<")
-TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too: if the verb is only text (a commit message, a note), "
+TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too (not when every command of the line is echo, printf, cat, tee, grep "
+             "or git commit|log|status|diff|show|add, with no comment, backslash or substitution): if the verb is only text (a commit message, a note), "
              "write the text to a file with your file tool and commit with git commit -F FILE.")
 
 
