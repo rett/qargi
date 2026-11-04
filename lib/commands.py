@@ -1083,7 +1083,8 @@ TOPICS = {
         "Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home "
         "directory is not. It refuses git push, git remote changes, git -c alias.*, gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
-        "on the command line. Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
+        "on the command line, unless every command is echo, printf, cat, tee, grep or git commit and its kin (then text is data). "
+        "Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
         "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through "
         "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
