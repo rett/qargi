@@ -206,6 +206,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A skill or tool pack with a file over 1 MB is refused by its review (`larger than 1000000 bytes`, as for a provider pack). The check skipped such a file unread and only the 2 MB total applied, so a 1-2 MB binary passed. The content hash of a skill pack also covers a link, a pipe, a socket, an empty directory and a file with a second name (`find -type f` saw none of them, so an approved pack could gain one with the hash unchanged); a pack without any of them hashes as before, so no approval is lost.
 - `qargi local prepare` refuses a `--repo-url` that carries a user name or a password (`https://user@host/...`): the URL is recorded and put in commands, and the substitution of the token in front of the host made `https://x-access-token@user@host`. The token goes in `--credential-file`.
 - `qargi project link` (memory) compares the real paths of the project's memory directory and of the memory root, so a link below the root that leads outside it is refused as outside (the paths were compared as written), and a project whose tiers resolve without a project tier is refused with a message instead of a `StopIteration` traceback.
+- `qargi project set` of `release.*`, `test_command` or `env.*` is refused to a member, as `models.*` is: the lead later runs those commands
+  (the preflight, `release verify`, the suite), so a member that set them would run its own command with the lead's rights.
 
 ## [0.2.0] - 2026-11-02
 
