@@ -1024,12 +1024,15 @@ TOPICS = {
         "what the member returned is the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
-        "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
+        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (check records results, adapter-run runs code; the other "
+        "provider verbs read); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
         "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
         "directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. "
         "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
+        "A refused verb in quotes, a comment or a heredoc that only a file or message receives is text and allowed; one in a substitution, after then or do, "
+        "or in a script that a shell, eval, xargs or an interpreter reads (by heredoc or pipe) is refused. Text it cannot read is read strictly.",
         "The read-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.",
         "Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.",
         "A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it."]),
