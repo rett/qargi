@@ -190,13 +190,13 @@ verb=${1:-}; shift || true
 POS=() ROLES='' MODEL='' EFFORT='' PROJ='' JSON='' PROFILE='' SURFACE='' OPTIN=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --roles) ROLES=$2; shift 2;;
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
-    --project) PROJ=$2; shift 2;;
-    --profile) PROFILE=$2; shift 2;;
+    --roles) need_val "$1" $#; ROLES=$2; shift 2;;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;;
+    --profile) need_val "$1" $#; PROFILE=$2; shift 2;;
     --json) JSON=1; shift;;
-    --surface) SURFACE=${2:-}; shift 2;;
+    --surface) need_val "$1" $#; SURFACE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
