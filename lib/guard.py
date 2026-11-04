@@ -947,17 +947,15 @@ def write_targets(toks, i):
         elif prog == "uniq" and len(args) > 1:
             targets.append((prog, args[1]))                               # uniq INPUT OUTPUT
         elif prog == "git":
-            k = 0
-            while k < len(rest) and rest[k].startswith("-"):
-                if rest[k] == "-C" and k + 1 < len(rest):
-                    gitdir = rest[k + 1]; k += 2
-                elif rest[k] in ("-c", "--git-dir", "--work-tree"):
-                    k += 2
-                else:
-                    k += 1
+            opts, k = git_global(rest)
+            gitdir = next((v for n, v in reversed(opts) if n == "-C" and v), None)
+            trees = [v for n, v in opts if n == "--work-tree" and v] + [t.split("=", 1)[1] for t in toks[:i] if t.startswith("GIT_WORK_TREE=")]
             sub = rest[k] if k < len(rest) else ""
             if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                 targets.append(("git " + sub, gitdir or "."))
+                targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
+            if sub == "config":
+                targets += git_config_targets(rest[k + 1:])
             places = [t for t in rest[k + 1:] if not t.startswith("-")]
             if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
                 targets.append(("git clone", places[-1]))
@@ -970,6 +968,29 @@ def write_targets(toks, i):
             if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
                 targets.append(("git bundle create", rest[k + 2]))
     return targets
+
+
+CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool", "--list", "-l", "--show-origin", "--show-scope", "--name-only"}   # git config options that only read
+
+
+def git_config_targets(args):
+    """What `git config ARGS` writes outside the repository: the lead's own configuration for --global and --system (~/.gitconfig, which git reads for every
+    repository of the lead), and the file --file|-f names. A read (--get, --list ..., or a key alone) writes nothing."""
+    if any(a in CONFIG_READS for a in args):
+        return []
+    names, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in ("--file", "-f", "--blob", "-t", "--type", "--default"):
+            skip = True
+        elif not a.startswith("-"):
+            names.append(a)
+    files = [v for v in (option_value(args, n, ("--file", "-f")) for n in range(len(args))) if v is not None]
+    scope = next((a for a in args if a in ("--global", "--system")), None)
+    if len(names) < 2 and not any(a in ("--add", "--unset", "--unset-all", "--replace-all", "--edit", "-e", "--rename-section", "--remove-section") for a in args):
+        return []                                                  # `git config --global user.name`: a key alone is a read
+    return ([("git config " + scope, "~/.gitconfig")] if scope else []) + [("git config --file", f) for f in files]
 
 
 def cluster_value(rest, k, letter):
@@ -1354,7 +1375,16 @@ def _protected_roots():
     roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
+    roots.update(lead_roots(home))
     return sorted(os.path.realpath(r) for r in roots)
+
+
+def lead_roots(home=None):
+    """The lead's own git configuration: ~/.gitconfig, ~/.config/git (also below XDG_CONFIG_HOME) and ~/.git. Git reads them for every repository of the lead, and an
+    alias, a hook path or a program set there runs in the lead's own commands (real paths, so a link to them is followed)."""
+    home = home or os.path.expanduser("~")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    return {os.path.realpath(r) for r in (os.path.join(home, ".gitconfig"), os.path.join(home, ".config", "git"), os.path.join(xdg, "git"), os.path.join(home, ".git"))}
 
 
 def render_roots(P=None, home=None):
@@ -1461,6 +1491,9 @@ def refusal_text(what, dest, root):
                              % (what, dest, root, MARSHAL_NOTE))
     if root in switch_roots():
         return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in lead_roots():
+        return OwnReason("%s on %s would change %s, the lead's own git configuration (git reads it for every repository, so an alias or a hook set there runs in the lead's commands); "
+                         "a member does not change it, propose the change in your report" % (what, dest, root))
     if root in memory_roots():
         return MemoryReason("%s on %s would change %s, a memory tier; %s" % (what, dest, root, MEMORY_NOTE))
     if root in render_roots():
@@ -1937,6 +1970,11 @@ def protected_write(toks, i, here):
             if why:
                 return why
             full = resolve(here, one)
+            if what == "git init" and full == real_dir(os.path.expanduser("~")):
+                return OwnReason("git init in the home directory makes it a repository whose .git/config and hooks the lead's own commands would read; a member does not do it")
+            if what == "git config --file" and not in_clone(full):
+                return OwnReason("git config --file %s writes a git configuration file outside the clone (a path in GIT_CONFIG_GLOBAL or an include can make git read it); "
+                                 "a member changes the configuration of its clone only" % dest)
             root = protected(full, what.split()[0] in DESTRUCTIVE)
             if root and what == "mv" and protected(full) is None and fits_beside(move_places(rest), one, full, here, lambda p: protected(p, True)):
                 continue                                     # only a directory above the protected location, and what is moved into it neither is, holds nor meets one

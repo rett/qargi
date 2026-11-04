@@ -3160,6 +3160,28 @@ class FifthReview(unittest.TestCase):
         self.assertEqual(self.not_allowed(ok), [])
         self.assertEqual(self.not_refused(["git push", "git -C sub push", "git --no-pager -c user.name=t push", "git -C push push"]), [])
 
+    # --- G4: --work-tree and GIT_WORK_TREE name where the tree is changed, as -C does
+    def test_a_work_tree_option_is_the_target_of_a_git_command_that_changes_the_tree(self):
+        s = os.path.dirname(self.skill)
+        bad = ["git --work-tree=%s checkout -- ." % s, "git --work-tree %s checkout -- ." % s, "GIT_WORK_TREE=%s git checkout -- ." % s, "env GIT_WORK_TREE=%s git reset --hard" % s,
+               "git -C . --work-tree=%s restore ." % s, "git --git-dir=.git --work-tree=%s clean -fdx" % s, "git --work-tree=%s/.. checkout -- ." % s]
+        self.assertEqual(self.not_refused(bad), [])
+        self.assertEqual(self.not_allowed(["git --work-tree=. checkout -- .", "git --work-tree=%s status" % s, "git -C %s status" % self.clone]), [])
+
+    # --- G5: the lead's own git configuration
+    def test_the_leads_own_git_configuration_is_not_written_by_any_member(self):
+        h = os.path.join(self.t, "home")
+        bad = ["echo x > ~/.gitconfig", "echo x >> %s/.gitconfig" % h, "echo x > ~/.config/git/config", "cp a ~/.config/git/ignore", "tee ~/.gitconfig < /dev/null", "rm ~/.gitconfig",
+               "git config --global user.name x", "git config --global alias.p x", "git config --system core.editor x", "git config --global --unset alias.p",
+               "git config --global --add include.path /x", "git config --global --edit", "git config --file /tmp/x alias.p x", "git config -f %s/x alias.p x" % self.t,
+               "git config --file=%s/x alias.p x" % self.out, "git -C ~ init", "git init ~", "git init %s" % h, "mkdir ~/.git", "echo x > ~/.git/config"]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, None, cls), [], cls)
+        self.assertEqual(self.not_allowed(["cat ~/.gitconfig", "git config --global user.name", "git config --global --get user.name", "git config --global --list", "git config --list",
+                                           "git config --file .gitmodules submodule.a.url u", "git init sub2", "git config user.name x", "grep -n alias ~/.config/git/config"]), [])
+        self.assertEqual(self.call("Write", {"file_path": "~/.gitconfig"}).returncode, 2)
+        self.assertEqual(self.call("Edit", {"file_path": h + "/.config/git/config"}).returncode, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
