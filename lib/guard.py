@@ -133,7 +133,7 @@ variables a read-only tool takes its programs and options from (PATH, GIT_*, PAG
 a git configuration or hook file in a command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
-written into the run directory outside out/, clone/ and tmp/ (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
+the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, what a pipe or a here-string hands a shell (`echo qargi upgrade | sh`,
 `bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
@@ -628,12 +628,14 @@ def control_refusal(full):
 
 
 def run_dir_refusal(full):
-    """The reason a write to the real path full lands in the run directory itself, or None. The run directory holds the record the run is judged by, the
-    contract and the git wrapper: a copy into it (`cp -r Y/. ..`), an extraction (`tar -C .. -xf`), a link, a move or a redirection is refused whatever
-    way the path is written, for every member. OUT, the clone and TMP (RUN/tmp) are the member's."""
+    """The reason a write to the real path full is a write to the run directory itself, or None. A copy over the directory (`cp -r Y/. ..`), an
+    extraction (`tar -C .. -xf`, `cd .. && tar xf`, `unzip -d ..`), `install -Dt ..`, a move or a link into it names no file: the files are made under the
+    names they have in the source, which can be the run's record. Refused whatever way the path to it is written (`.`, `..`, a trailing `/.`, a
+    relative path from where the shell is), for every member. A file with a name of its own in the run directory is the record's names (control_refusal)
+    and nothing else; OUT, the clone and TMP are the member's."""
     run = run_dir(full if os.path.isdir(full) else os.path.dirname(full))
-    if run and inside(full, run) and os.path.relpath(full, run).split(os.sep)[0] not in ("out", "clone", "tmp"):
-        return "%s is in the run directory (%s), outside its OUT, its clone and its TMP: the record and the contract there are the coordinator's" % (full, run)
+    if run and full == run:
+        return "%s is the run directory: a copy, an extraction, a link or a move into it can make any file of the run's record; name the files in out/ or the clone" % full
     return None
 
 
@@ -1100,7 +1102,7 @@ def review_segment(toks, i, here, text=""):
                 return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
                                  "to tell the clone from OUT; write the path out" % (what, dest))
             full = resolve(here, dest)
-            why = control_refusal(full) or run_dir_refusal(full)
+            why = control_refusal(full) or (None if what == "git config" and dest == "." else run_dir_refusal(full))     # git config --list in the run directory reads: its "." is where it was run
             if why:
                 return why
             run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)

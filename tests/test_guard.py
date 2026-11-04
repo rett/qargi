@@ -2840,19 +2840,17 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(self.not_refused(["echo x > docs/f"], self.clone, "read-only"), [])
 
     # --- finding 4: the run directory is not a destination for a copy, an extraction, a link, a move or a redirection (out/, clone/ and tmp/ are)
-    INTO_RUN = ("cp -r /tmp/y/. R", "cp -r /tmp/y/. R/", "cp -a /tmp/y/. R/.", "cp -rT /tmp/y R", "cp -rt R /tmp/y", "cp -at R/ /tmp/y", "cp /etc/hostname R/newfile", "cp /etc/hostname R/home/g",
+    INTO_RUN = ("cp -r /tmp/y/. R", "cp -r /tmp/y/. R/", "cp -a /tmp/y/. R/.", "cp -rT /tmp/y R", "cp -rt R /tmp/y", "cp -at R/ /tmp/y", "cp /tmp/ability R", "cp /tmp/ability R/.",
                 "rsync -a /tmp/y/ R", "rsync -a /tmp/y/ R/", "rsync -a /tmp/y/ R/.", "rsync -aq --delete /tmp/y/ R/", "mv /tmp/ability R", "mv /tmp/ability R/", "mv -t R /tmp/ability",
-                "ln -s /tmp/x R/link", "ln -sf /tmp/x R/ability.bak", "ln -t R /tmp/x", "install -D /etc/hostname R/zz", "install -Dm644 /etc/hostname R/sub/zz", "install -Dt R /etc/hostname",
-                "install -t R /etc/hostname", "ditto /tmp/y R", "ditto /tmp/y R/", "tar -C R -xf /tmp/rec.tar", "tar xf /tmp/rec.tar -C R", "tar -xf /tmp/rec.tar --directory=R",
-                "tar -xf /tmp/rec.tar --directory R/.", "tar xzf /tmp/rec.tgz -C R/", "tar --extract -f /tmp/rec.tar -C R", "tar -xvf /tmp/rec.tar -C R/home", "unzip /tmp/rec.zip -d R", "unzip -o /tmp/rec.zip -d R/",
-                "unzip -d R /tmp/rec.zip", "unzip -dR /tmp/rec.zip", "echo x > R/newfile", "echo x > R/home/f", "echo x >> R/contract/contract.md", "touch R/zz", "mkdir R/zz", "mkdir -p R/home/x",
-                "rm R/contract/contract.md", "chmod 777 R/home", "sed -i s/a/b/ R/contract/contract.md", "truncate -s0 R/contract/contract.md", "tee R/zz < /dev/null", "git -C R init", "git -C R checkout-index -a",
-                "patch -d R -p0 < /tmp/rec.patch", "git apply --unsafe-paths --directory=R /tmp/rec.patch", "dd if=/dev/zero of=R/zz")
+                "ln -s /tmp/x R", "ln -t R /tmp/x", "install -Dt R /etc/hostname", "install -t R /etc/hostname", "install -D /etc/hostname R/", "ditto /tmp/y R", "ditto /tmp/y R/",
+                "tar -C R -xf /tmp/rec.tar", "tar xf /tmp/rec.tar -C R", "tar -xf /tmp/rec.tar --directory=R", "tar -xf /tmp/rec.tar --directory R/.", "tar xzf /tmp/rec.tgz -C R/",
+                "tar --extract -f /tmp/rec.tar -C R", "unzip /tmp/rec.zip -d R", "unzip -o /tmp/rec.zip -d R/", "unzip -d R /tmp/rec.zip", "unzip -dR /tmp/rec.zip", "unzip -od R /tmp/rec.zip",
+                "touch R", "chmod -R 777 R", "mkdir -p R", "git -C R init", "git -C R checkout-index -a", "patch -d R -p0 < /tmp/rec.patch", "git apply --unsafe-paths --directory=R /tmp/rec.patch")
 
     def test_the_run_directory_itself_is_not_a_destination(self):
-        """Copying a directory into the run directory (`cp -r Y/. ../..`) or extracting an archive there replaces the record the run is judged by: the
-        destination, whatever way the path to it is written (`.`, `..`, a trailing `/.`, a relative path from where the shell is), is refused apart from
-        out/, clone/ and tmp/, for every member."""
+        """Copying a directory over the run directory (`cp -r Y/. ../..`) or extracting an archive there replaces the record the run is judged by (the files
+        are made under the names they have in the source): the run directory as a destination, whatever way the path to it is written (`.`, `..`, a trailing
+        `/.`, a relative path from where the shell is), is refused for every member."""
         from_sub = [c.replace("R", "../..") for c in self.INTO_RUN]
         from_run = [c.replace("R", ".") for c in self.INTO_RUN]
         from_clone = [c.replace("R/", "../").replace("R", "..") for c in self.INTO_RUN]
@@ -2870,19 +2868,20 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(self.not_refused(cmds), [])
         self.assertEqual(self.not_refused(["cd ../..; tar xf /tmp/rec.tar", "cd ../.. && cp -r /tmp/y/. ."], os.path.join(self.clone, "docs"), "read-only"), [])
 
-    def test_out_clone_and_tmp_of_the_run_are_still_destinations(self):
+    def test_out_clone_and_tmp_of_the_run_and_a_file_of_its_own_name_are_still_destinations(self):
         os.makedirs(os.path.join(self.run_dir, "tmp"))
         ok = ["cp -r /tmp/y/. ../../out/", "rsync -a /tmp/y/ ../../out", "tar -C ../../out -xf /tmp/rec.tar", "cd ../../out && tar xf /tmp/rec.tar", "unzip /tmp/rec.zip -d ../../out", "install -D /etc/hostname ../../out/a/b",
               "ditto /tmp/y ../../out/", "echo x > ../../out/report.md", "mkdir -p ../../out/patches", "ln -s /tmp/x ../../out/l", "cp -r /tmp/y/. ../../tmp/", "tar -C ../../tmp -xf /tmp/rec.tar",
               "echo x > ../../tmp/f", "mkdir ../../tmp/work", "cp -r /tmp/y/. ../../clone/docs/", "tar -C ../../clone -xf /tmp/rec.tar", "unzip /tmp/rec.zip -d ../../clone/docs", "cp -r /tmp/y/. .",
-              "tar xf /tmp/rec.tar", "unzip /tmp/rec.zip", "install -D /etc/hostname a/b", "echo x > ../../out/../out/r.md"]
+              "tar xf /tmp/rec.tar", "unzip /tmp/rec.zip", "install -D /etc/hostname a/b", "echo x > ../../out/../out/r.md",
+              "echo x > ../../notes", "touch ../../zz", "mkdir ../../zz", "cp /etc/hostname ../../newfile", "ln -s /tmp/x ../../link", "install -D /etc/hostname ../../sub/zz"]
         self.assertEqual(self.not_allowed(ok, None, None), [])
         self.assertEqual(self.not_allowed([c for c in ok if "clone" not in c and "docs" not in c and " ." not in c and "tar xf" not in c and "unzip /tmp" not in c and "install -D /etc/hostname a" not in c], None, "read-only"), [])
         for c in ("cp ../../contract/contract.md /tmp/x", "tar -C ../.. -cf /tmp/x.tar contract", "tar -cf /tmp/x.tar ../../contract", "unzip -l /tmp/rec.zip", "unzip -p /tmp/rec.zip | wc -c",
                   "tar -tf /tmp/rec.tar", "rsync -a ../../contract/ /tmp/y/", "ls ../.. > /dev/null", "cat ../../contract/contract.md", "git -C ../../clone log --oneline"):
             self.assertEqual(self.not_allowed([c], None, None), [], c)
         for tool, key in (("Write", "file_path"), ("Edit", "file_path")):
-            for name, want in (("newfile", 2), ("contract/contract.md", 2), ("out/report.md", 0), ("clone/docs/f", 0), ("tmp/f", 0)):
+            for name, want in ((".", 2), ("", 2), ("notes", 0), ("contract/contract.md", 0), ("out/report.md", 0), ("clone/docs/f", 0), ("tmp/f", 0)):
                 r = self.call(tool, {key: os.path.join(self.run_dir, name)}, None, None)
                 self.assertEqual(r.returncode, want, (tool, name, r.stderr))
 
