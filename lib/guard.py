@@ -128,7 +128,8 @@ install rsync ditto (every operand of mv: the sources are removed; -t DIR, also 
 shell is), curl and wget output, patch (where the shell is, or -d DIR), git apply --directory, clone, init and worktree add DIR, dd of=, sort -o|--output, uniq INPUT OUTPUT, sed|perl -i, git --output=FILE, format-patch -o, archive -o, bundle create, and the
 git subcommands that change the tree or the repository. A target the shell would expand and the guard cannot read (a glob or a variable, a command
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
-its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. Under the read-only class the
+its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
+(/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
 variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
 a git configuration or hook file in a command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
@@ -1123,7 +1124,7 @@ def review_segment(toks, i, here, text=""):
                 return OwnReason(NO_RUN)
             if what.split()[0] in DESTRUCTIVE:
                 why = run_refusal(full, here)
-                if why:
+                if why and not (what == "mv" and fits_beside(move_places(toks[i + 1:]), dest, full, here, lambda p: run_refusal(p, here))):
                     return why
             if run and reading(run) and inside(full, os.path.join(run, "clone")):
                 return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
@@ -1138,7 +1139,7 @@ def review_segment(toks, i, here, text=""):
                 return why
             if prog in DESTRUCTIVE | {"find"}:
                 why = run_refusal(resolve(here, a), here)
-                if why:
+                if why and not (prog == "mv" and fits_beside(move_places(rest), a, resolve(here, a), here, lambda p: run_refusal(p, here))):
                     return why
     return None
 
@@ -1812,10 +1813,45 @@ def protected_write(toks, i, here):
             why = glob_root(what, one, here)
             if why:
                 return why
-            root = protected(resolve(here, one), what.split()[0] in DESTRUCTIVE)
+            full = resolve(here, one)
+            root = protected(full, what.split()[0] in DESTRUCTIVE)
+            if root and what == "mv" and protected(full) is None and fits_beside(move_places(rest), one, full, here, lambda p: protected(p, True)):
+                continue                                     # only a directory above the protected location, and what is moved into it neither is, holds nor meets one
             if root:
                 return refusal_text(what, dest, root)
     return None
+
+
+def move_places(rest):
+    """(directories, sources) of an mv command: the words of -t DIR, --target-directory=DIR (the sources are then every other operand), else the last operand
+    (the sources are the rest); ([], []) for -T, which makes the source the destination itself."""
+    dirs, drop = [], set()
+    if any(t == "--no-target-directory" or re.match(r"^-[A-Za-z]*T", t) for t in rest):
+        return [], []                                            # -T renames the source to DIR itself: nothing is "moved into" it
+    for k, t in enumerate(rest):
+        v = option_value(rest, k, ("--target-directory", "-t"))
+        v = cluster_value(rest, k, "t") if v is None else v
+        if v is not None:
+            dirs.append(v)
+            m = re.match(r"^-[A-Za-z0-9]*?t(.*)$", t)
+            if k + 1 < len(rest) and (t == "--target-directory" or m and not m.group(1)):
+                drop.add(k + 1)                                  # the value is the next word, not an operand to move
+    args = operands([t for k, t in enumerate(rest) if k not in drop])
+    return (dirs, args) if dirs else (args[-1:], args[:-1])
+
+
+def fits_beside(moves, one, full, here, taken):
+    """True when the word `one` (the real path full), which is above a place the guard keeps (a protected location, the run directory), is only the directory an
+    mv moves things into: it is a directory and no source is, holds or takes the place of that place (taken(path) says so), nor has a name the guard cannot
+    read (it could be the child). Moving a file into /tmp does not change /tmp/x/conf/credentials; moving a directory over it, or a file named like it, does."""
+    dirs, sources = moves
+    if not sources or not os.path.isdir(full) or not any(one in brace_expand(d) for d in dirs):
+        return False
+    for s in sources:
+        name = os.path.basename(s.rstrip("/"))
+        if name in ("", ".", "..") or re.search(r"[$`*?\[{~\\]", name) or taken(resolve(here, s)) or taken(os.path.join(full, name)):
+            return False
+    return True
 
 
 def tar_targets(rest):
