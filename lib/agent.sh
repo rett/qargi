@@ -21,7 +21,7 @@
 #   agent.sh remove NAME [--project P]
 #   agent.sh for ROLE [--profile P] [--project P] [--json]     the member of the project, model and effort for ROLE under a profile: dispatch spawns it
 #   agent.sh for ROLE [--profile P] --surface cloud --project P [--opt-in] [--json]     the same for the cloud: the registered instance
-#                                                              (<project>-worker or -reviewer, else the legacy <project>-ROLE), its model id and effort
+#                                                              (<project>-worker or -reviewer), its model id and effort
 . "$(dirname "$0")/lib.sh"
 
 root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -569,9 +569,9 @@ cloud_inst() { # name -> the registry record when the name is a registered cloud
 }
 
 resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFORT PROFILE (or --json), or the reason on stderr (exit 1, or 2 for a refusal)
-  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls row model alias effort req out rc ovm=no ove=yes
-  local inst='' legacy=true brec='' rec rm n why='' ov alt
-  [ -n "$proj" ] || die "--surface cloud needs --project (the instances are named <project>-<role>)"
+  local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls model effort req out rc ovm=no ove=yes
+  local inst='' why='' ov
+  [ -n "$proj" ] || die "--surface cloud needs --project (the bases are named <project>-worker and <project>-reviewer)"
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" cloud) || exit $?
   ! no_effort "$prov" cloud || noeff=true
   pd=$(pdesc "$prov" cloud) || exit 1
@@ -585,7 +585,7 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
     echo "qargi: the $prof profile is opt-in (it runs the frontier model on a cloud session): pass --opt-in when you or the person who dispatches the task names it" >&2; exit 2
   fi
   # the model id and the effort come from the provider's adapter (the profile's tier, on the cloud surface); a model with no tier is used as it is
-  model=$(jq -r '.out.model_id // empty' <<<"$res"); alias=$(jq -r '.out.model // empty' <<<"$res"); effort=$(jq -r '.out.effort // empty' <<<"$res")
+  model=$(jq -r '.out.model_id // empty' <<<"$res"); effort=$(jq -r '.out.effort // empty' <<<"$res")
   if [ -n "$(jq -r '.out.tier // empty' <<<"$res")" ] && [ -n "$model" ]; then
     adapter_run "$prov" cloud resolve --check || exit $?
     req=$(jq -nc --arg t "$(jq -r .out.tier <<<"$res")" --arg e "$effort" --arg p "$prof" '{surface: "cloud", tier: $t, effort: (if $e == "" then null else $e end), profile: $p}')
@@ -594,8 +594,8 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
     model=$(jq -r .model <<<"$out"); effort=$(jq -r '.effort_native // empty' <<<"$out")
   fi
   [ -n "$model" ] || die "the $prof profile resolves to no model on the $prov provider"
-  # the base instance takes the model and the effort of the session as overrides: only when the provider is verified to honour them
-  row=build; [ "$cls" != read-only ] || row=review
+  # the base instance takes the model and the effort of the session as overrides: only when the provider is verified to honour them.
+  # There is no fallback to an instance of the role (<project>-build ...): such an instance is addressed by its name (qargi send NAME).
   ov=$(python3 -I "$root/lib/provider.py" effective "$prov" cloud per_dispatch_model_override --project "$proj" 2>/dev/null) || ov=no
   [ "$ov" = yes ] && ovm=yes
   if [ -n "$effort" ]; then
@@ -604,32 +604,18 @@ resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFOR
   fi
   [ "$ovm" = yes ] || why=per_dispatch_model_override
   [ "$ove" = yes ] || why=${why:+$why and }per_dispatch_effort_override
-  rec=$(cloud_inst "$proj-$base")
-  if [ -n "$rec" ] && [ "$ovm" = yes ] && [ "$ove" = yes ]; then
-    inst=$proj-$base; legacy=false
-  else
-    [ -z "$rec" ] || brec=$proj-$base
-    for n in "$proj-$role" "$proj-$row"; do   # the role's own instance, then its class's, as the local order does
-      rec=$(cloud_inst "$n"); [ -z "$rec" ] || { inst=$n; break; }
-    done
-    if [ -z "$inst" ]; then
-      if [ -n "$brec" ]; then
-        alt=$proj-$role; [ "$role" = "$row" ] || alt="$alt or $proj-$row"
-        echo "qargi: the instance $brec is registered, but the provider $prov cannot set the model and effort per dispatch on cloud ($why not verified), and no legacy instance $alt is registered to fall back on. Register one (qargi instances init --location cloud --provision --name $proj-$row), or verify the capability in the provider descriptor" >&2
-        exit 2
-      fi
-      echo "qargi: no cloud instance is registered for the $role role of project $proj: expected $proj-$base (the $cls base) or $proj-$role (qargi instances list; qargi instances init --location cloud ...)" >&2
-      exit 1
-    fi
-    rm=$(jq -r '.agent.model // ""' <<<"$rec")
-    if [ "$rm" != "$model" ] && { [ -z "$alias" ] || [ "$rm" != "$alias" ]; }; then
-      echo "qargi: the instance $inst runs ${rm:-an unrecorded model} and cannot take another per dispatch ($([ -n "$why" ] && echo "$why not verified for the provider $prov" || echo "the base $proj-$base is not registered")), so it cannot run the $prof profile (model $model). Register the base instance: qargi instances init --location cloud --provision --name $proj-$base, or choose a profile with the model of the instance" >&2
-      exit 2
-    fi
+  inst=$proj-$base
+  if [ -z "$(cloud_inst "$inst")" ]; then
+    echo "qargi: no cloud instance is registered for the $role role of project $proj: expected the base $inst (the $cls base; qargi instances list; qargi instances init --location cloud ...). An instance of one role is addressed by its name (qargi send NAME)" >&2
+    exit 1
+  fi
+  if [ "$ovm" != yes ] || [ "$ove" != yes ]; then
+    echo "qargi: the instance $inst is registered, but the provider $prov cannot set the model and effort per dispatch on cloud ($why not verified), so it cannot run the $prof profile. Verify the capability in the provider descriptor; an instance of one role is addressed by its name (qargi send NAME)" >&2
+    exit 2
   fi
   if [ -n "$JSON" ]; then
-    jq -n --arg i "$inst" --arg b "$base" --argjson l "$legacy" --arg m "$model" --arg e "$effort" --arg p "$prof" --arg c "$cls" \
-      '{instance: $i, base: (if $l then null else $b end), legacy: $l, model: $m, effort: (if $e == "" then null else $e end), profile: $p, class: $c}'
+    jq -n --arg i "$inst" --arg b "$base" --arg m "$model" --arg e "$effort" --arg p "$prof" --arg c "$cls" \
+      '{instance: $i, base: $b, model: $m, effort: (if $e == "" then null else $e end), profile: $p, class: $c}'
     return 0
   fi
   echo "$inst $model ${effort:-default} $prof"
