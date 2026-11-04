@@ -4,6 +4,9 @@
 # the command line, finds the project, reads the lease length and audits a takeover.
 #
 #   marshal.sh claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] ...
+#   marshal.sh claim NAME --as-successor-of ID   continue as the lead after a restart: the record's lead is ID, its lease is stale, and its
+#                                                host, OS user and work tree are this session's (refused otherwise; audited as marshal:succession).
+#                                                marshal_start (feature start) does the same on its own; status and check name the command
 #   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
@@ -68,7 +71,13 @@ marshal_py() { # PROJ VERB [args...]
   python3 -I "$MARSHAL_LIB/marshal_store.py" "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
 }
 
-marshal_start() { marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null; }
+marshal_start() { # a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
+  local af rc=0
+  af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX") || af=/dev/null
+  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null || rc=$?
+  if [ "$af" != /dev/null ]; then if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:succession" "$(cat "$af")"; fi; rm -f "$af"; fi
+  return "$rc"
+}
 marshal_check() { marshal_py "$1" check "$2" >/dev/null; }
 marshal_finish() { marshal_py "$1" finish "$2" --lenient >/dev/null; }
 
@@ -110,7 +119,7 @@ marshal_main() {
   # (feature.sh and cred.sh do the same)
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
        qargi marshal handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
@@ -133,7 +142,7 @@ marshal_main() {
     signers) want=' --project --line --plan --approved ';;
     resign|forget) want=' --project --plan --approved ';;
     disable) want=' --project --plan --approved ';;
-    claim) want=' --project --as --goal ';;
+    claim) want=' --project --as --goal --as-successor-of ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
     handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
@@ -330,6 +339,14 @@ marshal_main() {
     if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:takeover" "$(cat "$af")"; fi
     rm -f "$af"
     exit "$rc"
+  fi
+  if [ "$verb" = claim ]; then
+    local crc=0 caf
+    caf=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
+    QARGI_MARSHAL_AUDIT_OUT=$caf marshal_py "$PROJ" claim "${opt[@]}" || crc=$?
+    if [ "$crc" = 0 ] && [ -s "$caf" ]; then audit_log "marshal:succession" "$(cat "$caf")"; fi
+    rm -f "$caf"
+    exit "$crc"
   fi
   if [ "$verb" = handoff ]; then
     # read only: no lease, no fetch, no record written; the file of --write is the only thing it may make

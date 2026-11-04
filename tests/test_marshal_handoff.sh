@@ -73,6 +73,8 @@ grep -q "^host: $(hostname) " "$T/o" && ok "where: the host name" || no "SPEC wh
 grep -q "^qargi data present on this host" "$T/o" && ! grep -q "qargi data NOT present" "$T/o" && ok "where: says the qargi data is present" || no "SPEC where: data present"
 grep -q "^feature f1\$" "$T/o" && grep -q "tip: $(tip feature/f1 | cut -c1-12)  (2 commit(s) ahead of develop, 0 behind)" "$T/o" && ok "feature: tip and commits ahead of develop" || no "SPEC feature tip/ahead: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 grep -q "feature/f2" "$T/o" && no "SPEC handoff f1 mentions another feature" || ok "handoff NAME describes that feature only"
+grep -q "^next lead: the lead of f1 is alice; .*qargi marshal claim f1 --as-successor-of alice\$" "$T/o" && ok "read first: a feature this identity leads gets the claim --as-successor-of line" || no "SPEC next lead line: $(sed -n '/== read first/,/== do not assume/p' "$T/o")"
+"$DA" marshal handoff f2 --as carol 2>&1 | grep -q "^next lead:" && no "SPEC next lead line for a feature another lead holds" || ok "read first: no next lead line for a feature another lead holds"
 grep -q "whole suite: not run on this branch" "$T/o" && ok "feature: no suite record reads 'not run'" || no "SPEC suite not run: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 grep -q "agent branches merged into the feature: agent/merged" "$T/o" && ok "feature: the merged agent branch" || no "SPEC merged agent branches: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 grep -q "^    agent/unmerged (1 commit(s) ahead)" "$T/o" && ok "feature: the unmerged agent branch with its commits ahead" || no "SPEC unmerged agent branches: $(sed -n '/== features/,/== marshal/p' "$T/o")"

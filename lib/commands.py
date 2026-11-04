@@ -250,7 +250,13 @@ COMMANDS = {
         "scripts": ["marshal.sh", "marshal_store.py", "marshal_refs.py"],
         "verbs": {
             "claim": verb("Become the lead of feature NAME (creates the record; refuses when another lead holds it)", [("NAME", "none")],
-                          [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT")]),
+                          [PROJECT_OPT, AS_OPT, opt("--goal", "what the feature is to achieve", "TEXT"),
+                           opt("--as-successor-of", "continue as the lead after a restart: the old lead's id (see marshal handoff)", "ID")],
+                          desc=("With --as-successor-of ID you take over from the lead ID without the owner's words when that lead's lease is stale and its host, OS user and "
+                                "work tree are yours (a restart gives the session a new id and nothing else that tells it apart). The record keeps its goal, plan and note and "
+                                "names the succession; it is audited as marshal:succession. Any other case is refused: the owner's marshal takeover covers it. "
+                                "feature start continues the same way on its own, and status and check name the command when you look like the restarted lead."),
+                          examples=["qargi marshal claim lead-context --as-successor-of 3f2a9c1e"]),
             "status": verb("Show one feature, or every open one with --all: lead, status, goal, plan, note, tasks, branches, worktrees, overlap", [("[NAME]", "none")],
                            [PROJECT_OPT, AS_OPT, opt("--all", "every open feature of the project"), opt("--history", "with --all, also the finished and abandoned ones, after the open ones"), opt("--brief", "one line per feature"), opt("--json", "machine-readable"), opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")]),
             "set": verb("Update the goal, plan, note or status of a feature you lead", [("NAME", "none")],
@@ -291,6 +297,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
+                                  "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],

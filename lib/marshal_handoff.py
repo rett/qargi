@@ -19,6 +19,7 @@ this machine already holds (the same backend code as `marshal status`, switched 
 writes the clock cache nor the acceptance marks), and a record whose branch is gone is shown, never recorded as abandoned. The
 one thing it may write is the file named by --write: it must not exist, it is made with mode 600, and it may not lie inside a
 git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout.
+A feature that this identity leads gets a "next lead" line: the claim --as-successor-of command a restarted session runs.
 
 The goal, plan, note and purpose of a record are DATA written by a lead: they are printed under a line that says so, indented,
 with control characters removed (marshal_store.clean) and cut at marshal_store.CAP characters. Every other free-text field is
@@ -344,7 +345,9 @@ def collect(a, argv_name):
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
                            "repo_docs": [clean(os.path.join(repo, n)) for n in ("CLAUDE.md", "AGENTS.md") if repo and os.path.isfile(os.path.join(repo, n))],
-                           "status_command": "qargi marshal status --all --history --project %s" % a.project},
+                           "status_command": "qargi marshal status --all --history --project %s" % a.project,
+                           "successor": [{"feature": f["name"], "lead": f["record"]["lead"]["id"]} for f in feats
+                                         if f["record"]["lead"] and f["record"]["lead"]["id"] == ctx.id]},
             "do_not_assume": list(DO_NOT_ASSUME), "notes": notes, "truncated": False}
 
 
@@ -484,6 +487,8 @@ def render_body(F):
     for d in rf["repo_docs"]:
         A("repository instructions: " + d)
     A("the record, with history: %s" % rf["status_command"])
+    for s in rf["successor"]:
+        A("next lead: the lead of %s is %s; a restarted session of the same user, host and worktree continues as the lead with: qargi marshal claim %s --as-successor-of %s" % (s["feature"], s["lead"], s["feature"], s["lead"]))
     return "\n".join(L)
 
 
