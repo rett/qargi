@@ -5,6 +5,8 @@
 #
 #   feature.sh start NAME [--purpose TEXT] [--project P]   feature/NAME from develop (a local branch); the purpose says what is related
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
+#   feature.sh park [--project P]                  refresh the parking branch (answers repo.parking_branch, default scratch) in the main checkout:
+#                                                  checkout -B it onto develop; refused when the tree is dirty or the branch has commits develop lacks
 #   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed)
 #   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff. NAME may instead be a detached
 #                                                  long-lived branch (answers repo.detached): BRANCH must be an agent/* branch and the merge,
@@ -30,15 +32,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 export PLAN_ARG   # need_plan reads it
-if [ "$verb" = list ]; then NAME_ARG=-; fi
-[ -n "$NAME_ARG" ] || die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
+if [ "$verb" = list ] || [ "$verb" = park ]; then NAME_ARG=-; fi
+[ -n "$NAME_ARG" ] || die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]"
 export RESOLVED
 . "$(dirname "$0")/gitflow.sh"
 # shellcheck disable=SC2154  # PROJ and TESTCMD come from project_load
 project_load
 # NAME is a feature, or (feature merge only) a detached long-lived branch of the answers (repo.detached): the target of a merge, no feature
 DET=''
-if [ "$verb" != list ]; then
+if [ "$verb" != list ] && [ "$verb" != park ]; then
   if is_detached "$NAME_ARG"; then
     [ "$verb" = merge ] || die "$NAME_ARG is a detached long-lived branch (repo.detached): it has no feature flow. Cut tasks from it (--base $NAME_ARG) and merge them with qargi feature merge $NAME_ARG BRANCH"
     DET=1
@@ -72,6 +74,20 @@ merge_detached() {
 }
 
 case $verb in
+  park)
+    # the main checkout rests on the parking branch (answers repo.parking_branch, default scratch), so qargi can move develop under it
+    branch_exists develop || die "no develop branch to park on"
+    [ -z "$(git -C "$REPO" status --porcelain)" ] || die "the main checkout $REPO has uncommitted changes: commit or discard them, then qargi feature park"
+    w=$(held "$PARK"); [ -z "$w" ] || [ "$(readlink -f "$w")" = "$(readlink -f "$REPO")" ] || die "$PARK is checked out in $w, not in the main checkout: leave it there first"
+    old=$(sha_of "$PARK")
+    if [ -n "$old" ] && [ "$(g rev-list --count "develop..$PARK")" != 0 ]; then
+      echo "qargi: $PARK has commit(s) that develop lacks (not refreshed):" >&2
+      g log --format='  %h %s' "develop..$PARK" | head -20 >&2
+      die "re-implement them with an agent task based on develop (qargi local prepare --base develop), or keep them on a branch of their own (git branch NAME $PARK), then run qargi feature park again"
+    fi
+    git -C "$REPO" checkout -q -B "$PARK" develop || die "could not check out $PARK in $REPO"
+    journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" feature:park
+    echo "$REPO is on $PARK at develop ($(g rev-parse --short develop))$([ -n "$old" ] || echo "; created $PARK")";;
   start)
     branch_exists "$BR" && die "$BR exists already"
     branch_exists develop || die "no develop branch to start from"
@@ -185,9 +201,10 @@ case $verb in
     hold_end
     marshal_finish "$PROJ" "$NAME_ARG" || echo "qargi: warning: the marshal record of $NAME_ARG was not marked finished (see above); the merge is done" >&2
     echo "merged $BR into develop ($(g rev-parse --short develop))$([ -n "$KEEP" ] || echo "; deleted $BR"); the whole-suite run carries over to develop"
+    parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
       echo "pushed develop"
     fi;;
-  *) die "usage: qargi feature start|list|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
+  *) die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

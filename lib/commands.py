@@ -221,6 +221,13 @@ COMMANDS = {
                           desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached)."),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
                          desc="Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another."),
+            "park": verb("Put the project's main checkout on its parking branch, reset to develop", [], [PROJECT_OPT],
+                         desc=("qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a "
+                               "parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout -B BRANCH develop in the main checkout, creating the "
+                               "branch when missing. Refused when the working tree is not clean, or when the parking branch has commits develop lacks (they are listed; re-implement "
+                               "them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved "
+                               "develop, a clean main checkout on the parking branch with no commits of its own is fast-forwarded to develop, and one status line says why it was not. "
+                               "The parking branch is never pushed or merged.")),
             "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT]),
             "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, PLAN, APPROVED, RESOLVED_OPT],
                           desc=("NAME may be a detached long-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, "

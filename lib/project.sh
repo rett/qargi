@@ -142,6 +142,13 @@ if isinstance(det, list):
     for x in det:
         if isinstance(x, str) and (x in FLOW_NAMES or x.startswith(FLOW_PREFIXES)):
             bad.append("repo.detached: %s is a git-flow branch (master, develop, feature/*, agent/*, release/*, hotfix/*); a detached branch is another long-lived branch" % x)
+# repo.parking_branch: the branch the main checkout rests on (default scratch); qargi fast-forwards it to develop, never pushes or merges it
+pk = repo.get("parking_branch", "scratch")
+need(branch_name(pk), "repo.parking_branch: a branch name (default scratch): the branch the project's main checkout rests on while qargi moves develop")
+if branch_name(pk):
+    if pk in FLOW_NAMES or pk.startswith(FLOW_PREFIXES): bad.append("repo.parking_branch: %s is a git-flow branch; use a branch of its own such as scratch" % pk)
+    if isinstance(ll, list) and pk in ll: bad.append("repo.parking_branch: %s is also in repo.long_lived; the parking branch is reset to develop, so it is not long-lived" % pk)
+    if isinstance(det, list) and pk in det: bad.append("repo.parking_branch: %s is also in repo.detached" % pk)
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess

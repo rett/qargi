@@ -79,7 +79,36 @@ worktree() { # commit-ish -> a detached temporary worktree there (WT)
   g worktree add -q --detach "$WT" "$1" 2>/dev/null || { rm -rf "$WT"; WT=''; die "could not make a temporary worktree of $1"; }
 }
 held() { g worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{w=substr($0,10)} $1=="branch" && $2==b {print w}' | head -1; }
-need_free() { local b w; for b in "$@"; do w=$(held "$b"); [ -z "$w" ] || die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"; done; }
+need_free() { # BRANCH... -> dies when one is checked out anywhere; for the project's main checkout it names the parking branch
+  local b w hint
+  for b in "$@"; do
+    w=$(held "$b"); [ -z "$w" ] && continue
+    if [ "$(readlink -f "$w")" = "$(readlink -f "$REPO")" ]; then
+      if branch_exists "${PARK:-scratch}"; then hint="git -C $w switch ${PARK:-scratch}, then qargi feature park"; else hint="git -C $w switch -c ${PARK:-scratch} develop"; fi
+      die "$b is checked out in $w, the project's main checkout: leave it on the parking branch (answers repo.parking_branch): $hint (qargi moves $b without touching a working tree)"
+    fi
+    die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"
+  done
+}
+# parking_follow -> one status line. After qargi moved develop: the main checkout on the parking branch, clean and with no commit
+# of its own, is fast-forwarded to develop (git merge --ff-only in that checkout); otherwise the line says why it was left. The
+# parking branch is never pushed and never merged anywhere.
+parking_follow() {
+  local cur old n why
+  cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  if [ "$cur" != "$PARK" ]; then why="the main checkout is on ${cur:-a detached head}"
+  elif [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then why="the main checkout has uncommitted changes"
+  else
+    n=$(g rev-list --count "develop..$PARK"); old=$(sha_of "$PARK")
+    if [ "$n" != 0 ]; then why="$PARK has $n commit(s) that develop lacks"
+    elif [ "$old" = "$(sha_of develop)" ]; then echo "parking branch $PARK: already at develop"; return 0
+    elif git -C "$REPO" merge -q --ff-only develop >/dev/null 2>&1; then
+      journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" park:follow
+      echo "parking branch $PARK: fast-forwarded to develop ($(g rev-parse --short develop))"; return 0
+    else why="the fast-forward failed"; fi
+  fi
+  echo "parking branch $PARK: not advanced ($why)"
+}
 # Detached long-lived branches (answers repo.detached) never meet the git-flow branches: no merge in either direction.
 is_detached() { [ -n "${DETACHED:-}" ] && printf '%s\n' "$DETACHED" | grep -Fxq -- "$1"; }
 # history_of SRC INTO OTHER -> 0 when merging SRC into INTO would bring in commits of OTHER that INTO lacks (a best common ancestor
@@ -171,6 +200,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   METH=$(jq -r '.methodology // "gitflow"' "$af")
   TESTCMD=$(jq -r '.test_command // ""' "$af")
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
+  PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 
