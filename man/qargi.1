@@ -15,7 +15,7 @@ Every command takes \fB\-\-help\fR. A command that changes shared resources prin
 .SH CONCEPTS
 Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back numbered patches, one per commit, with a manifest. Nothing is pushed.
 .PP
-Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME \-\-roles build,test); qargi agent for ABILITY prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
+Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME \-\-roles build,test); qargi agent for ROLE prints the member that serves it. A role has its own model, effort, skills and packages, stored in the project's answers.
 .PP
 Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, and every cloud verb records your words with \-\-asked.
 .PP
@@ -1475,15 +1475,15 @@ the project (default: inferred from here).
 .RS
 .TP
 .BI "apply " "INSTANCE|PROJECT"
-Update an existing cloud agent, or render for a local Claude Code session.
+Update an existing cloud agent, or render for a local runtime.
 .br
 Without \-\-target (or with managed\-agents) this updates the existing cloud agent INSTANCE with its skills and tools; the lead's GitHub tool arrives this way when the project grants a cloud push. It needs \-\-asked, and always needs \-\-plan (QARGI_NESTED does not skip it); a local member's guard refuses it.
-With \-\-target claude\-code it takes PROJECT instead of INSTANCE and needs no \-\-asked. Without \-\-approved it prints a plan token. With \-\-plan and \-\-approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude\-code for this target), replacing the previous render atomically, and prints the exact `claude \-\-add\-dir ...` launch line (with \-\-mcp\-config and \-\-settings when the render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a repository or into ~/.claude, and members cannot write under the state's render/ directory.
+With \-\-target claude\-code it takes PROJECT instead of INSTANCE and needs no \-\-asked. Without \-\-approved it prints a plan token. With \-\-plan and \-\-approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude\-code for this target), replacing the previous render atomically, and prints the exact `claude \-\-add\-dir ...` launch line (with \-\-mcp\-config and \-\-settings when the render has them). A local runtime cannot enforce role scoping, so the render is the union of the project's roles and role scoping is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a repository or into ~/.claude, and members cannot write under the state's render/ directory.
 The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose front matter is not closed or has more than one name key; a skill and a tool with the same name; and a tool allowlist name outside letters, digits, _, . and \-. Each plan stages into its own hidden directory and a lock serializes concurrent applies; the second refuses if the render changed meanwhile. The swap installs only the tree the token approved; the token also covers the file modes, which the manifest records.
 .RS
 .TP
 .BI "\-\-target " "TARGET"
-claude\-code renders for a local Claude Code session; managed\-agents (the default for apply) is the cloud update.
+claude\-code renders for a local session; managed\-agents (the default for apply) is the cloud update.
 .RE
 .RS
 .TP
@@ -1526,14 +1526,14 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RS
 .TP
 .BI "check " "[PROJECT]"
-Check a Claude Code render for drift (read only).
+Check a render for drift (read only).
 .br
 Needs \-\-target claude\-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from the library copy (even when the manifest was edited with it), a changed file mode, a group\- or world\-writable render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.
 It ends with a section, skills a session would load, that gives every skill a session opened in the checkout would load one state: qargi (a library pack with approved content, or a skill shipped with qargi), accepted (skill accept), drifted (accepted, but its content changed: this exits 1), excluded (switched off in the provider's settings; qargi only reads them) or unmanaged (everything else, shown with what to do about it; this does not change the exit status). When the checkout's skills directory is not linked to the render it adds a note naming packs link.
 .RS
 .TP
 .BI "\-\-target " "TARGET"
-claude\-code renders for a local Claude Code session; managed\-agents (the default for apply) is the cloud update.
+claude\-code renders for a local session; managed\-agents (the default for apply) is the cloud update.
 .RE
 .RE
 .RS
@@ -3391,8 +3391,8 @@ One task, cloud:
 .nf
     qargi send acme\-build "$BRIEF" \-\-label rename\-verb \-\-asked "use the cloud builder"
     qargi watch SID    # in the background
-    qargi collect SID ./run
-    qargi review check ./run
+    qargi collect SID ./out
+    qargi review check ./out
 .fi
 .PP
 A team:
@@ -3457,4 +3457,4 @@ turn off bold in the terminal help.
 .SH EXIT STATUS
 0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.
 .SH SEE ALSO
-The skills qargi\-task, qargi\-team, qargi\-project, qargi\-instances, qargi\-provision, qargi\-memory, qargi\-packs and qargi\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).
+The skills qargi\-flow, qargi\-instances, qargi\-memory, qargi\-packs, qargi\-project, qargi\-providers, qargi\-provision, qargi\-session, qargi\-task, qargi\-team and qargi\-verify, loaded by the lead's session (qargi help roles for the roles, which come as role text with the task block).
