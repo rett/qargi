@@ -328,13 +328,10 @@ def write_record(ctx, entry):
 
 
 def check_after(ctx):
-    """Run `env check` when it exists; otherwise say what to run."""
-    if not os.path.exists(os.path.join(HERE, "env_check.py")):
-        print("next: qargi env check")
-        return
+    """Run `env check` (the project's doctor, so project code, as the bootstrap was) and return its exit status."""
     cmd = [sys.executable, "-I", os.path.join(HERE, "env.py"), "check", "--repo", ctx["repo"]] + (["--project", ctx["project"]] if ctx["project"] else [])
-    print("running: qargi env check")
-    subprocess.run(cmd, cwd=ctx["repo"], env=dict(os.environ))
+    print("running: qargi env check", flush=True)
+    return subprocess.run(cmd, cwd=ctx["repo"], env=dict(os.environ)).returncode
 
 
 def apply(argv):
@@ -369,7 +366,7 @@ def apply(argv):
         return 0
     detail = "%s %s token %s head %s" % (record_name(ctx), ctx["boot"], tok, ctx["head"][:12])
     audit("env:apply", detail + (" allow-root" if priv else ""), opts)
-    print("running: %s   (in %s, with your terminal)" % (vis(ctx["boot"]), ctx["repo"]))
+    print("running: %s   (in %s, with your terminal)" % (vis(ctx["boot"]), ctx["repo"]), flush=True)
     t0, rc = time.time(), None
     try:
         rc = subprocess.run(ctx["boot_argv"], cwd=ctx["repo"], env=ctx["env"]).returncode
@@ -386,8 +383,7 @@ def apply(argv):
     if rc != 0:
         print("qargi: the bootstrap command exited with status %d" % rc, file=sys.stderr)
         return 1
-    check_after(ctx)
-    return 0
+    return check_after(ctx)
 
 
 def main(verb, argv):
