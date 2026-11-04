@@ -12,10 +12,12 @@ The project's answers (outside the repository) may override the commands derived
   strings: doctor lines the owner accepts on this host).
 
   env.py show [--project P] [--repo DIR] [--json]    print what was detected and the commands in effect
+  env.py check [--project P] [--repo DIR] [--timeout SECONDS] [--json]    run the doctor, add the qargi layer, print the verdict (lib/env_check.py)
 
-Detection only reads files. Nothing is executed (make, just, task and mise are never run; their files are parsed
+Detection (show) only reads files. Nothing is executed (make, just, task and mise are never run; their files are parsed
 as text), and no git command is run. A file that is a symbolic link leaving the repository, is not a regular file or
-is larger than 1 MB is not read. plan and apply are lead-only verbs of this group and are not built yet.
+is larger than 1 MB is not read. check runs the doctor command and reads the qargi layer: see lib/env_check.py.
+plan and apply are lead-only verbs of this group and are not built yet.
 
 As a module: detect(repo) -> dict, effective(repo, answers) -> dict (detection plus the answers' overrides, the
 form the later check, plan and apply verbs read), problems(env_answers) -> list of messages (project validation).
@@ -463,7 +465,10 @@ def main(argv):
         return 2
     if argv[:1] == ["show"]:
         return show(argv[1:])
-    print("usage: env.py show [--project P] [--repo DIR] [--json]", file=sys.stderr)
+    if argv[:1] == ["check"]:
+        import env_check                       # runs the doctor and reads the qargi layer; kept in its own file
+        return env_check.check(argv[1:])
+    print("usage: env.py show|check [--project P] [--repo DIR] [--json]", file=sys.stderr)
     return 2
 
 
