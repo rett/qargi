@@ -171,7 +171,8 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
+           "agent.sh", "team.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -186,6 +187,7 @@ MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                       
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
+LEAD_VERBS = {("local", "clean"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
@@ -1612,6 +1614,12 @@ def holds_key(full):
     return any(inside(d, full) and has_key_file(d) for d in key_dirs())
 
 
+def below_key_dir(full):
+    """True when the real path full is a credentials directory with a signing key in it: a search that walks down from it reaches the key (one that starts below it,
+    or above it, at the home directory, does not name it)."""
+    return any(full == d and has_key_file(d) for d in key_dirs())
+
+
 def has_key_file(d):
     try:
         return any(n.startswith(KEY_PREFIX) for n in os.listdir(d))
@@ -1692,32 +1700,80 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
-            if "${" in b and (recursive or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
+            if "${" in b and (bool(recursive) or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
                 return b                                      # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
             paths = glob_paths(os.path.join(here, b)) if re.search(r"[*?\[]", b) else []
             for full in [resolve(here, b)] + [os.path.realpath(x) for x in paths]:
-                if is_key(full) or (recursive and holds_key(full)):
+                if is_key(full) or (recursive == "tree" and holds_key(full)) or (recursive == "below" and below_key_dir(full)):
                     return b
     return None
 
 
 def key_refusal_text(prog, word, tool=None):
-    return MarshalReason("%s on %s would read the marshal's signing key (credentials/%s*); %s" % (tool or prog, word, KEY_PREFIX, KEY_NOTE))
+    return MarshalReason("%s on %s would read the marshal's signing key (credentials/%s*); %s" % (tool or prog or "a redirection", word, KEY_PREFIX, KEY_NOTE))
+
+
+KEY_SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "find"}   # these walk down from the path they are given, so only a path at or below a credentials directory reaches the key
+
+
+def operand_positions(words):
+    """The indexes in words of the operands (no option, no redirection and the file it names), as operands() takes them."""
+    out, k = [], 0
+    while k < len(words):
+        t = words[k]
+        if BARE_REDIR.match(t):
+            k += 2
+            continue
+        if not t.startswith("-") and not LEADING_REDIR.match(t) and not REDIR.match(t):
+            out.append(k)
+        k += 1
+    return out
+
+
+def key_destinations(prog, toks, i):
+    """The indexes in toks of the words that only say where a copy, a move, a link or an extraction PUTS its files (the last operand, -t DIR, tar -C DIR when it extracts):
+    a directory above the credentials directory (the home directory) is a place to write to there, and reads nothing."""
+    rest = toks[i + 1:]
+    out = set()
+    if prog in COPIERS or prog in KEY_LINKERS or prog == "cp":
+        targeted = False
+        for k, t in enumerate(rest):
+            m = re.match(r"^-[A-Za-z0-9]*?t(.*)$", t) if prog != "rsync" and t.startswith("-") and not t.startswith("--") else None
+            if m or t == "--target-directory" or t.startswith("--target-directory="):
+                out.add(i + 1 + k if (m and m.group(1)) or "=" in t else i + 2 + k)       # -tDIR and --target-directory=DIR are one word, -t DIR and -rt DIR two
+                targeted = True
+        pos = operand_positions(rest)
+        if pos and not targeted:
+            out.add(i + 1 + pos[-1])
+    elif prog in TARS and tar_extracts(rest):
+        for k, t in enumerate(rest):
+            if t in ("-C", "--directory"):
+                out.add(i + 2 + k)
+            elif t.startswith("--directory=") or (t.startswith("-C") and len(t) > 2 and not t.startswith("--")):
+                out.add(i + 1 + k)
+    return out
 
 
 def key_read(toks, i, here):
     """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
     (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
-    in front of them is."""
+    in front of them is. A recursive reader (cp, rsync, tar, zip ...) also reads a directory that holds the key, but not the one it only writes into
+    (`cp src/a.go ~/`); grep and find read it only when the path they walk down from is at or below a credentials directory."""
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-    recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
-    recursive = recursive or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest))
-    for t in toks[:i] if prog in KEY_METADATA else toks:
+    mode = False
+    if prog in KEY_SEARCHERS:
+        mode = "below" if prog != "find" or any(t in FIND_ACTIONS for t in rest) else False
+    elif prog in KEY_RECURSIVE or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest)):
+        mode = "tree"
+    skip = key_destinations(prog, toks, i) if mode == "tree" else set()
+    for k, t in enumerate(toks[:i] if prog in KEY_METADATA else toks):
         tick()
-        named = key_named(t, here, recursive)
+        if k in skip:
+            continue
+        named = key_named(t, here, mode)
         if named:
             return key_refusal_text(prog, named)
     return None
@@ -1764,7 +1820,7 @@ def skill_refusal(call):
         return refusal_text(call.name, fp, root) if root else None
     if call.kind in ("read", "search"):                  # the read tools: the signing key, alone or in a directory the search reaches
         full = resolve(call.cwd, fp) if fp else ""
-        return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and holds_key(full))) else None
+        return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and below_key_dir(full))) else None
     if call.kind != "shell":
         return None
     return bash_skill_refusal(call.command, call.cwd, 0)
@@ -1964,6 +2020,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["local", "run"]
     if name == "local.sh":
         words = ["local"] + words
+    if name == "agent.sh":
+        words = ["agent"] + words
+    if name == "team.sh":
+        words = ["team"] + words
     if name == "project.sh":
         words = ["project"] + words
     if name == "gated_answers.py":                       # the store behind provider enable|disable|accept, with no gate of its own: any use of the script is the verbs
@@ -2026,6 +2086,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status, check and handoff without --write are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
+    if (area, verb) in LEAD_VERBS or area == "task":
+        return ("qargi %s%s is the lead's (it prepares, verifies or removes runs and agents, or dispatches work, with the lead's credentials and its own record) and is not "
+                "available to an agent; report what you need in your task output" % (area, " " + verb if verb else ""))
     if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":

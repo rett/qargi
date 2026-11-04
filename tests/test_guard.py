@@ -383,7 +383,7 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi local run starts the runtime's command", r.stderr, c)
-        for c in ("qargi local verify /tmp/r", "cat lib/local_run.py", "grep -n argv lib/local_run.py"):
+        for c in ("qargi local list /tmp/r", "cat lib/local_run.py", "grep -n argv lib/local_run.py"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -437,7 +437,7 @@ class Skills(unittest.TestCase):
                   "qargi packs render p build /tmp/o", "qargi packs load style --role build", "qargi packs check --target claude-code p",
                   "echo qargi skill accept p x", "git commit -m 'qargi skill unaccept p x'", "qargi export a.tgz", "qargi help skill",
                   "git commit -m 'qargi skill new is refused for members'", "grep -rn 'qargi skill link' docs", "echo qargi skill remove x",
-                  "ls skills", "qargi local verify"):
+                  "ls skills", "qargi local list"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1021,7 +1021,7 @@ class Marshal(unittest.TestCase):
         for tool, inp in (("Read", {"file_path": os.path.join(cred, "marshal_ed25519")}), ("Read", {"file_path": os.path.join(cred, "marshal_ed25519.pub")}),
                           ("Read", {"file_path": "to-creds/marshal_ed25519"}), ("NotebookRead", {"notebook_path": os.path.join(cred, "marshal_ed25519")}),
                           ("Grep", {"pattern": "BEGIN", "path": os.path.join(cred, "marshal_ed25519")}), ("Grep", {"pattern": "BEGIN", "path": cred}),
-                          ("Grep", {"pattern": "BEGIN", "path": self.conf}), ("Grep", {"pattern": "BEGIN", "path": "to-creds"})):
+                          ("Grep", {"pattern": "BEGIN", "path": "to-creds"})):
             res = self.call(tool, inp)
             self.assertEqual(res.returncode, 2, (tool, inp, res.stderr))
             self.assertIn("the marshal's signing key", res.stderr)
@@ -1037,11 +1037,11 @@ class Marshal(unittest.TestCase):
         cred = self.make_key()
         out = os.path.join(self.t, "run/out")
         self.key_refused(["cp -r %s %s/" % (cred, out), "cp -r %s %s/" % (self.conf, out), "cp -a %s %s/c" % (cred, out), "tar cf %s/c.tar %s" % (out, cred),
-                          "tar czf %s/c.tgz %s" % (out, self.conf), "rsync -a %s/ %s/c/" % (cred, out), "grep -r BEGIN %s" % cred, "grep -rn x %s" % self.conf,
+                          "tar czf %s/c.tgz %s" % (out, self.conf), "rsync -a %s/ %s/c/" % (cred, out), "grep -r BEGIN %s" % cred,
                           "rg BEGIN %s" % cred,
                           "zip -r %s/z.zip %s" % (out, self.conf), "cd %s && tar cf %s/c.tar ." % (cred, out), "cd %s && cp -r . %s/c" % (cred, out),
                           "cd %s && grep -r BEGIN ." % cred, "bash -c 'cp -r %s %s/c'" % (cred, out)])
-        for c in ("find %s -type f -exec cat {} +" % cred, "find %s -type f -execdir cat {} ;" % self.conf):     # find's actions already count as writes
+        for c in ("find %s -type f -exec cat {} +" % cred, "find %s -type f -execdir cat {} ;" % cred):     # find's actions already count as writes
             self.assertEqual(self.bash(c).returncode, 2, c)
         for c in ("ls %s" % cred, "ls -la %s" % self.conf, "cat %s/tok" % cred, "cp %s/tok %s/t" % (cred, out), "grep -n x %s/tok" % cred,
                   "find %s -type f" % cred, "grep -r x %s/instances.json" % self.conf, "cp -r %s %s/c" % (self.clone, out), "cp -r src %s/c" % out):
@@ -3251,6 +3251,37 @@ class FifthReview(unittest.TestCase):
         ok = ["echo x > ${HOME}/note.txt", "echo x > ${HOME:-/x}/note.txt", "echo x > ${HOME%/}/note.txt", "cat ${UNSET_NAME:-f}", "cat ${UNSET_NAME:-%s}/other" % cred,
               "echo ${UNSET_NAME:-x} > f", "git commit -m ${UNSET_NAME:-x}", "cat ${QARGI_CONF%/}/credentials/other"]
         self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G12: the lead's runs and agents
+    def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
+        verbs = ["local clean RUN", "local clean RUN --discard", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
+                                                    "timeout 5 qargi %s")]
+        bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]
+        self.assertEqual(self.not_refused(bad), [])
+        r = self.call("Bash", {"command": "qargi local clean RUN --discard"})
+        self.assertIn("is the lead's", r.stderr)
+        ok = ["qargi local list", "qargi local status RUN", "qargi agent list", "qargi project show p", "qargi team brief t", "qargi review check out", "qargi agent for build", "qargi project validate p"]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G13: the destination of a copy and a search above the credentials directory are no read of the key
+    def test_a_directory_above_the_credentials_is_a_place_to_write_and_to_search(self):
+        h, cred = os.path.join(self.t, "home"), os.path.join(self.conf, "credentials")
+        ok = ["cp src/a.go ~/", "mv x ~/", "rsync -a build/ ~/", "tar -C ~ -xf x.tar", "tar -xf x.tar -C ~", "tar -xf x.tar --directory=~", "cp -t ~ src/a.go", "cp -rt ~ src/a.go",
+              "cp -t %s a.go" % self.t, "mv x %s/" % self.conf, "cp -r src %s/" % self.conf, "grep -r TODO ~", "grep -rn TODO %s" % self.conf, "grep -r TODO %s" % self.t, "rg TODO %s" % self.conf,
+              "find ~ -name x", "find %s -name x -type f" % self.t, "rsync -a build/ %s/" % self.conf, "install -m 644 a %s/" % self.conf]
+        self.assertEqual(self.not_allowed(ok), [])
+        self.assertEqual(self.call("Grep", {"pattern": "x", "path": "~"}).returncode, 0)
+        self.assertEqual(self.call("Grep", {"pattern": "x", "path": self.conf}).returncode, 0)
+        k = os.path.join(cred, "marshal_ed25519")
+        bad = ["cp -r %s /tmp/y" % self.conf, "cp -rt /tmp/y %s" % self.conf, "cp -r %s /tmp/y" % cred, "cp %s /tmp/y" % k, "cp -t /tmp/y %s" % k, "mv %s /tmp/y" % self.conf,
+               "rsync -a %s/ /tmp/y/" % self.conf, "rsync -a %s /tmp/y/" % k, "tar czf /tmp/o.tgz %s" % self.conf, "tar czf /tmp/o.tgz -C %s ." % self.conf, 
+               "tar -xf %s -C /tmp" % k, "zip -r /tmp/o.zip %s" % self.conf, "ln -s %s /tmp/lnk" % self.conf, "ln -s %s /tmp/lnk" % cred,
+               "grep -r BEGIN %s" % cred, "grep BEGIN %s" % k, "rg BEGIN %s" % cred, "find %s -type f -exec cat {} +" % cred, "cd %s && grep -r BEGIN ." % cred,
+               "cat %s" % k, "cat < %s" % k, "< %s" % k, "cp %s ~/" % k, "cp -r %s ~/" % cred]
+        self.assertEqual(self.not_refused(bad), [])
+        self.assertEqual(self.call("Grep", {"pattern": "x", "path": cred}).returncode, 2)
+        self.assertIn("a redirection on", self.call("Bash", {"command": "< %s" % k}).stderr)
 
 
 if __name__ == "__main__":
