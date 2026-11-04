@@ -4,8 +4,7 @@
 # made neutral, lower or delete its entry. Sorted.
 
 # The runtimes that ship are the subject of these lines: the skill that defines or chooses a runtime names the two it ships and the family they
-# share, the render directory of an earlier version that migrate-render moves, and the example of a full definition.
-skills/qargi-packs/apply.md:1
+# share, and the example of a full definition.
 skills/qargi-project/SKILL.md:1
 skills/qargi-providers/SKILL.md:2
 skills/qargi-providers/definition.md:1

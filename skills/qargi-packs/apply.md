@@ -24,12 +24,6 @@ go-ahead before `--plan TOKEN --approved "..."`.
   only. The plan refuses hostile packs (a `SKILL.md` name that differs from the pack name, a skill
   and a tool sharing a name, odd tool names); `check` also reports edited, mode-changed or
   writable render files and a bad manifest.
-- **Renders made before the runtime names:** an earlier version rendered into
-  `~/.qargi/state/claude/PROJECT`. `qargi packs migrate-render` prints each move and a plan token;
-  with `--plan TOKEN --approved "..."` it moves them to `state/render/PROJECT/RUNTIME`, re-points
-  the checkout's skills link only when it points exactly at the old render, and deletes nothing.
-  Do it between sessions, not while one is open on the old render; `packs check` reports a missing
-  render until it is done.
 - **Repo link:** `qargi packs link PROJECT` (plan token, then `--plan TOKEN --approved "..."`)
   makes the checkout's skills directory (the runtime's `resources.skills.project_dir`) a symbolic
   link to the render, so a session there loads the project's packs with no `--add-dir`. A real

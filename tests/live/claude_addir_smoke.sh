@@ -38,7 +38,7 @@ t=$("$DA" skill seal "$PROBE" | tok_of); "$DA" skill seal "$PROBE" --plan "$t" -
 "$DA" skill link "$PROBE" --scope project --project smoke >/dev/null
 t=$("$DA" packs apply --target claude-code smoke | tok_of)
 "$DA" packs apply --target claude-code smoke --plan "$t" --approved "live smoke" >/dev/null || { echo "FAIL: packs apply" >&2; exit 1; }
-R=$QARGI_STATE/claude/smoke
+R=$QARGI_STATE/render/smoke/claude-code
 [ -f "$R/.claude/skills/$PROBE/SKILL.md" ] && ok "the probe skill is rendered in $R" || { no "the render is missing the probe skill"; exit 1; }
 "$DA" packs check --target claude-code smoke >/dev/null && ok "check passes on the render" || no "check on the render"
 

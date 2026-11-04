@@ -28,8 +28,6 @@ Claude Code: .claude/skills/<name>/..., mcp.json, settings.json, MANIFEST.json).
 side under <state>/render/<project>/, which is also where a staged tree lives until it is swapped in; a lock file per project is
 <state>/render/.<project>.lock.
 
-  packs_render.py migrate plan TOKENFILE    the renders an earlier version made under <state>/claude/<project>/, and where each goes
-  packs_render.py migrate apply TOKEN       move them (and the checkout links that point into them), if the plan is still the one
   packs_render.py label PROVIDER [PROJECT]  how the plan calls the runtime (renderers.packs.label of its definition, with a project of the
                                             composed one, else its name)
 """
@@ -735,161 +733,7 @@ def link_note(inp, live):
         print("note: repo %s is not linked to the render (qargi packs link %s)" % (sk, inp["project"]))
 
 
-# ---- the move of the renders from <state>/claude/<project> to <state>/render/<project>/<runtime>
-
-LEGACY = "claude"          # where the renders of the target claude-code were written before the render directory moved
-LEGACY_TARGET = "claude-code"
-
-
-def migration_plan(state, conf):
-    """([line, ...], [action, ...], token or "") for the renders under <state>/claude. An action is {"project", "runtime", "from", "to",
-    "link": None or {"path", "from", "to"}}. A directory that is not moved is a line that says why; nothing here changes anything."""
-    P = provider_module()
-    lines, acts = [], []
-    old_root = os.path.join(os.path.abspath(state), LEGACY)
-    if not os.path.lexists(old_root):
-        return [], [], ""
-    if os.path.islink(old_root) or not os.path.isdir(old_root):
-        return ["  left     %s: not a directory; nothing is moved" % old_root], [], ""
-    for name in sorted(os.listdir(old_root)):
-        src = os.path.join(old_root, name)
-
-        def left(why, name=name):
-            lines.append("  left     %s/%s: %s" % (LEGACY, name, why))
-        if name.startswith("."):
-            left("a staging directory or lock file of a run; remove it by hand when no run is going")
-        elif not NAME_RE.match(name):
-            left("not a project name")
-        elif os.path.islink(src) or not os.path.isdir(src):
-            left("not a directory")
-        elif not os.path.isfile(os.path.join(src, "MANIFEST.json")):
-            left("no MANIFEST.json, so not a render")
-        else:
-            answers = P.project_answers(name, conf)
-            if answers is None:
-                left("no stored answers for project %s on this host" % name)
-                continue
-            try:
-                runtime = P.provider_of(answers, "local", name)
-                lay = P.layout(runtime, project=name)
-            except P.ProviderError as e:
-                left(str(e))
-                continue
-            if lay["render_target"] != LEGACY_TARGET:
-                left("the project's local runtime %s has the render target %s, not %s" % (runtime, lay["render_target"], LEGACY_TARGET))
-                continue
-            dest = render_dir(state, name, runtime)
-            if os.path.lexists(dest):
-                left("%s exists already; remove one of the two by hand" % dest)
-                continue
-            if any(os.path.islink(d) or (os.path.lexists(d) and not os.path.isdir(d)) for d in (os.path.dirname(dest), os.path.dirname(os.path.dirname(dest)))):
-                left("%s is not a directory (or is a symbolic link); refusing" % os.path.dirname(dest))
-                continue
-            act = {"project": name, "runtime": runtime, "from": src, "to": dest, "link": None}
-            sd = lay["project_skills_dir"]
-            co = (answers.get("repo") or {}).get("path") or ""
-            if sd and isinstance(co, str) and os.path.isabs(co) and os.path.isdir(co):
-                link = os.path.join(co, sd)
-                if os.path.islink(link) and os.readlink(link) == os.path.join(src, sd):
-                    if os.path.realpath(os.path.dirname(link)) == os.path.join(os.path.realpath(co), *sd.split("/")[:-1]):
-                        act["link"] = {"path": link, "from": os.path.join(src, sd), "to": os.path.join(dest, sd)}
-                    else:
-                        lines.append("  note     %s links to the old render but a directory above it is a symbolic link: it is not re-pointed "
-                                     "(qargi packs unlink %s, then link, after the move)" % (link, name))
-            acts.append(act)
-            lines.append("  move     %s/%s -> render/%s/%s" % (LEGACY, name, name, runtime))
-            if act["link"]:
-                lines.append("           and re-point %s to %s" % (act["link"]["path"], act["link"]["to"]))
-    tok = hashlib.sha256(json.dumps([lines, acts], sort_keys=True).encode()).hexdigest()[:12] if acts else ""
-    return lines, acts, tok
-
-
-def lock_project(state, project):
-    """An exclusive lock on the project's render (the file the shell takes with flock): the open file, to be closed by the caller."""
-    import fcntl
-    path = os.path.join(os.path.abspath(state), "render", ".%s.lock" % project)
-    while True:
-        if os.path.islink(path):
-            os.unlink(path)
-        fh = open(path, "w")
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            if os.path.samestat(os.fstat(fh.fileno()), os.stat(path)):
-                return fh, path
-        except FileNotFoundError:
-            pass
-        fh.close()
-
-
-def cmd_migrate(args):
-    provider_module()
-    import paths
-    state, conf = paths.state(), paths.conf()
-    if len(args) == 2 and args[0] == "plan":
-        lines, acts, tok = migration_plan(state, conf)
-        if not lines:
-            print("nothing to migrate: no renders under %s/%s" % (state, LEGACY))
-            return
-        print("renders made by an earlier version under %s/%s/ move to %s/render/PROJECT/RUNTIME (the same files; do it between sessions):" % (state, LEGACY, state))
-        for ln in lines:
-            print(ln)
-        if acts:
-            with open(args[1], "w") as fh:
-                fh.write(tok)
-        else:
-            print("nothing is moved")
-        return
-    if len(args) == 2 and args[0] == "apply":
-        import marshal_refs
-        if marshal_refs.in_member_run():
-            die("packs migrate-render is not available in a member run: only the lead's session moves the renders; nothing was changed")
-        lines, acts, tok = migration_plan(state, conf)
-        if not acts or tok != args[1]:
-            die("the plan changed since the token was made (or there is nothing to move); nothing was changed")
-        os.makedirs(os.path.join(os.path.abspath(state), "render"), exist_ok=True)
-        done = []
-        for a in acts:
-            fh, lock = lock_project(state, a["project"])
-            try:
-                if os.path.lexists(a["to"]) or os.path.islink(a["from"]) or not os.path.isdir(a["from"]):
-                    die("%s changed while the move was going on; moved so far: %s; run the plan again" % (a["project"], ", ".join(done) or "nothing"))
-                mid = os.path.dirname(a["to"])
-                if not os.path.isdir(mid):
-                    os.mkdir(mid)
-                    os.chmod(mid, 0o755)
-                os.rename(a["from"], a["to"])
-                done.append(a["project"])
-                print("moved %s -> %s" % (a["from"], a["to"]))
-                lk = a["link"]
-                if lk and os.path.islink(lk["path"]) and os.readlink(lk["path"]) == lk["from"]:
-                    tmp = "%s.qargi-relink.%d" % (lk["path"], os.getpid())
-                    os.symlink(lk["to"], tmp)
-                    os.replace(tmp, lk["path"])
-                    print("re-pointed %s -> %s" % (lk["path"], lk["to"]))
-            finally:
-                fh.close()
-                try:
-                    os.unlink(lock)
-                except OSError:
-                    pass
-        try:
-            os.rmdir(os.path.join(os.path.abspath(state), LEGACY))
-            print("removed the empty directory %s/%s" % (state, LEGACY))
-        except OSError:
-            pass
-        return
-    die("usage: packs_render.py migrate plan TOKENFILE | migrate apply TOKEN")
-
-
 def main():
-    if len(sys.argv) >= 2 and sys.argv[1] == "migrate":
-        sys.path.insert(0, HERE)
-        try:
-            return cmd_migrate(sys.argv[2:])
-        except provider_module().ProviderError as e:
-            die(str(e))
-        except OSError as e:
-            die("%s: %s" % (e.filename or "file system error", e.strerror or e))
     if len(sys.argv) in (3, 4) and sys.argv[1] == "label":
         P = provider_module()
         try:
@@ -901,7 +745,7 @@ def main():
             print(sys.argv[2])
         return
     if len(sys.argv) < 3:
-        die("usage: packs_render.py prep|plan|swap|check INPUTS [TOKENFILE | STAGEFILE TOKEN] | migrate plan|apply | label PROVIDER")
+        die("usage: packs_render.py prep|plan|swap|check INPUTS [TOKENFILE | STAGEFILE TOKEN] | label PROVIDER")
     try:
         inp = load(sys.argv[2])
         verb = sys.argv[1]

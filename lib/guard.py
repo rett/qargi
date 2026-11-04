@@ -47,8 +47,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     read of a protected path stays allowed), the skills and agents directories the provider definitions name in their resources (user_dir, below
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
     installed ones: .claude/skills and .claude/agents), ~/.claude/plugins, and the installed copy of the tool (the tool_root in install.json:
-    the skills there are linked from ~/.claude/skills), and the claude/ and render/ directories of the state (the renders a runtime loads
-    its skills, tools and members from; the claude/ one is what `packs apply --target claude-code` makes). Inside the clone, found from the nearest `qargi local
+    the skills there are linked from ~/.claude/skills), and the render/ directory of the state (the renders a runtime loads
+    its skills, tools and members from: what `packs apply --target RUNTIME` makes). Inside the clone, found from the nearest `qargi local
     prepare` run directory, a project directory such as .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
@@ -426,7 +426,6 @@ def protected_roots():
     installed = P.installed_tool_root()
     if installed:
         roots.add(installed)
-    roots.update(claude_render_roots(P, home))
     roots.update(render_roots(P, home))
     roots.update(providers_state_roots(P, home))
     roots.update(feature_roots(P, home))
@@ -436,21 +435,10 @@ def protected_roots():
     return sorted(os.path.realpath(r) for r in roots)
 
 
-def claude_render_roots(P=None, home=None):
-    """The claude/ directory of the state: the render that `packs apply --target claude-code` makes of a project's enabled
-    skills and tools, which Claude Code loads with --add-dir. Its content is instructions a session follows, so it is
-    protected like the pack library. Found like the other qargi paths: QARGI_STATE, else <root>/state, and the default
-    ~/.qargi/state beside an override (real paths, so a link into it is followed)."""
-    if P is None:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import paths as P
-    home = home or os.path.expanduser("~")
-    return {os.path.realpath(os.path.join(st, "claude")) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
-
-
 def render_roots(P=None, home=None):
     """The render/ directory of the state: where the renders of every runtime go (state/render/<project>/<runtime>: skills, tools and
-    members as a runtime loads them). Found as claude_render_roots does."""
+    members as a runtime loads them). Found like the other qargi paths: QARGI_STATE, else <root>/state, and the default
+    ~/.qargi/state beside an override (real paths, so a link into it is followed)."""
     if P is None:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import paths as P
@@ -469,7 +457,7 @@ def providers_state_roots(P=None, home=None):
 
 
 def feature_roots(P=None, home=None):
-    """The features/ directory of the state: the marshal's record of each open feature. Found as claude_render_roots does."""
+    """The features/ directory of the state: the marshal's record of each open feature. Found as render_roots does."""
     if P is None:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import paths as P
@@ -523,7 +511,7 @@ def journal_sibling(full):
 
 
 def refusal_text(what, dest, root):
-    """The sentence for a refused write: the generic one, or for the claude render and the marshal's records the reason."""
+    """The sentence for a refused write: the generic one, or for the render and the marshal's records the reason."""
     if root in journal_roots() or journal_sibling(root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     name = os.path.basename(dest.rstrip("/"))
@@ -539,9 +527,6 @@ def refusal_text(what, dest, root):
         return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
     if root in memory_roots():
         return MemoryReason("%s on %s would change %s, a memory tier; %s" % (what, dest, root, MEMORY_NOTE))
-    if root in claude_render_roots():
-        return ("%s on %s would change %s, the render of a project's skills and tools that Claude Code loads; it is managed by "
-                "`qargi packs apply` and changed only by the lead" % (what, dest, root))
     if root in render_roots():
         return ("%s on %s would change %s, the render of a project's skills, tools and members that a runtime loads; it is managed by "
                 "qargi and changed only by the lead" % (what, dest, root))
@@ -915,7 +900,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "marshal" and verb not in MARSHAL_READ:
         return MarshalReason("qargi marshal %s changes the feature marshal and is not available to an agent (only status, check and handoff without --write are); %s"
                              % (verb or "(no verb)", MARSHAL_NOTE))
-    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("packs", "migrate-render"), ("local", "run")) \
+    if (area in ("skill", "tool") and verb in SKILL_VERBS) or (area, verb) in (("discover", "install"), ("packs", "apply"), ("packs", "seed"), ("packs", "link"), ("packs", "unlink"), ("local", "run")) \
             or (area == "import" and name == "qargi") or (area == "cloud" and verb in ("set", "unset", "login")) or area == "upgrade":
         if area == "upgrade":
             return "qargi upgrade changes the installed tool and its skills and is not available to an agent"
