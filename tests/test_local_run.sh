@@ -310,8 +310,7 @@ rec = {"kind": "provider", "sealed": True, "sha256": P.tree_hash(d), "approved":
 json.dump(rec, open(os.path.join(d, ".pack.json"), "w"))
 PY
 }
-setprov fakepack; prep "$T/r" w5; task
-seal fakepack '[]'
+setprov fakepack; seal fakepack '[]'; prep "$T/r" w5; task   # prepare refuses a provider that is set but does not resolve (an unsealed pack), so seal first
 out=$($DA local run "$RUN" 2>&1); rc=$?
 { [ "$rc" = 2 ] && grep -q "not an executable approved for the pack 'fakepack'" <<<"$out" && [ ! -e "$OUT/transcript" ]; } && ok "a pack executable the record does not approve is not run" || no "unapproved: rc=$rc $out"
 seal fakepack '["bin/pack-llm"]'
@@ -328,7 +327,7 @@ out=$($DA local run "$RUN" --again 2>&1); rc=$?
 bad() { # NAME dispatch-json: a runtime with this dispatch, project set to it
   mk "$1" "$(jq -n --arg n "$1" --argjson m "$M" --argjson d "$2" '{schema:2,kind:"provider",provider:$n,family:null,surface:"local",models:$m,capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:$d}')"
   setprov "$1"; }
-prep "$T/r" w6; task
+setprov fakecmd; prep "$T/r" w6; task   # the pack above has drifted: prepare would refuse it
 tryrun() { out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?; }
 bad fakeb1 '{"mode":"command","argv":["fakellm","{bogus}"],"prompt":{"via":"stdin"}}'; tryrun
 [ "$rc" = 2 ] && grep -q 'unknown placeholder {bogus}' <<<"$out" && ok "an unknown placeholder is refused" || no "bogus: rc=$rc $out"

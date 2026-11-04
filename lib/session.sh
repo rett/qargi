@@ -117,8 +117,8 @@ base_resolve() {
   [ -z "$OPTIN" ] || args+=(--opt-in)
   res=$("$(dirname "$0")/agent.sh" "${args[@]}") || rc=$?   # its refusal (exit 1 or 2) is on stderr already
   [ "$rc" = 0 ] || exit "$rc"
-  jq -e --arg n "$name" '.instance == $n and .legacy == false' <<<"$res" >/dev/null \
-    || die "$BROLE resolves to $(jq -r '.instance' <<<"$res"), not to the base $name: the base is not usable yet (the provider's per-dispatch model and effort overrides are not verified, so the legacy role instance runs); nothing was started"
+  jq -e --arg n "$name" '.instance == $n' <<<"$res" >/dev/null \
+    || die "$BROLE resolves to $(jq -r '.instance' <<<"$res"), not to the base $name; nothing was started"
   [ "$(jq -r .class <<<"$res")" = "$bclass" ] || die "the $(jq -r .profile <<<"$res") profile is of the $(jq -r .class <<<"$res") class, and $name is the $bclass base"
   BR_PROFILE=$(jq -r .profile <<<"$res"); BR_MODEL=$(jq -r .model <<<"$res"); BR_EFFORT=$(jq -r '.effort // empty' <<<"$res"); BR_ACCEPT=false
   # a read-only base needs a read-only barrier on the cloud, or the project's recorded acceptance that there is none

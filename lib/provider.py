@@ -101,6 +101,9 @@ Usage: provider.py list
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
                                          name is resolved, with a notice on stderr); exit 2 when it names none or there is no such project
+       provider.py of-if-set PROJECT [--conf DIR] --surface local|cloud
+                                         the same for a caller that adds something only when a provider is set: no project, no such project
+                                         and no provider for the surface print nothing and exit 0; a provider that is set and does not resolve is exit 2
 The library verbs (lib/conformance/library.py; every one that writes is a plan, a token and --approved, and leaves an audit line; a member
 is refused all of them by the guard):
        provider.py new NAME [--kind provider|catalog|extension] [--from minimal|command|hook-cli|PROVIDER]    scaffold an unsealed pack
@@ -2158,9 +2161,12 @@ def cmd_layout(name, field, would, home, project=None):
     return 0
 
 
-def cmd_of(args):
+def cmd_of(args, if_set=False):
     """of PROJECT [--conf DIR] [--surface local|cloud]: the project's provider. With a surface it is that surface's runtime (a family
-    name is resolved; a notice goes to stderr when it was); without, what models.provider says when it is one name."""
+    name is resolved; a notice goes to stderr when it was); without, what models.provider says when it is one name. of-if-set PROJECT --surface S
+    is for a caller that adds something only when a provider is set: no project, a project that is not stored, no models.provider or none for
+    that surface (or a single name that does not serve it) print nothing and succeed; a provider that is set and cannot be resolved, and answers
+    that cannot be read, are still refused (exit 2)."""
     opts, pos, i = {}, [], 0
     while i < len(args):
         if args[i] in ('--conf', "--surface") and i + 1 < len(args):
@@ -2169,13 +2175,28 @@ def cmd_of(args):
             pos.append(args[i])
             i += 1
     if len(pos) != 1 or "--surface" in opts and opts["--surface"] not in SURFACES or any(a.startswith("--") for a in pos):
-        print("usage: qargi provider of PROJECT [--conf DIR] [--surface local|cloud]", file=sys.stderr)
+        print("usage: qargi provider of PROJECT [--conf DIR] [--surface local|cloud] | of-if-set PROJECT --conf DIR --surface local|cloud", file=sys.stderr)
         return 2
     project, conf, surface = pos[0], opts.get('--conf'), opts.get("--surface")
     if surface is None:
+        if if_set:
+            print("usage: qargi provider of-if-set PROJECT --surface local|cloud (it needs a surface)", file=sys.stderr)
+            return 2
         print(provider_of_project(project, conf))
         return 0
-    runtime, notice = resolve_project(_stored_answers(project, conf), surface, project)
+    if if_set:
+        if not project or not NAME_RE.match(project) or not os.path.lexists(os.path.join(conf or _conf(), "projects", project + ".json")):
+            return 0
+        answers = _stored_answers(project, conf)
+        p = _provider_answer(answers)
+        if p is None or (isinstance(p, dict) and not (isinstance(p.get(surface), str) and p[surface].strip())):
+            return 0
+        try:
+            runtime, notice = resolve_project(answers, surface, project)
+        except NoProvider:
+            return 0
+    else:
+        runtime, notice = resolve_project(_stored_answers(project, conf), surface, project)
     if notice:
         print("qargi: note: " + notice, file=sys.stderr)
     print(runtime)
@@ -2185,7 +2206,7 @@ def cmd_of(args):
 def main(argv):
     usage = ("usage: qargi provider list | show NAME [--project P] [--json] | effective RUNTIME SURFACE CAP [--project P] | check NAME|DIR [--project P] | new NAME [--kind K] [--from F] | import SOURCE [--name N] | seal NAME | remove NAME "
              "| enable|disable PROJECT EXT | attest NAME CAP --asked W ... | accept NAME --surface S --no-barrier [--project P] --asked WORDS "
-             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S]")
+             "[--approved WORDS] [--plan TOKEN] | layout NAME [FIELD] [--project P] | require-skills NAME [--project P] | launch NAME RENDER [--project P] | adapter-run NAME SURFACE VERB [--check] | addenda NAME SURFACE | notes [TOPIC] [--project P] | model NAME SURFACE TIER | of PROJECT [--surface S] | of-if-set PROJECT --surface S")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -2235,6 +2256,8 @@ def main(argv):
             return cmd_model(rest)
         if verb == "of":
             return cmd_of(rest)
+        if verb == "of-if-set":
+            return cmd_of(rest, if_set=True)
         if verb in ("layout", "require-skills", "launch"):
             opts, pos, i = {}, [], 0
             while i < len(rest):

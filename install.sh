@@ -27,6 +27,9 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null || { echo "qargi: install.sh needs python3 3.11 or newer" >&2; exit 1; }
+# what --copy puts in the data directory: the tool's directories and files (tests/test_tool_copy.sh keeps this list covering TOOL_DIRS of
+# tests/hermetic.sh, the directories a modified copy of the tool needs to run, and the end of tests/test_install.sh runs the copy)
+tool_dirs="bin lib provision contract canon catalog roles methodologies packs skills agents examples man completions VERSION"
 skills="qargi-task qargi-project qargi-instances qargi-provision qargi-memory qargi-packs qargi-providers qargi-verify qargi-flow qargi-team qargi-session"
 target='' proj='' mode='' copy='' force='' uninstall=''
 while [ $# -gt 0 ]; do
@@ -91,7 +94,7 @@ done
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mkdir -p "$data"
-  cp -r "$here/bin" "$here/lib" "$here/provision" "$here/contract" "$here/roles" "$here/methodologies" "$here/packs" "$here/skills" "$here/agents" "$here/examples" "$here/man" "$here/completions" "$here/VERSION" "$data/"
+  for d in $tool_dirs; do cp -r "$here/$d" "$data/"; done
   echo "copied the tool to $data"
 fi
 
