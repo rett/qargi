@@ -418,7 +418,7 @@ class Config:
     def __init__(self, data, where):
         if not isinstance(data, dict):
             raise Refusal("%s: not an object" % where)
-        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name"}
+        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name", "author"}
         extra = set(data) - known
         if extra:
             raise Refusal("%s: unknown key(s) %s" % (where, ", ".join(sorted(extra))))
@@ -430,6 +430,14 @@ class Config:
         self.repo = data.get("repo")
         self.og_image = data.get("og_image")
         self.name = data.get("name", SITE_NAME)
+        self.author = None
+        if "author" in data:
+            a = data["author"]
+            if not isinstance(a, dict) or set(a) - {"name", "url"} or not isinstance(a.get("name"), str) or not a["name"].strip():
+                raise Refusal('%s: author must be an object {"name": "...", "url": "https://..."} (url is optional)' % where)
+            if "url" in a:
+                normalize_url(a["url"] if isinstance(a["url"], str) else "", "%s: author url" % where)
+            self.author = a
         for k, t in (("pages", list), ("forbidden", list)):
             v = data.get(k, t())
             if not isinstance(v, t) or not all(isinstance(x, str) and x for x in v):
@@ -1272,6 +1280,17 @@ def render_page(site, p):
         toc = '<details class="toc" open><summary>On this page</summary><ul>%s</ul></details>' % "".join(
             '<li><a href="#%s">%s</a></li>' % (esc(i), esc(t)) for i, t in h2)
     body = hrefs_to(p.body, L)
+    intro = ""
+    if p.kind != "notfound":
+        intro = '<p class="lede">%s</p>' % esc(p.description)
+        if p.kind != "home":
+            dates = []
+            if p.published:
+                dates.append('Published <time datetime="%s">%s</time>' % (esc(p.published), esc(p.published)))
+            if p.lastmod:
+                dates.append('Updated <time datetime="%s">%s</time>' % (esc(p.lastmod), esc(p.lastmod)))
+            if dates:
+                intro += '\n<p class="dates">%s</p>' % " · ".join(dates)
     # head
     title = page_title(site, p)
     canon = url + p.path
@@ -1293,6 +1312,9 @@ def render_page(site, p):
     # footer
     foot = ["<p>Checked against %s.</p>" % esc(site.src.stamp)]
     bits = []
+    if cfg and cfg.author:
+        a = cfg.author
+        bits.append("By " + ('<a href="%s">%s</a>' % (esc(a["url"]), esc(a["name"])) if a.get("url") else esc(a["name"])) + ".")
     if site.src.license_id:
         bits.append("Licensed under the %s License." % esc(site.src.license_id))
     if repo:
@@ -1304,29 +1326,39 @@ def render_page(site, p):
     page = tmpl("page.html").substitute(
         title=esc(title), description=esc(p.description), robots=head_robots, canonical=head_canon,
         css=esc(L("assets/site.css")), social=social, jsonld=ld, home=esc(L("")), site_name=esc(site.name),
-        stamp=esc(site.src.stamp), nav=nav, breadcrumb=crumb, h1=esc(p.title), toc=toc, body=body, footer="\n".join(foot))
+        stamp=esc(site.src.stamp), nav=nav, breadcrumb=crumb, h1=esc(p.title), intro=intro, toc=toc, body=body, footer="\n".join(foot))
     return page
 
 
 def jsonld_for(site, p, canon, repo):
+    """Structured data for what the page shows: its title, description (the lede), dates (the Updated line), breadcrumb,
+    version and licence (header and footer), and an author only when site.json names one that the footer shows."""
     url = site.url
     ctx = "https://schema.org"
-    org = {"@type": "Organization", "name": SITE_NAME}
+    cfg = site.cfg
+    author = None
+    if cfg and cfg.author:
+        author = {"@type": "Organization", "name": cfg.author["name"]}
+        if cfg.author.get("url"):
+            author["url"] = cfg.author["url"]
     if p.kind == "home":
-        app = {"@context": ctx, "@type": "SoftwareApplication", "name": SITE_NAME, "description": p.description, "url": canon,
-               "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux", "softwareVersion": site.src.release,
-               "author": org, "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}
+        app = {"@type": "SoftwareApplication", "name": SITE_NAME, "description": p.description, "url": canon,
+               "applicationCategory": "DeveloperApplication", "softwareVersion": site.src.release}
+        if author:
+            app["author"] = author
         if site.src.license_id == "MIT":
             app["license"] = "https://opensource.org/licenses/MIT"
         if repo:
             app["downloadUrl"] = repo + "/releases"
-        return app
+        return {"@context": ctx, "@graph": [{"@type": "WebSite", "name": site.name, "url": url}, app]}
     items = []
     for k, (t, path) in enumerate(p.crumbs, 1):
         items.append({"@type": "ListItem", "position": k, "name": t, "item": url + path})
     art = {"@type": "TechArticle", "headline": p.title, "description": p.description, "url": canon, "inLanguage": "en",
-           "author": org, "isPartOf": {"@type": "WebSite", "name": site.name, "url": url},
+           "isPartOf": {"@type": "WebSite", "name": site.name, "url": url},
            "about": {"@type": "SoftwareApplication", "name": SITE_NAME}}
+    if author:
+        art["author"] = author
     if p.lastmod:
         art["dateModified"] = p.lastmod
     if p.published:
@@ -1386,6 +1418,7 @@ class Tree(HTMLParser):
         self.title = ""
         self.lang = None
         self.scripts = []
+        self.times = []       # datetime attributes of <time> elements
         self._cap = None
         self._script = None
         self._title = False
@@ -1410,6 +1443,8 @@ class Tree(HTMLParser):
             self.err("<%s> is not allowed in the output" % tag)
         if tag == "meta" and "http-equiv" in a:
             self.err("<meta http-equiv> is not allowed in the output")
+        if tag == "time" and a.get("datetime"):
+            self.times.append(a["datetime"])
         if tag == "script" and (a.get("type") != "application/ld+json" or "src" in a):
             self.err("a script that is not JSON-LD")
         icon = tag == "link" and a.get("rel") == "icon" and a.get("href") == "data:,"       # the one data: address the pages use
@@ -1594,14 +1629,18 @@ def _check_jsonld(rel, t, rep, canon):
         nodes = [n for n in graph if isinstance(n, dict)]
         types = [n.get("@type") for n in nodes]
         if rel == "index.html":
-            if "SoftwareApplication" not in types:
-                rep.err(rel, "the home page needs SoftwareApplication JSON-LD")
+            if "SoftwareApplication" not in types or "WebSite" not in types:
+                rep.err(rel, "the home page needs SoftwareApplication and WebSite JSON-LD")
         else:
             if "TechArticle" not in types or "BreadcrumbList" not in types:
                 rep.err(rel, "JSON-LD needs TechArticle and BreadcrumbList")
         for n in nodes:
             if n.get("@type") == "TechArticle" and n.get("headline") not in h1:
                 rep.err(rel, "TechArticle headline %r is not the page's h1 %r" % (n.get("headline"), h1))
+            if n.get("@type") == "TechArticle":
+                for key in ("dateModified", "datePublished"):
+                    if key in n and n[key] not in t.times:
+                        rep.err(rel, "%s %s is not shown on the page (JSON-LD describes only what the page shows)" % (key, n[key]))
             if n.get("@type") == "BreadcrumbList":
                 items = n.get("itemListElement")
                 if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):

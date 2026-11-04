@@ -85,7 +85,8 @@ td:first-child code { white-space: nowrap; }
 .toc { border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 1rem; background: var(--head-bg); }
 .toc summary { cursor: pointer; font-weight: 600; }
 .toc ul { margin: 0.5rem 0 0.25rem; }
-.summary { color: var(--muted); font-size: 1.05rem; }
+.summary, .lede { color: var(--muted); font-size: 1.05rem; }
+.dates { color: var(--muted); font-size: 0.9rem; }
 .release-meta { color: var(--muted); }
 
 .site-footer { border-top: 1px solid var(--border); background: var(--head-bg); color: var(--muted); font-size: 0.9rem; }

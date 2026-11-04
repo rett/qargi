@@ -518,21 +518,53 @@ class Build(unittest.TestCase):
 
     def test_json_ld(self):
         home = self.ld("index.html")
-        self.assertEqual(home["@type"], "SoftwareApplication")
-        self.assertEqual(home["offers"]["price"], "0")
-        self.assertEqual(home["softwareVersion"], RELEASE)
-        self.assertEqual(home["author"], {"@type": "Organization", "name": "qargi"})
-        self.assertEqual(home["license"], "https://opensource.org/licenses/MIT")
-        self.assertNotIn("aggregateRating", home)
+        types = {n["@type"]: n for n in home["@graph"]}
+        app, site = types["SoftwareApplication"], types["WebSite"]
+        self.assertEqual((site["name"], site["url"]), ("qargi", "https://docs.example.org/qargi/"))
+        self.assertEqual(app["softwareVersion"], RELEASE)
+        self.assertEqual(app["license"], "https://opensource.org/licenses/MIT")
+        for k in ("offers", "operatingSystem", "author", "aggregateRating"):      # nothing the page does not show
+            self.assertNotIn(k, app)
         g = self.ld("reference/set-up/index.html")["@graph"]
         art = [n for n in g if n["@type"] == "TechArticle"][0]
         self.assertEqual(art["headline"], "Reference: Set up")
-        self.assertEqual(art["author"], {"@type": "Organization", "name": "qargi"})
+        self.assertNotIn("author", art)                   # no author unless site.json names one that the footer shows
         crumbs = [n for n in g if n["@type"] == "BreadcrumbList"][0]["itemListElement"]
         self.assertEqual([c["position"] for c in crumbs], [1, 2, 3])
         self.assertEqual(crumbs[0]["item"], "https://docs.example.org/qargi/")
         self.assertEqual(crumbs[1]["item"], "https://docs.example.org/qargi/reference/")
         self.assertEqual(self.ld("first-project/index.html")["@graph"][1]["itemListElement"][1]["name"], "Your first project")
+
+    def test_the_description_is_shown_and_no_date_is_marked_up_that_is_not_shown(self):
+        t = self.page("first-project/index.html")
+        self.assertRegex(t, r'<h1>Your first project</h1>\n<p class="lede">Set up a project called acme')
+        self.assertNotIn("<time", t)                      # these copies have no commit date, so no date is shown or marked up
+        self.assertNotIn("dateModified", t)
+        ref = self.page("reference/set-up/index.html")
+        self.assertIn('<p class="dates">Updated <time datetime="%s">%s</time></p>' % (RELEASE_DATE, RELEASE_DATE), ref)
+        self.assertIn('"dateModified":"%s"' % RELEASE_DATE, ref)
+
+    def test_an_author_named_in_the_config_is_shown_in_the_footer_and_marked_up(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "f"))
+        cfgp = os.path.join(t, "f", "site.json")
+        data = json.loads(slurp(cfgp))
+        data["author"] = {"name": "Example Docs Team", "url": "https://example.org/team"}
+        spit(cfgp, json.dumps(data))
+        o = os.path.join(t, "o")
+        rc, out, err = build(o, os.path.join(t, "f", "pages"))
+        self.assertEqual(rc, 0, out + err)
+        page = slurp(os.path.join(o, "first-project", "index.html"))
+        self.assertIn('By <a href="https://example.org/team">Example Docs Team</a>', page)
+        ld = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S).group(1))
+        art = [n for n in ld["@graph"] if n["@type"] == "TechArticle"][0]
+        self.assertEqual(art["author"], {"@type": "Organization", "name": "Example Docs Team", "url": "https://example.org/team"})
+        self.assertEqual(run("check-output", o)[0], 0)
+        for bad in [{"url": "https://example.org"}, {"name": "x", "extra": 1}, "just a string", {"name": "x", "url": "http://example.org"}]:
+            data["author"] = bad
+            spit(cfgp, json.dumps(data))
+            self.assertEqual(build(os.path.join(t, "o2"), os.path.join(t, "f", "pages"))[0], 2, bad)
 
     def test_sitemap_robots_and_404(self):
         root = ET.parse(os.path.join(self.out, "sitemap.xml")).getroot()
@@ -670,7 +702,7 @@ class Build(unittest.TestCase):
         self.assertIn("&lt;/title&gt;&lt;script&gt;", html_)
         m = re.search(r'<script type="application/ld\+json">(.*?)</script>', html_, re.S)
         self.assertNotIn("</", m.group(1))
-        self.assertEqual(json.loads(m.group(1))["name"], "qargi")
+        self.assertEqual(json.loads(m.group(1))["@graph"][0]["name"], "qargi")
         rc, out, _ = run("check-output", os.path.join(t, "o2"))
         self.assertEqual(rc, 0, out)
 
@@ -711,7 +743,13 @@ class LastMod(unittest.TestCase):
         ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', slurp(os.path.join(out, "first-project", "index.html")), re.S).group(1)
         art = json.loads(ld)["@graph"][0]
         self.assertEqual((art["dateModified"], art["datePublished"]), ("2026-03-02", "2026-01-15"))
+        page = slurp(os.path.join(out, "first-project", "index.html"))
+        self.assertIn('<p class="dates">Published <time datetime="2026-01-15">2026-01-15</time> · Updated <time datetime="2026-03-02">2026-03-02</time></p>', page)
         self.assertEqual(run("check-output", out)[0], 0)
+        spit(os.path.join(out, "first-project", "index.html"), page.replace('<time datetime="2026-03-02">', '<time datetime="2026-03-03">'))
+        rc, so, se = run("check-output", out)
+        self.assertEqual(rc, 1, so)
+        self.assertIn("dateModified 2026-03-02 is not shown on the page", so)
 
     def make_repo(self, t):
         f = os.path.join(t, "f")
@@ -1049,6 +1087,8 @@ class CheckOutput(unittest.TestCase):
             ("noindex", self.sub("first-project/index.html", "</head>", '<meta name="robots" content="noindex"></head>'), "noindex"),
             ("graph", self.sub("first-project/index.html", '"@graph":[', '"@graph":[7,"x",null,'), "not an object"),
             ("graphstr", self.sub("first-project/index.html", '"@graph":[', '"@graph":"x","y":['), "@graph"),
+            ("website", self.sub("index.html", '"@type":"WebSite"', '"@type":"Thing"'), "and WebSite JSON-LD"),
+            ("shown", self.sub("reference/set-up/index.html", '<time datetime="%s">' % RELEASE_DATE, '<time datetime="2000-01-01">'), "is not shown on the page"),
             ("sitemap", self.sub("sitemap.xml", "<loc>https://docs.example.org/qargi/first-project/</loc>", "<loc>https://docs.example.org/qargi/gone/</loc>"), "is not listed"),
             ("lastmod", self.sub("sitemap.xml", "<lastmod>%s</lastmod>" % RELEASE_DATE, "<lastmod>tomorrow</lastmod>"), "not YYYY-MM-DD"),
             ("robots", self.sub("robots.txt", "Sitemap:", "Nothing:"), "no Sitemap line"),
