@@ -196,6 +196,9 @@ res_name() {
 }
 
 die() { echo "qargi: $*" >&2; exit 1; }
+need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
+  [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
+}
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.

@@ -51,11 +51,11 @@ case $verb in
     FROM='' MORE='' ASKED='' APPROVED='' PLAN_ARG=''
     while [ $# -gt 0 ]; do
       case $1 in
-        --from-file) FROM=$2; shift 2;;
+        --from-file) need_val "$1" $#; FROM=$2; shift 2;;
         --allow-more-repos) MORE=1; shift;;
-        --asked) ASKED=$2; shift 2;;
-        --approved) APPROVED=$2; shift 2;;
-        --plan) PLAN_ARG=$2; shift 2;;
+        --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+        --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
         *) die "unknown option $1";;
       esac
     done
