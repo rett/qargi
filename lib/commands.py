@@ -1023,7 +1023,7 @@ TOPICS = {
         "The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of "
         "what the member returned is the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link, unlink and migrate-render; project set (models answers), init, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
         "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",

@@ -222,6 +222,7 @@ case $QARGI_STATE in "$T"/*) ok "the tests run in the test's own state directory
 cd "$T" || exit 1; DA=$ROOT/bin/qargi
 out=$("$DA" packs migrate-render 2>&1); rc=$?
 { [ "$rc" != 0 ] && grep -q 'usage: packs.sh packs' <<<"$out" && ! grep -q 'migrate-render' <<<"${out#*usage}" && ! grep -q 'plan token' <<<"$out"; } && ok "packs migrate-render is an unknown verb: it fails with the usage, which does not name it" || no "migrate-render (rc=$rc): $out"
+{ "$DA" packs --help; "$DA" help guard; } 2>&1 | grep -q 'migrate-render' && no "migrate-render is still in the packs help or the guard topic" || ok "the packs help and the guard topic do not name migrate-render"
 mkdir -p "$T/s/claude/old1/.claude/skills"; echo x > "$T/s/claude/old1/MANIFEST.json"
 proj fin1; "$DA" skill link s-all --scope project --project fin1 >/dev/null; D=$T/s/render/fin1/claude-code
 legacy_sig=$(find "$T/s/claude" -printf '%p %y\n' | sort)
