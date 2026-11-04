@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """qargi __guard: the PreToolUse hook that keeps a local agent's Bash from publishing."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import importlib.util, io, json, os, re, shutil, subprocess, sys, tarfile, tempfile, time, unittest
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")
+LIBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
 
 
 def guard(command):
@@ -139,6 +140,16 @@ class Review(unittest.TestCase):
             self.assertEqual(f.read().strip(), "review")
         with open(pr) as f:
             self.assertEqual(f.read().strip(), "advisor")
+
+    def test_review_sees_a_change_that_a_careless_reading_of_the_text_would_miss(self):
+        self.ability("review")
+        for c in ("echo a\\ #; touch newfile", "echo a\\\n#; git commit -qam x", 'trap "true; git commit -qam x; true" EXIT', "echo $[1<<2]\ntouch newfile\n2]",
+                  'X="true; touch newfile; true"; eval $X', "cat > ../a <<'E'\ntouch newfile\nE\nbash <../a", 'sh -c "true; touch newfile; true"',
+                  'env sh -c "true; git commit -qam x; true"', "echo ${x:-1}\ntouch newfile", "echo '#'; touch newfile"):
+            r = self.call("Bash", {"command": c})
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+        for c in ("echo 'x; touch newfile'", "git log --format='%s; touch newfile' -3", "echo hi # touch newfile"):
+            self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
 
     def test_an_unknown_class_refuses_every_call(self):
         self.assertEqual(self.call("Bash", {"command": "ls"}, None, "--class", "root").returncode, 2)
@@ -1881,7 +1892,6 @@ class BashText(unittest.TestCase):
         "echo '$(qargi upgrade)'",
         'echo "\\$(qargi upgrade)"',
         'python3 tests/test_guard.py && git commit -m "$(cat <<\'EOF\'\nDocs\n\nqargi upgrade is lead-only\nEOF\n)"',
-        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt && python3 tests/x.py",
         "for f in a b; do echo \"$f; qargi upgrade\"; done",
         "if [ -f x ]; then echo 'then qargi upgrade'; fi",
     )
@@ -2000,6 +2010,172 @@ class BashText(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, (c, r.stderr))
             self.assertIn("Agents never push", r.stderr)
+
+
+class ReviewedReading(unittest.TestCase):
+    """The adversarial review of the Bash reader: commands that the guard before it (the plain split on every separator, now the fallback) refused and the
+    quote-aware reading let through while they still run a refused verb or git push. The quote-aware reading applies only to a command whose every
+    segment runs nothing from its arguments (INERT in lib/guard.py); any other command is read as the plain split reads it."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    maxDiff = None
+
+    REFUSED = (
+        'echo a\\ #; qargi upgrade',
+        'echo a\\\n#b; qargi upgrade',
+        'echo a\\\t#b; git push',
+        'echo ${x/<<E/y}\nqargi upgrade\nE/y}',
+        ': ${x:-<<E}\ngit push\nE}',
+        'trap "true; qargi upgrade; true" EXIT',
+        'trap "true; git push; true" EXIT',
+        'X="true; qargi upgrade; true"; eval $X',
+        'X="true; git push origin x; true"\neval $X',
+        'sudo -u root sh -c "true; qargi upgrade; true"',
+        'env -C /tmp sh -c "true; qargi upgrade; true"',
+        'timeout -s KILL 5 sh -c "true; git push; true"',
+        'find . -maxdepth 0 -exec sh -c "true; qargi upgrade; true" \\;',
+        'perl -e \'system "true; qargi upgrade; true"\'',
+        'python3 -c "import os; os.system(\'true; qargi upgrade; true\')"',
+        'awk \'BEGIN{system("true; qargi upgrade; true")}\'',
+        'busybox sh -c "true; qargi upgrade; true"',
+        'fish -c "true; qargi upgrade; true"',
+        'script -qc "true; qargi upgrade; true" /dev/null',
+        'flock /tmp/l -c "true; qargi upgrade; true"',
+        'su -c "true; qargi upgrade; true"',
+        'git rebase --exec "true; qargi upgrade; true" HEAD~1',
+        'git -c alias.z="!true; qargi upgrade; true" z',
+        'watch -n1 "true; qargi upgrade; true"',
+        'echo "true; qargi upgrade; true" > a.sh; sh a.sh',
+        "cat > a <<'E'\nqargi upgrade\nE\ncp a b; sh b",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash <a",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash 0<a",
+        "cat > a <<'E'\nqargi upgrade\nE\n. <(cat a)",
+        "cat > a <<'E'\ngit push\nE\nbash <(cat a)",
+        "cat <<'E' | tee a >/dev/null\nqargi upgrade\nE\nsh a",
+        "cat > a <<'E'\nqargi upgrade\nE\nsh a*",
+        "cat > a <<'E'\nqargi upgrade\nE\nfind . -name a -exec sh {} \\;",
+        "cat > Makefile <<'E'\nall:\n\tqargi upgrade\nE\nmake",
+        "cat > .git/hooks/pre-commit <<'E'\nqargi upgrade\nE\nchmod +x .git/hooks/pre-commit; git commit -m x",
+        'cat > a <<E\nqargi upgrade\nE\nsh ./"a"',
+        'cat > a <<E\ngit push\nE\nchmod +x a; PATH=.:$PATH; a',
+        'cat > a <<E\ngit push\nE\nmv a b && sh b',
+        "alias z='true; qargi upgrade; true'\nz",
+        'f() { eval "$1"; }; f "true; qargi upgrade; true"',
+        'while read l; do eval "$l"; done <<\'E\'\nqargi upgrade\nE',
+        'cat <<E\n`qargi upgrade`\nE',
+        '"qargi" "upgrade"',
+        "q'a'rgi upgrade",
+        'command -p qargi upgrade',
+        'exec qargi upgrade',
+        'nohup qargi upgrade &',
+        '{ qargi upgrade; }',
+        'time qargi upgrade',
+        'x=1 y=2 qargi upgrade',
+        "echo x # '\nqargi upgrade",
+        'echo \'x\' #"\ngit push',
+        'echo hi\nqargi upgrade',
+        'echo hi\ngit push',
+        "shopt -s expand_aliases\nalias z='true; qargi upgrade; true'\nz",
+        'for ((i=1<<2;i<0;i++)); do :; done\nqargi upgrade\n2',
+        'echo $[1<<2]\nqargi upgrade\n2]',
+        'env -S "sh -s" <<\'E\'\nqargi upgrade\nE',
+        "stdbuf -oL sh <<'E'\ngit push\nE",
+        'builtin eval "$(cat)" <<\'E\'\nqargi upgrade\nE',
+        'echo "true; qargi upgrade; true" | stdbuf -oL sh',
+        "ionice -c3 bash <<'E'\nqargi upgrade\nE",
+        "cat > a <<'E'\nqargi upgrade\nE\nBASH_ENV=a bash -c true",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash --rcfile a -i </dev/null",
+        'cat > a <<\'E\'\nqargi upgrade\nE\nPROMPT_COMMAND=". ./a" bash -i </dev/null',
+        'mapfile -t a <<\'E\'\nqargi upgrade\nE\n"${a[@]}"',
+        "read -r a b <<'E'\nqargi upgrade\nE\n$a $b",
+        "cat > .git/hooks/pre-commit <<'E'\nqargi upgrade\nE\ngit commit -m x",
+        "x='a[$(qargi upgrade)]'\necho $[x]\nqargi upgrade",
+        "a[0]='x; qargi upgrade; y'; echo hi",
+        "rg --pre 'x; qargi upgrade; y' f",
+        "sort --compress-program 'x; qargi upgrade; y' f",
+        "sort --comp='x; qargi upgrade; y' f",
+        "PAGER='x; qargi upgrade; y' git log",
+        "BASH_ENV='x; qargi upgrade; y' git log",
+        "GIT_EXTERNAL_DIFF='x; qargi upgrade; y' git diff",
+        "git -c core.pager='x; qargi upgrade; y' log",
+        "git --exec-path='x; qargi upgrade; y' log",
+        "git grep -O'x; qargi upgrade; y' foo",
+        "echo hi # a\\\nqargi upgrade",
+        "echo ${x:-a}\nqargi upgrade",
+        "echo $((1<<2))\nqargi upgrade\n2))",
+        "echo ((a))\ngit push",
+        "[[ a<<b ]]\nqargi upgrade\nb",
+        "echo hi\r\nqargi upgrade",
+        "echo hi\r\ngit push",
+        "cat <<'E'\r\nqargi upgrade\r\nE\r\nqargi upgrade",
+        "git commit -m x\ngit push",
+        "cat <<'E' > n.txt\nhi\nE\ngit push",
+        "git log --oneline | tee n.txt; qargi upgrade",
+        "echo 'a' ; echo 'b' ; qargi upgrade ; echo 'c'",
+        "echo '#'; qargi upgrade",
+        "echo \"#\"; qargi upgrade",
+        "echo $#; qargi upgrade",
+        "echo a#b; qargi upgrade",
+        "echo a\\\n#b; git push",
+        "echo a\\ \\#b; git push",
+        "echo \\#; git push",
+        "echo hi &\n# c\nqargi upgrade",
+        "echo hi\n  # c\n\tqargi upgrade",
+    )
+    # still allowed: the text of a command that runs nothing from its arguments, however much it looks like a command
+    ALLOWED = (
+        'git commit -m "x; qargi upgrade; y"',
+        'echo "a; qargi packs seed; b"',
+        "cat <<'E'\n`qargi upgrade`\nE",
+        "git commit -F - <<'EOF'\nDocs\n\nqargi upgrade now fails\ngit push is for the lead\nEOF",
+        'git log --format="%s; qargi upgrade" -3',
+        "git log --oneline | grep 'qargi upgrade' | head -3",
+        "echo hi #; qargi upgrade",
+        "echo hi # git push",
+        "echo hi\n# qargi upgrade\nls",
+        "echo $#; echo 'x; qargi upgrade'",
+        "echo a#b; echo 'x; qargi upgrade'",
+        "git status && git diff --stat | tail -1 && git commit -m 'a; qargi packs seed; b'",
+        "if [ -f x ]; then echo 'qargi upgrade; git push'; fi",
+        "for f in a b; do echo \"$f; git push\"; done",
+        "cat <<'E' > n.txt\nqargi upgrade\nE\ngit add n.txt && git commit -m 'n.txt: qargi upgrade; git push'",
+        "qargi provider list && echo 'qargi upgrade; git push'",
+        "python3 tests/test_guard.py && git commit -m 'qargi upgrade; git push'",
+        "python3 tests/test_guard.py && git commit -m \"$(cat <<'EOF'\nDocs\n\nqargi upgrade is lead-only\nEOF\n)\"",
+        "git tag -l 'v*' | sort | tail -3; echo 'qargi upgrade'",
+    )
+    # read as the plain split reads them from now on (a refusal that a careful reading would not make): the cost of not guessing
+    CONSERVATIVE = (
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt && python3 tests/x.py",
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\nmkdir -p out",
+        "make gate; git commit -m 'a; qargi upgrade; b'",
+        "echo 'a; qargi upgrade; b' | tr a b",
+        "x=1; sh -c 'echo hi'; git commit -m 'a; qargi upgrade; b'",
+    )
+
+    def verdicts(self, cmds):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:
+            return list(zip(cmds, ex.map(self.bash, cmds)))
+
+    def test_every_command_the_review_found_is_refused(self):
+        wrong = [c for c, r in self.verdicts(self.REFUSED) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but they run a refused verb or git push")
+
+    def test_text_that_only_a_command_which_runs_nothing_carries_is_still_not_a_command(self):
+        wrong = [(c, r.stderr.strip()) for c, r in self.verdicts(self.ALLOWED) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text")
+
+    def test_a_command_with_anything_else_in_it_is_read_conservatively(self):
+        wrong = [c for c, r in self.verdicts(self.CONSERVATIVE) if r.returncode != 2]
+        self.assertEqual(wrong, [], "the plain split refuses these; the reader no longer guesses which file a heredoc is run through")
+
+    def test_the_review_found_the_variants_a_member_could_try(self):
+        """Not only the single commands: each refused verb is wrapped in the shapes a member could use to hide it."""
+        shapes = ('sh -c "@@"', "bash -c '@@'", 'eval "@@"', 'env sh -c "@@"', 'timeout 5 sh -c "@@"', 'trap "@@" EXIT', 'X="@@"; eval $X',
+                  "f() { eval \"$1\"; }; f \"@@\"", "python3 -c 'import os; os.system(\"@@\")'", "echo '@@' | sh", "cat <<'E' | sh\n@@\nE",
+                  "cat > a.sh <<'E'\n@@\nE\nsh a.sh", "echo a\\ #; @@", "echo ${x:-1}\n@@", "echo $[1<<2]\n@@\n2]")
+        wrong = [c for c, r in self.verdicts([s.replace("@@", p) for s in shapes for p in ("true; qargi upgrade; true", "true; git push; true")]) if r.returncode != 2]
+        self.assertEqual(wrong, [])
 
 
 class LibraryScripts(unittest.TestCase):
