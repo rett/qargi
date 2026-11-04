@@ -3283,6 +3283,38 @@ class FifthReview(unittest.TestCase):
         self.assertEqual(self.call("Grep", {"pattern": "x", "path": cred}).returncode, 2)
         self.assertIn("a redirection on", self.call("Bash", {"command": "< %s" % k}).stderr)
 
+    # --- G9: a link to a protected location
+    def test_a_link_to_a_protected_location_is_refused_where_it_is_made(self):
+        h, s = os.path.join(self.t, "home"), os.path.dirname(self.skill)
+        bad = ["ln -s %s dst" % s, "ln -s %s dst" % h, "ln -s ~/.claude/skills/x dst", "ln -s %s/x dst; echo x > dst/SKILL.md" % s, "ln -sf %s dst" % self.conf, "ln -s %s/packs dst" % self.conf,
+               "ln -s %s/features dst" % self.state, "ln -s %s dst/" % self.t, "ln %s dst" % self.skill, "ln -s -t dst %s" % self.skill, "ln -s ../../../home/.claude/skills dst"]
+        self.assertEqual(self.not_refused(bad, self.clone), [])
+        ok = ["ln -s /etc/hostname dst", "ln -s ../a b", "ln -s %s/sub x" % self.clone, "ln -s %s/f %s/l" % (self.out, self.out), "ln -s sub x"]
+        self.assertEqual(self.not_allowed(ok, self.clone), [])
+
+    # --- G10: more writers, and the commands find and parallel run
+    def test_more_writers_and_the_commands_find_exec_and_parallel_run(self):
+        s = self.skill
+        bad = ["awk -i inplace '{print}' %s" % s, "gawk -i inplace '1' %s" % s, "awk -iinplace 1 %s" % s, "vim -es %s" % s, "vi %s" % s, "ex %s" % s, "ed %s" % s, "rename s/a/b/ %s" % s,
+               "sqlite3 %s 'create table t(a)'" % s, "setfacl -m u:x:rwx %s" % s, "mkfifo %s" % s, "find . -exec git push {} \\;", "find . -name x -execdir gh api x \\;",
+               "find . -ok qargi packs link p \\;", "find . -exec qargi skill new x {} +", "find . -exec ls {} \\; -exec git push {} \\;", "parallel git push ::: a b", "parallel -j 4 gh api ::: a",
+               "echo a | parallel qargi packs link", "find ~ -delete", "find %s -name x -delete" % os.path.join(self.t, "home/.claude"), "find ~ -exec rm {} +",
+               "find %s -type f -exec rm {} \\;" % os.path.dirname(s), "find %s -delete" % self.t]
+        self.assertEqual(self.not_refused(bad), [])
+        ok = ["awk '{print}' f", "gawk -i inplace 1 f", "find . -type f -exec echo {} \\;", "find . -name '*.o' -delete", "find . -exec rm {} \\;", "find ~ -name x", "sqlite3 db.sqlite .tables",
+              "find . -exec grep -l push {} +", "parallel echo ::: a b", "find %s -name '*.o' -delete" % self.out]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G11: git commands that change the repository, under the read-only class
+    def test_git_commands_that_change_the_repository_are_refused_under_the_read_only_class(self):
+        bad = ["git bisect start", "git bisect good", "git bisect reset", "git symbolic-ref HEAD refs/heads/x", "git symbolic-ref -d HEAD", "git reflog expire --all", "git reflog delete HEAD@{1}",
+               "git hash-object -w f", "git hash-object --write f", "git hash-object -tw f", "git unpack-objects", "git lfs pull", "git lfs checkout", "git lfs fetch", "git -C . bisect run true"]
+        self.assertEqual(self.not_refused(bad, self.clone, "read-only"), [])
+        ok = ["git bisect log", "git symbolic-ref HEAD", "git symbolic-ref --short HEAD", "git reflog", "git reflog show HEAD", "git hash-object f", "git lfs ls-files", "git lfs status",
+              "git log --oneline", "git show HEAD", "git rev-parse HEAD"]
+        self.assertEqual(self.not_allowed(ok, self.clone, "read-only"), [])
+        self.assertEqual(self.not_allowed(["git bisect start", "git symbolic-ref HEAD refs/heads/x", "git hash-object -w f"], self.clone, None), [])
+
 
 if __name__ == "__main__":
     unittest.main()

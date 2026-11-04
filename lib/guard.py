@@ -157,8 +157,9 @@ PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
-WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
-WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
+WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
+WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
+           "ex", "vi", "vim", "nvim", "ed", "rename", "sqlite3", "setfacl", "mkfifo"}      # the editors and the like write the files they are given
 COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
 TARS = {"tar", "gtar", "bsdtar"}
 INPLACE = {"sed", "perl"}                                   # with -i
@@ -591,6 +592,14 @@ def pieces(text, whole=False, top=True):
     return tuple(out)
 
 
+FIND_EXEC = re.compile(r"-(?:exec|execdir|ok|okdir)\s")
+
+
+def find_commands(text):
+    """The commands that find -exec, -execdir, -ok and -okdir run in a piece of a command line: what follows each of them, up to the next one."""
+    return [c.strip() for c in re.split(r"(?:^|\s)-(?:exec|execdir|ok|okdir)(?=\s)", text)[1:] if c.strip()]
+
+
 @functools.lru_cache(maxsize=64)
 def passes(command):
     """The cuts of a Bash command line, read once per command (the checks of one call all ask): [(kind, pieces)], kind "main" for a cut of the whole line
@@ -602,6 +611,10 @@ def passes(command):
     for form in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
         tick()
         out.append(("main", pieces(form)))
+        if FIND_EXEC.search(form):                           # the command after -exec is a command of its own (find . -exec git X {} \;)
+            extra = [c for p in out[-1][1] for c in find_commands(p.text)]
+            if extra:
+                out.append(("inner", pieces("\n".join(extra), top=False)))
         if SUBST.search(form):                               # and the line cut with its substitutions whole: a word a substitution builds stays in the command it belongs to
             out.append(("main", pieces(form, whole=True)))
         for inner in substitutions(form):
@@ -981,6 +994,8 @@ def write_targets(toks, i):
                 v = cluster_value(rest, k, "t") if v is None else v
                 if v is not None:
                     targets.append((prog, v))
+        elif prog in ("awk", "gawk", "mawk") and any(t in ("inplace", "-iinplace", "--include=inplace") for t in rest):    # gawk -i inplace edits its files
+            targets += [("awk -i inplace", a) for a in (args if any(t in ("-f", "--file") for t in rest) else args[1:])]
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
             scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
             targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
@@ -1005,6 +1020,9 @@ def write_targets(toks, i):
             if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                 targets.append(("git " + sub, gitdir or "."))
                 targets += [("git " + sub, tree) for tree in trees]                # --work-tree DIR and GIT_WORK_TREE=DIR name where the tree is changed, as -C does
+            if sub not in GIT_WRITES and git_mutates(sub, rest[k + 1:]):
+                targets.append(("git " + sub, gitdir or "."))
+                targets += [("git " + sub, tree) for tree in trees]
             if sub == "config":
                 targets += git_config_targets(rest[k + 1:])
             places = [t for t in rest[k + 1:] if not t.startswith("-")]
@@ -1019,6 +1037,25 @@ def write_targets(toks, i):
             if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
                 targets.append(("git bundle create", rest[k + 2]))
     return targets
+
+
+def git_mutates(sub, args):
+    """True when `git SUB ARGS` changes the repository though SUB is not one of GIT_WRITES (a subcommand that reads or writes by its arguments): bisect (it checks out
+    commits), symbolic-ref with a value or -d, reflog expire|delete, hash-object -w, unpack-objects and lfs (all but the listing ones)."""
+    first = next((a for a in args if not a.startswith("-")), "")
+    if sub == "bisect":
+        return first not in ("log", "visualize", "view", "replay")
+    if sub == "symbolic-ref":
+        return len([a for a in args if not a.startswith("-")]) > 1 or any(a in ("-d", "--delete") for a in args)
+    if sub == "reflog":
+        return first in ("expire", "delete") or any(a.startswith("--expire") for a in args)
+    if sub == "hash-object":
+        return any(a == "--write" or (re.fullmatch(r"-[A-Za-z]+", a) is not None and "w" in a) for a in args)
+    if sub == "unpack-objects":
+        return True
+    if sub == "lfs":
+        return first not in ("ls-files", "status", "env", "version", "locks", "logs", "help")
+    return False
 
 
 CONFIG_READS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool", "--list", "-l", "--show-origin", "--show-scope", "--name-only"}   # git config options that only read
@@ -2112,12 +2149,22 @@ def protected_write(toks, i, here):
         if words[:2] == ["packs", "render"]:                 # render writes its output directory: judge every operand
             cands += [("qargi packs render", c) for t in words[2:] for c in {t, t.split("=", 1)[-1]}]
     if prog == "find" and any(t in FIND_ACTIONS for t in rest):
-        cands += [("find", t) for t in rest if not t.startswith("-") and t not in ("(", "!")][:8]
+        removes = "-delete" in rest or any(os.path.basename(t) in DESTRUCTIVE for t in rest)        # find -delete and -exec rm walk the tree below the path and remove it
+        cands += [("find -delete" if removes else "find", t) for t in rest if not t.startswith("-") and t not in ("(", "!")][:8]
     if prog == "tar":
         cands += [(prog, a) for a in tar_targets(rest)]
     elif prog in EXTRACTORS:
         for t in rest:
             cands += [(prog, c) for c in {t, t.split("=", 1)[-1], t[2:] if t.startswith("-") and not t.startswith("--") else t}]
+    if prog == "ln":                                         # ln -s PROT DST; echo x > DST/x: the link is a name the guard has not seen when the write is judged
+        links = [a for a in (args if any(t in ("-t", "--target-directory") or t.startswith("--target-directory=") for t in rest) else args[:-1])]
+        for a in links:
+            for one in brace_expand(a):
+                heres = [here] + ([os.path.dirname(resolve(here, args[-1]))] if args and not one.startswith(("/", "~")) else [])
+                root = next((r for r in (protected(resolve(h, one), True) for h in heres) if r), None)
+                if root:
+                    return OwnReason("ln of %s makes a link to %s (or a directory that holds it), a protected location, under a name the guard cannot follow in the same command line; "
+                                     "link to something else" % (a, root))
     for what, dest in cands:
         tick()
         if not dest or dest.startswith("-") and dest != "-":
@@ -2132,7 +2179,7 @@ def protected_write(toks, i, here):
             if what == "git config --file" and not in_clone(full):
                 return OwnReason("git config --file %s writes a git configuration file outside the clone (a path in GIT_CONFIG_GLOBAL or an include can make git read it); "
                                  "a member changes the configuration of its clone only" % dest)
-            root = protected(full, what.split()[0] in DESTRUCTIVE)
+            root = protected(full, what.split()[0] in DESTRUCTIVE or what == "find -delete")
             if root and what == "mv" and protected(full) is None and fits_beside(move_places(rest), one, full, here, lambda p: protected(p, True)):
                 continue                                     # only a directory above the protected location, and what is moved into it neither is, holds nor meets one
             if root:
