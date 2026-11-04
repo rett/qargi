@@ -12,7 +12,7 @@ qargi project frobnicate acme
 qargi agent add forge --no-such-option build
 ```
 
-Inline: `qargi nonesuch run` and `--also-missing` are wrong, but `qargi project init` is right.
+Inline: `qargi nonesuch run` is wrong, `--also-missing` is no qargi command line, and `qargi project init` is right.
 
 ## Links
 
