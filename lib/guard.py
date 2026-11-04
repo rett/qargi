@@ -157,7 +157,7 @@ PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
-WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
+WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
 COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
 TARS = {"tar", "gtar", "bsdtar"}
@@ -420,7 +420,9 @@ def skip_wrappers(toks):
     i = 0
     while i < len(toks):
         t = toks[i]
-        if "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+        if t in ("-C", "--chdir") and any(os.path.basename(w) == "env" for w in toks[:i]):
+            i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
+        elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
             i += 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
@@ -612,6 +614,7 @@ def segments(command):
     return tuple(p.text for _, ps in passes(command) for p in ps)
 
 
+UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)
 MAX_DIRS = 24                                                # directories the shell may be in at once, at most: a cd that may or may not happen doubles them
 CD_FLAGS = ("-P", "-L", "-e", "-@", "--")
 PLAIN_CD = re.compile(r"\s*(?:cd|pushd|popd)(?:\s|$)")
@@ -622,7 +625,7 @@ class TooManyDirs(TooSlow):
     command may run in): the call is refused, not judged from some of them."""
 
 
-def moved(dirs, args, certain, visited):
+def moved(dirs, args, certain, visited, cdpath=False):
     """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
     directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
     the directory it was in as well. `cd -` is any directory the line has been in."""
@@ -630,10 +633,15 @@ def moved(dirs, args, certain, visited):
     if ops == ["-"]:
         return list(dict.fromkeys(dirs + visited))
     target = ops[0] if ops else "~"
-    certain = certain and len(ops) <= 1 and not target.startswith("-") and not UNKNOWN.search(expand_path(target))
-    new = []
+    unknown = bool(UNKNOWN.search(expand_path(target))) or cdpath
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not unknown
+    new = [UNKNOWN_DIR] if unknown else []                    # the shell is in a directory the guard cannot name: relative writes are refused there (unknown_dir_refusal)
     for d in dirs:
         tick()
+        if d == UNKNOWN_DIR:
+            r = resolve("/", target) if target.startswith(("/", "~")) else None
+            new += [r] if r and certain else [d] + ([r] if r else [])
+            continue
         r = resolve(d, target)
         new += [r] if certain and os.path.isdir(r) else [d, r]
     new = list(dict.fromkeys(new))
@@ -651,6 +659,7 @@ def walk(command, here):
     directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command."""
     start = list(dict.fromkeys([here] if isinstance(here, str) else here))
     visited = list(start)
+    cdpath = "CDPATH" in command or bool(os.environ.get("CDPATH"))      # a CDPATH can send any cd to another directory than the one it names
     for kind, ps in passes(command):
         dirs = list(start) if kind == "main" else list(visited)
         if len(dirs) > MAX_DIRS:
@@ -659,8 +668,11 @@ def walk(command, here):
         texts = [p.text for p in ps]
         for n, piece in enumerate(ps):
             tick()
-            yield n, texts, piece.text, dirs
             toks, i = parsed(piece.text)
+            chdir = next((toks[k + 1] for k in range(min(i, len(toks)))
+                          if toks[k] in ("-C", "--chdir") and k + 1 < len(toks) and any(os.path.basename(w) == "env" for w in toks[:k])), None)
+            chdir = chdir or next((t.split("=", 1)[1] for t in toks[:i] if t.startswith("--chdir=")), None)
+            yield n, texts, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -668,12 +680,12 @@ def walk(command, here):
             certain, rest = piece.top and bool(PLAIN_CD.match(piece.text)) and (ran or not piece.chained), toks[i + 1:]    # after &&, only when everything before it in the chain is such a cd
             ran = certain
             if prog == "cd":
-                dirs = moved(dirs, rest, certain, visited)
+                dirs = moved(dirs, rest, certain, visited, cdpath)
             elif prog == "pushd":
                 named = [t for t in rest if not t.startswith(("-", "+"))]
                 if named and "-n" not in rest:
                     stack.append(dirs)
-                    dirs = moved(dirs, named[:1], certain, visited)
+                    dirs = moved(dirs, named[:1], certain, visited, cdpath)
                 elif not named:
                     dirs = list(dict.fromkeys(dirs + visited))
             elif stack and "-n" not in rest:
@@ -1224,6 +1236,17 @@ def glob_root(what, dest, here):
     return None
 
 
+def unknown_dir_refusal(toks, i):
+    """The reason a command run in a directory the guard cannot name (after a cd to a word a variable, a substitution or a glob builds, `env -C $d`, a CDPATH) is
+    refused, or None: a write to a path that is not absolute could land in the run's record, a skills directory or the pack library, and the command is judged from
+    its other directories only by the paths it names in full. The target of a git command (the repository it is run in) is left."""
+    for what, dest in write_targets(toks, i):
+        if dest and not DEVICE.match(dest) and not dest.startswith(("/", "~", "$", "`")) and not (what.startswith("git ") and dest == "."):
+            return OwnReason("%s on %s writes below a directory that a variable, a substitution or a glob built in a cd (or an env -C or a CDPATH), which the guard cannot read, so it cannot tell "
+                             "where %s is; write the directory out" % (what, dest, dest))
+    return None
+
+
 def review_refusal(call):
     """The reason a call is refused by what the run and the class hold a member to, or None: the record of the run is the coordinator's; under the read-only
     class (the hook's class, or the run's ability or class file) only the report and the manifest in OUT are written and the clone is not changed."""
@@ -1252,6 +1275,11 @@ def review_refusal(call):
             if (seg, here) in seen:                          # the same text from the same directory has been judged
                 continue
             seen.add((seg, here))
+            if here == UNKNOWN_DIR:
+                why = unknown_dir_refusal(toks, i)
+                if why:
+                    return why
+                continue
             why = review_segment(toks, i, here, seg)
             if why:
                 return why
@@ -1765,6 +1793,11 @@ def bash_skill_refusal(command, here, depth):
             if (seg, at) in seen:                            # judged already
                 continue
             seen.add((seg, at))
+            if at == UNKNOWN_DIR:
+                why = unknown_dir_refusal(toks, i)
+                if why:
+                    return why
+                continue
             if i < len(toks) and prog not in ("cd", "pushd", "popd"):
                 why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=at, exe=toks[i])
                 if why:
