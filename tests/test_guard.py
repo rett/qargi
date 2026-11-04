@@ -2589,6 +2589,66 @@ class RunRecord(unittest.TestCase):
             self.assertEqual(self.call("Bash", {"command": c}, self.run_dir, None).returncode, 0, c)
 
 
+class MoveBeside(unittest.TestCase):
+    """A file moved INTO a directory that only lies above a protected location (/tmp, the temporary directory, $HOME, a conf directory) or above the run does
+    not change that location. The directory is refused when what is moved is, holds or has the name of the place, and always as the target of mv -T."""
+    base = None                                          # where the fixture lives: the default temporary directory, or /tmp, or /dev/shm
+
+    def setUp(self):
+        before, tempfile.tempdir = tempfile.tempdir, self.base
+        try:
+            RunRecord.setUp(self)
+        finally:
+            tempfile.tempdir = before
+        with open(os.path.join(self.run_dir, "ability"), "w") as f:
+            f.write("build\n")
+        self.above = os.path.dirname(self.t)
+
+    tearDown = Skills.tearDown
+    call = RunRecord.call
+    table = RunRecord.table
+
+    ALLOWED = ("mv -t {above} src/a.go", "mv src/a.go {above}", "mv --target-directory={above} src/a.go", "mv -vt {above} src/a.go", "mv -f -t {above} src/a.go",
+        "mv -t {t} src/a.go", "mv src/a.go {t}", "mv src/a.go {conf}", "mv -t {conf} src/a.go", "mv src/a.go {home}/.claude", "mv src/a.go {home}",
+        "mv -t $HOME src/a.go", "mv src/a.go ~", "mv -t ~/.claude src/a.go", "mv src/a.go {proj}/.claude", "mv src/a.go src/b.go {t}", "mv {proj}/src {conf}",
+        "mv src/a.go {above}/{me}/proj")
+    REFUSED = (
+        "mv -t {conf}/credentials src/a.go", "mv src/a.go {conf}/credentials", "cp -t {conf}/credentials src/a.go", "cp src/a.go {conf}/credentials",       # into it
+        "mv -t {lib} src/a.go", "cp -t {lib} src/a.go", "mv src/a.go {lskill}/x", "mv -t {lskill} src/a.go", "mv src/a.go {home}/.claude/skills",
+        "mv {conf}/credentials {t}/gone", "mv -t {t} {conf}/credentials", "mv {conf} {above}/gone", "mv -t {above} {conf}", "mv {home}/.claude {t}/gone",        # a protected directory
+        "mv {t} {above}/gone", "mv -t {above} {t}", "mv {t} {above}", "mv {run} {above}", "mv -t {above} {run}", "mv {run} {above}/gone", "mv -t {conf} {conf}",   # one that holds it
+        "mv {proj}/credentials {conf}", "mv -t {conf} {proj}/credentials", "mv {proj}/packs {conf}", "mv -t {conf}/ {proj}/credentials/", "mv /x/{me} {above}",    # a name that meets it
+        "mv {proj}/cred* {conf}", "mv {proj}/$N {conf}", "mv -t {conf} {proj}/{{a,credentials}}", "mv {proj}/src/.. {conf}", "mv src/a.go ..",
+        "mv -T {proj}/src {conf}", "mv -T {proj}/src {above}", "mv --no-target-directory {proj}/src {t}", "mv -vT {proj}/src {conf}",                           # replaces the directory
+        "cp -r {proj}/src {conf}/credentials", "cp -rt {conf}/credentials {proj}/src", "mv src/a.go {run}", "mv -t {run} src/a.go", "mv src/a.go {run}/ability")
+
+    def fill(self, cmds):
+        names = dict(above=self.above, t=self.t, conf=self.conf, lib=self.lib, home=self.home, lskill=self.lskill, run=self.run_dir, proj=self.proj,
+                     me=os.path.basename(self.t))
+        return [c.format(**names) for c in cmds]
+
+    def test_a_file_moved_into_a_directory_above_a_protected_location_is_allowed(self):
+        cmds = self.fill(self.ALLOWED)
+        wrong = [(c, r.stderr.strip()) for c, r in self.table(cmds, cls=None) if r.returncode != 0]
+        self.assertEqual(wrong, [])
+
+    def test_what_changes_a_protected_location_or_the_run_stays_refused(self):
+        cmds = self.fill(self.REFUSED)
+        wrong = [c for c, r in self.table(cmds, cls=None) if r.returncode != 2]
+        self.assertEqual(wrong, [])
+
+    def test_the_read_only_class_still_may_not_move_the_clone_away_into_such_a_directory(self):
+        self.assertEqual(self.call("Bash", {"command": "mv -t %s src/a.go" % self.above}, cls="read-only").returncode, 2)
+
+
+class MoveBesideUnderTmp(MoveBeside):
+    base = "/tmp"
+
+
+class MoveBesideUnderShm(MoveBeside):
+    base = "/dev/shm"
+
+
 class GlobBound(unittest.TestCase):
     """The key checks used to expand a glob to the end: `cat /*/*/*/*/*/*` took 106 seconds, five times the time the hook has. A glob is expanded by reading
     at most GLOB_ENTRIES directory entries; a pattern that needs more is refused."""
