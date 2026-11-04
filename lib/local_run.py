@@ -36,11 +36,13 @@ to OUT/transcript and its standard error to OUT/transcript.err, and a process gr
 written to RUN/dispatch.json (argv, class, model, outcome; never an environment value). --dry-run prints the argv and the prompt and writes
 nothing. The exit status: 0 ok, 1 failed (or a usage error), 2 refused, 3 the runtime cannot be run this way, 4 transport.
 """
+import errno
 import json
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -284,6 +286,28 @@ def registry_tmp(run):
     return found
 
 
+def read_run_file(path, limit, what):
+    """The text of a file of the run directory, "" when it is absent. The run directory is a member's to write: the file is opened without following a
+    link and without waiting for a writer (a pipe in its place would stop the lead), and must be a regular file, or the run is refused."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return ""
+    except OSError as e:
+        fail("%s (%s) cannot be read as a file of the run: %s" % (what, path, e.strerror or e))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            fail("%s (%s) is not a regular file; the run is refused" % (what, path))
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(limit + 1)
+    finally:
+        os.close(fd)
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        fail("%s (%s) is not text" % (what, path))
+
+
 def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     """Everything a run needs, as a dict; Stop for a refusal. Nothing is written."""
     if not os.path.isfile(os.path.join(run, "refs.before")) or not os.path.isdir(os.path.join(run, "clone")):
@@ -362,12 +386,15 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     else:
         note = ""
     if task_file is None:
-        task_file = os.path.join(run, "task.md")
-    try:
-        with open(task_file, encoding="utf-8") as f:
-            task_text = f.read(MAX_TASK + 1)
-    except (OSError, ValueError) as e:
-        fail("no task block: write it to %s or give --task FILE (%s)" % (os.path.join(run, "task.md"), e.__class__.__name__), 1)
+        task_text = read_run_file(os.path.join(run, "task.md"), MAX_TASK, "the task block")
+        if not task_text:
+            fail("no task block: write it to %s or give --task FILE" % os.path.join(run, "task.md"), 1)
+    else:
+        try:
+            with open(task_file, encoding="utf-8") as f:
+                task_text = f.read(MAX_TASK + 1)
+        except (OSError, ValueError) as e:
+            fail("no task block: write it to %s or give --task FILE (%s)" % (os.path.join(run, "task.md"), e.__class__.__name__), 1)
     if len(task_text) > MAX_TASK or "\0" in task_text or not task_text.strip():
         fail("the task block must be non-empty text of at most %d bytes" % MAX_TASK, 1)
     prompt = compose_prompt(doc, task_text, cls, run, tmp)
@@ -375,13 +402,10 @@ def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
         fail("the prompt is %d bytes, too long for an argument (%d); use a runtime whose dispatch.prompt.via is stdin or file" % (len(prompt.encode("utf-8")), MAX_ARG))
     mname, native, notes = models_values(runtime, model, effort, project)
     pfile = os.path.join(run, PROMPT_DIR, pname)
-    member = ""
-    try:
-        with open(os.path.join(run, "profile"), encoding="utf-8") as f:
-            member = f.read().strip()
-    except OSError:
-        pass
-    member = member or open(os.path.join(run, "ability"), encoding="utf-8").read().strip()
+    member = read_run_file(os.path.join(run, "profile"), 256, "the run's profile").strip()
+    member = member or read_run_file(os.path.join(run, "ability"), 256, "the run's ability").strip()
+    if not member:
+        fail("%s is missing or empty: a run made by qargi local prepare records its ability there" % os.path.join(run, "ability"))
     values = {"member": member, "model": mname, "effort_native": native or "", "prompt_file": pfile, "prompt_arg": prompt if via == "arg" else "",
               "clone": clone, "run_dir": run, "out_dir": out, "project": project}
     argv = expand(argv_t, values, cls, "dispatch.argv", runtime)
@@ -434,8 +458,34 @@ def kill_group(proc):
             continue
 
 
+def open_own(path, what):
+    """Open path to write, new or replacing a file of its own, and return the file descriptor. It is refused when the final name is a link (O_NOFOLLOW),
+    when it is anything but a regular file (a pipe in its place would stop the lead; a device or a socket is not ours to write) or when it has a second
+    name (a hard link to a file elsewhere): the run directory is a member's to write, and a link planted as transcript, transcript.err or dispatch.json
+    would make the lead truncate and overwrite the file it points to. The truncation comes after the checks, on the descriptor."""
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as e:
+        fail("cannot write %s (%s): %s" % (what, path, "it is a link or a pipe, not a plain file of its own" if e.errno in (errno.ELOOP, errno.ENXIO) else (e.strerror or e)))
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        fail("%s (%s) is not a plain file of its own (a pipe, a device or a file with another name); it is written only as a new or a regular file" % (what, path))
+    os.set_blocking(fd, True)
+    os.ftruncate(fd, 0)
+    return fd
+
+
+def check_own(path, what):
+    """Refuse, before anything is run, a path that open_own would refuse (a run that cannot record its end is not started)."""
+    if os.path.lexists(path):
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            fail("%s (%s) is not a plain file of its own; remove it, or the run is refused" % (what, path))
+
+
 def write_private(path, text):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = open_own(path, "the run record")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
 
@@ -461,13 +511,20 @@ def write_prompt(run, path, text):
 
 def run_it(plan, run):
     out = os.path.join(run, "out")
+    if os.path.islink(out) or (os.path.exists(out) and not os.path.isdir(out)):
+        fail("%s is not a plain directory of the run; the transcript goes there and nowhere else" % out)
     os.makedirs(out, exist_ok=True)
+    if os.path.realpath(out) != os.path.join(os.path.realpath(run), "out"):
+        fail("%s is not inside the run" % out)
+    dispatch = os.path.join(run, "dispatch.json")
+    check_own(dispatch, "the dispatch record")
     write_prompt(run, plan["prompt_file"], plan["prompt"])
     argv = [plan["exe"]] + plan["argv"][1:]
     started = time.time()
     timed_out = False
     sin = open(plan["prompt_file"], "rb") if plan["via"] == "stdin" else subprocess.DEVNULL
-    with open(os.path.join(out, "transcript"), "wb") as so, open(os.path.join(out, "transcript.err"), "wb") as se:
+    with os.fdopen(open_own(os.path.join(out, "transcript"), "the transcript"), "wb") as so, \
+            os.fdopen(open_own(os.path.join(out, "transcript.err"), "the error transcript"), "wb") as se:
         try:
             proc = subprocess.Popen(argv, cwd=plan["cwd"], env=plan["env"], stdin=sin, stdout=so, stderr=se, shell=False, start_new_session=True)
         except OSError as e:
@@ -494,7 +551,7 @@ def run_it(plan, run):
            "model": plan["model"], "effort_native": plan["effort_native"], "prompt_via": plan["via"], "timeout_s": plan["timeout_s"],
            "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)), "seconds": round(time.time() - started, 1),
            "exit": code, "timed_out": timed_out, "outcome": outcome, "transcript": os.path.join(out, "transcript")}
-    write_private(os.path.join(run, "dispatch.json"), json.dumps(rec, indent=2, sort_keys=True) + "\n")
+    write_private(dispatch, json.dumps(rec, indent=2, sort_keys=True) + "\n")
     print("RUNTIME=" + plan["runtime"])
     print("OUTCOME=" + outcome + (" (timed out after %ds)" % plan["timeout_s"] if timed_out else ""))
     print("EXIT=%s" % code)
@@ -533,7 +590,7 @@ def main(argv):
     try:
         o = parse(argv)
         run = os.path.realpath(o["run"])
-        if not o["dry"] and not o["again"] and os.path.exists(os.path.join(run, "dispatch.json")):
+        if not o["dry"] and not o["again"] and os.path.lexists(os.path.join(run, "dispatch.json")):
             fail("%s has been run already (%s); --again runs it again and replaces the transcript" % (run, os.path.join(run, "dispatch.json")))
         plan = build(run, o["project"], o["runtime"], o["class"], o["task"], o["model"], o["effort"], o["timeout"], keep)
         for n in plan["notes"]:
