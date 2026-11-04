@@ -78,7 +78,8 @@ class Review(unittest.TestCase):
         return [("Write", {"file_path": os.path.join(o, "report.md")}), ("Edit", {"file_path": os.path.join(o, "manifest.json")}),
                 ("Bash", {"command": "git log --oneline && git diff HEAD~1"}), ("Bash", {"command": "make test > %s/test.log 2>&1" % o}),
                 ("Bash", {"command": "grep -rn x src 2>/dev/null"}), ("Bash", {"command": "go test ./... | tee %s/log.txt" % o}),
-                ("Bash", {"command": "cat src/a.go"})]
+                ("Bash", {"command": "cat src/a.go"}), ("Bash", {"command": "echo 'done; rm -rf src' && git log --format='%s; touch src/x' -3"}),
+                ("Bash", {"command": "cat <<'E' > %s/notes.txt\nrm -rf src\ngit commit -am x\nE" % o})]
 
     def test_review_refuses_every_change_to_the_clone(self):
         self.ability("review")
@@ -1811,6 +1812,165 @@ class ProviderVerbs(unittest.TestCase):
                   "echo qargi provider seal x", "grep -n 'provider attest' lib/provider.py", "cat provider.sh"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+
+class BashText(unittest.TestCase):
+    """What the guard reads of a Bash command is its commands, not the text it carries. A refused verb in a quoted string, a comment or a
+    heredoc that only a file or a message receives is not a command (ALLOWED); in the place of a command, however it is dressed up, it is
+    (REFUSED). Each table is read as one: the failures are listed together."""
+    setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
+    call = Skills.call
+    maxDiff = None
+
+    ALLOWED = (
+        'git commit -m "Fix docs\n\nqargi packs seed now refuses X"',
+        'git commit -m "Docs; qargi packs seed is lead-only"',
+        "git commit -m 'Docs; qargi packs seed is lead-only'",
+        "echo 'run it; qargi upgrade later'",
+        'printf "a\\nqargi upgrade\\n"',
+        "cat > notes.txt <<'E2'\nqargi provider enable x\nE2",
+        'cat > notes.txt <<"E2"\nqargi provider enable x\nE2',
+        "cat > notes.txt <<\\E2\nqargi provider enable x\nE2",
+        "cat > notes.txt <<-'E2'\n\tqargi provider enable x\n\tE2",
+        "cat <<'E' | tee notes.txt\nqargi upgrade\nE",
+        "cat <<E\nqargi upgrade\nE",
+        "cat <<E > notes.txt\nuse qargi packs seed\n\\$(qargi upgrade)\nE",
+        'git commit -m "$(cat <<\'EOF\'\nFix\n\nqargi packs seed now refuses X; qargi upgrade too\nEOF\n)"',
+        "grep -rn 'qargi packs seed' .",
+        "git commit -m 'a push of work'",
+        'git commit -m "Fix: a; gh api x"',
+        "echo hi # then qargi upgrade",
+        "echo hi # it's late\nls",
+        "echo 'a' && echo \"b; qargi upgrade\"",
+        "echo \"it's; qargi upgrade\"",
+        "echo \\; qargi upgrade",
+        "echo $((1 + 2)) && ls",
+        'echo "${HOME:-x}; qargi upgrade"',
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt",
+        "qargi provider list; echo 'qargi upgrade'",
+        "qargi packs list | grep 'packs seed'",
+        "echo '$(qargi upgrade)'",
+        'echo "\\$(qargi upgrade)"',
+        'python3 tests/test_guard.py && git commit -m "$(cat <<\'EOF\'\nDocs\n\nqargi upgrade is lead-only\nEOF\n)"',
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt && python3 tests/x.py",
+        "for f in a b; do echo \"$f; qargi upgrade\"; done",
+        "if [ -f x ]; then echo 'then qargi upgrade'; fi",
+    )
+    REFUSED = (
+        "qargi packs seed",
+        "x; qargi upgrade",
+        "echo hi && qargi provider enable x",
+        "echo hi || qargi upgrade",
+        "echo hi | qargi upgrade",
+        "printf 'qargi upgrade' | sh",
+        'printf "a\\nqargi upgrade\\n" | sh',
+        "echo qargi upgrade | bash",
+        "echo qargi upgrade | sudo bash -s",
+        "echo qargi upgrade | source /dev/stdin",
+        "echo qargi upgrade | . /dev/stdin",
+        "echo upgrade | xargs qargi",
+        "echo packs seed | xargs -n 2 qargi",
+        "bash <<< 'qargi upgrade'",
+        'bash -c "qargi upgrade"',
+        'eval "qargi upgrade"',
+        "bash -c \"echo hi; qargi upgrade\" ; ls",
+        "cat <<E | bash\nqargi upgrade\nE",
+        "cat <<'E' | bash\nqargi upgrade\nE",
+        "cat <<'E' | python3\nqargi upgrade\nE",
+        "bash <<'E'\nqargi upgrade\nE",
+        "sh <<E\nqargi upgrade\nE",
+        "sudo bash <<'E'\nqargi upgrade\nE",
+        "python3 <<'E'\nqargi upgrade\nE",
+        "eval \"$(cat <<'E'\nqargi upgrade\nE\n)\"",
+        "while read l; do eval \"$l\"; done <<'E'\nqargi upgrade\nE",
+        "cat > s.sh <<'E'\nqargi upgrade\nE\nbash s.sh",
+        "cat > s.sh <<'E'\nqargi upgrade\nE\nsource ./s.sh",
+        "cat <<E\n$(qargi upgrade)\nE",
+        "cat <<E\n`qargi upgrade`\nE",
+        "cat <<'E' ; qargi upgrade\nhello\nE",
+        'echo "$(qargi upgrade)"',
+        'echo "`qargi upgrade`"',
+        'echo "a; $(qargi upgrade)"',
+        'git commit -m "$(qargi upgrade)"',
+        'git commit -m "x $(cat <<\'E\'\nhi\nE\n; qargi upgrade)"',
+        "echo $(qargi upgrade)",
+        "echo `qargi upgrade`",
+        "x=$(qargi upgrade)",
+        "diff <(qargi upgrade) x",
+        "bash -c \"$(echo qargi upgrade)\"",
+        "if true; then qargi upgrade; fi",
+        "if qargi upgrade; then echo; fi",
+        "for i in 1; do qargi upgrade; done",
+        "while true; do qargi upgrade; done",
+        "{ qargi upgrade; }",
+        "(qargi upgrade)",
+        "( cd x; qargi upgrade )",
+        "! qargi upgrade",
+        "case x in x) qargi upgrade;; esac",
+        "echo \"$(case x in x) qargi upgrade;; esac)\"",
+        "if true; then\n  qargi upgrade\nfi",
+        "sleep 1 & qargi upgrade",
+        "> /dev/null qargi upgrade",
+        "FOO=1 qargi upgrade",
+        "command qargi upgrade",
+        '"qarg"i upgrade',
+        "q\\argi upgrade",
+        "'qargi' upgrade",
+        "\\qargi upgrade",
+        "exec qargi upgrade",
+        "time qargi upgrade",
+        "sudo qargi upgrade",
+        "nohup qargi upgrade",
+        "env -i qargi upgrade",
+        "timeout 5 qargi upgrade",
+        "xargs qargi upgrade",
+        "echo hi # it's late\nqargi upgrade",
+        "echo hi # it's\nqargi packs seed # don't",
+        "echo \\\\\nqargi upgrade",
+        "echo hi \\\n; qargi upgrade",
+        "echo 'unclosed; qargi upgrade",
+        "echo \"unclosed; qargi upgrade",
+        "echo $'a\\'b'; qargi upgrade",
+        "echo '1' \"2\"; qargi upgrade",
+        'echo "a\nb"\nqargi upgrade',
+        'echo "$(echo "x; y")"; qargi upgrade',
+        "cat <<E; qargi upgrade\nx\nE",
+        "echo `echo \\`qargi upgrade\\``",
+        "cat <<'E' | while read l; do eval \"$l\"; done\nqargi upgrade\nE",
+        "f() { sh; }; f <<'E'\nqargi upgrade\nE",
+        "cat <<'E' > \"$f\"\nqargi upgrade\nE\nbash \"$f\"",
+        "cat <<'E' > s.py\nqargi upgrade\nE\npython3 s.py",
+        "cat <<'E' > s.sh\nqargi upgrade\nE\nchmod +x s.sh && ./s.sh",
+        "printf '%s\\n' qargi upgrade | bash",
+        "echo $'qargi upgrade' | sh",
+        "echo packs seed | xargs -I{} qargi {}",
+        "f() { qargi upgrade; }; f",
+        "until false; do qargi upgrade; done",
+        "bash <(echo qargi upgrade)",
+        "eval `echo qargi upgrade`",
+    )
+
+    def verdicts(self, cmds):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:
+            return list(zip(cmds, ex.map(self.bash, cmds)))
+
+    def test_text_that_only_carries_a_refused_verb_is_not_a_command(self):
+        wrong = [(c, r.stderr.strip()) for c, r in self.verdicts(self.ALLOWED) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text")
+
+    def test_a_refused_verb_in_the_place_of_a_command_is_refused_however_it_is_dressed(self):
+        wrong = [c for c, r in self.verdicts(self.REFUSED) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but a command")
+
+    def test_the_publishing_barrier_reads_commands_too(self):
+        for c in ('git commit -m "Fix: a; gh api x"', "echo 'then git push; gh pr list'", "cat <<'E' > n.txt\ngit push\nE", "grep -n 'ssh host' f"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        for c in ('echo "$(gh api x)"', "if true; then git push; fi", "(git push)", "{ git push; }", "echo x | sh -c 'git push'", "cat <<E | sh\ngit push\nE",
+                  "echo a & gh pr list"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+            self.assertIn("Agents never push", r.stderr)
 
 
 class LibraryScripts(unittest.TestCase):

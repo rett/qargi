@@ -104,8 +104,16 @@ loop is accepted as residual, and `qargi local verify` and the lead's review of 
 Not covered: code that writes or reads a file itself (python -c, perl -e, node -e, a script written earlier and run) unless it
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
-cat $(echo ...), or by an echo piped to xargs). A heredoc line that starts with a
-refused verb is refused even as text (use the Write tool for documents).
+cat $(echo ...), or by an echo piped to xargs).
+Reading a Bash command (segments()): it is cut into commands at the separators the shell sees (& && || | ; and a newline), so a separator in a quoted
+string, a comment or a heredoc body cuts nothing, and a refused verb written there is text, not a command: `git commit -m "Docs; qargi packs seed"`
+is allowed. A $( ) or backtick substitution, also inside double quotes and in an unquoted heredoc, is a command of its own, and so is <( ). A quoted
+string given to `sh -c`, eval and the like is read again whole (shell_string). A heredoc body whose delimiter is quoted is left out only when what
+reads it only carries text (cat, tee, git ...): it is read line by line when a shell, eval, source, xargs, an interpreter or a loop that evals reads it,
+or when a later command runs the file it was written to (cat > s.sh <<'E' ... bash s.sh). When a segment pipes into a shell that reads its script from
+standard input (| sh, bash -s, . /dev/stdin, xargs, an interpreter), and whenever the text cannot be read with confidence (an unbalanced quote, an
+unfinished heredoc), the whole command is cut at every separator whatever the quotes, and what feeds the pipe is also read as a script. Not seen:
+a script built by code (python -c ...), a program or a verb held in a variable, a wrapper's option that takes a value (sudo -u root qargi ...).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
 JSON is still let through (exit 0), as before. Known limits outside this file, from the Claude Code hooks documentation
@@ -117,7 +125,7 @@ agent file run only after the workspace trust dialog is accepted (https://code.c
 then the subagent runs without this guard."""
 import collections, glob, json, os, re, shlex, sys
 
-SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
+SEGMENT = re.compile(r"\s*(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*")    # the plain split on every separator (segments(): the reading that follows the quotes)
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
 HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
@@ -170,9 +178,9 @@ EXTRACTORS = {"tar", "unzip", "curl", "wget"}              # write where an opti
 FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
 
 
-def blocked(command):
-    for seg in SEGMENT.split(command):
-        toks = tokens(seg)
+def blocked(command, depth=0):
+    for seg in segments(command)[0]:
+        toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if i >= len(toks):
             continue
@@ -186,6 +194,10 @@ def blocked(command):
                 return "git push is not available to an agent"
             if words[:1] == ["remote"] and len(words) > 1 and words[1] in ("add", "set-url", "remove", "rm"):
                 return "changing a git remote is not available to an agent"
+        inner = shell_string(prog, rest) if depth < 3 else None
+        why = blocked(inner, depth + 1) if inner is not None else None
+        if why:
+            return why
     return None
 
 
@@ -197,12 +209,404 @@ def tokens(seg):
     return toks
 
 
+KEYWORDS = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "coproc"}   # a command follows them
+LEADING_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)")
+BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")           # the operator alone: its target is the next word
+
+
 def skip_wrappers(toks):
+    """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
+    redirections written before the program (> f, 2>&1)."""
     i = 0
-    while i < len(toks) and ("=" in toks[i].split("/")[0] and not toks[i].startswith("-")
-                             or os.path.basename(toks[i]) in WRAP or toks[i].isdigit() or (toks[i].startswith("-") and i)):
-        i += 1
+    while i < len(toks):
+        t = toks[i]
+        if "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
+            i += 1
+        elif LEADING_REDIR.match(t):
+            i += 2 if BARE_REDIR.match(t) else 1
+        else:
+            break
     return i
+
+
+def cmd_tokens(seg):
+    """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
+    a group or a substitution stuck to the last."""
+    toks = tokens(seg)
+    if toks[:1] == ["function"]:                             # function NAME { ...
+        toks = toks[2:]
+    elif toks[:1] and toks[0].endswith("()"):                # NAME() { ...
+        toks = toks[1:]
+    if toks:
+        toks[0] = toks[0].lstrip("(")
+        if not toks[0]:
+            toks.pop(0)
+    if toks[:1] == ["case"]:                                 # case WORD in PATTERN) command
+        k = next((k for k, t in enumerate(toks) if k > 1 and t.endswith(")") and "(" not in t), None)
+        toks = toks[k + 1:] if k is not None else toks
+    elif len(toks) > 1 and toks[0].endswith(")") and "(" not in toks[0]:
+        toks.pop(0)
+    if toks and toks[-1].endswith(")") and "(" not in toks[-1]:
+        toks[-1] = toks[-1].rstrip(")")
+        if not toks[-1]:
+            toks.pop()
+    return toks
+
+
+# --- reading a Bash command: its commands, not the text they carry
+
+class _Unreadable(Exception):
+    """The command text cannot be read with confidence (an unbalanced quote, an unfinished heredoc or substitution, a construct this reader does not know):
+    the caller falls back on the plain split on every separator, which reads quoted text as commands too and so refuses more, never less."""
+
+
+class Seg:
+    """One simple command of a Bash command line: its text as written (quotes kept, so tokens() cuts it as the shell would), the separator before it
+    (& && || | ; or a newline), the segment whose $( ), backticks or <( ) it sits in, those it holds, and the heredoc bodies read for it."""
+    __slots__ = ("text", "sep", "parent", "children", "heredocs")
+
+    def __init__(self, sep="", parent=None, text=""):
+        self.text, self.sep, self.parent, self.children, self.heredocs = text, sep, parent, [], []
+        if parent is not None:
+            parent.children.append(self)
+
+
+class _Scanner:
+    """Cuts a command line into Segs the way the shell reads it: a separator inside quotes, a comment or a heredoc body is not one. A substitution
+    ($( ), backticks, <( ) and >( ), also inside double quotes and in an unquoted heredoc) is a command of its own, in a Seg of its own."""
+    MAX_DEPTH = 12
+
+    def __init__(self, s, out=None, depth=0):
+        self.s, self.n, self.i, self.depth = s, len(s), 0, depth
+        if depth > self.MAX_DEPTH:
+            raise _Unreadable("substitutions nested too deep")
+        self.out = [] if out is None else out
+
+    def new(self, sep, parent):
+        g = Seg(sep, parent)
+        self.out.append(g)
+        return g
+
+    def commands(self, closer, parent):
+        """Read commands to the end of the text, or (closer) to the `)` that ends a $( ). Returns the raw text read, with comments and heredoc bodies left out."""
+        s, n = self.s, self.n
+        raw, cur, pending, depth = [], [], [], 0           # pending: heredocs whose body starts after the next newline
+        seg = self.new("", parent)
+
+        def add(text):
+            cur.append(text)
+            raw.append(text)
+
+        def cut(sep):
+            nonlocal seg, cur
+            seg.text = "".join(cur)
+            cur = []
+            raw.append(sep)
+            seg = self.new(sep, parent)
+        while self.i < n:
+            i, c = self.i, s[self.i]
+            if c == "\\":
+                if i + 1 < n and s[i + 1] == "\n":         # a line continuation joins the lines (an escaped backslash does not: the pair is read first)
+                    self.i += 2
+                else:
+                    add(s[i:i + 2])
+                    self.i += 2
+            elif c == "'":
+                j = s.find("'", i + 1)
+                if j < 0:
+                    raise _Unreadable("quote")
+                add(s[i:j + 1])
+                self.i = j + 1
+            elif c == '"':
+                self.dquote(add, seg)
+            elif c == "$" and s.startswith("$'", i):       # $'...': a backslash escapes the next character, a quote included
+                j = i + 2
+                while j < n and s[j] != "'":
+                    j += 2 if s[j] == "\\" else 1
+                if j >= n:
+                    raise _Unreadable("quote")
+                add(s[i:j + 1])
+                self.i = j + 1
+            elif c == "$" and s.startswith("$(", i) or c in "<>" and s.startswith("(", i + 1):
+                self.subst(add, seg, s[i:i + 2])
+            elif c == "`":
+                self.backtick(add, seg)
+            elif c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):    # a comment: to the end of the line (an apostrophe in it opens no quote)
+                j = s.find("\n", i)
+                self.i = n if j < 0 else j
+            elif c == "\n":
+                self.i += 1
+                cut("\n")
+                for (word, quoted), strip, rseg in pending:
+                    rseg.heredocs.append(self.body(word, quoted, strip))
+                pending = []
+            elif c == ";" or c == "|" and not s.startswith("||", i) or c == "&" and not s.startswith("&&", i) and s[i - 1:i] not in "<>&" and s[i + 1:i + 2] != ">":
+                self.i += 1
+                cut(c)
+            elif c in "&|" and s.startswith(c * 2, i):
+                self.i += 2
+                cut(c * 2)
+            elif c == "<" and s.startswith("<<", i) and not s.startswith("<<<", i):
+                j, strip = i + 2, False
+                if s[j:j + 1] == "-":
+                    j, strip = j + 1, True
+                while j < n and s[j] in " \t":
+                    j += 1
+                word, quoted = [], False
+                while j < n and s[j] not in " \t\n;&|()<>":
+                    ch = s[j]
+                    if ch in "'\"":
+                        k = s.find(ch, j + 1)
+                        if k < 0 or "\\" in s[j:k]:
+                            raise _Unreadable("heredoc delimiter")
+                        word.append(s[j + 1:k])
+                        quoted, j = True, k + 1
+                    elif ch == "\\" and j + 1 < n:
+                        word.append(s[j + 1])
+                        quoted, j = True, j + 2
+                    elif ch in "$`\\":
+                        raise _Unreadable("heredoc delimiter")
+                    else:
+                        word.append(ch)
+                        j += 1
+                if not word:
+                    raise _Unreadable("heredoc delimiter")
+                add(s[i:j])
+                pending.append((("".join(word), quoted), strip, seg))
+                self.i = j
+            elif c == ")" and depth == 0 and closer:
+                if pending:
+                    raise _Unreadable("heredoc in a substitution that ends first")
+                self.i += 1
+                seg.text = "".join(cur)
+                return "".join(raw)
+            else:
+                depth += (c == "(") - (c == ")" and depth > 0)
+                add(c)
+                self.i += 1
+        if closer:
+            raise _Unreadable("end of text")
+        seg.text = "".join(cur)
+        return "".join(raw)
+
+    def dquote(self, add, seg):
+        s, n = self.s, self.n
+        add('"')
+        self.i += 1
+        while self.i < n:
+            i, c = self.i, s[self.i]
+            if c == '"':
+                add(c)
+                self.i += 1
+                return
+            if c == "\\":
+                if s[i + 1:i + 2] != "\n":
+                    add(s[i:i + 2])
+                self.i += 2
+            elif s.startswith("$(", i):
+                self.subst(add, seg, "$(")
+            elif c == "`":
+                self.backtick(add, seg)
+            else:
+                add(c)
+                self.i += 1
+        raise _Unreadable("quote")
+
+    def subst(self, add, seg, opener):
+        self.i += 2
+        inner = _Scanner(self.s, self.out, self.depth + 1)
+        inner.i = self.i
+        text = inner.commands(True, seg)
+        if re.search(r"\bcase\b", text):                     # a case pattern's `)` would end the substitution early: leave it to the plain split
+            raise _Unreadable("case in a substitution")
+        self.i = inner.i
+        add(opener + text + ")")
+
+    def backtick(self, add, seg):
+        s, n, j, chars = self.s, self.n, self.i + 1, []
+        while j < n and s[j] != "`":
+            if s[j] == "\\" and s[j + 1:j + 2] in ("`", "\\", "$"):
+                j += 1
+            chars.append(s[j])
+            j += 1
+        if j >= n:
+            raise _Unreadable("backtick")
+        _Scanner("".join(chars), self.out, self.depth + 1).commands(False, seg)
+        add(s[self.i:j + 1])
+        self.i = j + 1
+
+    def body(self, delim, quoted, strip):
+        """The text of a heredoc from here to the line that is its delimiter, the position moved past that line. (quoted, text)."""
+        s, n, lines = self.s, self.n, []
+        while self.i < n:
+            j = s.find("\n", self.i)
+            line = s[self.i:n if j < 0 else j]
+            self.i = n if j < 0 else j + 1
+            if (line.lstrip("\t") if strip else line) == delim:
+                return (quoted, "\n".join(lines))
+            lines.append(line)
+        raise _Unreadable("heredoc without its delimiter")
+
+
+# the programs that may run the text they are given on standard input, in a heredoc or a here-string (a shell, eval, source, xargs, an interpreter, or a
+# compound command that reads a line and runs it); a heredoc that one of them reads is a script, any other reader only carries the text
+INTERPRETERS = {"node", "nodejs", "deno", "bun", "awk", "gawk", "mawk", "nawk", "tclsh", "expect", "fish", "csh", "tcsh", "busybox", "Rscript", "pwsh", "osascript"}
+INTERPRETER = re.compile(r"^(?:python|ruby|perl|php|lua|luajit)[0-9.]*$")
+RUNS_TEXT = SHELLS | {"eval", "source", ".", "xargs", "read", "mapfile", "readarray", "done", "}", ")", "fi", "esac", "su", "watch", "script", "parallel", "at", "batch"}
+STDIN_NAMES = {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0", "-"}
+
+
+def runs_text(prog):
+    return prog in RUNS_TEXT or prog in INTERPRETERS or bool(INTERPRETER.match(prog)) or prog == "" or any(c in UNREADABLE for c in prog)
+
+
+def seg_prog(text):
+    """(words, index of the program, its base name) of a segment."""
+    ct = cmd_tokens(text)
+    i = skip_wrappers(ct)
+    return ct, i, os.path.basename(ct[i]) if i < len(ct) else ""
+
+
+def reads_stdin(ct, i, prog):
+    """True when the segment's program takes the script it runs from standard input: sh|bash with no -c and no script file (or -s, or /dev/stdin), `. /dev/stdin`,
+    an interpreter with no program, and xargs (its arguments come from standard input)."""
+    if i >= len(ct):
+        return False
+    rest = ct[i + 1:]
+    if any(os.path.basename(t) == "xargs" for t in ct[:i + 1]):
+        return True
+    if prog in ("source", "."):
+        return any(t in STDIN_NAMES for t in rest)
+    if prog in SHELLS or prog in INTERPRETERS or INTERPRETER.match(prog):
+        if any(SHELL_C.match(t) or t in ("-e", "-E") for t in rest):
+            return False
+        words = [t for t in rest if not t.startswith("-")]
+        return not words or "-s" in rest or any(t in STDIN_NAMES for t in rest)
+    return False
+
+
+def payload_forms(text):
+    """The texts that a command line could hand a shell as a script: its words after the program, joined, each word alone, and the same text with every
+    quote taken off (echo qargi$' 'upgrade), with a literal \\n (what printf and echo -e turn into a newline) read as a newline."""
+    toks = cmd_tokens(text)[1:]
+    raw = re.sub(r"[\\'\"]", "", re.sub(r"\$(?=['\"])", "", text.strip().partition(" ")[2].replace("\\n", "\n")))
+    return [f.replace("\\n", "\n") for f in [" ".join(toks), raw] + toks if f.strip()]
+
+
+def pipeline_before(segs, k):
+    """The segments that feed the pipe into segs[k], in the same command list (not those in a substitution)."""
+    g, found, j = segs[k], [], k - 1
+    cur = g
+    while cur.sep == "|":
+        while j >= 0 and segs[j].parent is not g.parent:
+            j -= 1
+        if j < 0:
+            break
+        found.append(segs[j])
+        cur, j = segs[j], j - 1
+    return found
+
+
+def written_then_run(segs, info, k):
+    """True when a later segment runs a file that segment k names (cat > s.sh <<'E' ... E; bash s.sh): the heredoc is then a script."""
+    ct, i, _ = info[k]
+    names = {os.path.basename(w.lstrip("0123456789>&")) for w in ct[i + 1:] if not w.startswith(("-", "<"))} - {""}
+    for ct2, i2, prog2 in info[k + 1:]:
+        if i2 < len(ct2) and (runs_text(prog2) or os.path.basename(ct2[i2]) in names) and names & {os.path.basename(w) for w in ct2[i2:]}:
+            return True
+    return False
+
+
+def body_commands(body):
+    """The Segs of the substitutions in an unquoted heredoc body: the shell expands them, so they run."""
+    sc, noop = _Scanner(body), lambda t: None
+    while sc.i < sc.n:
+        c = body[sc.i]
+        if c == "\\":
+            sc.i += 2
+        elif body.startswith("$(", sc.i):
+            sc.subst(noop, None, "$(")
+        elif c == "`":
+            sc.backtick(noop, None)
+        else:
+            sc.i += 1
+    return [g for g in sc.out if g.text.strip() or g.heredocs]
+
+
+def plain_segments(command):
+    """The command split at every separator whatever the quotes (and at every substitution): the old reading, which is also the conservative one."""
+    command = SUBST.sub(";", command.replace("\\\n", ""))
+    segs, pos, sep = [], 0, ""
+    for m in SEGMENT.finditer(command):
+        segs.append(Seg(sep, None, command[pos:m.start()]))
+        sep, pos = m.group(1), m.end()
+    segs.append(Seg(sep, None, command[pos:]))
+    return segs
+
+
+def feeds(segs, info, exact):
+    """The texts that segments hand a shell as a script through a pipe, a here-string, a heredoc or a substitution: the arguments of what feeds it. With
+    xargs in front, the words stand behind the program (echo packs seed | xargs qargi is qargi packs seed)."""
+    extra = []
+
+    def hand(ct, i, forms):
+        if any(os.path.basename(t) == "xargs" for t in ct[:i + 1]):
+            target = " ".join(ct[i:])
+            forms = [target.replace("{}", f.replace("\n", " ")) if "{}" in target else target + " " + f.replace("\n", " ") for f in forms] + forms
+        extra.extend(g.text for f in forms for g in plain_segments(f))
+    # a shell that reads standard input, or one given a word the shell builds (eval "$x", sh "$f"): a quoted heredoc anywhere in the command may be what it runs
+    dynamic = any(i < len(ct) and (reads_stdin(ct, i, prog) or (prog in SHELLS or prog in ("eval", "source", ".")) and any(c in t for t in ct[i + 1:] for c in "$`"))
+                  for ct, i, prog in info)
+    for k, g in enumerate(segs):
+        ct, i, prog = info[k]
+        if i >= len(ct):
+            continue
+        stdin = reads_stdin(ct, i, prog)
+        if stdin and g.sep == "|":
+            hand(ct, i, [f for p in pipeline_before(segs, k) for f in payload_forms(p.text)])
+        if stdin or runs_text(prog):
+            for t in ct:                                    # a here-string
+                if t.startswith("<<<"):
+                    operand = t[3:] or (ct[ct.index(t) + 1] if ct.index(t) + 1 < len(ct) else "")
+                    hand(ct, i, [operand.replace("\\n", "\n")] if operand else [])
+        if exact and (prog in SHELLS or prog in ("eval", "source", ".")):
+            for ch in g.children:                           # sh -c "$(cmd)", eval "$(cmd)", bash <(cmd): what cmd prints is the script
+                hand(ct, i, payload_forms(ch.text))
+        if exact and g.heredocs:
+            scripts, a = runs_text(prog) or dynamic or written_then_run(segs, info, k), g.parent
+            while a is not None and not scripts:
+                scripts, a = runs_text(seg_prog(a.text)[2]), a.parent
+            for quoted, body in g.heredocs:
+                if scripts:
+                    extra.extend(segments(body)[0])
+                elif not quoted:
+                    sub = body_commands(body)
+                    extra.extend([g.text for g in sub] + feeds(sub, [seg_prog(g.text) for g in sub], True))
+    return extra
+
+
+def segments(command):
+    """(texts, exact): the commands of a Bash command line, as the shell would cut them. A separator in a quoted string, a comment or a heredoc body does not
+    cut, and a heredoc whose delimiter is quoted and which is read by anything but a shell, eval, source, xargs or an interpreter is only text and is left out
+    (an unquoted one still runs its substitutions); a substitution is a command of its own. exact is False when the plain split on every separator was used
+    instead, which it is when the text cannot be read with confidence (an unbalanced quote, ...) and when a segment pipes into a shell that reads its script
+    from standard input (the quoted text before the pipe is then the script, so none of it is skipped, and the words of what feeds the pipe are read as a
+    script too). The plain split is the old reading and refuses more, never less."""
+    segs = None
+    try:
+        sc = _Scanner(command)
+        sc.commands(False, None)
+        segs = [g for g in sc.out if g.text.strip() or g.heredocs]
+        info = [seg_prog(g.text) for g in segs]
+        if any(g.sep == "|" and reads_stdin(*info[k]) for k, g in enumerate(segs)):
+            segs = None
+    except (_Unreadable, RecursionError):
+        segs = None
+    if segs is not None:
+        return [g.text for g in segs] + feeds(segs, info, True), True
+    segs = plain_segments(command)
+    info = [seg_prog(g.text) for g in segs]
+    return [g.text for g in segs] + feeds(segs, info, False), False
 
 
 def run_dir(path):
@@ -323,8 +727,8 @@ def review_refusal(call):
     if call.kind != "shell":
         return None
     here = cwd
-    for seg in SEGMENT.split(call.command):
-        toks = tokens(seg)
+    for seg in segments(call.command)[0]:
+        toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if i < len(toks) and toks[i] == "cd" and i + 1 < len(toks):
             here = os.path.realpath(os.path.join(here, os.path.expanduser(toks[i + 1])))
@@ -668,21 +1072,18 @@ def lead_refusal(prog, rest, pre):
 
 
 def bash_skill_refusal(command, here, depth):
-    command = command.replace("\\\n", "")                # a line continuation joins the lines
-    if HANDOFF_SUBST.search(command):
+    joined = command.replace("\\\n", "")                 # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
+    if HANDOFF_SUBST.search(joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
-    if PROJECT_SET_SUBST.search(command):
+    if PROJECT_SET_SUBST.search(joined):
         return "qargi project set with a command substitution in its arguments takes a path the guard cannot read, which could be a models answer, and is not available to an agent"
-    if AUDIT_SUBST.search(command):
+    if AUDIT_SUBST.search(joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
-    segs = SEGMENT.split(SUBST.sub(";", command))
+    segs, exact = segments(command)
     stack = []                                           # the directories pushd left behind
     for n, seg in enumerate(segs):
-        toks = tokens(seg)
-        if toks:
-            toks[0] = toks[0].lstrip("({")
-            toks = toks if toks[0] else toks[1:]
+        toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
@@ -711,8 +1112,9 @@ def bash_skill_refusal(command, here, depth):
         if why:
             return why
         inner = shell_string(prog, rest) if depth < 3 else None
-        if inner is not None:          # a `;` inside the quoted string split it: read the segments that follow as part of it
-            inner += " ; " + " ; ".join(segs[n + 1:]).replace('"', " ").replace("'", " ")
+        if inner is not None:
+            if not exact:              # a `;` inside the quoted string split it: read the segments that follow as part of it
+                inner += " ; " + " ; ".join(segs[n + 1:]).replace('"', " ").replace("'", " ")
             why = bash_skill_refusal(inner, here, depth + 1)
             if why:
                 return why
@@ -767,7 +1169,7 @@ def unreadable_project_verb(command):
     turn out to say. A segment that hands a string to a shell (sh -c, eval) is read again with every quote and backslash taken off, since the string
     is cut into words once more there. This runs after the readable forms were judged (their reasons are the better ones), and does not look at a
     program held in a variable (the limit of the whole guard)."""
-    for seg in SEGMENT.split(command.replace("\\\n", "")):
+    for seg in segments(command)[0]:
         forms = [seg]
         if any(os.path.basename(w) in SHELLS or w == "eval" for w, _ in lex(seg)):
             forms.append(re.sub(r"[\\'\"]", "", seg))
