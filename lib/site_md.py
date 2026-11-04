@@ -48,6 +48,22 @@ def esc(s):
     return html.escape(s, quote=True)
 
 
+def anchor_html(sid, text):
+    """The link at the end of a heading; its name says which section it leads to."""
+    return '<a class="anchor" href="#%s" aria-label="%s">#</a>' % (esc(sid), esc("Link to: " + text))
+
+
+def pre_html(lang, text, label=None):
+    """A code block that can be scrolled with the keyboard and has a name (role region, since a pre may not be named)."""
+    return '<pre class="code" tabindex="0" role="region" aria-label="%s"><code class="language-%s">%s</code></pre>' % (esc(label or lang + " code"), esc(lang), esc(text))
+
+
+def table_html(head_cells, body_rows):
+    """A table inside a wrapper that can be scrolled with the keyboard."""
+    return ('<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>'
+            % (head_cells, body_rows))
+
+
 def slugify(text):
     s = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -58,6 +74,8 @@ def parse_front_matter(text, allowed=None):
     """(dict, number of lines used). Front matter is `---`, `key: value` lines, `---`; a value may be
     wrapped in double quotes. Raises MdError for a block that never closes, a bad line, a repeated key or a
     key outside `allowed`. No front matter: ({}, 0)."""
+    if text.startswith("\ufeff"):
+        raise MdError(1, "the file starts with a byte order mark: save it as UTF-8 without one")
     lines = text.split("\n")
     if not lines or lines[0].rstrip() != "---":
         return {}, 0
@@ -231,8 +249,8 @@ class _Converter:
         return '<a href="%s">%s</a>' % (esc(url), h), p, k + 1
 
     def _check_url(self, url, line):
-        if not url or re.search(r"[\s<>\"'`\\\x00-\x1f\x7f()]", url):
-            raise MdError(line, "link target %r has a space, quote, parenthesis or control character (titles and wrapped urls are not supported)" % url)
+        if not url or re.search(r"[\s<>\"'`\\\x00-\x1f\x7f()\u200e\u200f\u202a-\u202e\u2066-\u2069]", url):
+            raise MdError(line, "link target %r has a space, quote, parenthesis, control character or text-direction character (titles and wrapped urls are not supported)" % url)
         if url.startswith("//"):
             raise MdError(line, "link target %r is protocol-relative; write https://..." % url)
         if url.startswith(_SCHEMES) or url.startswith("#") or url.startswith("/"):
@@ -304,8 +322,7 @@ class _Converter:
             if t.startswith("```"):
                 raise MdError(ln, "fence inside a fence")
         self.doc.code.append((ln, "fence:" + lang, text))     # the text starts on line ln + 1
-        out.append(("pre", '<pre class="code" tabindex="0" aria-label="%s"><code class="language-%s">%s</code></pre>'
-                    % (esc(lang + " code"), esc(lang), esc(text))))
+        out.append(("pre", pre_html(lang, text)))
         return j + 1
 
     def _heading(self, ln, t):
@@ -328,7 +345,7 @@ class _Converter:
             k += 1
         self.ids.add(sid)
         self.doc.headings.append((level, sid, plain, ln))
-        return '<h%d id="%s">%s <a class="anchor" href="#%s" aria-label="Link to this section">#</a></h%d>' % (level, esc(sid), h, esc(sid), level)
+        return '<h%d id="%s">%s %s</h%d>' % (level, esc(sid), h, anchor_html(sid, plain), level)
 
     def _is_block_start(self, t):
         return bool(_BULLET.match(t) or _ORDERED.match(t) or t.startswith((">", "|")) or _HR.match(t) or _SETEXT.match(t))
@@ -428,7 +445,7 @@ class _Converter:
             return "<%s%s%s>%s</%s>" % (tag, scope, st, h, tag)
         th = "".join(cell("th", c, align[k], ln, ' scope="col"') for k, c in enumerate(head))
         trs = "".join("<tr>%s</tr>" % "".join(cell("td", c, align[k], rl) for k, c in enumerate(cs)) for rl, cs in rows)
-        out.append(("table", '<div class="table-wrap"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (th, trs)))
+        out.append(("table", table_html(th, trs)))
         return j
 
     def _list(self, lines, i, depth, in_quote, out):

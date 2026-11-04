@@ -150,6 +150,21 @@ class Converter(unittest.TestCase):
         d = self.conv("## Same\n\n### Same\n\n## Same\n", id_prefix="v1-")
         self.assertEqual([h[1] for h in d.headings], ["v1-same", "v1-same-2", "v1-same-3"])
 
+    def test_a_byte_order_mark_is_named(self):
+        with self.assertRaises(MD.MdError) as cm:
+            MD.parse_front_matter("\ufeff---\ntitle: a\n---\n")
+        self.assertIn("byte order mark", cm.exception.msg)
+
+    def test_direction_characters_are_refused_in_link_targets(self):
+        for ch in ["\u202e", "\u2066", "\u200f"]:
+            with self.assertRaises(MD.MdError, msg=repr(ch)) as cm:
+                self.conv("## A\n\n[a](https://example.org/x%sy)\n" % ch)
+            self.assertIn("direction character", cm.exception.msg)
+
+    def test_the_heading_anchor_names_its_section(self):
+        d = self.conv("## Add *a* member\n")
+        self.assertIn('aria-label="Link to: Add a member">#</a>', d.html)
+
     def test_front_matter(self):
         meta, n = MD.parse_front_matter('---\ntitle: "A: b"\ndescription: d\n---\nbody\n')
         self.assertEqual((meta, n), ({"title": "A: b", "description": "d"}, 4))
@@ -464,6 +479,21 @@ class Build(unittest.TestCase):
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
 
+    def test_accessibility_markup(self):
+        t = self.page("first-project/index.html")
+        self.assertRegex(t, r'<pre class="code" tabindex="0" role="region" aria-label="bash code">')
+        self.assertIn('aria-label="Link to: Add a member">#</a>', t)
+        self.assertNotIn("Link to this section", t)
+        self.assertNotIn("Link to this section", self.page("index.html"))
+        ref = self.page("reference/set-up/index.html")
+        self.assertIn('<div class="table-wrap" tabindex="0" role="region" aria-label="Table">', ref)
+        self.assertIn('<nav aria-label="On this page"><details class="toc" open>', ref)
+        self.assertRegex(ref, r'<li><a href="\.\./" aria-current="true">Reference</a></li>')       # an ancestor, not the page itself
+        self.assertNotIn('aria-current="page">Reference</a>', ref)
+        self.assertRegex(self.page("reference/index.html"), r'<a href="\./" aria-current="page">Reference</a>')
+        self.assertIn('color-scheme: light dark', self.page("assets/site.css"))
+        self.assertIn('<meta name="color-scheme" content="light dark">', t)
+
     def test_the_files_exist(self):
         for rel in ["index.html", "404.html", "first-project/index.html", "reference/index.html", "reference/set-up/index.html", "reference/topics/index.html",
                     "reference/files/index.html", "reference/environment/index.html", "releases/index.html", "sitemap.xml", "robots.txt", ".nojekyll",
@@ -503,7 +533,7 @@ class Build(unittest.TestCase):
         self.assertIn('<meta name="twitter:card" content="summary">', t)
         self.assertIn('<html lang="en">', t)
         self.assertIn('<meta name="viewport"', t)
-        self.assertIn('<meta name="color-scheme" content="dark light">', t)
+        self.assertIn('<meta name="color-scheme" content="light dark">', t)
         self.assertIn('<a class="skip" href="#main">', t)
         self.assertEqual(t.count("<h1>"), 1)
         home = self.page("index.html")
@@ -1028,6 +1058,40 @@ class StaticAndOut(unittest.TestCase):
         self.assertIn("warning: static/.hidden: a hidden folder is not published", out)
         self.assertIn("note: static/README.md: not published", out)
         self.assertEqual(run("check-output", self.out)[0], 0)
+
+
+class SmallInputs(unittest.TestCase):
+    """N3, N5, N6."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_control_and_direction_characters_are_refused_in_the_site_address(self):
+        for bad in ["https://example.org/a\x01b/", "https://example.org/a\x7fb/", "https://example.org/a\u202eb/"]:
+            with self.assertRaises(S.Refusal, msg=repr(bad)):
+                S.normalize_url(bad)
+        self.assertEqual(S.normalize_url("https://example.org/a"), "https://example.org/a/")
+
+    def test_a_page_listed_twice_in_the_menu_is_an_error(self):
+        f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, f)
+        cfgp = os.path.join(f, "site.json")
+        data = json.loads(slurp(cfgp))
+        data["pages"] = ["first-project", "first-project"]
+        spit(cfgp, json.dumps(data))
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("error: site.json: pages lists 'first-project' twice", out)
+
+    def test_an_address_with_a_path_says_where_robots_txt_is_read(self):
+        f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, f)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("note: url: the address has a path: crawlers read robots.txt only at the root of the host", out)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(f, "pages")), "--url", "https://docs.example.org/")
+        self.assertNotIn("note: url", out)
 
 
 class CheckOutput(unittest.TestCase):
