@@ -51,7 +51,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Project answers can hold `release.sign` (`key`, `namespace`, `files`, optional `verify_command`), `release.assets` and
   `release.notes_file`; `project validate`, `init` and `set` refuse a malformed one (a public key, an absolute or
   `..` file name, a verify command that is not a list of words).
-- `qargi release sign VERSION`: signs the files of the answer `release.sign.files` with `ssh-keygen -Y sign -f KEY -n NAMESPACE FILE`,
+- `qargi release sign VERSION` (signing is optional, off unless the project answers hold `release.sign`; without it the verb
+  exits 2 and nothing else about releases changes): signs the files of the answer `release.sign.files` with `ssh-keygen -Y sign -f KEY -n NAMESPACE FILE`,
   run on your own terminal (stdin, stdout and stderr are yours, nothing is captured or logged), so the key's passphrase is typed
   there and never passes through qargi, a log or an agent; no ssh agent is asked. It runs `release.sign.verify_command` (a list of
   words, no shell) and records the result, the tag's commit and the hash of every signed file and signature under

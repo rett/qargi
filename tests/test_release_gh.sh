@@ -68,7 +68,9 @@ PTYRUN=$PWD/tests/pty_run.py; pty() { python3 "$PTYRUN" "$@"; }
 cd "$T" || exit 1   # the lead works outside any run directory (a checkout inside one is taken for a member run, where sign refuses)
 : > "$T/keygen.log"
 out=$($REL sign 0.2.0 2>&1 </dev/null); rc=$?
-[ $rc = 1 ] && grep -q "do not hold a usable release.sign" <<<"$out" && ok "sign refuses a project with no release.sign" || no "sign without answers: rc=$rc $out"
+[ $rc = 2 ] && grep -q "signing is not enabled for this project (set release.sign in the project answers)" <<<"$out" && ok "sign exits 2 for a project with no release.sign: signing is opt-in" || no "sign without answers: rc=$rc $out"
+out=$(pty $SIGN 2>&1); rc=$?
+[ $rc = 2 ] && grep -q "signing is not enabled for this project" <<<"$out" && [ ! -s "$T/keygen.log" ] && ok "and on a terminal too, without reaching ssh-keygen" || no "sign without answers on a tty: rc=$rc $out"
 setans() { jq "$1" "$T/c/projects/relgh.json" > "$T/ans.tmp" && mv "$T/ans.tmp" "$T/c/projects/relgh.json"; }   # the answers of the fixture are not a whole project: edit the file
 setans ".release.sign={key:\"$T/relkey\", namespace:\"relsign\", files:[\"dist/SHA256SUMS\"], verify_command:[\"touch\",\"verified.flag\"]}" && ok "release.sign is stored as an answer" || no "set release.sign"
 git -C "$R" checkout -q parked

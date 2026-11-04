@@ -27,7 +27,8 @@
 #                                           runs on the person's own terminal (stdin, stdout and stderr are inherited; nothing is captured and no
 #                                           input is logged), so the passphrase is typed there and never passes through qargi; no ssh agent is
 #                                           asked (SSH_AUTH_SOCK and SSH_ASKPASS are removed from its environment). Refused when stdin is no
-#                                           terminal, in a member run and when QARGI_NESTED is set (exit 2); the guard refuses it to a member too.
+#                                           terminal, in a member run, when QARGI_NESTED is set and when the project has no release.sign (signing is
+#                                           optional and off by default; exit 2); the guard refuses it to a member too.
 #                                           The verify command is an argv list, run without a shell in the repository.
 #
 #   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--notes-file FILE]
@@ -316,6 +317,7 @@ PY
     fi;;
   sign)
     python3 -I "$RS" lead-only || exit $?
+    sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
     python3 -I "$RS" config "$af" --need-sign || die "the answers of $PROJ do not hold a usable release.sign"
     sign_gate; [ -z "$SG_WHY" ] || die "$SG_WHY"
     # the passphrase is typed on the person's terminal, so a stdin that is no terminal (a pipe, a file, an agent's tool) is refused

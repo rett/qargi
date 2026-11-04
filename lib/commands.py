@@ -311,7 +311,7 @@ COMMANDS = {
                                 "with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. "
                                 "A project without a man page or changelog is not checked for that part.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
-                         desc=(REMOTE_NOTE + " " + TAG_NOTE + " When the answer release.sign is set and the tag has no GitHub release it also says 'awaiting signature' "
+                         desc=(REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
                                "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
@@ -322,13 +322,14 @@ COMMANDS = {
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. " + REMOTE_NOTE)),
             "sign": verb("Sign the release files from the tag with your own key, on your own terminal, and record that they verify", [("VERSION", "none")], [PROJECT_OPT],
-                         desc=("Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it): "
+                         desc=("Signing is optional and off by default: it applies only to a project whose answers hold release.sign (otherwise this exits 2 and nothing else changes). "
+                               "Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it): "
                                "after finish, before publish. For each file of the answer release.sign.files it runs ssh-keygen -Y sign -f KEY -n NAMESPACE FILE attached to "
                                "your terminal (stdin, stdout and stderr are yours; nothing is captured and no input is logged), so you type the key's passphrase there and it "
                                "never passes through qargi, a log or an agent; no ssh agent is asked. Then it runs release.sign.verify_command (a list of words, no shell) in the "
                                "repository and records the result, the tag's commit and the hash of every signed file and signature under the state's release directory. "
                                "Refused (exit 1) when stdin is no terminal, HEAD is not exactly the tag VERSION, on a branch other than master, or a tracked file is modified; "
-                               "refused (exit 2) in a member run or when QARGI_NESTED is set. A member run cannot sign. The answers: release.sign.key (an ssh private key), "
+                               "refused (exit 2) in a member run, when QARGI_NESTED is set or when release.sign is not set. A member run cannot sign. The answers: release.sign.key (an ssh private key), "
                                "release.sign.namespace, release.sign.files (relative to the repository) and optionally release.sign.verify_command.")),
             "publish": verb("Create the GitHub release of an existing tag, with its changelog section (or a notes file) as the notes and the assets attached", [("VERSION", "none")],
                             [PROJECT_OPT, PLAN, APPROVED,
@@ -339,7 +340,7 @@ COMMANDS = {
                                   "--verify-tag --title \"PROJECT VERSION\" --notes-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers "
                                   "the notes and the assets. The assets are --asset and release.assets, regular files inside the repository, attached by the same call that creates the release. "
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
-                                  "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since; --verify-tag makes gh refuse a tag that is not on origin. "
+                                  "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
                                   "Needs the plan token and an approval; a member run cannot publish.")),
         },
     },
