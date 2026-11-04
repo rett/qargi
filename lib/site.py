@@ -452,7 +452,7 @@ def normalize_url(url, what="url"):
     u = urllib.parse.urlsplit(url or "")
     if u.scheme != "https" or not u.netloc or u.query or u.fragment or u.username or u.password:
         raise Refusal("%s %r must be an https:// address without a query or fragment" % (what, url))
-    if re.search(r"[\s<>\"'\\]", url):
+    if re.search(r"[\s<>\"'\\\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]", url):
         raise Refusal("%s %r has characters that do not belong in a url" % (what, url))
     return url if url.endswith("/") else url + "/"
 
@@ -615,17 +615,18 @@ def gather_hand(pages_dir, rep):
 
 
 def h_html(level, sid, inner):
-    return '<h%d id="%s">%s <a class="anchor" href="#%s" aria-label="Link to this section">#</a></h%d>' % (level, esc(sid), inner, esc(sid), level)
+    text = html.unescape(re.sub(r"<[^>]+>", "", inner))
+    return '<h%d id="%s">%s %s</h%d>' % (level, esc(sid), inner, MD.anchor_html(sid, text), level)
 
 
 def code_block(text, lang="text", label=None):
-    return '<pre class="code" tabindex="0" aria-label="%s"><code class="language-%s">%s</code></pre>' % (esc(label or lang + " code"), esc(lang), esc(text))
+    return MD.pre_html(lang, text, label)
 
 
 def table(head, rows):
     th = "".join('<th scope="col">%s</th>' % h for h in head)
     tr = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % c for c in r) for r in rows)
-    return '<div class="table-wrap"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (th, tr)
+    return MD.table_html(th, tr)
 
 
 # ---- the reference, from the command description
@@ -827,6 +828,9 @@ def build_model(args, rep):
     url = args.url or (cfg.url if cfg else None)
     if url:
         site.url = normalize_url(url)
+    if site.url and urllib.parse.urlsplit(site.url).path not in ("", "/"):
+        rep.note("url", "the address has a path: crawlers read robots.txt only at the root of the host, so serve a copy of robots.txt "
+                        "there, or submit sitemap.xml to the search engines directly")
     if cfg and cfg.release and cfg.release != args.release:
         rep.err("site.json", "release is %s but --release is %s" % (cfg.release, args.release))
     hand = gather_hand(pages_dir, rep) if pages_dir else []
@@ -843,6 +847,9 @@ def build_model(args, rep):
     # order: the home page, hand pages in the configured order, then the generated ones
     order = list(cfg.pages) if cfg else []
     hand_by_slug = {p.slug: p for p in hand if p.path}
+    for k, s in enumerate(order):
+        if s in order[:k]:
+            rep.err("site.json", "pages lists %r twice" % s)
     for s in order:
         if s != "index" and s not in hand_by_slug:
             rep.err("site.json", "pages lists %r, which is not a page in --pages" % s)
@@ -879,8 +886,8 @@ def default_home(src, hand):
     c = src.cmds
     items = ["<li><a href=\"/%s\">%s</a></li>" % (esc(p.path), esc(p.title)) for p in sorted(hand, key=lambda p: p.slug) if p.path]
     items += ['<li><a href="/reference/">Command reference</a></li>', '<li><a href="/releases/">Releases</a></li>']
-    body = "<p>%s</p>\n<p>%s</p>\n<h2 id=\"pages\">Pages <a class=\"anchor\" href=\"#pages\" aria-label=\"Link to this section\">#</a></h2>\n<ul>%s</ul>" % (
-        esc(c.intro), esc(sentence(c.tagline)), "".join(items))
+    body = "<p>%s</p>\n<p>%s</p>\n<h2 id=\"pages\">Pages %s</h2>\n<ul>%s</ul>" % (
+        esc(c.intro), esc(sentence(c.tagline)), MD.anchor_html("pages", "Pages"), "".join(items))
     p = Page("", "home", "qargi documentation", "Documentation for qargi, which hands development tasks to sandboxed agents and takes the work back as patches you review and apply yourself.", body, [(2, "pages", "Pages")])
     p.toc = False
     return p
@@ -1260,8 +1267,8 @@ def render_page(site, p):
     nav_items = [("Home", "")] + [(h.nav, h.path) for h in site.hand_order] + [("Reference", "reference/"), ("Releases", "releases/")]
     lis = []
     for label, path in nav_items:
-        cur = (p.path == path) or (path == "reference/" and p.kind == "reference")
-        lis.append('<li><a href="%s"%s>%s</a></li>' % (esc(L(path)), ' aria-current="page"' if cur else "", esc(label)))
+        cur = ' aria-current="page"' if p.path == path else ' aria-current="true"' if path == "reference/" and p.kind == "reference" else ""
+        lis.append('<li><a href="%s"%s>%s</a></li>' % (esc(L(path)), cur, esc(label)))
     nav = "<ul>\n%s\n</ul>" % "\n".join(lis)
     # breadcrumb
     crumb = ""
@@ -1277,7 +1284,7 @@ def render_page(site, p):
     toc = ""
     h2 = [(i, t) for lv, i, t in p.headings if lv == 2]
     if p.toc and len(h2) >= 3:
-        toc = '<details class="toc" open><summary>On this page</summary><ul>%s</ul></details>' % "".join(
+        toc = '<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul>%s</ul></details></nav>' % "".join(
             '<li><a href="#%s">%s</a></li>' % (esc(i), esc(t)) for i, t in h2)
     body = hrefs_to(p.body, L)
     intro = ""
