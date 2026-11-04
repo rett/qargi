@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""qargi env show and lib/env.py: what a repository declares about its development environment, read from its own files.
-Fixture repositories are invented (acme and others); nothing is executed. Offline. Run: python3 tests/test_env.py"""
+"""qargi env show and check, lib/env.py and lib/env_check.py: what a repository declares about its development environment, read from its
+own files, and whether a checkout is set up that way. Fixture repositories are invented (acme and others); show executes nothing, check
+runs only fixture scripts. Offline. Run: python3 tests/test_env.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import json, os, shutil, stat, subprocess, sys, tempfile, time, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "bin", "qargi")
@@ -373,6 +374,250 @@ class Cli(Fixtures):
         j = json.loads(self.q("env", "show", "--project", "acme", "--json").stdout)
         self.assertEqual(j["commands"]["doctor_command"]["command"], "make doctor")
         self.assertEqual(j["known_failures"], ["expected: x"])
+
+
+GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.net", "-c", "protocol.file.allow=always"]
+
+
+class Check(Fixtures):
+    """qargi env check: the doctor command, the built-in minimum, the verdict, the exit status and the state file."""
+
+    def git(self, d, *a):
+        r = subprocess.run(GIT + ["-C", d] + list(a), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def gitrepo(self, name, files):
+        d = self.repo(name, files)
+        subprocess.run(["git", "init", "-q", d], check=True)
+        self.git(d, "add", "-A")
+        self.git(d, "commit", "-q", "-m", "first")
+        return d
+
+    def doctor_repo(self, script, known=None, name="acme"):
+        d = self.gitrepo(name, {"doctor.sh": script})
+        self.answers(name, d, {"doctor_command": "sh ./doctor.sh", **({"known_failures": known} if known else {})})
+        return d
+
+    def check(self, d, *extra, env=None):
+        r = self.q("env", "check", "--repo", d, *extra, env=env)
+        return r.returncode, r.stdout, r.stderr
+
+    def test_a_doctor_with_nothing_missing_is_ok(self):
+        d = self.doctor_repo("echo 'ok: git 2.40'\necho 'ok: make'\n")
+        rc, out, err = self.check(d)
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out + err)
+        self.assertIn("2 other line(s)", out)
+
+    def test_a_missing_item_is_named_in_the_verdict(self):
+        d = self.doctor_repo("echo 'ok: git'\necho 'missing: shellcheck 0.9'\necho 'bats    not installed'\nexit 1\n")
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        last = out.splitlines()[-1]
+        self.assertTrue(last.startswith("ENV INCOMPLETE: 2 missing ("), last)
+        self.assertIn("missing: shellcheck 0.9", last)
+        self.assertIn("bats    not installed", last)
+
+    def test_a_known_failure_is_expected_and_not_red(self):
+        d = self.doctor_repo("echo 'ok: git'\necho 'FAIL: linter 1.2 is older than the pin'\necho 'expected: bats is not packaged here'\nexit 1\n",
+                             known=["linter 1.2"])
+        rc, out, _ = self.check(d)
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out)
+        self.assertIn("expected: FAIL: linter 1.2", out)
+        self.assertIn("expected: expected: bats", out)
+        j = json.loads(self.check(d, "--json")[1])
+        self.assertEqual((j["exit"], j["missing"], len(j["expected"])), (0, [], 2))
+        # the same line without the accepted failure is red
+        self.answers("acme", d, {"doctor_command": "sh ./doctor.sh"})
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("ENV INCOMPLETE: 1 missing (FAIL: linter 1.2", out.splitlines()[-1])
+
+    def test_a_failing_doctor_that_names_nothing_is_one_missing_item(self):
+        d = self.doctor_repo("echo 'all good'\nexit 3\n")
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("ENV INCOMPLETE: 1 missing (doctor exited 3 and named no missing item)", out)
+
+    def test_lines_that_only_look_like_failures_are_not(self):
+        d = self.doctor_repo("echo 'ok: 0 failed'\necho 'errors: 0'\necho 'no problems found'\necho 'warning: old'\n")
+        self.assertEqual(self.check(d)[0], 0)
+
+    def test_the_doctor_runs_without_a_shell_stdin_or_the_callers_environment(self):
+        d = self.doctor_repo("[ -z \"$SECRET_TOKEN\" ] || echo 'missing: the environment leaked'\n"
+                             "if read -r line; then echo 'missing: stdin was open'; fi\n"
+                             "[ \"$PWD\" = \"$(pwd -P)\" ] || true\n[ -f doctor.sh ] || echo 'missing: not run in the repository'\n")
+        rc, out, _ = self.check(d, env=dict(self.env, SECRET_TOKEN="hunter2"))
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out)
+        self.answers("acme", d, {"doctor_command": "sh ./doctor.sh && echo hi"})
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("without a shell", out)
+        self.answers("acme", d, {"doctor_command": "no-such-doctor-tool --x"})
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("is not on PATH", out)
+
+    def test_a_doctor_that_does_not_finish_is_killed(self):
+        d = self.doctor_repo("echo 'ok: started'\nsleep 30\n")
+        t0 = time.monotonic()
+        rc, out, _ = self.check(d, "--timeout", "1")
+        self.assertLess(time.monotonic() - t0, 15)
+        self.assertEqual(rc, 1)
+        self.assertIn("did not finish within 1 s", out)
+
+    def test_the_detected_make_target_is_run_when_the_answers_name_none(self):
+        if shutil.which("make") is None:
+            self.skipTest("make is not installed")
+        d = self.gitrepo("acme", {"Makefile": "doctor:\n\t@echo 'ok: make'\n\t@echo 'missing: tool x'\n\t@false\n"})
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertIn("make doctor   [detected: Makefile target doctor]", out)
+        self.assertIn("ENV INCOMPLETE: 1 missing (missing: tool x)", out)
+
+    def test_exit_two_for_usage_and_for_no_project_or_repository(self):
+        d = self.doctor_repo("echo ok\n")
+        for args in (["--bogus"], ["--timeout", "0"], ["--timeout", "soon"], ["--timeout", "99999"], ["--project", "nosuch"], ["--repo", os.path.join(self.t, "absent")], ["--repo"]):
+            r = self.q("env", "check", *args)
+            self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
+        self.answers("nopath", "")
+        self.assertEqual(self.q("env", "check", "--project", "nopath").returncode, 2)
+        self.assertEqual(self.check(d)[0], 0)
+
+    def test_the_state_file_holds_the_verdict_and_no_output(self):
+        d = self.doctor_repo("echo 'missing: sekrit-line-7f3a'\nexit 1\n")
+        self.assertEqual(self.check(d)[0], 1)
+        f = os.path.join(self.t, "state", "env", "acme.json")
+        self.assertEqual(stat.S_IMODE(os.stat(f).st_mode), 0o600)
+        with open(f) as fh:
+            raw = fh.read()
+        self.assertNotIn("sekrit-line-7f3a", raw)
+        j = json.loads(raw)
+        self.assertEqual((j["project"], j["verdict"], j["exit"], j["missing"], j["doctor_command"], j["builtin_minimum"]), ("acme", "ENV INCOMPLETE: 1 missing", 1, 1, "sh ./doctor.sh", False))
+        self.assertEqual(j["head"], self.git(d, "rev-parse", "HEAD").strip())
+        self.assertRegex(j["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertIn("dry_run_command", j)
+        with open(os.path.join(d, "doctor.sh"), "w") as fh:
+            fh.write("echo ok\n")
+        self.assertEqual(self.check(d)[0], 0)
+        with open(f) as fh:
+            self.assertEqual(json.load(fh)["verdict"], "ENV OK")
+
+    def test_no_state_file_without_a_stored_project(self):
+        d = self.gitrepo("lone", {"doctor.sh": "echo ok\n"})
+        self.assertEqual(self.check(d)[0], 0)
+        self.assertFalse(os.path.exists(os.path.join(self.t, "state", "env")))
+
+    def test_the_builtin_minimum_finds_an_uninitialised_submodule(self):
+        lib = self.gitrepo("lib", {"README": "lib\n"})
+        up = self.gitrepo("upstream", {"README": "up\n"})
+        self.git(up, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib")
+        self.git(up, "commit", "-q", "-m", "add the submodule")
+        clone = os.path.join(self.t, "acme")
+        subprocess.run(GIT + ["clone", "-q", up, clone], check=True, capture_output=True)
+        self.answers("acme", clone)
+        rc, out, _ = self.check(clone)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("none; built-in minimum (1 submodule(s)", out)
+        self.assertIn("ENV INCOMPLETE: 1 missing (submodule vendor/lib is not initialised", out.splitlines()[-1])
+        self.git(clone, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q")
+        rc, out, _ = self.check(clone)
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out)
+        with open(os.path.join(self.t, "state", "env", "acme.json")) as fh:
+            self.assertTrue(json.load(fh)["builtin_minimum"])
+
+    def test_the_builtin_minimum_checks_tags_and_pinned_tools(self):
+        major = str(sys.version_info.major)
+        d = self.gitrepo("acme", {"VERSION": "1.0.0\n", ".python-version": major + "\n", ".tool-versions": "nosuchtool-xyz 1.0\n"})
+        self.git(d, "remote", "add", "origin", "https://example.net/acme.git")
+        rc, out, _ = self.check(d)
+        last = out.splitlines()[-1]
+        self.assertEqual(rc, 1, out)
+        self.assertIn("2 missing", last)
+        self.assertIn("no tags are fetched", last)
+        self.assertIn("nosuchtool-xyz is not installed (pinned in .tool-versions)", last)
+        self.assertNotIn("python", last)                       # python answers --version and matches the major pin
+        self.git(d, "tag", "1.0.0")
+        os.remove(os.path.join(d, ".tool-versions"))
+        with open(os.path.join(d, ".python-version"), "w") as fh:
+            fh.write("1.0\n")
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 1)
+        self.assertRegex(out.splitlines()[-1], r"ENV INCOMPLETE: 1 missing \(python 3\.\d+ does not match \.python-version 1\.0\)")
+        self.git(d, "tag", "-d", "1.0.0")
+        os.remove(os.path.join(d, ".python-version"))
+        self.assertEqual(self.check(d)[0], 1)                  # still no tags, still a versioned project with a remote
+        os.remove(os.path.join(d, "VERSION"))
+        rc, out, _ = self.check(d)
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out)
+        self.assertIn("git fetch --tags", out)                 # a note, not a missing item
+
+    def test_the_version_rules(self):
+        import env_check as C
+        self.assertEqual(C.wanted("1.22"), [("=", 1, 22)])
+        self.assertEqual(C.wanted(">=18"), [(">=", 18, None)])
+        self.assertEqual(C.wanted("3.12 3.11"), [("=", 3, 12), ("=", 3, 11)])
+        self.assertEqual(C.wanted("go1.22.3"), [("=", 1, 22)])
+        for v in ("latest", "system", "lts/*", "20.x", "*"):
+            self.assertIsNone(C.wanted(v), v)
+        self.assertTrue(C.matches((20, 11), "=", 20, None))
+        self.assertFalse(C.matches((21, 0), "=", 20, None))
+        self.assertTrue(C.matches((1, 23), ">=", 1, 22))
+        self.assertFalse(C.matches((1, 21), ">=", 1, 22))
+        self.assertEqual(C.version_of("go version go1.22.3 linux/amd64"), (1, 22))
+        self.assertEqual(C.version_of("Python 3.12.1"), (3, 12))
+
+    def test_a_pin_with_a_backend_prefix_or_toolchain_is_not_asked(self):
+        import env_check as C
+        tools = C.pinned_tools([{"file": "go.mod", "tool": "go", "version": "1.22"}, {"file": "go.mod", "tool": "toolchain", "version": "go1.22.3"},
+                                {"file": "mise.toml", "tool": "npm:left-pad", "version": "1"}, {"file": ".tool-versions", "tool": "golang", "version": "1.22.3"},
+                                {"file": "mise.toml", "tool": "../evil", "version": "1"}])
+        self.assertEqual(sorted(tools), ["go"])
+        self.assertEqual(tools["go"], [("go.mod", ">=1.22"), (".tool-versions", "1.22.3")])
+
+    def test_the_qargi_layer_for_a_stored_project(self):
+        d = self.doctor_repo("echo 'ok: git'\n")
+        rc, out, _ = self.check(d)
+        self.assertEqual(rc, 0, out)                           # no provider set: each part is a note, none is missing
+        self.assertIn("project:  acme (answers found)", out)
+        self.assertIn("not checked", out)
+        with open(os.path.join(self.conf, "projects", "acme.json")) as fh:
+            a = json.load(fh)
+        a["models"] = {"provider": {"local": "claude-code", "cloud": "claude-platform"}}
+        a["roles"] = {"build": {"base": "master", "push": {"mode": "none"}, "model": "claude-sonnet-5-5", "effort": "high"}}
+        a["budget_cents"] = 500
+        put(self.conf, "projects/acme.json", json.dumps(a))
+        env = dict(self.env, QARGI_PROJECT="acme")
+        self.assertEqual(self.q("agent", "add", "forge", "--roles", "build", "--project", "acme", env=env).returncode, 0)
+        j = json.loads(self.check(d, "--json")[1])
+        parts = {x["part"] + ":" + x["text"].split(" ")[0]: x["text"] for x in j["qargi"]}
+        self.assertIn("members", {x["part"] for x in j["qargi"]})
+        self.assertTrue(any(x["part"] == "members" and x["text"].startswith("1 current") for x in j["qargi"]), j)
+        self.assertFalse(any(m.startswith("skills") for m in j["missing"]), j["missing"])      # nothing is rendered yet: nothing to link
+        os.makedirs(os.path.join(self.t, "state", "render", "acme", "claude-code", ".claude", "skills"))
+        j = json.loads(self.check(d, "--json")[1])
+        self.assertIn("skills are not linked in this checkout", j["missing"])
+        self.assertTrue(any(m.startswith("packs drift") for m in j["missing"]), j["missing"])
+        self.assertEqual(j["exit"], 1)
+        # a member whose file was edited by hand is DRIFT, a missing item
+        listing = self.q("agent", "list", "--project", "acme", env=env).stdout.split()
+        mf = next(w for w in listing if w.endswith(".md"))
+        with open(mf, "a") as fh:
+            fh.write("\nedited by hand\n")
+        j = json.loads(self.check(d, "--json")[1])
+        self.assertTrue(any(m.startswith("members not current: forge DRIFT") for m in j["missing"]), j["missing"])
+        self.assertTrue(any(x["part"] == "members" and "DRIFT" in x["text"] for x in j["qargi"]), j)
+
+    def test_the_member_guard_allows_check(self):
+        g = subprocess.run([BIN, "__guard"], input=json.dumps({"tool_input": {"command": "qargi env check --json"}}), capture_output=True, text=True, env=self.env)
+        self.assertEqual(g.returncode, 0, g.stderr)
+
+    def test_help_and_completion(self):
+        h = self.q("help", "env", "check").stdout
+        self.assertIn("RUNS THE PROJECT'S CODE", h)
+        self.assertIn("ENV INCOMPLETE", h)
+        self.assertIn("--timeout", self.q("__complete", "env", "check", "--").stdout)
+        self.assertIn("ENV INCOMPLETE", self.q("help", "environment").stdout)
 
 
 if __name__ == "__main__":
