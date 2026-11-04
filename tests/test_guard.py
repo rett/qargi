@@ -2788,6 +2788,56 @@ class ThirdReview(unittest.TestCase):
                   "cd ../../out; cd ../clone/sub; echo \"$(date)\" > a"):
             self.assertEqual(self.not_refused([c], cls="read-only"), [], c)
 
+    # --- finding 3: the repository's own files named like the record do not make a run of a directory of the clone
+    LOOK_ALIKES = ("tmpdir", "ability", "repo.path", "repo.url", "cred.path", "refs.before", "refs.after", "refs.diff")
+
+    def make_look_alikes(self):
+        for name in self.LOOK_ALIKES:
+            with open(os.path.join(self.clone, "docs", name), "w") as f:
+                f.write("repository content\n")
+        for d in ("fake/clone", "fake/out", "pair"):
+            os.makedirs(os.path.join(self.clone, d))
+        for path in ("fake/ability", "fake/refs.before", "fake/class", "pair/ability", "pair/refs.before"):
+            with open(os.path.join(self.clone, path), "w") as f:
+                f.write("review\n" if path.endswith("ability") else "")
+
+    def test_a_directory_of_the_clone_with_files_named_like_the_record_is_not_a_run(self):
+        """A repository may hold docs/tmpdir, docs/ability and the like: is_run() took the directory for the run, so under the read-only class a write into
+        docs/ was judged by a run whose clone it is not inside, and a build member could not edit the repository's own file."""
+        self.make_look_alikes()
+        for d in ("docs", "fake", "pair"):
+            self.assertEqual(self.not_refused(["echo x > %s/f" % d, "touch %s/g" % d, "rm -f %s/h" % d, "sed -i s/a/b/ %s/f" % d, "cp /etc/hostname %s/" % d], self.clone, "read-only"), [], d)
+            for tool, key in (("Write", "file_path"), ("Edit", "file_path")):
+                r = self.call(tool, {key: os.path.join(self.clone, d, "f")}, self.clone, "read-only")
+                self.assertEqual(r.returncode, 2, (d, tool, r.stderr))
+            self.assertEqual(self.not_refused(["cd %s; echo x > f" % d, "cd %s && git commit -am x" % d], self.clone, "read-only"), [], d)
+            r = self.call("Bash", {"command": "echo x > f"}, os.path.join(self.clone, d), "read-only")
+            self.assertEqual(r.returncode, 2, (d, r.stderr))
+
+    def test_a_build_member_edits_the_repositorys_own_files_named_like_the_record(self):
+        self.make_look_alikes()
+        cmds = []
+        for d in ("docs", "fake", "pair"):
+            cmds += ["echo x > %s/%s" % (d, n) for n in ("tmpdir", "ability", "refs.before", "class", "repo.path")]
+            cmds += ["rm -f %s/ability" % d, "sed -i s/a/b/ %s/tmpdir" % d, "cp /etc/hostname %s/refs.before" % d, "mv %s/ability %s/ability.old" % (d, d), "touch %s/tmpdir" % d]
+        self.assertEqual(self.not_allowed(cmds, self.clone), [])
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path")):
+            for d in ("docs", "fake", "pair"):
+                for n in ("tmpdir", "ability", "refs.before"):
+                    r = self.call(tool, {key: os.path.join(self.clone, d, n)}, self.clone)
+                    self.assertEqual(r.returncode, 0, (tool, d, n, r.stderr))
+        r = self.call("Bash", {"command": "echo x > ability"}, os.path.join(self.clone, "docs"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_true_run_is_still_found_and_its_record_still_held(self):
+        self.make_look_alikes()
+        for c in ("echo x > ../../ability", "echo x > ../../tmpdir", "rm ../../refs.before", "cp /etc/hostname ../../class"):
+            self.assertEqual(self.not_refused([c], os.path.join(self.clone, "docs")), [], c)
+        for f in ("ability", "refs.before"):                                    # the two files moved away: the markers beside clone/ and out/ still say it is a run
+            os.unlink(os.path.join(self.run_dir, f))
+        self.assertEqual(self.not_refused(["echo x > ../../tmpdir"], os.path.join(self.clone, "sub")), [])
+        self.assertEqual(self.not_refused(["echo x > docs/f"], self.clone, "read-only"), [])
+
 
 
 if __name__ == "__main__":

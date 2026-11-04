@@ -526,15 +526,30 @@ def walk(command, here):
             visited += [d for d in dirs if d not in visited]
 
 
-RUN_MARKERS = ("ability", "refs.before", "refs.after", "refs.diff", "repo.path", "repo.url", "cred.path", "tmpdir")   # files only `qargi local prepare` makes in a run directory
+@functools.cache                                     # the files do not change while one command is judged
+def run_like(p):
+    """True when the directory p holds the record `qargi local prepare` makes: ability and refs.before, or the clone and out directories beside any
+    other file of the record (so a run whose two files were moved away is still a run)."""
+    if os.path.lexists(os.path.join(p, "ability")) and os.path.lexists(os.path.join(p, "refs.before")):
+        return True
+    return os.path.isdir(os.path.join(p, "clone")) and os.path.isdir(os.path.join(p, "out")) and any(os.path.lexists(os.path.join(p, m)) for m in RUN_CONTROL)
+
+
+@functools.cache
+def in_a_clone(p):
+    """True when p lies below the clone directory of a directory that holds a run's record. A clone is the repository's content, and a repository may hold
+    a docs/tmpdir or a whole docs/ability + docs/refs.before: they are not a run, and the member that edits them is not editing the record."""
+    q = os.path.dirname(p)
+    while q != os.path.dirname(q):
+        if os.path.basename(q) == "clone" and run_like(os.path.dirname(q)):
+            return True
+        q = os.path.dirname(q)
+    return False
 
 
 def is_run(p):
-    """True when the directory p is a run directory: it holds any file `qargi local prepare` makes there, or the clone and out directories beside any
-    other file of the run's record. Not only ability and refs.before, so a run whose two files were moved away is still a run."""
-    if any(os.path.lexists(os.path.join(p, m)) for m in RUN_MARKERS):
-        return True
-    return os.path.isdir(os.path.join(p, "clone")) and os.path.isdir(os.path.join(p, "out")) and any(os.path.lexists(os.path.join(p, m)) for m in RUN_CONTROL)
+    """True when the directory p is a run directory: it holds the record (run_like) and does not lie inside the clone of another run."""
+    return run_like(p) and not in_a_clone(p)
 
 
 @functools.cache                                     # the files do not change while one command is judged
