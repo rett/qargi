@@ -355,6 +355,11 @@ ENV_DENIED = {
     "EDITOR": "a program other tools run by themselves", "VISUAL": "a program other tools run by themselves", "PAGER": "a program other tools run by themselves",
     "MANPAGER": "a program other tools run by themselves", "BROWSER": "a program other tools run by themselves", "GIT": "qargi's git wrapper of the run",
     "GNUPGHOME": "the user's keys", "NETRC": "the user's stored logins", "KRB5CCNAME": "the user's Kerberos credentials",
+    "JDK_JAVA_OPTIONS": "it loads code into java", "FPATH": "it changes where a shell loads functions from", "ZDOTDIR": "a shell startup directory",
+    "KSH_ENV": "a shell startup file", "LUA_INIT": "it runs code in lua", "LUA_PATH": "it changes where lua loads code from",
+    "LUA_CPATH": "it changes where lua loads code from", "LESSOPEN": "a program less runs by itself", "GLIBC_TUNABLES": "it changes how libc loads and allocates",
+    "GOFLAGS": "it changes what go builds and runs", "GOENV": "it changes where go reads its settings from", "INPUTRC": "a readline startup file",
+    "TERMINFO": "it changes where terminal definitions are loaded from", "SUDO_ASKPASS": "a program sudo runs by itself",
 }
 ENV_DENIED_PREFIX = (
     ("GIT_", "the run's git wrapper and its settings are qargi's"), ("QARGI_", "qargi's own settings are not handed on"),
@@ -364,6 +369,7 @@ ENV_DENIED_PREFIX = (
     ("SSH_", "the ssh agent and its keys are the user's, and a member never pushes"), ("GPG_", "the user's signing agent"),
     ("GH_", "a forge credential: a member never pushes or calls the forge"), ("GITHUB_", "a forge credential: a member never pushes or calls the forge"),
     ("GITLAB_", "a forge credential: a member never pushes or calls the forge"), ("BITBUCKET_", "a forge credential: a member never pushes or calls the forge"),
+    ("NPM_CONFIG_", "it changes what npm runs and where it reads and sends"), ("npm_config_", "it changes what npm runs and where it reads and sends"),
 )
 
 
@@ -2014,15 +2020,33 @@ def adapter_exec(name, surface, verb, root=None, library=None):
     return path, None
 
 
+def adapter_env(name, surface, home, root=None, library=None):
+    """The environment an adapter runs in: pack_env (nothing of the caller's, a search path of absolute entries, the home and temporary
+    directory `home`) plus the names the runtime's dispatch.env_pass lists on that surface, minus any that env_pass_problem refuses."""
+    env = pack_env(home, home)
+    doc = _docs(_entry(name, root, library)).get(surface) or {}
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    for n in disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else []:
+        if isinstance(n, str) and n in os.environ and env_pass_problem(n) is None and n not in env:
+            env[n] = os.environ[n]
+    return env
+
+
 def run_adapter(name, surface, verb, data, root=None, library=None, env=None):
     """(exit status, stdout, stderr) of the adapter's VERB with the request `data` (text) on its standard input; the private copy of a
-    library adapter is removed afterwards. The errors of adapter_exec() are raised."""
+    library adapter is removed afterwards. The adapter gets adapter_env() (a private home and temporary directory, removed afterwards,
+    and the runtime's env_pass names), never the caller's environment; `env` replaces it. The errors of adapter_exec() are raised."""
+    import shutil
     import subprocess
+    import tempfile
     path, cleanup = adapter_exec(name, surface, verb, root, library)
+    home = tempfile.mkdtemp(prefix="qargi-adapter.")
     try:
-        r = subprocess.run([path, verb], input=data, capture_output=True, text=True, env=env)
+        r = subprocess.run([path, verb], input=data, capture_output=True, text=True,
+                           env=env if env is not None else adapter_env(name, surface, home, root, library))
         return r.returncode, r.stdout, r.stderr
     finally:
+        shutil.rmtree(home, ignore_errors=True)
         if cleanup:
             discard_exec_copy(cleanup)
 
