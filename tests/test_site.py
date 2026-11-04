@@ -695,6 +695,78 @@ class ConfigTrust(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "o")))
 
 
+class StaticAndOut(unittest.TestCase):
+    """S2, N1, N2: static files against generated paths, building in a temporary folder, --out placement."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, self.f)
+        self.static = os.path.join(self.f, "static")
+        self.out = os.path.join(self.tmp, "o")
+
+    def b(self, *extra):
+        return build(self.out, os.path.join(self.f, "pages"), *extra)
+
+    def test_a_static_file_on_a_generated_path_is_an_error_before_anything_is_written(self):
+        for name in ["first-project", "assets", "reference", "releases", "sitemap.xml", "Index.html", "FIRST-PROJECT", "404.html", "index.html/x"]:
+            d = os.path.join(self.f, "static", *name.split("/")[:-1])
+            os.makedirs(d, exist_ok=True)
+            spit(os.path.join(self.static, *name.split("/")), "x")
+            rc, out, err = self.b()
+            self.assertEqual((rc, "Traceback" in err), (1, False), "%s: %s%s" % (name, out, err))
+            self.assertIn("static/%s: collides with a generated file or folder" % name, out)
+            self.assertFalse(os.path.exists(self.out), name)
+            shutil.rmtree(self.static)
+            shutil.copytree(os.path.join(FIX, "static"), self.static)
+
+    def test_two_static_files_that_differ_only_by_case_are_an_error(self):
+        spit(os.path.join(self.static, "Notes.txt"), "a")
+        spit(os.path.join(self.static, "notes.txt"), "b")
+        rc, out, err = self.b()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("differs only by case", out)
+
+    def test_a_failed_build_leaves_nothing_and_a_good_one_leaves_only_the_site(self):
+        from unittest import mock
+        argv = ["build", "--release", RELEASE, "--source", ROOT, "--pages", os.path.join(self.f, "pages"), "--config", os.path.join(self.f, "site.json"), "--out", self.out]
+        with mock.patch.object(S, "render_page", side_effect=S.Refusal("boom")):
+            self.assertEqual(S.main(argv), 2)
+        self.assertEqual(os.listdir(self.tmp), ["f"])
+        os.makedirs(self.out)                                  # an empty folder that existed stays empty
+        with mock.patch.object(S, "render_page", side_effect=S.Refusal("boom")):
+            self.assertEqual(S.main(argv), 2)
+        self.assertEqual(os.listdir(self.out), [])
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["f", "o"])
+        self.assertEqual(S.main(argv), 0)
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["f", "o"])
+        self.assertTrue(os.path.isfile(os.path.join(self.out, "index.html")))
+        self.assertTrue(os.stat(self.out).st_mode & 0o005)      # readable by a web server: not the private mode of a temporary folder
+
+    def test_out_inside_pages_or_static_is_refused(self):
+        for sub in [os.path.join(self.f, "pages", "site"), os.path.join(self.static, "out"), self.static]:
+            rc, out, err = build(sub, os.path.join(self.f, "pages"))
+            self.assertEqual(rc, 2, sub + out)
+            self.assertIn("would be inside", err)
+            self.assertFalse(os.path.exists(os.path.join(sub, "index.html")))
+
+    def test_well_known_is_copied_other_hidden_folders_are_reported_and_readme_is_not_published(self):
+        os.makedirs(os.path.join(self.static, ".well-known"))
+        spit(os.path.join(self.static, ".well-known", "security.txt"), "Contact: mailto:security@example.org\n")
+        os.makedirs(os.path.join(self.static, ".hidden"))
+        spit(os.path.join(self.static, ".hidden", "x.txt"), "x")
+        spit(os.path.join(self.static, "README.md"), "# Notes for the maintainers\n")
+        rc, out, err = self.b()
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.isfile(os.path.join(self.out, ".well-known", "security.txt")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, ".hidden")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, "README.md")))
+        self.assertIn("warning: static/.hidden: a hidden folder is not published", out)
+        self.assertIn("note: static/README.md: not published", out)
+        self.assertEqual(run("check-output", self.out)[0], 0)
+
+
 class CheckOutput(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

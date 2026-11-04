@@ -26,6 +26,7 @@ import os
 import posixpath
 import re
 import shlex
+import shutil
 import stat
 import string
 import subprocess
@@ -70,6 +71,10 @@ class Report:
     def __init__(self):
         self.errors = []
         self.warnings = []
+        self.notes = []
+
+    def note(self, where, msg):
+        self.notes.append("%s: %s" % (where, msg))
 
     def err(self, where, msg):
         self.errors.append("%s: %s" % (where, msg))
@@ -78,6 +83,8 @@ class Report:
         self.warnings.append("%s: %s" % (where, msg))
 
     def show(self, label, file=sys.stdout):
+        for n in self.notes:
+            print("note: " + n, file=file)
         for w in self.warnings:
             print("warning: " + w, file=file)
         for e in self.errors:
@@ -171,11 +178,14 @@ def read_text(path, limit=MAX_PAGE_BYTES):
         raise Refusal("%s is not UTF-8 text (%s)" % (path, e))
 
 
-def read_tree(root, suffix):
-    """Regular files under root with the suffix, as sorted relative paths; a symlink anywhere is a refusal."""
+def read_tree(root, suffix, keep=(), skipped=None):
+    """Regular files under root with the suffix, as sorted relative paths; a symlink anywhere is a refusal.
+    Hidden folders are left out, except those named in keep; the left-out ones are appended to skipped."""
     out = []
     for dirpath, dirs, files in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        if skipped is not None:
+            skipped.extend(os.path.relpath(os.path.join(dirpath, d), root).replace(os.sep, "/") for d in sorted(dirs) if d.startswith(".") and d not in keep)
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") or d in keep)
         for name in sorted(dirs) + sorted(files):
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
@@ -186,23 +196,46 @@ def read_tree(root, suffix):
     return sorted(out)
 
 
-def prepare_out(out, roots_forbidden):
-    """--out must be absent or an empty directory, and must not contain the source or the pages."""
+def prepare_out(out, roots_forbidden, inside_forbidden=()):
+    """--out must be absent or an empty directory; it must not contain the source or the pages, and must not lie inside
+    the pages or the static folder (the next build would take the site as input). Returns its final path; nothing is created."""
     p = os.path.abspath(out)
     rp = _real(os.path.dirname(p))
     final = os.path.join(rp, os.path.basename(p))
     if final == os.sep or final == _real(os.path.expanduser("~")):
         raise Refusal("--out %s: refused" % out)
+    for r in roots_forbidden:
+        if r and _inside(r, final):
+            raise Refusal("--out %s would contain %s: refused" % (out, r))
+    for r in inside_forbidden:
+        if r and _inside(final, r):
+            raise Refusal("--out %s would be inside %s: refused" % (out, r))
     if os.path.lexists(final):
         if os.path.islink(final) or not os.path.isdir(final):
             raise Refusal("--out %s exists and is not a directory" % out)
         if os.listdir(final):
             raise Refusal("--out %s is not empty: give a new or empty directory" % out)
-    for r in roots_forbidden:
-        if r and _inside(r, final):
-            raise Refusal("--out %s would contain %s: refused" % (out, r))
-    os.makedirs(final, exist_ok=True)
     return final
+
+
+def build_into(final, writer):
+    """Run writer(directory) in a private folder next to `final`, then move it to `final` in one step; on any failure
+    remove it, so a failed build leaves no half-written site (and an existing empty `final` stays empty)."""
+    parent = os.path.dirname(final)
+    os.makedirs(parent, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix=".site-build-", dir=parent)
+    try:
+        result = writer(tmp)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(tmp, 0o777 & ~mask)
+        if os.path.isdir(final):
+            os.rmdir(final)
+        os.rename(tmp, final)
+        return result
+    except BaseException:
+        shutil.rmtree(tmp, True)
+        raise
 
 
 class Writer:
@@ -961,6 +994,9 @@ def validate(site, hand, rep):
     cfg = site.cfg
     pages = site.pages
     files = {"sitemap.xml", "robots.txt", "assets/site.css", ".nojekyll"}
+    gen = files | {p.file for p in pages.values()}
+    gen_dirs = {"/".join(f.split("/")[:k]) for f in gen for k in range(1, f.count("/") + 1)}
+    gen_lower = {g.lower() for g in gen | gen_dirs}
     if cfg and cfg.dir:
         sd = os.path.join(cfg.dir, "static")
         if os.path.islink(sd):
@@ -968,26 +1004,38 @@ def validate(site, hand, rep):
         if os.path.isdir(sd):
             check_trusted(sd, "static folder")
             checked = {sd}
-            for rel in read_tree(sd, ""):
+            skipped = []
+            lower = {}
+            for rel in read_tree(sd, "", keep=(".well-known",), skipped=skipped):
                 parts = rel.split("/")
                 for k in range(1, len(parts)):
                     d = os.path.join(sd, *parts[:k])
                     if d not in checked:
                         check_trusted(d, "static folder")
                         checked.add(d)
-                check_static_file(os.path.join(sd, *parts))
+                full = os.path.join(sd, *parts)
+                check_static_file(full)
                 if not re.match(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$", rel):
                     rep.err("static/" + rel, "file names use letters, digits, dot, hyphen and underscore")
                     continue
-                full = os.path.join(sd, *rel.split("/"))
+                if parts[-1] == "README.md":
+                    rep.note("static/" + rel, "not published (a README is for the people who keep the folder)")
+                    continue
                 if os.path.getsize(full) > MAX_STATIC_BYTES:
                     rep.err("static/" + rel, "larger than %d bytes" % MAX_STATIC_BYTES)
                     continue
-                if rel in files or rel.endswith("/index.html") or rel == "404.html" or rel == "index.html":
-                    rep.err("static/" + rel, "collides with a generated file")
+                prefixes = {"/".join(parts[:k]) for k in range(1, len(parts) + 1)}
+                if rel.lower() in gen_lower or any(x in gen for x in prefixes) or rel.endswith("/index.html"):
+                    rep.err("static/" + rel, "collides with a generated file or folder")
                     continue
+                if rel.lower() in lower:
+                    rep.err("static/" + rel, "differs only by case from static/%s (they would be one file on some systems)" % lower[rel.lower()])
+                    continue
+                lower[rel.lower()] = rel
                 site.static[rel] = full
                 files.add(rel)
+            for d in skipped:
+                rep.warn("static/" + d, "a hidden folder is not published (only .well-known is)")
     if cfg and cfg.og_image and cfg.og_image not in site.static:
         rep.err("site.json", "og_image %r is not a file in static/" % cfg.og_image)
     titles, descs = {}, {}
@@ -1647,8 +1695,9 @@ def main(argv=None):
         if rep.errors or args.verb == "check":
             return rep.show("check")
         source_roots = [_real(args.source)] + ([_real(args.pages)] if args.pages else [])
-        out = prepare_out(args.out, source_roots)
-        write_site(site, out)
+        inside = ([_real(args.pages)] if args.pages else []) + ([_real(os.path.join(site.cfg.dir, "static"))] if site.cfg and site.cfg.dir else [])
+        out = prepare_out(args.out, source_roots, inside)
+        build_into(out, lambda d: write_site(site, d))
         rc = rep.show("build")
         print("built %d page(s) in %s" % (len([k for k in site.pages]), out))
         return rc
