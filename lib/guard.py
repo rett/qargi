@@ -2148,7 +2148,7 @@ def protected_write(toks, i, here):
             for one in brace_expand(a):
                 heres = [here] + ([os.path.dirname(resolve(here, args[-1]))] if args and not one.startswith(("/", "~")) else [])
                 root = next((r for r in (protected(resolve(h, one), True) for h in heres) if r), None)
-                if root:
+                if root and root not in key_dirs():              # a link to the credentials directory is the signing key's own refusal (key_read), with its own reason
                     return OwnReason("ln of %s makes a link to %s (or a directory that holds it), a protected location, under a name the guard cannot follow in the same command line; "
                                      "link to something else" % (a, root))
     for what, dest in cands:
