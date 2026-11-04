@@ -185,6 +185,7 @@ OWN_ONLY = ("linker.py", "render.py")                       # names too common t
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
+BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
@@ -248,6 +249,68 @@ def word_then_subst(word, text):
     return False
 
 
+GIT_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")   # git's global options that take the next word
+GIT_PUSHERS = {"push", "send-pack", "http-push"}             # the git subcommands that publish
+GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack"}   # and the programs behind them, run by their own name
+GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy)|diff\.external|pager\..*|"
+                           r"sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|remote\..*\.(?:receivepack|uploadpack|vcs))$", re.I)
+GIT_ENV_RUNS_CODE = re.compile(r"^(?:GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS|GLOBAL|SYSTEM)|GIT_EXEC_PATH|GIT_SSH(?:_COMMAND)?|GIT_PROXY_COMMAND|GIT_ASKPASS|GIT_EXTERNAL_DIFF|"
+                               r"GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR)$")
+REMOTE_CHANGES = ("add", "set-url", "remove", "rm", "rename", "set-branches", "set-head")
+def remote_operand(w):
+    """True when the word names a place on another host (host:path, user@host:path, [::1]:path, rsync://host/m), not a local path or an option's text. Not a
+    regular expression: an optional user@ in front of a host made one quadratic on a long run of at signs."""
+    head, colon, _ = w.partition(":")
+    return w.startswith("rsync://") or bool(colon and head and "/" not in head and not head.isspace() and not re.search(r"\s", head))
+
+
+def git_global(rest):
+    """([(option, value)], k): the global options of a git command line (-C DIR, -c K=V, --work-tree=D, --no-pager ...) and the index in rest of the subcommand
+    (len(rest) when there is none). value is None for an option with none."""
+    opts, k = [], 0
+    while k < len(rest) and rest[k].startswith("-"):
+        t = rest[k]
+        if t in GIT_VALUE_OPTS and k + 1 < len(rest):
+            opts.append((t, rest[k + 1]))
+            k += 2
+        else:
+            name, eq, val = t.partition("=")
+            opts.append((name, val if eq else None))
+            k += 1
+    return opts, k
+
+
+def builds_word(w):
+    """True when a variable or a substitution takes part in the word, so the guard cannot read what it stands for."""
+    return "$" in w or "`" in w
+
+
+def git_refusal(pre, rest):
+    """The reason a git command line (pre: the words before git, with the assignments in front of it; rest: the words after) publishes, reaches out under another
+    name or runs a program a member names, or None. Only the subcommand counts: the first word after the global options (`git commit -m push` is no push)."""
+    opts, k = git_global(rest)
+    sub, args = (rest[k], rest[k + 1:]) if k < len(rest) else ("", [])
+    if sub in GIT_PUSHERS:
+        return "git %s is not available to an agent" % sub
+    if sub == "svn" and "dcommit" in args:
+        return "git svn dcommit is not available to an agent"
+    nonopt = [t for t in args if not t.startswith("-")]
+    if sub == "remote" and nonopt[:1] and nonopt[0] in REMOTE_CHANGES:
+        return "changing a git remote is not available to an agent"
+    if builds_word(sub):
+        return "a git subcommand that a variable or a substitution builds (%s) could be a push or any other verb and is not available to an agent" % sub
+    for name, val in opts:
+        key = (val or "").partition("=")[0]
+        if (name in ("-c", "--config-env") and GIT_RUNS_CODE.match(key)) or (name == "--exec-path" and val):
+            return ("git %s %s sets a git configuration that runs a program or gives a git command another name (an alias can be a push) and is not available to an agent"
+                    % (name, val))
+    for t in pre:
+        m = ASSIGNMENT.match(t)
+        if m and GIT_ENV_RUNS_CODE.match(m.group(1)):
+            return "git with %s set reads a configuration that runs a program or gives a git command another name (an alias can be a push) and is not available to an agent" % m.group(1)
+    return None
+
+
 def blocked(command, depth=0):
     seen = set()
     for seg in segments(command):
@@ -262,12 +325,14 @@ def blocked(command, depth=0):
         rest = toks[i + 1:]
         if prog in ("gh", "ssh", "scp", "sftp"):
             return "%s is not available to an agent" % prog
+        if prog in GIT_PUSH_PROGRAMS or prog in ("svn", "git-svn") and "dcommit" in rest:
+            return "%s is not available to an agent" % prog
+        if prog == "rsync" and any(remote_operand(t) for t in rest if not t.startswith("-")):
+            return "rsync to or from another host is not available to an agent"
         if prog == "git":
-            words = [t for t in rest if not t.startswith("-")]
-            if "push" in words:
-                return "git push is not available to an agent"
-            if words[:1] == ["remote"] and len(words) > 1 and words[1] in ("add", "set-url", "remove", "rm"):
-                return "changing a git remote is not available to an agent"
+            why = git_refusal(toks[:i], rest)
+            if why:
+                return why
         inner = shell_string(prog, rest) if depth < 3 else None
         why = blocked(inner, depth + 1) if inner is not None else None
         if why:
@@ -275,17 +340,72 @@ def blocked(command, depth=0):
     return None
 
 
+ANSI_ESCAPES = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+ANSI_CODE = re.compile(r"x([0-9A-Fa-f]{1,2})|([0-7]{1,3})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|c(.)", re.S)
+
+
+def ansi_c(text):
+    """text with every $'...' (ANSI-C quoting: the shell decodes \\n, \\xHH, \\NNN, \\uHHHH ...) written as the plain single-quoted string it stands for, and
+    $"..." as "...": a word quoted so (git $'push') is the word it decodes to for every check that reads the words. A $' inside a quote is no
+    ANSI-C quote and is left. One pass over the text."""
+    if "$'" not in text and '$"' not in text:
+        return text
+    out, quote, k, n = [], "", 0, len(text)
+    while k < n:
+        c = text[k]
+        if quote == "'":
+            quote = "" if c == "'" else quote
+        elif c == "\\" and k + 1 < n:
+            out.append(text[k:k + 2])
+            k += 2
+            continue
+        elif c == "'" and quote == "":
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote else '"'
+        elif c == "$" and quote == "" and text[k + 1:k + 2] == '"':
+            k += 1                                           # $"..." is "..." (a translated string)
+            continue
+        elif c == "$" and quote == "" and text[k + 1:k + 2] == "'":
+            buf, k = [], k + 2
+            while k < n and text[k] != "'":
+                if text[k] == "\\" and k + 1 < n:
+                    m = ANSI_CODE.match(text, k + 1)
+                    if text[k + 1] in ANSI_ESCAPES:
+                        buf.append(ANSI_ESCAPES[text[k + 1]])
+                        k += 2
+                    elif m and m.group(5) is not None:
+                        buf.append(chr(ord(m.group(5)) & 31))
+                        k = m.end()
+                    elif m:
+                        code = int(m.group(1) or m.group(3) or m.group(4) or m.group(2), 16 if m.group(2) is None else 8)
+                        buf.append(chr(code) if 0 < code < 0x110000 else "")
+                        k = m.end()
+                    else:
+                        buf.append(text[k:k + 2])
+                        k += 2
+                else:
+                    buf.append(text[k])
+                    k += 1
+            out.append("'" + "".join(buf).replace("'", "'\\''") + "'")
+            k += 1
+            continue
+        out.append(c)
+        k += 1
+    return "".join(out)
+
+
 @functools.cache
 def split_words(seg):
     """shlex.split of one segment, cut once per text (the checks of a call all ask); raises ValueError for an unbalanced quote."""
-    return tuple(shlex.split(seg))
+    return tuple(shlex.split(ansi_c(seg)))
 
 
 def tokens(seg):
     try:
         toks = list(split_words(seg))
     except ValueError:                                       # an unbalanced quote (a substitution cut out of a quoted string): the words with the quotes taken off
-        toks = re.sub(r"[\\'\"]", "", seg).split()
+        toks = re.sub(r"[\\'\"]", "", ansi_c(seg)).split()
     return toks
 
 
@@ -1542,7 +1662,7 @@ def lead_refusal(prog, rest, pre):
 
 
 def bash_skill_refusal(command, here, depth):
-    joined = command.replace("\\\n", "")                 # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
+    joined = ansi_c(command.replace("\\\n", ""))        # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
     if word_then_subst(HANDOFF_SUBST, joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
@@ -1585,6 +1705,7 @@ def bash_skill_refusal(command, here, depth):
 def lex(seg):
     """The words of a command segment as the shell would cut them, each with whether the shell expands it: [(word, bool)]. Quotes are taken off and a
     backslash makes the next character plain; a variable or a substitution expands outside single quotes, a brace or a glob outside any quote."""
+    seg = ansi_c(seg)
     out, cur, expands, started, quote, k = [], [], False, False, "", 0
     while k < len(seg):
         c = seg[k]
@@ -1734,6 +1855,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
+        return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
         which = verb if verb in MEMORY_VERBS else next(w for w in words[1:4] if w in MEMORY_VERBS)
         return MemoryReason("qargi memory %s changes a memory tier and is not available to an agent; %s" % (which, MEMORY_NOTE))
