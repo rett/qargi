@@ -701,7 +701,8 @@ COMMANDS = {
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
-                               "It is the list that qargi local clean --applied --scratch DIR acts on.")),
+                               "It is the list that qargi local clean --applied --scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), "
+                               "and the AGE is ? when the run's started file is not a number.")),
         },
     },
     "review": {
