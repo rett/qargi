@@ -88,6 +88,55 @@ run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare wr
   local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
   echo read-only
 }
+# The lead's registry of local runs ($DA_STATE/local-runs.jsonl, one JSON line per run, written by `local prepare`, mode 600) is what decides what a run is
+# and where it came from: its directory, slug, base, temporary directory and the repository (repo: a real path; or url and cred: a repository URL and the path
+# of its credential file, never a token). The run directory is a member's to write, so nothing in it that says the same is believed (see run_record).
+#   reg_load            fills LRUNS (real path of each run directory the registry names -> its last line) and LRUNS_ORDER (those paths, first seen first)
+#   reg_has DIR         0 when the registry names the directory DIR (compared by real path)
+#   reg_get DIR FIELD   the text of FIELD in the registry's line for DIR (empty when absent or not a string)
+declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
+LRUNS_ORDER=()
+reg_load() {
+  local f=$DA_STATE/local-runs.jsonl r line rr
+  LRUNS=(); LRUNS_ORDER=()
+  [ -f "$f" ] || return 0
+  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
+  while IFS=$'\t' read -r r line; do
+    r=${r//\\\\/\\}; line=${line//\\\\/\\}
+    rr=$(readlink -f -- "$r" 2>/dev/null) || continue
+    [ -n "$rr" ] || continue
+    [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")
+    LRUNS[$rr]=$line
+  done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
+}
+reg_has() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
+reg_get() {
+  local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 0
+  [ -n "${LRUNS[$rr]+x}" ] || return 0
+  jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$rr]}" 2>/dev/null || true
+}
+# run_record RUN -> 0 and sets RUN_REPO, RUN_URL and RUN_CRED from the registry (reg_load first); 1 with the reason on stderr when the registry does not
+# name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
+# plain files. verify, clean, run and review apply take the repository, the URL and the credential path from these variables and from nothing else: git run
+# in a repository a member chose reads its configuration (core.sshCommand, credential.helper ...), and a URL and a credential path chosen by a member send
+# any file the lead can read as a token to a host of its choice.
+run_record() {
+  local run=$1 name want got
+  RUN_REPO='' RUN_URL='' RUN_CRED=''
+  reg_has "$run" || { echo "qargi: $run is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
+  RUN_REPO=$(reg_get "$run" repo); RUN_URL=$(reg_get "$run" url); RUN_CRED=$(reg_get "$run" cred)
+  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $run (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
+  for name in repo.path repo.url cred.path; do
+    case $name in repo.path) want=$RUN_REPO;; repo.url) want=$RUN_URL;; *) want=$RUN_CRED;; esac
+    if [ -z "$want" ]; then
+      [ ! -e "$run/$name" ] && [ ! -L "$run/$name" ] || { echo "qargi: $run/$name exists but the lead's registry records none: the run directory was changed after prepare" >&2; return 1; }
+      continue
+    fi
+    [ -f "$run/$name" ] && [ ! -L "$run/$name" ] || { echo "qargi: $run/$name is missing or not a plain file, and the lead's registry records $want: the run directory was changed after prepare" >&2; return 1; }
+    got=$(cat -- "$run/$name" 2>/dev/null || true)
+    [ "$got" = "$want" ] || { echo "qargi: $run/$name says '$got' but the lead's registry says '$want': the run directory was changed after prepare, nothing was run against it" >&2; return 1; }
+  done
+}
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.

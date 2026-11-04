@@ -2573,7 +2573,7 @@ the local repository.
 .RS
 .TP
 .BI "\-\-repo\-url " "URL"
-clone a private repository from this URL.
+clone a private repository from this https URL (no user name or password in it: that is \-\-credential\-file).
 .RE
 .RS
 .TP
@@ -2611,14 +2611,14 @@ the profile to dispatch under (for example advisor or auditor for review); resol
 .BI "verify " "RUN_DIR"
 Compare the repository's refs with the snapshot taken by prepare.
 .br
-Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: your own fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.
+Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). After a passing verify the run records RUN/verified, and later verify and clean compare with that: your own fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.
 .RE
 .RS
 .TP
 .BI "clean " "[RUN_DIR]"
 Remove a collected, verified run and its temporary directory.
 .br
-Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path; \-\-applied takes no RUN_DIR and no \-\-discard. \-\-stale DAYS \-\-scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with \-\-yes each is cleaned exactly as clean RUN would, so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without \-\-scratch, takes no RUN_DIR, no \-\-applied and no \-\-discard, and \-\-yes is for \-\-stale only.
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); \-\-applied takes no RUN_DIR and no \-\-discard. \-\-stale DAYS \-\-scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with \-\-yes each is cleaned exactly as clean RUN would, so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without \-\-scratch, takes no RUN_DIR, no \-\-applied and no \-\-discard, and \-\-yes is for \-\-stale only.
 .RS
 .TP
 .B \-\-discard
@@ -2632,7 +2632,7 @@ clean every run under \-\-scratch whose work is recorded applied (review apply) 
 .RS
 .TP
 .BI "\-\-stale " "DAYS"
-list the finished runs (RUN/verified or RUN/applied exists) under \-\-scratch that are at least DAYS days old, from the run's start; with \-\-yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed.
+list the finished runs (RUN/verified or RUN/applied exists) under \-\-scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with \-\-yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed.
 .RE
 .RS
 .TP
@@ -2650,7 +2650,7 @@ with \-\-applied or \-\-stale: the directory the runs were prepared in; only the
 .B list
 List the local runs: role, slug, age, whether applied and merged.
 .br
-Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on.
+Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number.
 .RS
 .TP
 .BI "\-\-scratch " "DIR"
@@ -2741,10 +2741,10 @@ the command to put in the snippet (default qargi).
 Check what an agent returned and put it on a task branch.
 .RS
 .TP
-.BI "check " "RUN_DIR"
-Check a run: numbered patches, messages, manifest, groups.
+.BI "check " "OUT"
+Check what a run returned: numbered patches, messages, manifest, groups.
 .br
-Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).
+OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).
 .RS
 .TP
 .B \-\-allow\-empty
