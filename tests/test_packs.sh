@@ -49,6 +49,16 @@ $DA skill remove style >/dev/null 2>&1 && no "removed a linked pack" || ok "a li
 sed -i '$d' "$T/c/packs/skills/style/SKILL.md"   # undo the edit: the hash matches again
 $DA skill check alpha build >/dev/null 2>&1 && ok "reverting the change clears the drift" || no "drift not cleared"
 
+# what is not a regular file of one name is part of the content hash: a link, a pipe, an empty directory or a second name added to an approved pack is drift
+# (find -type f saw none of them; `packs load` compares the hash alone, without the review)
+for kind in link fifo emptydir hardlink; do
+  sd=$T/c/packs/skills/style
+  case $kind in link) ln -s /etc/hostname "$sd/added";; fifo) mkfifo "$sd/added";; emptydir) mkdir "$sd/added";; hardlink) ln "$sd/SKILL.md" "$sd/added";; esac
+  $DA packs load style --project alpha --role build >/dev/null 2>&1 && no "a $kind added to an approved pack was not drift" || ok "a $kind added to an approved pack is drift (its content hash changed)"
+  rm -rf "$sd/added"
+done
+$DA packs load style --project alpha --role build >/dev/null 2>&1 && ok "with it removed the pack loads again (a pack without such entries hashes as before)" || no "style does not load after removal"
+
 # --- tools: allowlist and write-like tools
 printf '%s' '{"name":"issues","url":"https://mcp.example.net/","tools":{"list_issues":"always_allow","create_issue":"always_allow"}}' > "$T/t.json"
 $DA tool import "$T/t.json" --compatible any 2>&1 | grep -q "create_issue.*write-like" && ok "a write-like tool cannot run unattended" || no "write-like tool accepted"
@@ -86,7 +96,7 @@ $DA skill import "$T/src/leaky" --compatible any 2>&1 | grep -q "looks like a se
 # control or bidi character in a file or in its name is refused at import (the review says which and prints it escaped), and at seal
 SKM=$'---\nname: NAME\ndescription: Use when testing the text-only policy.\n---\nbody\n'
 mkskill_dir() { local d=$T/src/$1; rm -rf "$d"; mkdir -p "$d"; printf '%s' "${SKM//NAME/$1}" > "$d/SKILL.md"; }
-for c in elf zip nul latin ctrl bidi crlf name fifo link; do mkskill_dir pol-$c; done
+for c in elf zip nul latin ctrl bidi crlf name fifo link big empty; do mkskill_dir pol-$c; done
 printf '\x7fELF\x02\x01\x01\x00rest' > "$T/src/pol-elf/helper"
 printf 'PK\x03\x04rest' > "$T/src/pol-zip/refs.dat"
 printf 'a\x00b\n' > "$T/src/pol-nul/refs.md"
@@ -97,7 +107,9 @@ printf 'dos\r\nlines\r\n' > "$T/src/pol-crlf/refs.md"
 printf 'x\n' > "$T/src/pol-name/$(printf 'n\x1b[8mame.md')"
 mkfifo "$T/src/pol-fifo/pipe"
 ln -s /etc/passwd "$T/src/pol-link/lnk"
-for c in elf:"an ELF executable" zip:"a zip archive" nul:"NUL byte" latin:"not UTF-8" ctrl:"control or bidi character" bidi:"control or bidi character" name:"control or bidi character" fifo:"not a regular file" link:"symbolic link"; do
+head -c 1200000 /dev/urandom > "$T/src/pol-big/blob"   # over the 1 MB a file may hold, under the 2 MB a pack may hold in all: it used to pass unread
+mkdir "$T/src/pol-empty/nothing"
+for c in elf:"an ELF executable" zip:"a zip archive" nul:"NUL byte" latin:"not UTF-8" ctrl:"control or bidi character" bidi:"control or bidi character" name:"control or bidi character" fifo:"not a regular file" link:"symbolic link" big:"larger than 1000000 bytes" empty:"empty directory"; do
   n=pol-${c%%:*}; why=${c#*:}
   out=$(timeout 20 $DA skill import "$T/src/$n" --compatible any 2>&1); rc=$?
   { [ $rc = 1 ] && grep -q "FAIL" <<<"$out" && grep -q "$why" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ ! -e "$T/c/packs/skills/$n" ]; } && ok "a skill pack with $n is refused at import ($why)" || no "policy $n: rc=$rc $out"
@@ -112,6 +124,11 @@ printf '\x7fELF\x02\x01\x01\x00rest' > "$T/c/packs/skills/pol-late/helper"
 out=$($DA skill seal pol-late 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q "an ELF executable" <<<"$out" && ! grep -q '^plan token' <<<"$out"; } && ok "seal refuses a skill pack that gained a binary" || no "seal binary: rc=$rc $out"
 rm -f "$T/c/packs/skills/pol-late/helper"
+$DA skill new pol-hl --compatible any >/dev/null; sed -i 's/^description: .*/description: Use when testing hard links./' "$T/c/packs/skills/pol-hl/SKILL.md"; seal pol-hl
+ln "$T/c/packs/skills/pol-hl/SKILL.md" "$T/c/packs/skills/pol-hl/again.md"
+out=$($DA skill seal pol-hl 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "hard link" <<<"$out" && ! grep -q '^plan token' <<<"$out"; } && ok "seal refuses a skill pack that gained a second name for a file" || no "seal hard link: rc=$rc $out"
+rm -f "$T/c/packs/skills/pol-hl/again.md"
 
 # --- provisioning picks up attached skills and tools
 $DA provision plan --project alpha --role write >/dev/null 2>&1

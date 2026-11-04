@@ -143,9 +143,15 @@ def _control(rel, content):
 
 def policy(root):
     """The text-only rules alone, for a pack of any kind (a skill's directory, say): [failure message]. A symbolic link or special file, a
-    file that is a binary, an archive or not UTF-8 text, a control or bidi character in a file or in its name. Sizes and counts are the
-    caller's own rules."""
+    file with a second name (a hard link), an empty directory, a file larger than MAX_FILE (it is not read, so what it holds is not known), a
+    file that is a binary, an archive or not UTF-8 text, a control or bidi character in a file or in its name. The count of files and the total
+    size are the caller's own rules."""
     out = []
+    for dp, dns, fns in os.walk(root, followlinks=False):
+        for d in dns:
+            q = os.path.join(dp, d)
+            if not os.path.islink(q) and not os.listdir(q):
+                out.append("%s is an empty directory, which a pack may not hold" % vis(os.path.relpath(q, root)))
     for rel, p in _files(root):
         shown = vis(rel)
         if _BAD_NAME.search(rel):
@@ -157,7 +163,10 @@ def policy(root):
         if not stat.S_ISREG(st.st_mode):
             out.append("%s is not a regular file" % shown)
             continue
+        if st.st_nlink > 1:
+            out.append("%s has %d names (a hard link), which a pack may not hold" % (shown, st.st_nlink))
         if st.st_size > MAX_FILE:
+            out.append("%s is larger than %d bytes" % (shown, MAX_FILE))
             continue
         try:
             with open(p, "rb") as f:
@@ -214,6 +223,8 @@ def _policy_file(path, label):
             raw = f.read(MAX_FILE + 1)
     except OSError:
         return out
+    if len(raw) > MAX_FILE:
+        return ["%s is larger than %d bytes" % (label, MAX_FILE)]
     text, why, content = _text_problem(raw)
     if not text:
         return ["%s is %s: a pack holds only text files (scripts you can read)" % (label, why)]
