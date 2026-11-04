@@ -1041,9 +1041,10 @@ TOPICS = {
         "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
         "directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. "
         "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
-        "Text in quotes, a comment or a heredoc is only text for commands that run nothing from their arguments (echo, cat, grep, git commit and the like); "
-        "everything else is read conservatively, cut at every separator, quotes or not. A substitution, or a verb after then or do, is a command.",
-        "The read-only class (review) writes only its report and manifest to OUT: every change to the clone, by an edit or a command, git included, is refused.",
+        "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
+        "on the command line. Write the message to a file, commit with git commit -F FILE.",
+        "The read-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through "
+        "a name the guard cannot read that could be the run's record.",
         "Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.",
         "A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it."]),
     "naming": ("How resources are named", [
