@@ -184,16 +184,6 @@ older state. A store with no `/CANON.md` that is not empty (the layouts before t
 canon, a half-moved store), one whose marker names an earlier version, and one whose
 marker is newer than this qargi knows are all `unknown`: `canon check` fails it,
 `canon plan` says so and plans nothing, and `canon apply` changes nothing. To bring
-such a store in, move its notes into the layout by hand or merge them with `canon
-import`. A note without a `Check:` or `Verified:` where its kind needs one is
+such a store in, move its notes into the layout by hand. A note without a `Check:` or `Verified:` where its kind needs one is
 reported by `canon check`, not invented.
 
-## Importing a foreign store
-
-`qargi canon import SOURCE --role ROLE --map NAME` merges an existing store
-(for example an older documentation store) into the project's stores under
-`roles/<role>/`, using a named mapping (`docs-v0` for the documentation store
-layout). Curated parts go to the reference store, run history to the memory
-store. Imported folders get names relevant to their scope: numbered prefixes are
-removed and the references to them inside the imported files are rewritten.
-Collisions go to `/_conflicts/`. The source is read, never modified.
