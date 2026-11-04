@@ -33,7 +33,7 @@ Every name follows from the project, so resources are identifiable at a glance.
 | Thing | Name | Example |
 |---|---|---|
 | project | one lower-case token (letters, digits) | `myproject` |
-| role | an ability (`build`, `write`, `review`, `test`) or `lead` | `build` |
+| role | `build`, `write`, `review`, `test` or `lead` | `build` |
 | member (local agent) | any kebab-case name you choose | `forge` |
 | instance (registry) | `<project>-<role>` | `myproject-build` |
 | cloud agent (role) | `<project>-<role>` | `myproject-build` |
@@ -108,27 +108,27 @@ the memory store, and `shared/` is curated, so an agent proposes a shared note i
 and the lead or the person promotes it. `init` and `move` are the lead's: the guard refuses
 them to a member. There are no remote shares.
 
-## Roles, abilities and members
+## Roles and members
 
-A role is named by its activity. Each of the four abilities is defined by the text
+A role is named by its activity. Each of the four work roles is defined by the text
 of its role, `roles/<role>/ROLE.md`, the single source: a member gets that text with the
 task block (`qargi local prepare` writes it, as `qargi role prompt ROLE` prints it) and a
 cloud agent of that role carries it in its prompt. A member keeps the Skill tool for the
-packs attached to it, not for its ability:
+packs attached to it, not for its role:
 
-| Role | Ability | Defined by | What it does |
-|---|---|---|---|
-| `build` | build | `roles/build/ROLE.md` | changes the code with its tests, manual page, help and changelog |
-| `write` | write | `roles/write/ROLE.md` | writes the operational documentation on its own branch |
-| `review` | review | `roles/review/ROLE.md` | reads a change, runs its checks and reports a verdict; changes no file |
-| `test` | test | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
-| `lead` | (coordinates) | `/qargi-team` | runs a team of members on one task |
+| Role | Defined by | What it does |
+|---|---|---|
+| `build` | `roles/build/ROLE.md` | changes the code with its tests, manual page, help and changelog |
+| `write` | `roles/write/ROLE.md` | writes the operational documentation on its own branch |
+| `review` | `roles/review/ROLE.md` | reads a change, runs its checks and reports a verdict; changes no file |
+| `test` | `roles/test/ROLE.md` | writes and repairs tests, proves them failing first and stable |
+| `lead` | `/qargi-team` | runs a team of members on one task |
 
 The members are yours to name: `qargi agent add forge --roles build,test --project P` renders
 the one member definition qargi ships through the project's local runtime into that runtime's own
 file (for Claude Code `forge.md`, in the repository's agents directory, hidden from git, or in the
-project's member render once `qargi project link` is applied), with the abilities it serves (all
-four by default; `worker` and `reviewer`, the two base names, default to their base's abilities). Every member belongs to a project: `agent add` requires `--project NAME`, and the runtime is that project's `models.provider.local`; with none, `agent add` refuses, and so does a runtime that keeps no agent files. Nothing is written to the runtime's user-level directory (`~/.claude/agents`). `agent list` and `agent models` flag a member `STALE` when the definition, the model catalog or the renderer changed since it was written and `DRIFT` when its file was edited by hand; `agent refresh NAME` writes it again. Two base members cover
+project's member render once `qargi project link` is applied), with the roles it serves (all
+four by default; `worker` and `reviewer`, the two base names, default to their base's roles). Every member belongs to a project: `agent add` requires `--project NAME`, and the runtime is that project's `models.provider.local`; with none, `agent add` refuses, and so does a runtime that keeps no agent files. Nothing is written to the runtime's user-level directory (`~/.claude/agents`). `agent list` and `agent models` flag a member `STALE` when the definition, the model catalog or the renderer changed since it was written and `DRIFT` when its file was edited by hand; `agent refresh NAME` writes it again. Two base members cover
 the two guard classes: `worker` (build, write and test; write class) and `reviewer` (review; read-only). Models and efforts
 come from profiles, not from more members (see Choosing models). `qargi agent for build` prints one line,
 `MEMBER MODEL EFFORT PROFILE`, and dispatch spawns that member with that model and effort; `qargi agent list`, `rename`,
@@ -172,7 +172,7 @@ refusal changes nothing.
 1. `qargi feature start NAME --purpose "..."` cuts `feature/NAME` from develop. A feature is a broad
    theme; `qargi feature list` shows the open ones and the files two of them both change.
 2. Tasks run on `agent/<slug>` (`/qargi-task ... --base feature/NAME`) with targeted checks only.
-   Per task: `qargi review check RUN` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
+   Per task: `qargi review check RUN/out` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi review prune [--yes]` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
@@ -245,7 +245,7 @@ Signing cannot stop someone with push access from deleting a ref; it makes forge
 
 ## Skills and command
 
-Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the abilities are defined by the roles (above), not by skills; the others configure and manage:
+Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` dispatches work; the roles are defined by their texts (above), not by skills; the others configure and manage:
 
 | Skill | Covers |
 |---|---|
@@ -322,10 +322,10 @@ none: then a read-only run needs its declared barrier or your acceptance, and `q
 is the proof). The guard refuses `git push`, `gh`,
 `ssh`, `scp`, `sftp` and changes to a git remote. It also makes review read-only as a
 rule rather than a missing tool: a member that only reviews names its class in the hook
-command of its definition, and `qargi local prepare --role review` records the ability
-in the run directory for a member that serves several abilities (the guard refuses any
+command of its definition, and `qargi local prepare --role review` records the role
+(as `RUN/ability`) for a member that serves several roles (the guard refuses any
 write to that record). Under review the guard refuses an edit outside the run's output
-directory and a Bash command that writes into the clone. Whatever the ability,
+directory and a Bash command that writes into the clone. Whatever the role,
 the guard also refuses a member the verbs that change a skill (`qargi skill|tool new`,
 `import`, `seal`, `remove`, `link`, `unlink`, `enable`, `disable`, `qargi discover
 install`, `qargi packs apply`), the verbs that change a runtime (`qargi provider new|import|seal|remove|enable|disable|attest|accept`),
@@ -338,14 +338,14 @@ the member's clone stay writable, since they are the work product. The guard fai
 internal error, and the Claude Code member file sets `onFailure: "block"` on the hook (Claude
 Code 2.1.295 or later) so that a hook that cannot run blocks the call; frontmatter
 hooks of a project-level agent run only once you trust the workspace. So one definition
-serves every ability; what an ability does comes from its role text and the contract, not
+serves every role; what a role does comes from its role text and the contract, not
 from the definition. The guard is a second barrier beside the credential-free git
 wrapper; `qargi local verify` remains the proof. A new member is available in Claude
 Code sessions started after it is added.
 
 ## Choosing models
 
-qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per guard class, and a set of **profiles**. The bases are members: `worker` (abilities build, write and test; write class) and `reviewer` (review; read-only). A profile is not a member; it is `{base, tier, effort, purpose}`, resolved at dispatch:
+qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per guard class, and a set of **profiles**. The bases are members: `worker` (roles build, write and test; write class) and `reviewer` (review; read-only). A profile is not a member; it is `{base, tier, effort, purpose}`, resolved at dispatch:
 
 | Profile | Base | Tier | Effort | Purpose |
 |---|---|---|---|---|
@@ -360,7 +360,7 @@ qargi ships one table (`lib/model-defaults.json`) with two **bases**, one per gu
 
 A **tier** (`fast`, `balanced`, `deep`, `frontier`) is mapped by the model catalog of the runtime's family (`lib/providers/catalogs/claude.json` for `claude`) to a full model id for cloud (`claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-fable-5-1`) and to an alias for local dispatch (`haiku`, `sonnet`, `opus`, `fable`); a runtime with a single model writes it once for every tier. A project picks the runtime of each surface with `models.provider.local` and `models.provider.cloud` in its answers; there is no default, so a verb that needs a surface (`agent`, `provision`, a read-only `local prepare`, a cloud session, `packs apply --target`) refuses a project that leaves it out (exit 2, naming `qargi project set PROJECT models.provider.SURFACE NAME`), and a name with no definition is refused. `qargi project attach` and `qargi project new` store them with `--provider-local` and `--provider-cloud` (or `--provider NAME` for one name), and nothing without. The `frontier` tier is an opt-in escalation: no default profile except `researcher` uses it, and `researcher` is used only when you or the lead name it for the task.
 
-A project adds or overrides profiles in its answers as `profiles.<name>` (`base`, `tier`, `model`, `effort`, `purpose`, `abilities`). A profile whose base class conflicts with its abilities, or with the role being dispatched, is refused.
+A project adds or overrides profiles in its answers as `profiles.<name>` (`base`, `tier`, `model`, `effort`, `purpose`, `abilities`, the roles it may serve). A profile whose base class conflicts with its `abilities`, or with the role being dispatched, is refused.
 
 `qargi agent for ROLE [--profile NAME] [--project P] [--json]` prints one line, `MEMBER MODEL EFFORT PROFILE`; MODEL is the alias, or `-` when there is none. The lead spawns the Agent tool with `subagent_type` MEMBER, `model` MODEL (omitted when `-`) and `effort` EFFORT: the call's model and effort override the member definition. `qargi local prepare ... --role R [--profile P]` resolves the profile before it clones anything, records it in `RUN/profile` and prints `PROFILE=`, `MEMBER=`, `MODEL=` and `EFFORT=` (`PROFILE=<role>` without `--profile`). Advisor sign-off uses `--profile advisor` on review, a per-task diff check `--profile auditor`, and `researcher` only when the owner or the lead names it. `qargi agent models [--project P] [--json]` shows the bases, the profiles (the project's merged over the shipped ones) and the members of that project (`--project`, else the project in effect; with neither, exit 2); a member that is not a base is flagged.
 
