@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); export QARGI_CONF=$T/c QARGI_STATE=$T/s
+T=$(mktemp -d); mkdir -p "$T/h"; export HOME=$T/h QARGI_CONF=$T/c QARGI_STATE=$T/s
 DA=./bin/qargi; fail=0; HANDSEAL=$PWD/tests/handseal.py
 base=$($DA project template demo | jq '.repo.url="https://github.com/example/demo"')
 chk() { # name expected(0|1) jq-filter

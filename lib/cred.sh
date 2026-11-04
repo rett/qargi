@@ -5,7 +5,6 @@
 #
 #   cred.sh check PROJECT [--allow-write-token]   probe the token: it must read and should not push
 #   cred.sh setup lead-push PROJECT ...           store, check and wire the cloud lead's write token (see below)
-#   cred.sh askpass FILE                          (internal) print the token for git
 #
 # Prefer a fine-grained, read-only token (contents: read): the policy is that agents never
 # push, and a token that cannot push makes that true on the server side as well.
@@ -13,7 +12,6 @@
 
 verb=${1:-}; shift || true
 case $verb in
-  askpass) cat "${1:?askpass needs a file}";;
   check)
     PROJECT=${1:-}; shift || true; ALLOW=''
     [ "${1:-}" = --allow-write-token ] && ALLOW=1
@@ -22,9 +20,9 @@ case $verb in
     url=$(jq -r .repo.url "$DA_CONF/projects/$PROJECT.json")
     case $url in https://*) ;; *) die "a credential file is for https repository URLs";; esac
     [ -f "$f" ] && [ -z "$(find "$f" -perm /077 2>/dev/null)" ] || die "$f must exist and be readable by you only (chmod 600)"
-    tmp=$(mktemp -d); trap 'rm -rf "$tmp" "${ASKPASS:-}"' EXIT
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     ( git_auth_env "$f"
-      # user name in the URL, the token comes from the askpass helper
+      # user name in the URL, the token comes from the askpass helper (lib/askpass.sh)
       authurl=${url/https:\/\//https://x-access-token@}
       if timeout 60 git ls-remote "$authurl" HEAD >/dev/null 2>"$tmp/read.err" </dev/null; then echo "read:  ok (the token can read $url)"; else echo "read:  FAILED (the token cannot read $url)"; exit 3; fi
       git -C "$tmp" init -q -b probe && git -C "$tmp" -c user.name=probe -c user.email=probe@example.invalid commit -q --allow-empty -m probe
@@ -128,5 +126,5 @@ case $verb in
     fi
     echo "done: token file $dest, vault $vid, grant recorded (lead.push: agent branches and pull requests; merges asked of you; no releases through this tool)"
     echo "next: qargi packs apply $PROJECT-lead (adds the GitHub tool to the lead agent) and qargi instances refresh-prompt $PROJECT-lead (adds its Push section); each shows a plan first";;
-  *) die "usage: cred.sh check PROJECT | setup lead-push PROJECT | askpass FILE";;
+  *) die "usage: cred.sh check PROJECT | setup lead-push PROJECT";;
 esac
