@@ -310,7 +310,10 @@ COMMANDS = {
                           desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. "
                                 "A project without a man page or changelog is not checked for that part.")),
-            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT], desc=REMOTE_NOTE + " " + TAG_NOTE),
+            "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
+                         desc=(REMOTE_NOTE + " " + TAG_NOTE + " When the answer release.sign is set and the tag has no GitHub release it also says 'awaiting signature' "
+                               "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
+                               "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result."),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED], desc=REMOTE_NOTE),
