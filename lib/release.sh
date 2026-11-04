@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2154  # af, REPO, PROJ, TESTCMD come from gitflow.sh (project_load)
-# Releases and hotfixes, by the git-flow rules of "A successful Git branching model":
+# Releases and hotfixes, by the usual git-flow rules (long-lived master and develop, short-lived release and hotfix branches):
 #   release/<version>  from develop, merged into master (tagged) and back into develop, then deleted
 #   hotfix/<version>   from master,  merged into master (tagged) and into develop, or into the open release branch
 # The merges are --no-ff. The commands are those the model lists, done in temporary worktrees; a branch moves only after
