@@ -80,9 +80,11 @@ worktree() { # commit-ish -> a detached temporary worktree there (WT)
 }
 held() { g worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{w=substr($0,10)} $1=="branch" && $2==b {print w}' | head -1; }
 need_free() { local b w; for b in "$@"; do w=$(held "$b"); [ -z "$w" ] || die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"; done; }
-run_suite() { # runs the project's test command in the worktree WT without the project's cloud binding: the suite must not see it
-  (cd "$WT" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT bash -c "$TESTCMD")
+run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite or a release check must not see it
+  local dir=$1; shift
+  (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
 }
+run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 

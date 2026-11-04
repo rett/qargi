@@ -41,6 +41,11 @@
 #                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
 #                                           plan token covers the notes and the hash of every asset.
 #
+# The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
+# release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
+# man/*.1), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
+# `push` before they change anything; a non-zero exit refuses). lib/release_layout.py checks and applies them.
+#
 # Options for all: --project P, --date D. Pushing, merging and tagging need the plan token and an approval.
 . "$(dirname "$0")/lib.sh"
 
@@ -70,6 +75,10 @@ PY
 ) || exit 1
 if [ -n "$HOTFIX" ]; then BR=${HOT_PAT//\{version\}/$VER} BASE=master KIND=hotfix; else BR=${REL_PAT//\{version\}/$VER} BASE=develop KIND=release; fi
 RELPREFIX=${REL_PAT%%\{version\}*}
+RL=$(dirname "$0")/release_layout.py
+# the layout answers (see the head of this file): the version file, the manual pages, the test command of `verify`
+VFILE=$(jq -r '(.release? // {}) | .version_file // "VERSION"' "$af"); VFILE_SET=$(jq -r '(.release? // {}) | has("version_file")' "$af")
+RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" then map(@sh) | join(" ") else . end' "$af"); [ -z "$RTC" ] || TESTCMD=$RTC
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
 notes=''   # the temporary file of `publish`
@@ -142,8 +151,26 @@ sign_gate() {
   done < <(jq -r '.release.sign.files[]' "$af")
 }
 
+# rel_valid: the release answers of the project must be valid before a verb relies on them
+rel_valid() { python3 -I "$RS" config "$af" || die "the release answers of $PROJ are not valid (qargi project validate $PROJ)"; }
+# man_pages_at REF: the manual pages a release dates, one per line: release.man_pages, else the man/*.1 files tracked at REF
+man_pages_at() {
+  if jq -e '(.release? // {}) | has("man_pages")' "$af" >/dev/null 2>&1; then jq -r '.release.man_pages[]' "$af"
+  else g ls-tree -r --name-only "$1" | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true; fi
+}
+# run_preflight DIR: release.preflight (an argv list, {version} replaced) runs in DIR, with no shell and no input; a non-zero exit ends the verb
+# with the tail of its output. It runs before the verb changes anything.
+run_preflight() {
+  local pre=() out rc=0
+  mapfile -d '' -t pre < <(jq -j --arg v "$VER" '(.release? // {}) | (.preflight // [])[] | split("{version}") | join($v), "\u0000"' "$af")
+  [ "${#pre[@]}" -gt 0 ] || return 0
+  out=$(run_clean "$1" "${pre[@]}" </dev/null 2>&1) || rc=$?
+  [ "$rc" = 0 ] || die "release.preflight failed (exit $rc): ${pre[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"nothing was changed"
+}
+
 case $verb in
   start)
+    rel_valid
     branch_exists "$BR" && die "$BR exists already"
     branch_exists "$BASE" || die "no $BASE branch to start from"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
@@ -158,54 +185,20 @@ case $verb in
     git -C "$WT" checkout -q --detach "$b0"
     # the preflight: every file the release must update is checked and rewritten in the temporary worktree first; a refusal
     # exits before any branch exists, so nothing has changed
-    oldver=''; [ -f "$WT/VERSION" ] && oldver=$(tr -d '[:space:]' < "$WT/VERSION")
-    if [ -f "$WT/VERSION" ]; then echo "$VER" > "$WT/VERSION"; git -C "$WT" add VERSION; fi
+    run_preflight "$WT"
+    oldver=''
+    if [ "$VFILE" != none ]; then
+      if [ -f "$WT/$VFILE" ]; then oldver=$(tr -d '[:space:]' < "$WT/$VFILE"); echo "$VER" > "$WT/$VFILE"; git -C "$WT" add -- "$VFILE"
+      elif [ "$VFILE_SET" = true ]; then die "release.version_file: $VFILE is not a file at the head of $BASE (set it to none when the project has no version file)"; fi
+    fi
     while IFS= read -r mp; do
       [ -n "$mp" ] || continue
-      python3 -I - "$WT/$mp" "$mp" "$VER" "$DATE" "$oldver" <<'PY' || exit 1
-import re, sys
-path, name, ver, date, old = sys.argv[1:6]
-def refuse(why):
-    sys.exit("qargi: %s: %s. Fix: make its .TH line read .TH NAME SECTION \"DATE\" \"NAME VERSION\", then start the release again." % (name, why))
-lines = open(path, encoding="utf-8").read().split("\n")
-for i, l in enumerate(lines):
-    if l.startswith(".TH ") or l == ".TH":
-        break
-else:
-    refuse("it has no .TH line, so the release cannot set its date and version")
-tok = re.findall(r'"[^"]*"|\S+', lines[i])
-if len(tok) < 5:
-    refuse("its .TH line has no date and source (version) fields, so the bump cannot update them")
-src = tok[4].strip('"')
-if old and old in src:
-    src = src.replace(old, ver)
-else:
-    m = list(re.finditer(r"\d+\.\d+\.\d+[\w.+-]*", src))
-    if not m:
-        refuse("the source field of its .TH line (%s) carries no version, so the bump cannot update it" % tok[4])
-    src = src[:m[-1].start()] + ver + src[m[-1].end():]
-tok[3] = '"%s"' % date
-tok[4] = '"%s"' % src
-lines[i] = " ".join(tok)
-open(path, "w", encoding="utf-8").write("\n".join(lines))
-PY
+      [ -f "$WT/$mp" ] || die "release.man_pages: $mp is not a file at the head of $BASE"
+      python3 -I "$RL" manpage "$WT/$mp" "$mp" "$VER" "$DATE" "$oldver" || exit 1
       git -C "$WT" add "$mp"
-    done < <(git -C "$WT" ls-files | grep -E '(^|/)man[0-9]?/[^/]+\.[1-9]$' || true)
+    done < <(man_pages_at "$b0")
     if [ -f "$WT/CHANGELOG.md" ]; then
-      python3 -I - "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" <<'PY' || exit 1
-import re, sys
-p, ver, date, allow = sys.argv[1:5]
-t = open(p, encoding="utf-8").read()
-m = re.search(r"^## \[Unreleased\][^\n]*\n", t, re.M)
-if not m:
-    sys.exit("qargi: CHANGELOG.md has no '## [Unreleased]' section to release. Fix: add one with the changes of this release, then start again.")
-rest = t[m.end():]
-n = re.search(r"^## ", rest, re.M)
-body = rest[:n.start()] if n else rest
-if not allow and not [l for l in body.split("\n") if l.strip() and not l.startswith("#")]:
-    sys.exit("qargi: CHANGELOG.md has nothing under '## [Unreleased]'. Fix: record the changes of this release there (or pass --allow-empty-notes to release without notes), then start again.")
-open(p, "w", encoding="utf-8").write(t.replace("## [Unreleased]", "## [Unreleased]\n\n## [%s] - %s" % (ver, date), 1))
-PY
+      python3 -I "$RL" changelog "$WT/CHANGELOG.md" "$VER" "$DATE" "$ALLOW_EMPTY" "$af" || exit 1
       git -C "$WT" add CHANGELOG.md
     fi
     wcommit --allow-empty -m "Bumped version number to $VER"
@@ -231,7 +224,8 @@ PY
     tag_checks
     sign_status;;
   verify)
-    [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
+    rel_valid
+    [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     on=$BR; branch_exists "$BR" || on=$BASE
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
@@ -242,13 +236,16 @@ PY
     tag_checks
     [ "$res" = pass ];;
   push)
+    rel_valid
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
     tok=$(printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h" | plan_token)
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
+    jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
     remote_report "$BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
+    worktree "$h"; run_preflight "$WT"; cleanup
     g push -q -u origin "$BR" || die "pushing $BR failed"
     audit_log "release:push" "$PROJ $BR"
     command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
@@ -259,7 +256,23 @@ PY
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
     branch_exists master && branch_exists develop || die "git-flow needs a master and a develop branch"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
-    if [ -f "$REPO/VERSION" ] || g cat-file -e "$BR:VERSION" 2>/dev/null; then g show "$BR:VERSION" 2>/dev/null | grep -qx "$VER" || die "$BR does not carry VERSION $VER"; fi
+    rel_valid
+    ftmp=$(mktemp -d "$DA_STATE/.release-chk.XXXXXX")
+    if [ "$VFILE" != none ]; then
+      if [ -f "$REPO/$VFILE" ] || g cat-file -e "$BR:$VFILE" 2>/dev/null; then g show "$BR:$VFILE" 2>/dev/null | grep -qx "$VER" || { rm -rf "$ftmp"; die "$BR does not carry $VFILE $VER"; }; fi
+    elif g cat-file -e "$BR:CHANGELOG.md" 2>/dev/null; then   # no version file: the changelog's heading is where the version is written
+      g show "$BR:CHANGELOG.md" > "$ftmp/changelog"
+      python3 -I "$RL" has-section "$ftmp/changelog" "$VER" "$af" || { rm -rf "$ftmp"; die "release.version_file is none and the CHANGELOG.md of $BR has no released section for $VER (release.changelog.released)"; }
+    fi
+    # a manual page that leaves with an empty .TH date or version (a regenerated page that lost what `start` set) is not released
+    emptyth=''
+    while IFS= read -r mp; do
+      [ -n "$mp" ] || continue
+      g show "$BR:$mp" > "$ftmp/page" 2>/dev/null || continue
+      python3 -I "$RL" th-empty "$ftmp/page" >/dev/null || emptyth+=" $mp"
+    done < <(man_pages_at "$BR")
+    rm -rf "$ftmp"
+    [ -z "$emptyth" ] || die "the .TH line of$emptyth on $BR has no date or no version: set them (qargi release start sets both) before finishing"
     # the second target: develop, or for a hotfix the open release branch (the fix reaches develop when that is finished)
     second=develop
     if [ "$KIND" = hotfix ]; then
@@ -368,7 +381,7 @@ PY
       nsrc="the file $nrel"
     else
       g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
-      sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
+      sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" "$(jq -r '(.release? // {}).changelog.released // ""' "$af")" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
       printf '%s\n' "$sect" > "$notes"
       nsrc="the $VER section of CHANGELOG.md at the tag"
     fi

@@ -2144,13 +2144,13 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi release
 Releases and hotfixes by the git\-flow rules.
 .PP
-release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with \-\-no\-ff, tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with \-\-no\-ff and deletes it. A release starts only from a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal.
+release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with \-\-no\-ff, tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with \-\-no\-ff and deletes it. A release starts only from a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default '## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] \- {date}'), release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non\-zero exit refuses and shows the tail of its output). A member may not set them: the lead runs them.
 .RS
 .TP
 .BI "start " "VERSION"
 Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version.
 .br
-Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line with a date and a version field, which the first commit sets to the date and VERSION; a CHANGELOG.md needs content under '## [Unreleased]'. A project without a man page or changelog is not checked for that part.
+Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2169,7 +2169,7 @@ the changelog and man page date (default today).
 .RS
 .TP
 .B \-\-allow\-empty\-notes
-release although '## [Unreleased]' in CHANGELOG.md is empty.
+release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by default) is empty.
 .RE
 .RE
 .RS
@@ -2194,7 +2194,7 @@ a hotfix: branch from master, finish into master and the open release branch (or
 .BI "verify " "VERSION"
 Run the project's whole test suite on the release branch (develop's head before it starts) and record the result.
 .br
-When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. The exit status stays the suite's result.
+When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2211,7 +2211,7 @@ a hotfix: branch from master, finish into master and the open release branch (or
 .BI "push " "VERSION"
 Push the branch and open the pull request into master.
 .br
-It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non\-zero exit refuses.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2238,7 +2238,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "finish " "VERSION"
 After the checks pass: merge into master, tag, merge back, delete the branch, push.
 .br
-Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
+Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved. It refuses a branch whose manual page has an empty .TH date or version, and, when release.version_file is none, one whose changelog has no section for VERSION. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2287,7 +2287,7 @@ the project, instead of the one inferred from here.
 .BI "publish " "VERSION"
 Create the GitHub release of an existing tag, with its changelog section (or a notes file) as the notes and the assets attached.
 .br
-For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, the notes (the VERSION section of CHANGELOG.md at the tag, or the notes file), the sha256 of every asset and the command: gh release create VERSION \-\-verify\-tag \-\-title "PROJECT VERSION" \-\-notes\-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers the notes and the assets. The assets are \-\-asset and release.assets, regular files inside the repository, attached by the same call that creates the release. It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); \-\-verify\-tag makes gh refuse a tag that is not on origin. Needs the plan token and an approval; a member run cannot publish.
+For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, the notes (the VERSION section of CHANGELOG.md at the tag, found by release.changelog.released, or the notes file), the sha256 of every asset and the command: gh release create VERSION \-\-verify\-tag \-\-title "PROJECT VERSION" \-\-notes\-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers the notes and the assets. The assets are \-\-asset and release.assets, regular files inside the repository, attached by the same call that creates the release. It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); \-\-verify\-tag makes gh refuse a tag that is not on origin. Needs the plan token and an approval; a member run cannot publish.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
