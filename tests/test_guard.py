@@ -425,6 +425,19 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_sign_to_a_member(self):
+        """release sign signs the release files with the lead's key (the passphrase is the person's); the verb, the script run directly and
+        the signature record's script are refused with their own reason. The other release verbs stay as they were."""
+        for form in ("qargi release sign 0.2.0", "qargi release sign 0.2.0 --project p", "/opt/q/bin/qargi release sign 0.2.0", "sudo qargi release sign 0.2.0",
+                     "bash -c 'qargi release sign 0.2.0'", "cd src && qargi release sign 0.2.0", "qargi release --project p sign 0.2.0",
+                     "bash lib/release.sh sign 0.2.0", "python3 lib/release_sign.py record --state x", "python3 lib/release_sign.py lead-only"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi release sign signs the release files with the lead's key", r.stderr)
+        for c in ("qargi release status 0.2.0", "echo qargi release sign", "grep -n 'release sign' lib/commands.py", "qargi help release sign"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_packs_seed_to_a_member(self):
         for form in ("qargi packs seed", "qargi packs seed --install", "/opt/q/bin/qargi packs seed --plan 0123456789ab --approved go", "bash -c 'qargi packs seed'"):
             r = self.bash(form)

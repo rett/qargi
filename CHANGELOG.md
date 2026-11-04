@@ -51,6 +51,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Project answers can hold `release.sign` (`key`, `namespace`, `files`, optional `verify_command`), `release.assets` and
   `release.notes_file`; `project validate`, `init` and `set` refuse a malformed one (a public key, an absolute or
   `..` file name, a verify command that is not a list of words).
+- `qargi release sign VERSION`: signs the files of the answer `release.sign.files` with `ssh-keygen -Y sign -f KEY -n NAMESPACE FILE`,
+  run on your own terminal (stdin, stdout and stderr are yours, nothing is captured or logged), so the key's passphrase is typed
+  there and never passes through qargi, a log or an agent; no ssh agent is asked. It runs `release.sign.verify_command` (a list of
+  words, no shell) and records the result, the tag's commit and the hash of every signed file and signature under
+  `state/release/`. Only from the tag (HEAD is the commit of VERSION, on master or detached, no tracked file modified), after
+  `finish` and before `publish`; refused when stdin is no terminal, in a member run and when `QARGI_NESTED` is set (exit 2), and
+  the member guard refuses it.
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.
