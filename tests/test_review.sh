@@ -48,6 +48,11 @@ $DA review check "$T/batch" 2>&1 | grep -q "NOTE.*batch" && ok "commits made wit
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
 out=$($DA review check "$T/nogroups" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "patch_groups" && ok "missing patch groups and commit advice are warned about" || no "nogroups: $out"
+# the patches are OUT/patches/*.patch, the one place apply reads: loose patches in OUT are not a series; an unknown option is an error, not ignored
+mkdir -p "$T/flat"; cp "$T/good/patches/"*.patch "$T/flat/"; cp "$T/good/manifest.json" "$T/flat/"
+out=$($DA review check "$T/flat" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "no patches found" && ok "patches loose in OUT (not in OUT/patches) are not accepted" || no "flat patches: $out"
+out=$($DA review check "$T/good" --alow-empty 2>&1); rc=$?; [ $rc = 2 ] && echo "$out" | grep -q "unknown option --alow-empty" && ok "a misspelled option is an error" || no "unknown option: rc=$rc $out"
+out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two directories are an error" || no "two args: rc=$rc $out"
 # a review run returns a report instead of patches
 mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
 printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
@@ -124,6 +129,10 @@ R9=$(newrun linkapplied); ln -s "$T/victim9" "$R9/applied"
 out=$($DA review apply "$R9" 2>&1); rc=$?
 { [ $rc != 0 ] && [ ! -e "$T/victim9" ] && ! git -C "$A" rev-parse -q --verify agent/linkapplied >/dev/null && grep -q "applied" <<<"$out"; } \
   && ok "an applied that is a (dangling) link refuses the apply before any branch is made" || no "link applied: rc=$rc $out"
+# a patch file name with a space in it (a member names its files) is one patch, not two words
+R10=$(newrun spacey); mv "$R10"/out/patches/0001-*.patch "$R10/out/patches/0001-has a space.patch"; mv "$R10"/out/patches/0002-*.patch "$R10/out/patches/0002-it's  here.patch"
+out=$($DA review apply "$R10" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/spacey")" = 2 ] && echo "$out" | grep -q "applied 2 patch(es)"; } && ok "patch files whose names hold spaces are applied, as two patches" || no "spacey names: rc=$rc $out"
 # --- qargi review prune: only merged agent/* branches, only with --yes
 git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
 git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master
