@@ -51,8 +51,16 @@ def run(*args, cwd=None):
     return r.returncode, r.stdout, r.stderr
 
 
+def pg(pages):
+    """--pages PAGES, and --config for the site.json beside the folder when the folder has none (the generator never looks upward)."""
+    beside = os.path.join(os.path.dirname(pages), "site.json")
+    if os.path.isfile(os.path.join(pages, "site.json")) or not os.path.isfile(beside):
+        return ["--pages", pages]
+    return ["--pages", pages, "--config", beside]
+
+
 def build(out, pages=PAGES, *extra):
-    return run("build", "--release", RELEASE, "--source", ROOT, "--pages", pages, "--out", out, *extra)
+    return run("build", "--release", RELEASE, "--source", ROOT, *pg(pages), "--out", out, *extra)
 
 
 class Converter(unittest.TestCase):
@@ -201,12 +209,12 @@ class CommandChecks(unittest.TestCase):
 
 class Check(unittest.TestCase):
     def test_clean_pages_pass(self):
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", PAGES)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(PAGES))
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
 
     def test_bad_pages_are_reported_with_line_numbers(self):
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", BAD)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(BAD))
         self.assertEqual(rc, 1, out + err)
         want = ["unsupported.md:7: raw HTML is not supported",
                 "broken.md:20: contains the forbidden word 'hunter2'",
@@ -230,10 +238,10 @@ class Check(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(t, "o")))
 
     def test_the_release_must_match_the_source(self):
-        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES)
+        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, *pg(PAGES))
         self.assertEqual(rc, 1)
         self.assertIn("not --release 9.9.9", out)
-        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, "--pages", PAGES, "--allow-unreleased")
+        rc, out, _ = run("check", "--release", "9.9.9", "--source", ROOT, *pg(PAGES), "--allow-unreleased")
         self.assertEqual(rc, 0, out)
 
     def test_description_length_warns(self):
@@ -244,7 +252,7 @@ class Check(unittest.TestCase):
         text = slurp(p)
         text = re.sub(r"(?m)^description: .*$", "description: Too short.", text)
         spit(p, text)
-        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, "--pages", os.path.join(t, "f", "pages"))
+        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, *pg(os.path.join(t, "f", "pages")))
         self.assertEqual(rc, 0, out)
         self.assertIn("warning: first-project.md: description is 10 characters", out)
 
@@ -256,7 +264,7 @@ class Check(unittest.TestCase):
         spit(os.path.join(pages, "a.md"), "## No front matter\n")
         spit(os.path.join(pages, "b.md"), "---\ntitle: B\n---\n## Body\n")
         spit(os.path.join(pages, "Bad_Name.md"), "---\ntitle: C\ndescription: d\n---\n## Body\n")
-        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, "--pages", pages, "--url", "https://docs.example.org/")
+        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages), "--url", "https://docs.example.org/")
         self.assertEqual(rc, 1)
         self.assertIn("error: a.md:1: no front matter", out)
         self.assertIn("error: b.md:1: front matter needs description", out)
@@ -433,9 +441,9 @@ class Build(unittest.TestCase):
         self.addCleanup(shutil.rmtree, t, True)
         o = os.path.join(t, "o")
         pages = os.path.join(self.tmp, "fix", "pages")        # not in a git repository: no commit dates
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o)
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, *pg(pages), "--out", o)
         self.assertEqual(rc, 1)
-        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, "--pages", pages, "--out", o, "--allow-unreleased")
+        rc, out, err = run("build", "--release", "9.9.9", "--source", ROOT, *pg(pages), "--out", o, "--allow-unreleased")
         self.assertEqual(rc, 0, out + err)
         self.assertIn("qargi (unreleased)", slurp(os.path.join(o, "index.html")))
         self.assertIn("Checked against qargi (unreleased).", slurp(os.path.join(o, "index.html")))
@@ -523,12 +531,12 @@ class Safety(unittest.TestCase):
         os.makedirs(pages)
         shutil.copy(os.path.join(PAGES, "index.md"), pages)
         os.symlink("/etc/hostname", os.path.join(pages, "evil.md"))
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", pages)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(pages))
         self.assertEqual(rc, 2, out)
         self.assertIn("symbolic link", err)
         link = os.path.join(self.tmp, "link")
         os.symlink("/etc", link)
-        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, "--pages", link)
+        rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(link))
         self.assertEqual(rc, 2)
         self.assertIn("outside the allowed roots", err)
 
@@ -568,6 +576,99 @@ class Safety(unittest.TestCase):
         rc, so, se = run("build", "--release", RELEASE, "--source", ROOT, "--out", os.path.join(self.tmp, "o"), "--url", "https://x.example/")
         self.assertEqual(rc, 0, so + se)           # no hand pages: a generated home page lists the others
         self.assertEqual(run("check-output", os.path.join(self.tmp, "o"))[0], 0)
+
+
+class ConfigTrust(unittest.TestCase):
+    """B1, S10, N2: where site.json and static/ come from, and who may own them."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.f = os.path.join(self.tmp, "f")
+        shutil.copytree(FIX, self.f)
+        self.pages = os.path.join(self.f, "pages")
+        self.cfg = os.path.join(self.f, "site.json")
+
+    def raw(self, *extra, pages=None):
+        return run("build", "--release", RELEASE, "--source", ROOT, "--pages", pages or self.pages, "--out", os.path.join(self.tmp, "o"), *extra)
+
+    def test_no_site_json_is_taken_from_the_parent_folder(self):
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 2, out)                      # the parent's site.json (and its url) are not used
+        self.assertIn("site address", err)
+        rc, out, err = self.raw("--url", "https://docs.example.org/qargi/")
+        self.assertEqual(rc, 0, out + err)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "verify-acme.html")))     # nor its static/ folder
+        self.assertNotIn("github.com", slurp(os.path.join(self.tmp, "o", "index.html")))
+
+    def test_the_config_comes_from_config_or_pages(self):
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 0, out + err)
+        self.assertTrue(os.path.isfile(os.path.join(self.tmp, "o", "verify-acme.html")))
+        shutil.rmtree(os.path.join(self.tmp, "o"))
+        shutil.copy(self.cfg, self.pages)
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("github.com/example/qargi", slurp(os.path.join(self.tmp, "o", "index.html")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o", "verify-acme.html")))     # static/ is beside the config, here pages/static
+
+    def test_a_symlinked_config_is_refused(self):
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(os.path.join(other, "static"))
+        spit(os.path.join(other, "static", "from-other.txt"), "x")
+        shutil.copy(self.cfg, os.path.join(other, "site.json"))
+        os.symlink(os.path.join(other, "site.json"), os.path.join(self.pages, "site.json"))
+        rc, out, err = self.raw()
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+        rc, out, err = self.raw("--config", os.path.join(self.pages, "site.json"))
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+
+    def test_a_pages_folder_that_is_a_symlink_is_refused(self):
+        link = os.path.join(self.tmp, "link")
+        os.symlink(self.pages, link)
+        rc, out, err = self.raw("--config", self.cfg, pages=link)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("symbolic link", err)
+
+    def test_a_config_folder_others_can_write_is_refused(self):
+        os.chmod(self.f, 0o757)
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("can be written by other users", err)
+        os.chmod(self.f, 0o755)
+        os.chmod(os.path.join(self.f, "static"), 0o757)
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("static", err)
+
+    def test_a_config_or_static_file_of_another_user_is_refused(self):
+        from unittest import mock
+        roots = S.allowed_roots(ROOT, [self.tmp])
+
+        class A:
+            config = self.cfg
+        with mock.patch.object(S.os, "geteuid", return_value=os.geteuid() + 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.find_config(A, self.pages, roots)
+            self.assertIn("owned by another user", str(cm.exception))
+        with mock.patch.object(S.os, "getegid", return_value=os.getegid() + 1):
+            os.chmod(self.f, 0o775)
+            with self.assertRaises(S.Refusal) as cm:
+                S.find_config(A, self.pages, roots)
+            self.assertIn("written by other users", str(cm.exception))      # group-writable, and the group is not the user's own
+        os.chmod(self.f, 0o775)
+        self.assertIsNotNone(S.find_config(A, self.pages, roots))          # the user's own group may write
+
+    def test_a_hard_linked_static_file_is_refused(self):
+        outside = os.path.join(self.tmp, "outside.txt")
+        spit(outside, "secret")
+        os.link(outside, os.path.join(self.f, "static", "hl.txt"))
+        rc, out, err = self.raw("--config", self.cfg)
+        self.assertEqual(rc, 2, out)
+        self.assertIn("hard link", err)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "o")))
 
 
 class CheckOutput(unittest.TestCase):
