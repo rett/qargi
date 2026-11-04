@@ -33,19 +33,19 @@ if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
 PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS='' FORCE=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
-    --apt) APT=$2; APT_SET=1; shift 2;;
-    --networking) NETWORKING=$2; shift 2;;
-    --asked) ASKED=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
+    --apt) need_val "$1" $#; APT=$2; APT_SET=1; shift 2;;
+    --networking) need_val "$1" $#; NETWORKING=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --force) FORCE=1; shift;;
-    --budget) BUDGET=$2; shift 2;;
-    --project) PROJECT=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --memory-store) MEMORY_STORE=$2; shift 2;;
-    --reference-store) REFERENCE_STORE=$2; shift 2;;
+    --budget) need_val "$1" $#; BUDGET=$2; shift 2;;
+    --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --memory-store) need_val "$1" $#; MEMORY_STORE=$2; shift 2;;
+    --reference-store) need_val "$1" $#; REFERENCE_STORE=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done
