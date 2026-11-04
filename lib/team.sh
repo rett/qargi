@@ -34,7 +34,11 @@ brief() {
     [ -n "$build_base" ] && [ "$build_base" != "@dispatcher" ] || die "the builder's base is @dispatcher: give --base BRANCH"
     base=$build_base
   fi
-  local rdone="test -s /mnt/session/outputs/review--report.md && grep -qiE '^#+ *findings' /mnt/session/outputs/review--report.md"
+  # where a hosted member keeps its output and its clone is the cloud runtime's to say (notes of its definition), not the core's
+  local outd clnd
+  outd=$(cloud_note "$project" output-dir) && clnd=$(cloud_note "$project" clone-dir) \
+    || die "the brief needs the cloud runtime of project $project to name its output-dir and clone-dir (notes of its definition)"
+  local rdone="test -s $outd/review--report.md && grep -qiE '^#+ *findings' $outd/review--report.md"
   printf 'TEAM: %s\nTASK: %s\n' "$team" "$task"
   jq -r --arg t "$team" '.teams[$t] | "STANDARDS: " + ((.standards // []) | if length == 0 then "none" else join(", ") end) + "\nMAX_ROUNDS: \(.max_rounds // 2)"' "$f"
   echo "MEMBERS:"
@@ -48,7 +52,7 @@ brief() {
     esac
     [ -n "$mdone" ] || die "member $m has no DONE check: give one in the project's teams.$team.done.$m"
     scope=$(jq -r --arg t "$team" --arg r "$m" '(.teams[$t].scopes[$r] // []) | if length == 0 then "none" else join(", ") end' "$f")
-    printf -- '- role: %s\n  ROLE: %s (the instructions are in your system prompt)\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  OUT: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
+    printf -- '- role: %s\n  ROLE: %s (the instructions are in your system prompt)\n  BASE: %s\n  SCOPE: %s\n  CLONE: %s/%s\n  OUT: %s\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$mbase" "$scope" "$clnd" "$m" "$outd" "$m" "$mdone"
   done
 }
 
