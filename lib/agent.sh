@@ -198,7 +198,7 @@ while [ $# -gt 0 ]; do
     --json) JSON=1; shift;;
     --surface) need_val "$1" $#; SURFACE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
 done
@@ -346,7 +346,7 @@ write_member() { # rendered-json file: say what the runtime could not express, t
 
 add() {
   local n=${POS[0]:-} a list='' dir file seq first bc prov r ro ORIG_EFFORT=$EFFORT
-  [ -n "$n" ] || die "usage: qargi agent add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P"
+  [ -n "$n" ] || usage_die "usage: qargi agent add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P"
   need_project "agent add" "$PROJ"
   # the provider is the project's (models.provider; no default); the member's file goes where the runtime links the project's agents
   prov=$(provider_for "$PROJ" local) || exit $?
@@ -359,7 +359,7 @@ add() {
     [ -z "$bc" ] || [ "$(role_class "$a")" = "$bc" ] || die "--roles: $n is a base of the $bc class; $a is $(role_class "$a")"
     case ",$list," in *",$a,"*) ;; *) list=${list:+$list,}$a;; esac
   done
-  [ -n "$list" ] || die "--roles: give at least one"
+  [ -n "$list" ] || usage_die "--roles: give at least one"
   first=${list%%,*}
   # a member that only reviews is read-only by class: the provider must have a read-only barrier on the local surface, or the project must have accepted that
   ro=1; for a in $(printf '%s' "$list" | tr ',' ' '); do [ "$(role_class "$a")" = read-only ] || ro=''; done
@@ -571,7 +571,7 @@ cloud_inst() { # name -> the registry record when the name is a registered cloud
 resolve_cloud() { # role profile-or-empty project -> prints INSTANCE MODEL EFFORT PROFILE (or --json), or the reason on stderr (exit 1, or 2 for a refusal)
   local role=$1 prof=$2 proj=$3 pf prov pd res code noeff=false base cls model effort req out rc ovm=no ove=yes
   local inst='' why='' ov
-  [ -n "$proj" ] || die "--surface cloud needs --project (the bases are named <project>-worker and <project>-reviewer)"
+  [ -n "$proj" ] || usage_die "--surface cloud needs --project (the bases are named <project>-worker and <project>-reviewer)"
   pf=$(pf_json "$proj"); prov=$(provider_for "$proj" cloud) || exit $?
   ! no_effort "$prov" cloud || noeff=true
   pd=$(pdesc "$prov" cloud) || exit 1
@@ -646,7 +646,7 @@ case $verb in
     else echo "no members${PROJ:+ in project $PROJ} yet: qargi agent add NAME [--roles build,write,review,test] --project ${PROJ:-P}"; fi;;
   rename)
     old=${POS[0]:-}; new=${POS[1]:-}
-    [ -n "$old" ] && [ -n "$new" ] || die "usage: qargi agent rename OLD NEW [--project P]"
+    [ -n "$old" ] && [ -n "$new" ] || usage_die "usage: qargi agent rename OLD NEW [--project P]"
     mproj=$(member_project "$old") || exit $?
     rec=$(jq -ce --arg p "$mproj" --arg n "$old" '.projects[$p][$n]' "$MEMBERS_FILE")
     prov=$(provider_for "$mproj" local) || exit $?
@@ -674,7 +674,7 @@ case $verb in
     [ -z "$kept" ] || echo "qargi: note: $f was edited by hand, so it was kept (the new member is rendered from the definition); move your edits over and delete it" >&2
     link_note "$mproj" "$r" "$nf";;
   refresh)
-    n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent refresh NAME [--project P]"
+    n=${POS[0]:-}; [ -n "$n" ] || usage_die "usage: qargi agent refresh NAME [--project P]"
     mproj=$(member_project "$n") || exit $?
     rec=$(jq -ce --arg p "$mproj" --arg n "$n" '.projects[$p][$n]' "$MEMBERS_FILE")
     f=$(jq -r .file <<<"$rec"); [ -n "$f" ] || die "member $n records no definition file"
@@ -694,7 +694,7 @@ case $verb in
     link_note "$mproj" "$r" "$f";;
   models) models;;
   remove)
-    n=${POS[0]:-}; [ -n "$n" ] || die "usage: qargi agent remove NAME [--project P]"
+    n=${POS[0]:-}; [ -n "$n" ] || usage_die "usage: qargi agent remove NAME [--project P]"
     mproj=$(member_project "$n") || exit $?
     rec=$(jq -ce --arg p "$mproj" --arg n "$n" '.projects[$p][$n]' "$MEMBERS_FILE")
     f=$(jq -r .file <<<"$rec"); [ ! -f "$f" ] || rm -f "$f"
@@ -703,7 +703,7 @@ case $verb in
     case $f in *.agents/*) echo "qargi: note: a worktree that linked it still has a dangling link; qargi project link $mproj --resource agents drops it" >&2;; esac;;
   for)
     a=${POS[0]:-}
-    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
+    [ -n "$a" ] && [ "$a" != lead ] && valid_role "$a" || usage_die "usage: qargi agent for ROLE [--profile P] [--project P] [--json]   (a role of: $DA_ROLES)"
     [ -z "$PROFILE" ] || printf '%s' "$PROFILE" | grep -Eq '^[a-z][a-z0-9-]{0,30}$' || die "--profile: a profile name (lower-case letters, digits and '-', at most 31)"
     [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer)
     case $SURFACE in
@@ -711,5 +711,5 @@ case $verb in
       cloud) [ -n "$PROJ" ] || PROJ=$(python3 -I "$root/lib/help.py" infer); resolve_cloud "$a" "$PROFILE" "$PROJ";;
       *) die "--surface: local or cloud";;
     esac;;
-  *) die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
+  *) usage_die "usage: qargi agent add|list|models|rename|refresh|remove|for ...";;
 esac

@@ -98,10 +98,14 @@ done
 msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
-# marshal.ttl is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
-$DA project set demo marshal.ttl 20 >/dev/null 2>&1 && [ "$(jq .marshal.ttl $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.ttl" || { echo "FAIL set marshal.ttl"; fail=1; }
+# marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
+$DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1 && [ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.lease_minutes" || { echo "FAIL set marshal.lease_minutes"; fail=1; }
+for bad in 0 -3 1441 abc 2.5 '"15"'; do
+  $DA project set demo marshal.lease_minutes "$bad" >/dev/null 2>&1 && { echo "FAIL set marshal.lease_minutes $bad accepted"; fail=1; } || echo "ok   set refuses marshal.lease_minutes $bad"
+done
+[ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   refused lease values changed nothing" || { echo "FAIL a refused lease value changed the file"; fail=1; }
 cp $T/c/projects/demo.json $T/before.json
-for k in marshal.backend marshal.ttl.x marshal; do
+for k in marshal.backend marshal.lease_minutes.x marshal; do
   v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
   msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
 done

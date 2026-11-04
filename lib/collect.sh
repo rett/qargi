@@ -7,7 +7,7 @@
 . "$(dirname "$0")/lib.sh"
 
 sid=${1:-}; dir=${2:-}
-[ -n "$sid" ] && [ -n "$dir" ] || die "usage: collect.sh SID DIR"
+[ -n "$sid" ] && [ -n "$dir" ] || usage_die "usage: collect.sh SID DIR"
 mkdir -p "$dir"
 [ -z "$(ls -A "$dir")" ] || die "$dir is not empty; use a fresh directory"
 

@@ -47,21 +47,21 @@ KIND=${1:-}; VERB=${2:-}; shift 2 || true
 COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --scope) SCOPE=$2; shift 2;;
-    --project) PROJECT=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --name) NAME=$2; shift 2;;
-    --ref) REF=$2; shift 2;;
-    --path) SUBPATH=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --asked) ASKED=$2; shift 2;;
-    --compatible) [ $# -ge 2 ] || die "--compatible needs a list: any, or runtime or family names separated by commas"; COMPAT_ARG=$2; shift 2;;
-    --target) TARGET=$2; shift 2;;
+    --scope) need_val "$1" $#; SCOPE=$2; shift 2;;
+    --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --name) need_val "$1" $#; NAME=$2; shift 2;;
+    --ref) need_val "$1" $#; REF=$2; shift 2;;
+    --path) need_val "$1" $#; SUBPATH=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --compatible) need_val "$1" $#; COMPAT_ARG=$2; shift 2;;
+    --target) need_val "$1" $#; TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
     '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load
-    --*) die "unknown option $1";;
+    --*) usage_die "unknown option $1";;
     *) ARGS+=("$1"); shift;;
   esac
 done
@@ -80,7 +80,7 @@ prov_need() { # project would field...: prov_of, then the refusals above
   python3 -I "$PROVPY" require-skills "$PROV" --would "$would" || exit $?
   for f; do python3 -I "$PROVPY" layout "$PROV" "$f" --would "$would" >/dev/null || exit $?; done
 }
-case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <verb> ...";; esac
+case $KIND in skill|tool|packs) ;; *) usage_die "usage: packs.sh skill|tool|packs <verb> ...";; esac
 # Changing a skill needs a present person (library/SPEC.md, "Who may modify a skill"): a caller that is itself approved
 # (QARGI_NESTED) has not approved this change, so the write verbs never honour it and the token is always required.
 # No caller nests them: discover.py already clears it, and provisioning only renders.
@@ -109,7 +109,7 @@ compat_parse() { # LIST (names separated by commas, or a JSON array) -> compact,
   printf '%s\n' "$j"
 }
 compat_need() { # the --compatible of a verb that makes a pack: parsed, or the verb ends
-  [ -n "${COMPAT_ARG:-}" ] || die "$VERB needs --compatible LIST: the providers that can use this pack, runtime or family names separated by commas, or any (it is kept with the pack and approved with its content)"
+  [ -n "${COMPAT_ARG:-}" ] || usage_die "$VERB needs --compatible LIST: the providers that can use this pack, runtime or family names separated by commas, or any (it is kept with the pack and approved with its content)"
   compat_parse "$COMPAT_ARG" || exit 1
 }
 # The content hash of a pack: its files, and compatible_providers (given as the second argument, else the record's own; a pack with no
@@ -219,9 +219,9 @@ skip_say() { # prefix: one line per CP_SKIP entry
 link_args() { # validates --scope/--project/--role, prints the link as JSON
   case $SCOPE in
     user) jq -nc --arg k "$1" '{pack:$k, scope:"user"}';;
-    user-role) valid_role "$ROLE" || die "user-role scope needs --role (one of: $DA_ROLES)"; jq -nc --arg k "$1" --arg r "$ROLE" '{pack:$k, scope:"user-role", role:$r}';;
-    project) [ -f "$DA_CONF/projects/$PROJECT.json" ] || die "project scope needs --project with stored answers"; jq -nc --arg k "$1" --arg p "$PROJECT" '{pack:$k, scope:"project", project:$p}';;
-    project-role) [ -f "$DA_CONF/projects/$PROJECT.json" ] && valid_role "$ROLE" || die "project-role scope needs --project (with stored answers) and --role"
+    user-role) valid_role "$ROLE" || usage_die "user-role scope needs --role (one of: $DA_ROLES)"; jq -nc --arg k "$1" --arg r "$ROLE" '{pack:$k, scope:"user-role", role:$r}';;
+    project) [ -f "$DA_CONF/projects/$PROJECT.json" ] || usage_die "project scope needs --project with stored answers"; jq -nc --arg k "$1" --arg p "$PROJECT" '{pack:$k, scope:"project", project:$p}';;
+    project-role) [ -f "$DA_CONF/projects/$PROJECT.json" ] && valid_role "$ROLE" || usage_die "project-role scope needs --project (with stored answers) and --role"
                   jq -nc --arg k "$1" --arg p "$PROJECT" --arg r "$ROLE" '{pack:$k, scope:"project-role", project:$p, role:$r}';;
     *) die "--scope user|user-role|project|project-role";;
   esac
@@ -319,7 +319,7 @@ rt_say() { # project-or-empty: "--target is RT (...)", RT the render target of t
 rt_main() { # verb: apply|check with --target
   local prj=${ARGS[0]:-} rt
   [ -n "$TARGET" ] || die "$(rt_say "$prj")"
-  [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
+  [ -n "$prj" ] || usage_die "$1 --target $TARGET needs PROJECT"
   prov_of "$prj"
   rt=$(python3 -I "$PROVPY" layout "$PROV" render_target --would "render the project's packs for a local session") || exit $?
   [ "$TARGET" = "$rt" ] || die "--target is $rt for provider $PROV (or managed-agents / none for a cloud instance); check needs --target $rt"
@@ -327,7 +327,7 @@ rt_main() { # verb: apply|check with --target
 }
 rn_main() { # verb: apply|check
   local prj=${ARGS[0]:-} PY tok live
-  [ -n "$prj" ] || die "$1 --target $TARGET needs PROJECT"
+  [ -n "$prj" ] || usage_die "$1 --target $TARGET needs PROJECT"
   PY=$(dirname "$(readlink -f "$0")")/packs_render.py
   RN_W=$(mktemp -d); RN_LK=''; trap rn_cleanup EXIT
   rn_inputs "$prj" "$RN_W/in.json"
@@ -374,7 +374,7 @@ cl_inputs() { # project outfile: the render inputs plus the skills of a real pro
 }
 cl_main() { # verb: link|unlink
   local prj=${ARGS[0]:-} PY tok
-  [ -n "$prj" ] || die "packs $1 needs PROJECT"
+  [ -n "$prj" ] || usage_die "packs $1 needs PROJECT"
   valid_project "$prj" || die "not a project name: $prj"
   PY=$(dirname "$(readlink -f "$0")")/packs_link.py
   prov_need "$prj" "link the checkout's skills directory to the render" project_skills_dir
@@ -404,7 +404,7 @@ cl_main() { # verb: link|unlink
 ac_main() { # verb: accept|unaccept
   local prj=${ARGS[0]:-} name=${ARGS[1]:-} scope=project who tok hash real shown AUPY ACC rec
   [ "$KIND" = skill ] || die "$1 is for skills: qargi skill $1 PROJECT NAME"
-  [ -n "$prj" ] && [ -n "$name" ] || die "skill $1 needs PROJECT NAME"
+  [ -n "$prj" ] && [ -n "$name" ] || usage_die "skill $1 needs PROJECT NAME"
   valid_project "$prj" || die "not a project name: $prj"
   # [[ =~ ]] anchors at the end of the string; grep -E '$' would accept a trailing newline
   { [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ $name != *$'\n'* ]]; } || die "not a skill name: $name"
@@ -455,7 +455,7 @@ if [ "$KIND" = packs ]; then
   esac
   case $VERB in
     render)
-      PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; OUT=${ARGS[2]:-}; [ -n "$OUT" ] || die "render needs PROJECT ROLE OUTDIR"
+      PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; OUT=${ARGS[2]:-}; [ -n "$OUT" ] || usage_die "render needs PROJECT ROLE OUTDIR"
       rm -rf "$OUT"; mkdir -p "$OUT/skills"; : > "$OUT/custom_skills.txt"; echo '[]' > "$OUT/mcp.json"
       compat_filter "$PRJ" "$ROL" cloud; skip_say "note: " >&2   # the cloud render is for the project's cloud provider
       for e in ${CP_OK[@]+"${CP_OK[@]}"}; do
@@ -650,7 +650,7 @@ if [ "$KIND" = packs ]; then
       nv=$(ant beta:deployments retrieve --deployment-id "$did" </dev/null 2>/dev/null | jq .agent.version)
       json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$INST" --argjson v "$nv"
       echo "applied; the deployment now pins agent v$nv";;
-    *) die "usage: packs.sh packs render|load|apply|link|unlink|check|seed ...";;
+    *) usage_die "usage: packs.sh packs render|load|apply|link|unlink|check|seed ...";;
   esac
   exit 0
 fi
@@ -659,7 +659,7 @@ TEMPLATE_TOOL='{"name":"NAME","url":"https://mcp.example.invalid/","vault_ids":[
 
 case "$VERB" in
   new)
-    NAME=${NAME:-${ARGS[0]:-}}; valid_slug "$NAME" || die "new needs a NAME (lower-case letters, digits, -)"
+    NAME=${NAME:-${ARGS[0]:-}}; valid_slug "$NAME" || usage_die "new needs a NAME (lower-case letters, digits, -)"
     COMPAT=$(compat_need) || exit 1
     P=$(item_path "$KIND" "$NAME"); [ ! -e "$P" ] || die "$NAME already exists in the library (names are unique)"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME is already used by another pack (skills and tools share one namespace)"
@@ -669,7 +669,7 @@ case "$VERB" in
     write_record "$P" "$KIND" created "$COMPAT"; audit_log "$KIND-new" "$NAME"
     echo "created $KIND $NAME: $P (compatible_providers: $(jq -r 'join(", ")' <<<"$COMPAT"))"; echo "edit it, then link it: qargi $KIND link $NAME --scope S ...";;
   import)
-    SRC=${ARGS[0]:-}; [ -n "$SRC" ] || die "import needs a SOURCE (a directory or file, or an https git URL)"
+    SRC=${ARGS[0]:-}; [ -n "$SRC" ] || usage_die "import needs a SOURCE (a directory or file, or an https git URL)"
     COMPAT=$(compat_need) || exit 1   # before anything is fetched: the declaration is part of what is approved
     T=$(mktemp -d); trap 'rm -rf "$T"' EXIT; SRCREC=$SRC
     if [[ $SRC == https://* ]]; then
@@ -756,5 +756,5 @@ case "$VERB" in
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"
     [ "$(jq -r --arg k "$KIND:$NAME" '[.links[] | select(.pack==$k)] | length' "$LINKS")" = 0 ] || die "$NAME is linked; unlink it from every scope first (qargi $KIND show $NAME)"
     audit_log "$KIND-remove" "$NAME"; rm -rf "$P" "$(record_of "$P")"; echo "removed $KIND $NAME";;
-  *) die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...; skill accept|unaccept PROJECT NAME";;
+  *) usage_die "usage: packs.sh skill|tool new|import|list|show|seal|link|unlink|enable|disable|effective|check|remove ...; skill accept|unaccept PROJECT NAME";;
 esac

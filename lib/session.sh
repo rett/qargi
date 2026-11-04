@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     --role) need_val "$1" $#; BROLE=${2:-}; shift 2;;
     --profile) need_val "$1" $#; BPROFILE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
 done
@@ -198,9 +198,9 @@ start() {
 send() {
   need_asked; ant_ok
   local name=$1 task=$2 sid i
-  valid_slug "$LABEL" || die "send needs --label <task-slug> (lower-case letters, digits, '-'): the session is named <instance>-<task-slug>; use the same slug for the agent/<slug> branch"
+  valid_slug "$LABEL" || usage_die "send needs --label <task-slug> (lower-case letters, digits, '-'): the session is named <instance>-<task-slug>; use the same slug for the agent/<slug> branch"
   i=$(cloud_inst "$name") || exit 1
-  [ -n "$task" ] || die "send needs the task text"
+  [ -n "$task" ] || usage_die "send needs the task text"
   local base=''; if is_base_inst "$name" && [ -n "$BROLE" ]; then base=1; else no_base_opts "$name"; fi
   if [ -n "$NEW" ]; then
     if [ -n "${QARGI_DRY_RUN:-}" ]; then start "$name"; else start "$name" >/dev/null; fi
@@ -252,7 +252,7 @@ status() {
 }
 
 stop() {
-  local sid=${POS[0]:-}; [ -n "$sid" ] || die "stop needs SID"
+  local sid=${POS[0]:-}; [ -n "$sid" ] || usage_die "stop needs SID"
   ant beta:sessions:events send --session-id "$sid" --event '{type: user.interrupt}' >/dev/null || die "interrupt failed"
   # an interrupted turn ends with stop_reason end_turn, like a finished one: keep what tells them apart
   json_update "$TRK" 'if has($s) then .[$s].interrupt_sent_at = $t else . end' --arg s "$sid" --arg t "$(now)"
@@ -275,7 +275,7 @@ mark() {
 # Close = archive, only after outputs are collected and a review verdict exists.
 close() {
   local sid=${POS[0]:-} row
-  [ -n "$sid" ] || die "close needs SID"
+  [ -n "$sid" ] || usage_die "close needs SID"
   row=$(jq -e --arg s "$sid" '.[$s]' "$TRK") || die "session $sid is not tracked"
   trk_refresh "$sid" || die "cannot read $sid"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" != running ] || die "session is running; stop it first"
@@ -298,5 +298,5 @@ case $verb in
   stop) stop;;
   mark) mark;;
   close) close;;
-  *) die "usage: session.sh track|start|send|status|stop|mark|close ...";;
+  *) usage_die "usage: session.sh track|start|send|status|stop|mark|close ...";;
 esac

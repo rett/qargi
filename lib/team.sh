@@ -16,19 +16,19 @@ brief() {
   local task='' done_cmd='' base='' write_done='' review_done=''
   while [ $# -gt 0 ]; do
     case $1 in
-      --task) task=$2; shift 2;;
-      --done) done_cmd=$2; shift 2;;
-      --base) base=$2; shift 2;;
-      --write-done) write_done=$2; shift 2;;
-      --review-done) review_done=$2; shift 2;;
-      *) die "unknown option $1";;
+      --task) need_val "$1" $#; task=$2; shift 2;;
+      --done) need_val "$1" $#; done_cmd=$2; shift 2;;
+      --base) need_val "$1" $#; base=$2; shift 2;;
+      --write-done) need_val "$1" $#; write_done=$2; shift 2;;
+      --review-done) need_val "$1" $#; review_done=$2; shift 2;;
+      *) usage_die "unknown option $1";;
     esac
   done
-  valid_project "$project" || die "usage: team.sh brief PROJECT TEAM --task TEXT --done CMD"
+  valid_project "$project" || usage_die "usage: team.sh brief PROJECT TEAM --task TEXT --done CMD"
   local f=$DA_CONF/projects/$project.json
   [ -f "$f" ] || die "no stored answers for $project"
   jq -e --arg t "$team" '.teams[$t]' "$f" >/dev/null 2>&1 || die "project $project has no team '$team' (qargi project show $project)"
-  [ -n "$task" ] && [ -n "$done_cmd" ] || die "brief needs --task TEXT and --done CMD (an executable check for the builder's part)"
+  [ -n "$task" ] && [ -n "$done_cmd" ] || usage_die "brief needs --task TEXT and --done CMD (an executable check for the builder's part)"
   local build_base; build_base=$(jq -r '.roles.build.base // empty' "$f")
   if [ -z "$base" ]; then
     [ -n "$build_base" ] && [ "$build_base" != "@dispatcher" ] || die "the builder's base is @dispatcher: give --base BRANCH"
@@ -58,7 +58,7 @@ brief() {
 
 check() {
   local dir=${1:-} rc=0 d r
-  [ -d "$dir" ] || die "usage: team.sh check RUN_DIR (a directory made by: qargi collect SID DIR)"
+  [ -d "$dir" ] || usage_die "usage: team.sh check RUN_DIR (a directory made by: qargi collect SID DIR)"
   for d in "$dir"/*/; do
     r=$(basename "$d")
     [ "$r" != lead ] || continue
@@ -89,5 +89,5 @@ case $verb in
   contract) contract;;
   brief) brief "$@";;
   check) check "$@";;
-  *) die "usage: team.sh brief|check|contract ...";;
+  *) usage_die "usage: team.sh brief|check|contract ...";;
 esac

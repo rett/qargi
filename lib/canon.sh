@@ -22,16 +22,16 @@ PROJECT=${1:-}; shift || true
 KIND='' PLAN_ARG='' APPROVED='' ROLE='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --kind) KIND=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --path) PATH_ARG=$2; shift 2;;
-    *) die "unknown option $1";;
+    --kind) need_val "$1" $#; KIND=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --path) need_val "$1" $#; PATH_ARG=$2; shift 2;;
+    *) usage_die "unknown option $1";;
   esac
 done
 export PLAN_ARG
-valid_project "$PROJECT" || die "usage: canon.sh check|plan|apply|promote PROJECT ..."
+valid_project "$PROJECT" || usage_die "usage: canon.sh check|plan|apply|promote PROJECT ..."
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
 ROLES=$(jq -r '([.roles | keys[]] + (if ((.teams // {}) | length) > 0 then ["lead"] else [] end)) | join(",")' "$PCFG")
@@ -90,7 +90,7 @@ case $verb in
     done
     echo "reconciled $PROJECT (approved: $APPROVED)";;
   seed-role)
-    [ -n "$ROLE" ] || die "seed-role needs --role R"
+    [ -n "$ROLE" ] || usage_die "seed-role needs --role R"
     [ -n "$APPROVED" ] || die "seed-role needs --approved \"<go-ahead>\""
     [ "$ROLE" = shared ] || printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
     RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
@@ -145,7 +145,7 @@ case $verb in
     [ "${#unattr[@]}" = 0 ] || echo "NOTE: ${#unattr[@]} session(s) could not be attributed to a role"
     exit $bad;;
   promote)
-    [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || die "promote needs --kind K --path /roles/R/..."
+    [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || usage_die "promote needs --kind K --path /roles/R/..."
     [ -n "$APPROVED" ] || die "promote needs --approved \"<go-ahead>\""
     case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
     store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
@@ -155,5 +155,5 @@ case $verb in
     [ -z "$(jq -r --arg p "$dest" 'select(.path==$p)|.id' "$tmp")" ] || die "$dest already exists; merge by hand"
     ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" --path "$dest" </dev/null >/dev/null || die "move failed"
     echo "moved $PATH_ARG -> $dest; add its row to shared/INDEX.md and remove it from the role's INDEX.md (approved: $APPROVED)";;
-  *) die "usage: canon.sh check|plan|apply|promote PROJECT ...";;
+  *) usage_die "usage: canon.sh check|plan|apply|promote PROJECT ...";;
 esac

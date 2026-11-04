@@ -14,15 +14,15 @@ here=$(dirname "$(readlink -f "$0")")
 TTY_IN=${QARGI_TTY_IN:-/dev/tty}; TTY_OUT=${QARGI_TTY_OUT:-/dev/tty}    # the tests answer the prompts through these
 
 verb=${1:-}; PROJECT=${2:-}; shift 2 || true
-valid_project "$PROJECT" || die "usage: lead.sh grant|status|revoke PROJECT"
+valid_project "$PROJECT" || usage_die "usage: lead.sh grant|status|revoke PROJECT"
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
 LEAD=$PROJECT-lead
 FROM=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --from-file) FROM=$2; shift 2;;
-    *) die "unknown option $1";;
+    --from-file) need_val "$1" $#; FROM=$2; shift 2;;
+    *) usage_die "unknown option $1";;
   esac
 done
 
@@ -165,5 +165,5 @@ case $verb in
   grant) grant;;
   status) status;;
   revoke) revoke;;
-  *) die "usage: lead.sh grant|status|revoke PROJECT";;
+  *) usage_die "usage: lead.sh grant|status|revoke PROJECT";;
 esac

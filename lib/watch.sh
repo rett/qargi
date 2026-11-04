@@ -11,12 +11,12 @@
 sid=${1:-}; max=7200; warn=85; shift || true
 while [ $# -gt 0 ]; do
   case $1 in
-    --warn) warn=${2:-}; shift 2 || die "--warn needs a percent";;
-    *[!0-9]*|'') die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]";;
+    --warn) need_val "$1" $#; warn=$2; shift 2;;
+    *[!0-9]*|'') usage_die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]";;
     *) max=$1; shift;;
   esac
 done
-[ -n "$sid" ] || die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]"
+[ -n "$sid" ] || usage_die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]"
 case $warn in ''|*[!0-9]*) die "--warn is a whole percent (0 turns it off)";; esac
 
 start=$(date +%s); seen_running=
