@@ -83,6 +83,18 @@ fnd "validate: models without a provider is a finding"       '.models={}'       
 fnd "validate: a blank provider is a finding"                '.models.provider="  "'     yes
 fnd "validate: a provider that is not a string is a finding" '.models.provider=3'        yes
 fnd "validate: a provider named is no finding"               '.models.provider={local:"claude-code",cloud:"claude-platform"}' no
+# a pack linked to a role of the project that the library does not hold is a WARN line; validate still exits 0
+mkdir -p "$T/c/packs/skills/present" "$T/c/packs/tools"
+jq -n '{links:[{pack:"skill:present",scope:"user"},{pack:"skill:gone",scope:"project",project:"demo"},{pack:"tool:lost",scope:"project-role",project:"demo",role:"write"},
+  {pack:"skill:other",scope:"project",project:"elsewhere"},{pack:"skill:norole",scope:"user-role",role:"fresh"},{pack:"skill:gone-all",scope:"user"}]}' > "$T/c/packs/links.json"
+jq '.models.provider={local:"claude-code",cloud:"claude-platform"}' <<<"$base" > "$T/a.json"
+out=$($DA project validate "$T/a.json" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qE '^WARN: skill:gone is linked to .*build.* of demo but is not in the pack library' <<<"$out" && grep -qE '^WARN: tool:lost is linked to write of demo ' <<<"$out" \
+  && grep -qE '^WARN: skill:gone-all is linked to ' <<<"$out" && [ "$(grep -c '^WARN:' <<<"$out")" = 3 ] && grep -qx ok <<<"$out"; } \
+  && echo "ok   validate warns of a linked pack the library does not hold (once per pack, with its roles) and still exits 0" || { echo "FAIL pack WARN (exit $rc): $out"; fail=1; }
+mkdir -p "$T/c/packs/skills/gone" "$T/c/packs/skills/gone-all"; echo '{}' > "$T/c/packs/tools/lost.json"
+out=$($DA project validate "$T/a.json" 2>&1); [ "$?" = 0 ] && ! grep -q '^WARN:' <<<"$out" && echo "ok   with the packs in the library the warnings are gone" || { echo "FAIL pack WARN gone: $out"; fail=1; }
+rm -rf "$T/c/packs"
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }

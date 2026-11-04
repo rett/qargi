@@ -136,7 +136,7 @@ COMMANDS = {
                         examples=["qargi project set acme roles.write.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
-            "validate": verb("Check an answers file without storing it", [("FILE", "file")]),
+            "validate": verb("Check an answers file without storing it (a WARN line for each pack linked to a role that is not in the pack library)", [("FILE", "file")]),
             "link": verb("Make this work tree load the project's skills, agents and memory from ~/.qargi", [("PROJECT", "project", True)],
                          [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED],
                          desc=("One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). "
@@ -977,7 +977,7 @@ COMMANDS = {
 # skill and tool share one set of verbs
 PACK_VERBS = {
     "new": verb("Create a pack from a template", [("NAME", "none")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST")]),
-    "import": verb("Import a pack from a directory, file or pinned git URL, after a review", [("SOURCE", "file")],
+    "import": verb("Import a pack from a directory, file or pinned git URL, after a review (a top-level .pack.json in the source is qargi's own record: ignored, not copied)", [("SOURCE", "file")],
                    [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
     "list": verb("List the library, or what a project and role get", [("PROJECT", "project", True), ("ROLE", "role", True)]),
     "show": verb("Show a pack", [("NAME", "pack")]),

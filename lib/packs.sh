@@ -120,8 +120,8 @@ compat_need() { # the --compatible of a verb that makes a pack: parsed, or the v
 content_hash() { # path [compat-json]
   local h c x
   if [ -d "$1" ]; then
-    h=$(cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
-    x=$(cd "$1" && find . ! -path . ! -name .pack.json \( \( ! -type f ! -type d \) -o \( -type d -empty \) -o \( -type f -links +1 \) \) -printf '%y %n %P -> %l\0' | LC_ALL=C sort -z | tr '\0' '\n')
+    h=$(cd "$1" && find . -type f ! -path ./.pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+    x=$(cd "$1" && find . ! -path . ! -path ./.pack.json \( \( ! -type f ! -type d \) -o \( -type d -empty \) -o \( -type f -links +1 \) \) -printf '%y %n %P -> %l\0' | LC_ALL=C sort -z | tr '\0' '\n')
     [ -z "$x" ] || h=$({ printf '%s\nnon-regular entries\n' "$h"; printf '%s\n' "$x"; } | sha256sum | cut -c1-16)
   else h=$(sha256sum < "$1" | cut -c1-16); fi
   if [ $# -ge 2 ]; then c=$2; else c=$(compat_of "$1"); fi
@@ -148,11 +148,15 @@ review() { # kind path [compat-json]: the declaration is the third argument whil
     # the owner's policy for every pack: only text (no binary, archive, special file or symbolic link, no NUL byte, invalid UTF-8, control or
     # bidi character in a file or its name); the failures come escaped, from the same rules as the provider packs (conformance/review.py)
     pol=$(python3 -I "$REVIEWPY" policy "$p" 2>&1) || { echo "$pol"; rc=1; }
-    n=$(find "$p" -type f ! -name .pack.json | wc -l); size=$(find "$p" -type f ! -name .pack.json -exec cat {} + | wc -c)
+    n=$(find "$p" -type f ! -path "$p/.pack.json" | wc -l); size=$(find "$p" -type f ! -path "$p/.pack.json" -exec cat {} + | wc -c)
+    # the top-level .pack.json is qargi's own record of a library pack and no part of the skill; one deeper is skill content that nothing
+    # reads as a record (it would pass for an approval), so it is a finding, and it counts in the content hash like any file
+    local nested; nested=$(cd "$p" && find . -mindepth 2 -name .pack.json | sed 's#^\./#  #' | sort)
+    [ -z "$nested" ] || { echo "FAIL: .pack.json is qargi's own record and only the top level of a library pack holds it; remove or rename these:"; echo "$nested" | showable; rc=1; }
     echo "files: $n, $size bytes"
     { [ "$n" -le 100 ] && [ "$size" -le 2000000 ]; } || { echo "FAIL: more than 100 files or 2 MB"; rc=1; }
-    (cd "$p" && find . -type f ! -name .pack.json | sed 's#^\./#  #' | sort | head -40) | showable
-    local scripts; scripts=$(cd "$p" && find . -type f ! -name .pack.json \( -perm /111 -o -name '*.sh' -o -name '*.py' -o -name '*.js' -o -name '*.rb' \) | sed 's#^\./#  #')
+    (cd "$p" && find . -type f ! -path ./.pack.json | sed 's#^\./#  #' | sort | head -40) | showable
+    local scripts; scripts=$(cd "$p" && find . -type f ! -path ./.pack.json \( -perm /111 -o -name '*.sh' -o -name '*.py' -o -name '*.js' -o -name '*.rb' \) | sed 's#^\./#  #')
     [ -z "$scripts" ] || { echo "executable or script files (the agent may run these):"; echo "$scripts" | showable; }
     local urls; urls=$(grep -rhoE 'https?://[A-Za-z0-9._~:/?#@!$&*+,;=%-]+' "$p" 2>/dev/null | sort -u | head -15)
     [ -z "$urls" ] || { echo "URLs mentioned:"; echo "$urls" | sed 's/^/  /' | showable; }
@@ -188,6 +192,15 @@ effective() { # project role -> "kind:name" lines
   jq -r --arg p "$1" --arg r "$2" --argjson off "$off" '
     [.links[] | select((.scope=="user") or (.scope=="user-role" and .role==$r) or (.scope=="project" and .project==$p) or (.scope=="project-role" and .project==$p and .role==$r)) | .pack]
     | unique | map(select(. as $x | ($off | index($x)) | not)) | .[]' "$LINKS"
+}
+
+# True when no pack reaches any role of the project (effective() is empty for every role): the case where a check would only say that nothing was rendered.
+none_linked() { # project
+  local r
+  for r in $(jq -r '.roles | keys[]' "$DA_CONF/projects/$1.json" 2>/dev/null | grep -vx lead); do
+    [ -z "$(effective "$1" "$r")" ] || return 1
+  done
+  return 0
 }
 
 # The packs of effective() that the project's provider can use. SURFACES is local, cloud or local,cloud (a pack is used when its
@@ -337,6 +350,7 @@ rn_main() { # verb: apply|check
     # read only: the section of the skills a session would load follows; only a drifted one adds to the exit status
     local rc=0
     prov_need "$prj" "list the skills a session would load" project_skills_dir
+    ! none_linked "$prj" || echo "no pack is linked to any role of $prj (qargi skill link NAME --scope project --project $prj)"
     python3 -I "$PY" check "$RN_W/in.json" || rc=1
     [ -n "$RENDER_ONLY" ] || au_report "$RN_W/in.json" "$RN_W" || rc=1
     exit $rc
@@ -605,7 +619,7 @@ if [ "$KIND" = packs ]; then
       k=${e%%:*}; vet "$k" "$LN"
       if [ "$k" = skill ]; then
         echo "== skill $LN (approved library content; files beside it: $P)"; cat "$P/SKILL.md"
-        others=$(cd "$P" && find . -type f ! -name .pack.json ! -name SKILL.md | sed 's#^\./#  #' | sort)
+        others=$(cd "$P" && find . -type f ! -path ./.pack.json ! -name SKILL.md | sed 's#^\./#  #' | sort)
         [ -z "$others" ] || { echo; echo "== other files of $LN, relative to $P"; echo "$others"; }
       else echo "== tool $LN (MCP server definition)"; cat "$P"; fi
       exit 0;;
@@ -679,7 +693,8 @@ case "$VERB" in
     if [ "$KIND" = skill ]; then
       [ -d "$WORK" ] || die "a skill source is a directory with SKILL.md"
       NAME=${NAME:-$(sed -n 's/^name: *//p' "$WORK/SKILL.md" 2>/dev/null | head -1)}
-      cp -r "$WORK" "$T/stage"; rm -f "$T/stage/.pack.json"
+      # a top-level .pack.json in the source is qargi's own record (a pack copied out of the library, or made by qargi): not copied, and said so
+      cp -r "$WORK" "$T/stage"; if [ -e "$T/stage/.pack.json" ] || [ -L "$T/stage/.pack.json" ]; then IGNORED_REC=1; rm -rf "$T/stage/.pack.json"; fi
     else
       [ -f "$WORK" ] || die "a tool source is a JSON file"
       NAME=${NAME:-$(jq -r .name "$WORK" 2>/dev/null)}; cp "$WORK" "$T/stage"
@@ -687,6 +702,7 @@ case "$VERB" in
     valid_slug "$NAME" || die "cannot work out a valid name; pass --name"
     [ -z "$(ls "$PACKS/skills/$NAME" "$PACKS/tools/$NAME.json" 2>/dev/null)" ] || die "$NAME already exists in the library (names are unique; pass --name or remove the old one)"
     echo "== review of $KIND $NAME from $SRCREC"
+    [ -z "${IGNORED_REC:-}" ] || echo "note: the source's top-level .pack.json is qargi's own record of a library pack: it is ignored and not copied (the pack gets a new record from this import)"
     review "$KIND" "$T/stage" "$COMPAT" || { echo "refused: fix the source first" >&2; exit 1; }
     TOK=$(content_hash "$T/stage" "$COMPAT")
     if [ -z "$APPROVED" ]; then echo "plan token: $TOK   (store it with: --plan $TOK --approved \"<the user's go-ahead after reading the review>\")"; exit 0; fi
@@ -750,7 +766,9 @@ case "$VERB" in
       if [ -n "$want" ] && [ "$want" != "$have" ]; then echo "FAIL $e: content changed since it was approved (drift: $want -> $have); review it and re-import"; rc=1; fi
       if out=$(review "$KIND" "$P" 2>&1); then echo "ok   $e"; else echo "$out" | grep -E '^FAIL' | sed "s/^/$e: /"; rc=1; fi
     done
-    [ -n "$any" ] || echo "no $KIND packs reach $PRJ/$ROL"
+    if [ -n "$any" ]; then :
+    elif none_linked "$PRJ"; then echo "no pack is linked to any role of $PRJ"
+    else echo "no $KIND packs reach $PRJ/$ROL"; fi
     exit $rc;;
   remove)
     NAME=${NAME:-${ARGS[0]:-}}; P=$(item_path "$KIND" "$NAME"); [ -e "$P" ] || die "no such $KIND in the library"

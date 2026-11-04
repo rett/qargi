@@ -32,8 +32,9 @@
 #                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
 #                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
 #                                         the same links and puts back what they replaced
-#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
-#                                         change the exit status, so storing and the flows after it work as before)
+#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
+#                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
+#                                         status, so storing and the flows after it work as before)
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
 # pushes. The "coordinator" and "agent" policies below are designed but not built, so
@@ -288,6 +289,23 @@ if "lead" in (r if isinstance(r, dict) else {}):
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
 EOF
+}
+
+# pack_warn FILE: a `WARN:` line for each pack linked at a scope that reaches a role of the project but is not in the pack library (one
+# removed or never imported: the role loses it, or fails its check, at the next render). Never an error: validate still exits 0.
+pack_warn() {
+  local f=$1 prj links pack rs kind n
+  links=$DA_CONF/packs/links.json; [ -f "$links" ] || return 0
+  prj=$(jq -r '.project // empty' "$f" 2>/dev/null); [ -n "$prj" ] || return 0
+  while IFS=$'\t' read -r pack rs; do
+    [ -n "$pack" ] || continue; kind=${pack%%:*}; n=${pack#*:}
+    if [ "$kind" = skill ]; then [ -e "$DA_CONF/packs/skills/$n" ] && continue; else [ -e "$DA_CONF/packs/tools/$n.json" ] && continue; fi
+    echo "WARN: $pack is linked to $rs of $prj but is not in the pack library (qargi $kind list); import it, or unlink it: qargi $kind unlink $n"
+  done < <(jq -r --arg p "$prj" --slurpfile c "$f" '
+    ($c[0].roles // {} | keys - ["lead"]) as $rs
+    | [.links[] | select(.scope == "user" or .scope == "user-role" or .project == $p) | . as $l
+       | $rs[] | select($l.scope == "user" or $l.scope == "project" or $l.role == .) | [$l.pack, .]]
+    | group_by(.[0])[] | .[0][0] + "\t" + (map(.[1]) | unique | join(", "))' "$links" 2>/dev/null)
 }
 
 # no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
@@ -686,6 +704,6 @@ PY
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
-  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
+  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; };;
   *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
 esac
