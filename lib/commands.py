@@ -877,7 +877,9 @@ COMMANDS = {
                  "(also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes "
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
-                 "notes go to the stores named in the project's answers. It asks at a terminal; --dry-run shows the plan without one."),
+                 "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
+                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, "
+                 "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
         "scripts": ["transfer.py"],
         "usage": [("FILE", "file")],
         "opts": [opt("--only", "the parts to import (default: ask)", "PARTS", ("config", "definitions", "memories", "state", "credentials")),
