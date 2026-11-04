@@ -487,6 +487,20 @@ class Cli(Base):
         self.assertTrue(hint[0].startswith("FAIL"), hint)
         self.assertRegex(r.stdout.strip().splitlines()[-1], r"^1 fail, \d+ warn, 1 tiers checked$")
 
+    def test_check_half_initialised_tier_says_init_finishes_it(self):
+        e = self.mk()
+        put(e.d("repo"), {k: v for k, v in seed_files(P).items() if k in ("/shared/INDEX.md", "/roles/build/INDEX.md")})   # init stopped before its marker
+        r = e.qargi("memory", "check", "--project", P)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("INFO tier repo: a set-up that was interrupted before it wrote the marker (qargi memory init repo finishes it)", r.stdout)
+        self.assertNotIn("no canon marker", r.stdout)
+        self.assertNotIn("project set", r.stdout)
+        self.assertRegex(r.stdout.strip().splitlines()[-1], r"^0 fail, 0 warn, 1 tiers checked$")
+        put(e.d("repo"), {"/shared/stray.md": "# a note\n"})                       # a store with other files is not an interrupted set-up
+        r = e.qargi("memory", "check", "--project", P)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("FAIL tier repo: no canon marker and no known layout", r.stdout)
+
     def test_shared_tier_is_checked_as_shared_for_the_union_of_roles(self):
         e = self.mk(roles=("build", "test"))
         put(e.d("repo"), seed_files(P, "build,test"))

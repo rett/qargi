@@ -125,6 +125,12 @@ project_provider_if_set() { # project-or-empty surface
   [ -z "$p" ] || printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   [ -z "$p" ] || echo "$p"
 }
+# cloud_note PROJECT TOPIC: the notes topic TOPIC of the definition of the runtime the project uses on the cloud surface (output-dir and
+# clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
+# Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
+cloud_note() { # project topic
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" notes "$2" --project "$1" --surface cloud </dev/null
+}
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
 # that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)

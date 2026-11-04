@@ -754,13 +754,18 @@ resources.contract_addenda of the definition: plain text files in its own direct
 .RS
 .TP
 .BI "notes " "[TOPIC]"
-Print a note of the project's local runtime, or list the topics it has.
+Print a note of the project's runtime (local unless \-\-surface cloud), or list the topics it has.
 .br
-The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read\-only.
+The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read\-only.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project whose local runtime is asked (default: the one in effect).
+the project whose runtime is asked (default: the one in effect).
+.RE
+.RS
+.TP
+.BI "\-\-surface " "SURFACE"
+the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output\-dir, clone\-dir).
 .RE
 .RE
 .RS
@@ -2611,7 +2616,7 @@ Exits 2 when refs changed (1 before). After a passing verify the run records RUN
 .BI "clean " "[RUN_DIR]"
 Remove a collected, verified run and its temporary directory.
 .br
-Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path; \-\-applied takes no RUN_DIR and no \-\-discard.
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path; \-\-applied takes no RUN_DIR and no \-\-discard. \-\-stale DAYS \-\-scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with \-\-yes each is cleaned exactly as clean RUN would, so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without \-\-scratch, takes no RUN_DIR, no \-\-applied and no \-\-discard, and \-\-yes is for \-\-stale only.
 .RS
 .TP
 .B \-\-discard
@@ -2624,8 +2629,18 @@ clean every run under \-\-scratch whose work is recorded applied (review apply) 
 .RE
 .RS
 .TP
+.BI "\-\-stale " "DAYS"
+list the finished runs (RUN/verified or RUN/applied exists) under \-\-scratch that are at least DAYS days old, from the run's start; with \-\-yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed.
+.RE
+.RS
+.TP
+.B \-\-yes
+with \-\-stale: clean the runs it lists (without it nothing changes).
+.RE
+.RS
+.TP
 .BI "\-\-scratch " "DIR"
-with \-\-applied: the directory the runs were prepared in; only the run directories directly under it are looked at.
+with \-\-applied or \-\-stale: the directory the runs were prepared in; only the run directories directly under it are looked at.
 .RE
 .RE
 .RS
@@ -3286,7 +3301,7 @@ write the archive without a password (for scripts).
 .B qargi import
 Restore from an export, choosing what and how.
 .PP
-Reads an archive made by qargi export (asking for the password when it is encrypted), shows what is inside, asks which parts and projects to import and, for each part, how to treat what already exists: merge (add what is missing), overwrite (also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory notes go to the stores named in the project's answers. It asks at a terminal; \-\-dry\-run shows the plan without one.
+Reads an archive made by qargi export (asking for the password when it is encrypted), shows what is inside, asks which parts and projects to import and, for each part, how to treat what already exists: merge (add what is missing), overwrite (also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, or the key is left out, and a note says so. It asks at a terminal; \-\-dry\-run shows the plan without one.
 .RS
 .nf
 qargi import FILE
