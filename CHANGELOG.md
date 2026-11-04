@@ -146,6 +146,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The member guard's tool names are those of the member's matcher: `MultiEdit` and `NotebookRead`, which the hook is never given, are gone from the built-in hook data and from the shipped `claude-code` definition (the test that compares the two keeps them equal). The unused `cmd_tokens` and `MARSHAL_MUTATING` are removed, the five state-directory root functions share one helper, and the module docstring no longer quotes outside documentation.
 - `clear_caches()` of the member guard forgets everything read from the provider library, the environment and the state (the resource directories, the protected roots, the credentials directories, the state directories), so a judge that outlives one call reads them again. The guard tests that time a command have bounds fit for a busy machine (the minutes they guard against are not seconds), and the `MoveBeside` tests skip when `/tmp` or `/dev/shm` is not there.
 - `qargi help guard` and the manual page now say what the member guard refuses beyond the verbs: the memory tiers, the state's `providers/` directory, `~/.config/anthropic`, the lead's git configuration and session files, the lead's run verbs (`local prepare|verify|clean`, `agent remove`, `team run`, `task`, `project new`), `git -c alias.*` and rsync to a host, and the corrected reading rule (a copy into the home directory is no read of the signing key; copying or searching its directory is). The topic stays within 330 words.
+- An archive written by the export verb with the `config` or `credentials` part could not be read back by the import verb: it refused the
+  library's `.pack.json` records (`config/packs/skills/NAME/.pack.json`), so a project's skills and tools could not be moved between
+  hosts. A name in an archive may now begin with a dot (`.` and `..` still do not pass), and a memory note's name is checked with the
+  same segment rule as every other name.
 
 ### Removed
 - `qargi credential askpass FILE` (an internal verb nothing called) and the second, unreachable `version)` branch of `bin/qargi`.
