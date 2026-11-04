@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-04T08:52:39Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-04T12:04:14Z",
- "finished_at": null,
+ "finished_at": "2026-11-04T16:48:16Z",
  "updated_by": "rett@arc",
- "rev": 10,
- "updated_at": "2026-11-04T12:04:14Z",
+ "rev": 11,
+ "updated_at": "2026-11-04T16:48:16Z",
  "feature": "hygiene2",
  "project": "qargi"
 }
