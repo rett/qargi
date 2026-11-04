@@ -217,6 +217,17 @@ master and release branches keep their plans and tokens. `branches.delete_merged
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
 shows the deletion and its token covers origin's tip.
 
+### Pruning merged branches
+
+`qargi branch prune [--remote]` prints the merged `agent/*` and `feature/*` branches of the project (with `--remote`, the same
+branches on origin, asked live) and the worktrees qargi made for them, with a token; apply it with `--plan TOKEN --approved
+"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, or, for an agent branch, into an open
+feature; a branch that only sits at the tip of develop or of a feature was never merged and is kept. It never deletes master,
+develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
+worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
+the reason. A remote branch is deleted as a lease on the tip the plan showed. `qargi review prune --yes` still deletes the
+merged `agent/*` branches of the local repository without a token.
+
 ### The worktree root
 
 qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one
