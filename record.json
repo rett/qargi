@@ -3,19 +3,14 @@
  "started": "2026-11-04T20:03:30Z",
  "goal": "",
  "plan": "",
- "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-04T20:03:30Z"
- },
+ "note": "handoff note: memory handoff-2026-11-04.md",
+ "status": "released",
+ "lead": null,
  "renewed_at": "2026-11-04T20:03:30Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 1,
- "updated_at": "2026-11-04T20:03:30Z",
+ "rev": 2,
+ "updated_at": "2026-11-04T22:11:40Z",
  "feature": "site",
  "project": "qargi"
 }
