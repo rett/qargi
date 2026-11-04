@@ -138,6 +138,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The judgement of a local run made before `RUN/class` and `RUN/started` existed: a run directory with no `class` file counts as read-only (it was judged by its `ability` file), and one with no `started` file has no ref-journal entry to explain a moved branch (it used the time of `refs.before`). `local prepare` writes both.
 - `qargi canon import` (the merge of a store with the old numbered documentation layout, `--map docs-v0`, under a role) with `canon.py import`, the `imports` list of `canon/layout.json` and the section of the canon that described it: `canon import` is an unknown verb. Move the notes of such a store into the layout by hand.
 
+### Security
+- A runtime's adapter (`provider adapter-run`, and so `agent for --surface cloud` and the session verbs) ran with the caller's whole environment, forge tokens and ssh agent included. It now gets the small environment a pack gets (a search path of absolute entries, a private home and temporary directory removed afterwards, a locale and a clock zone) plus the names its definition lists in `dispatch.env_pass`. `dispatch.env_pass` also refuses `JDK_JAVA_OPTIONS`, `FPATH`, `ZDOTDIR`, `KSH_ENV`, `LUA_INIT`, `LUA_PATH`, `LUA_CPATH`, `LESSOPEN`, `GLIBC_TUNABLES`, `NPM_CONFIG_*`, `GOFLAGS`, `GOENV`, `INPUTRC`, `TERMINFO` and `SUDO_ASKPASS`, and a member's command also gets `LC_ALL` and `TZ`.
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
