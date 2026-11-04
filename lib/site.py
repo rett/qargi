@@ -1265,7 +1265,8 @@ def write_site(site, out):
 
 # ------------------------------------------------------------------ check-output
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
-LOCAL_SCHEMES = ("mailto:", "tel:", "data:")
+LOCAL_SCHEMES = ("mailto:", "tel:")
+BANNED_TAGS = ("iframe", "frame", "frameset", "object", "embed", "applet", "form", "base")
 
 
 class Tree(HTMLParser):
@@ -1300,8 +1301,17 @@ class Tree(HTMLParser):
                 self.err("id %r is empty or has whitespace" % a["id"])
         if tag == "html":
             self.lang = a.get("lang")
+        if any(k.lower().startswith("on") for k in names):
+            self.err("<%s> has an event handler attribute" % tag)
+        if tag in BANNED_TAGS:
+            self.err("<%s> is not allowed in the output" % tag)
+        if tag == "meta" and "http-equiv" in a:
+            self.err("<meta http-equiv> is not allowed in the output")
+        if tag == "script" and (a.get("type") != "application/ld+json" or "src" in a):
+            self.err("a script that is not JSON-LD")
+        icon = tag == "link" and a.get("rel") == "icon" and a.get("href") == "data:,"       # the one data: address the pages use
         for attr in ("href", "src"):
-            if attr in a and a[attr] is not None:
+            if attr in a and a[attr] is not None and not icon:
                 self.links.append((self.getpos()[0], tag, attr, a[attr]))
         if tag == "img" and not a.get("alt") and "alt" not in a:
             self.imgs_noalt.append(self.getpos()[0])
@@ -1441,6 +1451,8 @@ def check_output(out):
             if "noindex" not in t.meta.get("robots", ""):
                 rep.err(rel, "the 404 page must be noindex")
         else:
+            if "noindex" in t.meta.get("robots", "").lower():
+                rep.err(rel, "a page that is in the sitemap is marked noindex")
             expect = (site_url or "") + (rel[:-len("index.html")] if rel.endswith("index.html") else rel)
             if t.rels.get("canonical") != expect:
                 rep.err(rel, "canonical is %r, expected %r" % (t.rels.get("canonical"), expect))
@@ -1470,8 +1482,14 @@ def _check_jsonld(rel, t, rep, canon):
         except ValueError as e:
             rep.err(rel, "JSON-LD is not valid JSON (%s)" % e)
             continue
-        nodes = data.get("@graph", [data]) if isinstance(data, dict) else []
-        types = [n.get("@type") for n in nodes if isinstance(n, dict)]
+        graph = data.get("@graph", [data]) if isinstance(data, dict) else None
+        if not isinstance(graph, list):
+            rep.err(rel, "JSON-LD @graph is not a list")
+            continue
+        if not all(isinstance(n, dict) for n in graph):
+            rep.err(rel, "JSON-LD @graph holds a value that is not an object")
+        nodes = [n for n in graph if isinstance(n, dict)]
+        types = [n.get("@type") for n in nodes]
         if rel == "index.html":
             if "SoftwareApplication" not in types:
                 rep.err(rel, "the home page needs SoftwareApplication JSON-LD")
@@ -1482,22 +1500,30 @@ def _check_jsonld(rel, t, rep, canon):
             if n.get("@type") == "TechArticle" and n.get("headline") not in h1:
                 rep.err(rel, "TechArticle headline %r is not the page's h1 %r" % (n.get("headline"), h1))
             if n.get("@type") == "BreadcrumbList":
-                pos = [i.get("position") for i in n.get("itemListElement", [])]
+                items = n.get("itemListElement")
+                if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                    rep.err(rel, "BreadcrumbList itemListElement is not a list of objects")
+                    continue
+                pos = [i.get("position") for i in items]
                 if pos != list(range(1, len(pos) + 1)):
                     rep.err(rel, "BreadcrumbList positions are not 1..n")
-                for i in n.get("itemListElement", []):
+                for i in items:
                     if i.get("name") is None or not str(i.get("item", "")).startswith("https://"):
                         rep.err(rel, "BreadcrumbList item needs a name and an https url")
 
 
 def _local_target(rel, val, site_url):
     """(path in the output, is a directory, fragment) of a link; None when it leaves the site; an error string."""
-    if val.startswith(LOCAL_SCHEMES):
+    seen = re.sub(r"[\t\r\n]", "", val).lstrip("".join(chr(c) for c in range(33))).lower()     # as a browser reads the scheme
+    if seen.startswith(LOCAL_SCHEMES):
         return None
-    if val.lower().startswith("javascript:"):
+    if seen.startswith("javascript:"):
         return "javascript: links are not allowed"
     path, _, frag = val.partition("#")
     path = path.split("?", 1)[0]
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*):", seen)
+    if m and m.group(1) not in ("http", "https"):
+        return "link %s: the scheme %s: is not allowed (only https, http, mailto and tel)" % (val, m.group(1))
     if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", path) or path.startswith("//"):
         if site_url and path.startswith(site_url):
             rest = path[len(site_url):]
