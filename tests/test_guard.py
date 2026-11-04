@@ -602,36 +602,35 @@ class Skills(unittest.TestCase):
             self.assertEqual(self.call(*call).returncode, 2, call)
 
 
-class ClaudeRender(unittest.TestCase):
-    """$DA_STATE/claude/<project>/ is the render Claude Code loads with --add-dir: instructions a session follows. No member
-    class may write there; reading stays open."""
+class RenderTree(unittest.TestCase):
+    """$DA_STATE/render/<project>/<runtime> is the render a runtime loads (Claude Code with --add-dir): instructions a session follows. No member
+    class may write there; reading stays open. The claude/ directory an earlier version used is not special any more."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
 
     def setUp(self):
         self.setUp_skills()
         self.state = os.path.join(self.t, "state")
-        self.render = os.path.join(self.state, "claude", "proj")
+        self.render = os.path.join(self.state, "render", "proj", "claude-code")
         os.makedirs(os.path.join(self.render, "skills/s"))
         os.makedirs(os.path.join(self.state, "runs"))
-        os.makedirs(os.path.join(self.t, "elsewhere/claude/proj"))
+        os.makedirs(os.path.join(self.t, "elsewhere/render/proj"))
         os.symlink(self.render, os.path.join(self.clone, "to-render"))
-        os.symlink(os.path.join(self.state, "claude"), os.path.join(self.clone, "to-claude"))
+        os.symlink(os.path.join(self.state, "render"), os.path.join(self.clone, "to-renders"))
 
     def call(self, tool, inp, cwd=None, **env):
         env.setdefault("QARGI_STATE", self.state)
         return self.call_skills(tool, inp, cwd, **env)
 
-    def test_edit_tools_refuse_every_path_under_the_claude_state_directory(self):
+    def test_edit_tools_refuse_every_path_under_the_render_directory(self):
         r = self.render
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
-            for p in (os.path.join(r, "skills/s/SKILL.md"), os.path.join(r, "new.md"), os.path.join(self.state, "claude/other/x"),
-                      os.path.join(self.state, "claude"), "to-render/skills/s/SKILL.md", "to-claude/proj/new.md", "../../state/claude/proj/CLAUDE.md"):
+            for p in (os.path.join(r, "skills/s/SKILL.md"), os.path.join(r, "new.md"), os.path.join(self.state, "render/other/x"),
+                      os.path.join(self.state, "render"), "to-render/skills/s/SKILL.md", "to-renders/proj/new.md", "../../state/render/proj/claude-code/CLAUDE.md"):
                 for cls in ((), ("--class", "read-only")):
                     res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
                                          capture_output=True, text=True, env=self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
-                    self.assertIn("managed by `qargi packs apply`", res.stderr)
-                    self.assertIn("changed only by the lead", res.stderr)
+                    self.assertIn("managed by qargi and changed only by the lead", res.stderr)
 
     def env(self):
         e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
@@ -642,26 +641,26 @@ class ClaudeRender(unittest.TestCase):
         r = self.render
         for c in ("echo x > %s/CLAUDE.md" % r, "echo x >> %s/skills/s/SKILL.md" % r, "echo x>%s/CLAUDE.md" % r, "echo x | tee %s/CLAUDE.md" % r,
                   "cp a.md %s/skills/s/" % r, "cp -t %s a.md" % r, "mv a.md %s/x.md" % r, "mv %s/skills /tmp/gone" % r, "rm -rf %s/skills" % r,
-                  "rm -rf %s" % r, "rm -rf %s/claude" % self.state, "sed -i s/a/b/ %s/skills/s/SKILL.md" % r, "perl -pi -e s/a/b/ %s/CLAUDE.md" % r,
+                  "rm -rf %s" % r, "rm -rf %s/render" % self.state, "sed -i s/a/b/ %s/skills/s/SKILL.md" % r, "perl -pi -e s/a/b/ %s/CLAUDE.md" % r,
                   "ln -s /etc/passwd %s/x" % r, "touch %s/x" % r, "mkdir %s/new" % r, "chmod 777 %s/CLAUDE.md" % r, "truncate -s 0 %s/CLAUDE.md" % r,
                   "dd if=/dev/zero of=%s/CLAUDE.md" % r, "rsync -a src/ %s/" % r, "install -m 644 a %s/x" % r, "patch %s/CLAUDE.md fix.diff" % r,
-                  "git -C %s checkout ." % r, "git -C %s/claude add -A" % self.state, "cd %s && echo y > CLAUDE.md" % r, "cd %s && rm -r skills" % r,
+                  "git -C %s checkout ." % r, "git -C %s/render add -A" % self.state, "cd %s && echo y > CLAUDE.md" % r, "cd %s && rm -r skills" % r,
                   "tar xf a.tgz -C %s" % r, "unzip -o a.zip -d %s" % r, "curl -o %s/x http://h/f" % r, "find %s -name '*.md' -delete" % r,
-                  "echo y > to-render/CLAUDE.md", "rm -rf to-claude/proj", "bash -c 'echo y > %s/CLAUDE.md'" % r, "eval 'rm %s/CLAUDE.md'" % r,
-                  "echo $(echo y > %s/CLAUDE.md)" % r, "echo y > $QARGI_STATE/claude/proj/CLAUDE.md", "qargi packs render p build %s" % r,
+                  "echo y > to-render/CLAUDE.md", "rm -rf to-renders/proj", "bash -c 'echo y > %s/CLAUDE.md'" % r, "eval 'rm %s/CLAUDE.md'" % r,
+                  "echo $(echo y > %s/CLAUDE.md)" % r, "echo y > $QARGI_STATE/render/proj/claude-code/CLAUDE.md", "qargi packs render p build %s" % r,
                   "qargi packs render p build --out %s" % r):
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("qargi guard:", res.stderr)
-            self.assertIn("managed by `qargi packs apply`", res.stderr)
+            self.assertIn("managed by qargi and changed only by the lead", res.stderr)
 
     def test_the_render_is_found_like_the_other_qargi_paths(self):
-        home_state = os.path.join(self.home, ".qargi/state/claude/proj")
-        qh_state = os.path.join(self.t, "qh/state/claude/proj")
+        home_state = os.path.join(self.home, ".qargi/state/render/proj")
+        qh_state = os.path.join(self.t, "qh/state/render/proj")
         for d in (home_state, qh_state):
             os.makedirs(d)
         for target, env in ((home_state, dict(QARGI_STATE=None)), (qh_state, dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),
-                            (os.path.join(self.t, "alt/claude/proj"), dict(QARGI_STATE=os.path.join(self.t, "alt")))):
+                            (os.path.join(self.t, "alt/render/proj"), dict(QARGI_STATE=os.path.join(self.t, "alt")))):
             os.makedirs(target, exist_ok=True)
             self.assertEqual(self.call("Write", {"file_path": target + "/CLAUDE.md"}, **env).returncode, 2, (target, env))
             self.assertEqual(self.bash("echo x > %s/CLAUDE.md" % target, **env).returncode, 2, (target, env))
@@ -676,14 +675,14 @@ class ClaudeRender(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
-    def test_a_path_that_merely_says_claude_is_allowed(self):
-        e = os.path.join(self.t, "elsewhere/claude/proj")
-        for p in (e + "/CLAUDE.md", os.path.join(self.state, "runs/claude/x"), os.path.join(self.state, "claude-notes.md"),
-                  os.path.join(self.state, "runs/x.log"), os.path.join(self.t, "state2/claude/proj/x")):
+    def test_a_path_that_merely_says_render_is_allowed(self):
+        e = os.path.join(self.t, "elsewhere/render/proj")
+        for p in (e + "/CLAUDE.md", os.path.join(self.state, "runs/render/x"), os.path.join(self.state, "render-notes.md"),
+                  os.path.join(self.state, "runs/x.log"), os.path.join(self.t, "state2/render/proj/x")):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0, p)
             self.assertEqual(self.bash("echo x > %s" % p).returncode, 0, p)
-        for c in ("echo x > %s/runs/audit.log" % self.state, "rm -rf %s/runs/old" % self.state, "touch claude/x", "echo claude > notes.txt"):
+        for c in ("echo x > %s/runs/audit.log" % self.state, "rm -rf %s/runs/old" % self.state, "touch render/x", "echo render > notes.txt"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
@@ -696,6 +695,18 @@ class ClaudeRender(unittest.TestCase):
             self.assertEqual(res.returncode, 2, c)
             self.assertIn("is not available to an agent", res.stderr)
         self.assertEqual(self.bash("qargi packs render p build /tmp/o").returncode, 0)
+
+    def test_the_directory_of_the_earlier_layout_is_not_special_any_more(self):
+        old = os.path.join(self.state, "claude", "proj")
+        os.makedirs(old)
+        self.assertEqual(self.call("Write", {"file_path": old + "/CLAUDE.md"}).returncode, 0)
+        for cmd in ("echo x > %s/CLAUDE.md" % old, "rm -rf %s" % old, "echo x > $QARGI_STATE/claude/proj/CLAUDE.md"):
+            res = self.bash(cmd)
+            self.assertEqual(res.returncode, 0, (cmd, res.stderr))
+
+    def test_the_verb_that_moved_the_earlier_renders_is_no_verb_the_guard_names(self):
+        res = self.bash("qargi packs migrate-render --plan 000000000000 --approved x")
+        self.assertEqual(res.returncode, 0, res.stderr)
 
 
 class Marshal(unittest.TestCase):
@@ -1723,7 +1734,7 @@ class ProviderRoots(unittest.TestCase):
 
 class RuntimeRender(unittest.TestCase):
     """$DA_STATE/render/<project>/<runtime> is where the renders of every runtime go (skills, tools, members): instructions a session follows,
-    changed only by the lead, like the claude/ directory beside it."""
+    changed only by the lead."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
 
     def setUp(self):
@@ -1759,11 +1770,6 @@ class RuntimeRender(unittest.TestCase):
                   "cp %s/agents/m.toml %s/run/out/" % (r, self.t)):
             res = self.bash(c, QARGI_STATE=self.state)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
-
-    def test_the_claude_directory_keeps_its_own_sentence(self):
-        res = self.bash("echo x > %s/claude/proj/CLAUDE.md" % self.state, QARGI_STATE=self.state)
-        self.assertEqual(res.returncode, 2)
-        self.assertIn("the render of a project's skills and tools that Claude Code loads; it is managed by `qargi packs apply`", res.stderr)
 
 
 class ProviderVerbs(unittest.TestCase):
