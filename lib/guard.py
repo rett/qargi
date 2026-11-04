@@ -55,7 +55,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
     without a space), tee, cp, mv, rm, ln, install, rsync, touch, mkdir, chmod, chown, truncate, shred, patch,
     `sed|perl -i`, `dd of=`, a git command that changes the tree, find with -delete or -exec, and any argument of
-    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed. What an agent edits in its own clone, the
+    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
+    directory when nothing in the command could set it; a cd only as the next paragraph says). What an agent edits in its own clone, the
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
@@ -82,7 +83,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     shared-refs backend: found and decided like features/, reading stays allowed;
   - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
     it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
-    accepts as lead-side changes. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
+    accepts as lead-side changes; and the same for the registry of local runs ($QARGI_STATE/local-runs.jsonl and the files like it), which names the
+    temporary directory `qargi local clean` removes for each run. Decided like features/; reading stays allowed. The journal is trusted only as far as the state
     directory is: an executor running as the same OS user could still edit the file by code the guard cannot see (HMAC-signed
     records are a later feature);
   - the verbs of the signed records: qargi marshal key|signers|resign (the lead's signing key, the allowed signers, a record signed
@@ -93,7 +95,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read, NotebookRead and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
-  globs and symbolic links are resolved, in a `<` redirection, an `--opt=path` and in the text of a `-c` program. A directory that holds the key
+  globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
   is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
   look at it and stay allowed; the other credentials stay readable.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
@@ -106,24 +108,32 @@ Not covered: code that writes or reads a file itself (python -c, perl -e, node -
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
-Reading a Bash command (segments()): the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
+Reading a Bash command (passes(), segments()): the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
 A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. No file is guessed to be run later.
-A NUL byte, a command over 262144 characters, checks that take over 8 seconds and a glob that needs more than GLOB_ENTRIES directory entries read are
-refused, since a hook that times out does not block.
-Write targets (write_targets()): a redirection (> >> >| <> &> >&FILE, N-prefixed, stuck to its word or not), tee, cp mv ln install rsync (every operand of mv:
-the sources are removed; -t DIR), dd of=, sort -o|--output, uniq INPUT OUTPUT, sed|perl -i, git --output=FILE, format-patch -o, archive -o, bundle create, and the
+Where the shell is: the line is cut more than once (the substitutions cut out, left whole, and each on its own), and every cut starts in the directory of
+the call. A plain `cd DIR` at the top level (and pushd, popd, and a cd after an && whose chain is cds alone) changes the directory of what follows when DIR
+is there; any other cd (inside ( ), a substitution, if/for/while/case, braces, a function, after || or `cmd &&`, before a pipe or &, in quoted text, a
+here-document or a comment, an option, two directories, a DIR that is not there yet) leaves the old directory among those the shell may be in, `cd -` is
+any directory the line has been in, and each command is judged from each of them (walk(); more than MAX_DIRS at once is refused).
+A NUL byte, a command over 262144 characters, checks that take over BUDGET seconds (read inside the loops over words, targets, braces and project words, not
+once per segment), a brace word that stands for more than MAX_BRACE words (or MAX_BRACE_WORK in all) and a glob that needs more than GLOB_ENTRIES directory
+entries read are refused, since a hook that times out does not block.
+Write targets (write_targets()): a redirection (> >> >| <> &> >&FILE, N-prefixed, stuck to its word or not, alone or in front of the program), tee, cp mv ln
+install rsync ditto (every operand of mv: the sources are removed; -t DIR, also in a cluster: -rt DIR), tar and unzip extraction (below -C / -d, else where the
+shell is), curl and wget output, patch (where the shell is, or -d DIR), git apply --directory, clone, init and worktree add DIR, dd of=, sort -o|--output, uniq INPUT OUTPUT, sed|perl -i, git --output=FILE, format-patch -o, archive -o, bundle create, and the
 git subcommands that change the tree or the repository. A target the shell would expand and the guard cannot read (a glob or a variable, a command
 substitution) is refused when it could name a record file of the run (`> abilit?`, `> $F`, `cp x $D/ability`) or, for a command that makes or replaces
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. Under the read-only class the
 variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
 a git configuration or hook file in a command that also runs git is refused for every member.
-The run: a directory is a run when it holds any file `qargi local prepare` makes there (RUN_MARKERS), or the clone and out directories beside any other file of
-the record (RUN_CONTROL). RUN_CONTROL files are not written, moved, removed, copied or linked, and the run directory is not removed or moved; under
+The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
+below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
+written into the run directory outside out/, clone/ and tmp/ (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
 Not seen: a script built by code (python -c ...), a program or a verb held in a variable, what a pipe or a here-string hands a shell (`echo qargi upgrade | sh`,
 `bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
@@ -1783,7 +1793,7 @@ def protected_write(toks, i, here):
         tick()
         if not dest or dest.startswith("-") and dest != "-":
             continue
-        for one in brace_expand(dest):                       # cp a ~/.claude/{x,skills}/: each word it stands for
+        for one in brace_expand(dest):                       # cp a DIR/{x,packs}/: each word it stands for
             why = glob_root(what, one, here)
             if why:
                 return why
