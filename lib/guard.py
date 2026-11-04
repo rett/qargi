@@ -704,13 +704,24 @@ def write_targets(toks, i):
                 else:
                     k += 1
             sub = rest[k] if k < len(rest) else ""
-            if sub in GIT_WRITES:
+            if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                 targets.append(("git " + sub, gitdir or "."))
     return targets
 
 
+TAG_CHANGES = re.compile(r"^-[A-Za-z]*[dasufmFe]|^--(?:delete|annotate|sign|no-sign|local-user|force|message|file|edit|create-reflog|cleanup)")   # an option that makes, replaces or deletes a tag
+
+
+def lists_tags(args):
+    """True when `git tag ARGS` only lists tags: no tag name given, or -l/--list and no option that makes, replaces or deletes one."""
+    opts = [a for a in args if a.startswith("-")]
+    if any(TAG_CHANGES.match(a) for a in opts):
+        return False
+    return not [a for a in args if not a.startswith("-")] or any(a == "--list" or re.match(r"^-[A-Za-z]*l[A-Za-z]*$", a) for a in opts)
+
+
 def review_refusal(call):
-    """The reason a call under the review ability is refused, or None."""
+    """The reason a call under the read-only class is refused, or None."""
     cwd = call.cwd
     if call.kind == "write":
         fp = call.path
@@ -722,7 +733,7 @@ def review_refusal(call):
             return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
         if run and is_review(run) and not inside(full, os.path.join(run, "out")):
-            return "under the review ability only the report and the manifest in OUT may be written (%s is not)" % fp
+            return "under the read-only class only the report and the manifest in OUT may be written (%s is not)" % fp
         return None
     if call.kind != "shell":
         return None
@@ -749,7 +760,7 @@ def review_segment(toks, i, here):
             return why
         run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
         if run and is_review(run) and inside(full, os.path.join(run, "clone")):
-            return "under the review ability nothing in the clone may be changed (%s into %s)" % (what, dest)
+            return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
     return None
 
 
