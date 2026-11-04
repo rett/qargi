@@ -4,7 +4,6 @@
 Subcommands (all read JSON lines of {"id","path","content"} from --store and print JSON):
   plan    --kind memory|reference --project P --roles build,write --store F --seed D
   check   --kind K --project P --roles ... --store F   (structure, note format, indexes, hygiene)
-  import  --map docs-v0 --role R --src F --memory F --reference F --seed D
 The executor (canon.sh) applies the steps with `ant`. Nothing here talks to the API.
 """
 import argparse, datetime, json, os, re, sys
@@ -202,20 +201,6 @@ def init(kind, mems, project, roles, seed, today):
     for r in roles:
         text["/roles/%s/INDEX.md" % r] = lambda r=r: seed_text(seed, "INDEX.role.%s.md" % kind, dict(subs, **{"{{ROLE}}": r}))
     return [{"op": "create", "path": p, "content": text[p]()} for p in setup_paths(roles) if p not in mems], []
-
-
-NUM = re.compile(r"^\d\d-")
-
-
-def strip_num(name):
-    return NUM.sub("", name)
-
-
-def rewrite_refs(text, folders):
-    """Replace old numbered folder names with the new ones wherever they are named."""
-    for old in sorted(folders, key=len, reverse=True):
-        text = re.sub(r"(?<![\w-])%s(?![\w-])" % re.escape(old), folders[old], text)
-    return text
 
 
 def simulate(mems, ops):
@@ -458,59 +443,6 @@ def cmd_check(a):
     return 1 if fails else 0
 
 
-def rename_top(p, folders):
-    top = p.strip('/').split('/')[0]
-    return '/' + folders.get(top, top) + p[len(top) + 1:]
-
-
-def import_docs_v0(a):
-    src = load(a.src)
-    mem, ref = load(a.memory), load(a.reference)
-    today = a.today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-    role = a.role
-    taken = {"memory": set(mem), "reference": set(ref)}
-    ops = {"memory": [], "reference": []}
-    notes = []
-    # numbered source folders become plain names; references to them are rewritten
-    folders = {}
-    for p in src:
-        top = p.strip("/").split("/")[0]
-        if NUM.match(top):
-            folders[top] = strip_num(top)
-    if folders:
-        notes.append("renamed: " + ", ".join("%s -> %s" % kv for kv in sorted(folders.items())))
-    src = {p: dict(m, content=rewrite_refs(m["content"], folders)) for p, m in src.items()}
-    for p, m in sorted(src.items()):
-        if p == "/README.md":
-            kind, dest = "reference", "/roles/%s/INDEX.md" % role
-            content = ("> Imported from the documentation store; paths below are relative to this role folder.\n\n"
-                       + m["content"])
-        elif re.match(r"/0[1-6]-", p) or p.startswith(("/08-maintainer/", "/tools/")):
-            kind, dest, content = "reference", "/roles/%s%s" % (role, rename_top(p, folders)), m["content"]
-        elif p.startswith("/07-project/"):
-            kind, dest, content = "memory", "/roles/%s%s" % (role, rename_top(p, folders)), m["content"]
-        else:
-            notes.append("not imported, unknown part of the source layout: %s" % p)
-            continue
-        if is_note(dest) and not p.endswith("INDEX.md"):
-            content, _ = add_header(kind, dest, content, a.project, today)
-            if "Kind" not in note_fields(content):
-                notes.append("kind not derivable from the path, set Kind: by hand: %s" % dest)
-        if dest in taken[kind]:
-            existing = (ref if kind == "reference" else mem).get(dest)
-            if existing and existing["content"] == content:
-                continue
-            if existing and "| (none yet) | | |" in existing["content"]:
-                ops[kind].append({"op": "update", "id": existing["id"], "path": dest, "content": content})
-                continue
-            dest = "/_conflicts/%s%s" % (today, dest)
-            notes.append("conflict: goes to %s" % dest)
-        taken[kind].add(dest)
-        ops[kind].append({"op": "create", "path": dest, "content": content})
-    print(json.dumps({"memory": ops["memory"], "reference": ops["reference"], "notes": notes}))
-    return 0
-
-
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -523,16 +455,8 @@ def main():
         s.add_argument("--today")
         if name == "plan":
             s.add_argument("--seed", required=True)
-    s = sub.add_parser("import")
-    s.add_argument("--map", required=True, choices=["docs-v0"])
-    s.add_argument("--project", required=True)
-    s.add_argument("--role", required=True)
-    s.add_argument("--src", required=True)
-    s.add_argument("--memory", required=True)
-    s.add_argument("--reference", required=True)
-    s.add_argument("--today")
     a = ap.parse_args()
-    sys.exit({"plan": cmd_plan, "check": cmd_check, "import": import_docs_v0}[a.cmd](a))
+    sys.exit({"plan": cmd_plan, "check": cmd_check}[a.cmd](a))
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
   adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
                                        the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
                                        it lists); the second runs it and removes the copy
-  notes_of(project)                    (runtime, {topic: text}): the notes of the definition of the project's local runtime, composed (notes: an
+  notes_of(project, surface=local)     (runtime, {topic: text}): the notes of the definition of the project's runtime on a surface, composed (notes: an
                                        optional object of topic name to one line of text, at most 16 topics of 2000 characters)
   contract_addenda(name, surface)      the texts the runtime's definition adds to the member contract (resources.contract_addenda: files in its
                                        own directory, plain text); ProviderError for one that is missing, is not text or leaves the directory
@@ -92,11 +92,11 @@ Usage: provider.py list
        provider.py model NAME SURFACE TIER
                                          the model id of a tier of the runtime on a surface
        provider.py launch NAME RENDER [--project P]   the command that starts a session on the render directory RENDER (exit 3: none)
-       provider.py notes [TOPIC] [--project P]
-                                         the text of a notes topic of the definition of the project's local runtime (composed with its enabled
-                                         extensions; the project is P, else the one in effect), or the topic names when none is given; exit 1
-                                         when the runtime has no such topic or no notes, 2 when the project has no local runtime or the
-                                         runtime is refused (a library pack not sealed or changed since, an unreadable definition)
+       provider.py notes [TOPIC] [--project P] [--surface local|cloud]
+                                         the text of a notes topic of the definition of the project's runtime on a surface (local unless told
+                                         otherwise; composed with its enabled extensions; the project is P, else the one in effect), or the
+                                         topic names when none is given; exit 1 when the runtime has no such topic or no notes, 2 when the
+                                         project has no runtime on that surface or the runtime is refused (a library pack not sealed or changed since, an unreadable definition)
        provider.py skills-dirs [NAME]    the project skills directory of NAME, or of every provider that has one and supports skills (one per line)
        provider.py of PROJECT [--conf DIR] [--surface local|cloud]
                                          prints the project's provider (models.provider); with a surface, the runtime for it (a family
@@ -355,6 +355,11 @@ ENV_DENIED = {
     "EDITOR": "a program other tools run by themselves", "VISUAL": "a program other tools run by themselves", "PAGER": "a program other tools run by themselves",
     "MANPAGER": "a program other tools run by themselves", "BROWSER": "a program other tools run by themselves", "GIT": "qargi's git wrapper of the run",
     "GNUPGHOME": "the user's keys", "NETRC": "the user's stored logins", "KRB5CCNAME": "the user's Kerberos credentials",
+    "JDK_JAVA_OPTIONS": "it loads code into java", "FPATH": "it changes where a shell loads functions from", "ZDOTDIR": "a shell startup directory",
+    "KSH_ENV": "a shell startup file", "LUA_INIT": "it runs code in lua", "LUA_PATH": "it changes where lua loads code from",
+    "LUA_CPATH": "it changes where lua loads code from", "LESSOPEN": "a program less runs by itself", "GLIBC_TUNABLES": "it changes how libc loads and allocates",
+    "GOFLAGS": "it changes what go builds and runs", "GOENV": "it changes where go reads its settings from", "INPUTRC": "a readline startup file",
+    "TERMINFO": "it changes where terminal definitions are loaded from", "SUDO_ASKPASS": "a program sudo runs by itself",
 }
 ENV_DENIED_PREFIX = (
     ("GIT_", "the run's git wrapper and its settings are qargi's"), ("QARGI_", "qargi's own settings are not handed on"),
@@ -364,6 +369,7 @@ ENV_DENIED_PREFIX = (
     ("SSH_", "the ssh agent and its keys are the user's, and a member never pushes"), ("GPG_", "the user's signing agent"),
     ("GH_", "a forge credential: a member never pushes or calls the forge"), ("GITHUB_", "a forge credential: a member never pushes or calls the forge"),
     ("GITLAB_", "a forge credential: a member never pushes or calls the forge"), ("BITBUCKET_", "a forge credential: a member never pushes or calls the forge"),
+    ("NPM_CONFIG_", "it changes what npm runs and where it reads and sends"), ("npm_config_", "it changes what npm runs and where it reads and sends"),
 )
 
 
@@ -2014,15 +2020,33 @@ def adapter_exec(name, surface, verb, root=None, library=None):
     return path, None
 
 
+def adapter_env(name, surface, home, root=None, library=None):
+    """The environment an adapter runs in: pack_env (nothing of the caller's, a search path of absolute entries, the home and temporary
+    directory `home`) plus the names the runtime's dispatch.env_pass lists on that surface, minus any that env_pass_problem refuses."""
+    env = pack_env(home, home)
+    doc = _docs(_entry(name, root, library)).get(surface) or {}
+    disp = doc.get("dispatch") if isinstance(doc.get("dispatch"), dict) else {}
+    for n in disp.get("env_pass") if isinstance(disp.get("env_pass"), list) else []:
+        if isinstance(n, str) and n in os.environ and env_pass_problem(n) is None and n not in env:
+            env[n] = os.environ[n]
+    return env
+
+
 def run_adapter(name, surface, verb, data, root=None, library=None, env=None):
     """(exit status, stdout, stderr) of the adapter's VERB with the request `data` (text) on its standard input; the private copy of a
-    library adapter is removed afterwards. The errors of adapter_exec() are raised."""
+    library adapter is removed afterwards. The adapter gets adapter_env() (a private home and temporary directory, removed afterwards,
+    and the runtime's env_pass names), never the caller's environment; `env` replaces it. The errors of adapter_exec() are raised."""
+    import shutil
     import subprocess
+    import tempfile
     path, cleanup = adapter_exec(name, surface, verb, root, library)
+    home = tempfile.mkdtemp(prefix="qargi-adapter.")
     try:
-        r = subprocess.run([path, verb], input=data, capture_output=True, text=True, env=env)
+        r = subprocess.run([path, verb], input=data, capture_output=True, text=True,
+                           env=env if env is not None else adapter_env(name, surface, home, root, library))
         return r.returncode, r.stdout, r.stderr
     finally:
+        shutil.rmtree(home, ignore_errors=True)
         if cleanup:
             discard_exec_copy(cleanup)
 
@@ -2069,23 +2093,27 @@ def _project_in_effect():
         return None
 
 
-def notes_of(project, conf=None, root=None, library=None):
-    """(runtime, {topic: text}) of a project: the notes of the definition of its local runtime, as composed with the extensions the project
-    enabled. NoProvider (exit 2) when the project does not exist or names no provider for the local surface; there is no default."""
-    runtime, _ = resolve_project(_stored_answers(project, conf), "local", project, root, library)
-    doc = composed(runtime, "local", project, root, library, conf)
+def notes_of(project, conf=None, root=None, library=None, surface="local"):
+    """(runtime, {topic: text}) of a project: the notes of the definition of its runtime on a surface (local unless told otherwise), as composed
+    with the extensions the project enabled. NoProvider (exit 2) when the project does not exist or names no provider for that surface; there
+    is no default."""
+    runtime, _ = resolve_project(_stored_answers(project, conf), surface, project, root, library)
+    doc = composed(runtime, surface, project, root, library, conf)
     notes = doc.get("notes")
     return runtime, notes if isinstance(notes, dict) else {}
 
 
 def cmd_notes(args):
-    """notes [TOPIC] [--project P]: the text of a notes topic of the project's local runtime, or the topic names when none is given. Exit 1
-    when the runtime has no such topic or no notes (the message names both and lists the topics there are); exit 2 when the project has no
-    local runtime or the runtime cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition)."""
-    topics, project, i = [], None, 0
+    """notes [TOPIC] [--project P] [--surface local|cloud]: the text of a notes topic of the project's runtime on a surface (local unless told
+    otherwise), or the topic names when none is given. Exit 1 when the runtime has no such topic or no notes (the message names both and lists
+    the topics there are); exit 2 when the project has no runtime on that surface or the runtime cannot be used as it stands (a library pack not
+    sealed or changed since it was sealed, an unreadable definition)."""
+    topics, project, surface, i = [], None, "local", 0
     while i < len(args):
         if args[i] == "--project" and i + 1 < len(args) and project is None:
             project, i = args[i + 1], i + 2
+        elif args[i] == "--surface" and i + 1 < len(args) and args[i + 1] in SURFACES:
+            surface, i = args[i + 1], i + 2
         elif args[i].startswith("--"):
             topics = [None, None]
             break
@@ -2093,10 +2121,10 @@ def cmd_notes(args):
             topics.append(args[i])
             i += 1
     if len(topics) > 1:
-        print("usage: qargi provider notes [TOPIC] [--project P]", file=sys.stderr)
+        print("usage: qargi provider notes [TOPIC] [--project P] [--surface local|cloud]", file=sys.stderr)
         return 2
     try:
-        runtime, notes = notes_of(project or _project_in_effect())
+        runtime, notes = notes_of(project or _project_in_effect(), surface=surface)
     except (NoProvider, Refused, Unsupported):
         raise
     except ProviderError as e:                 # a runtime that cannot be read as it stands is a refusal (exit 2), not "no such topic" (exit 1)

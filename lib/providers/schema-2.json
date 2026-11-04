@@ -86,7 +86,7 @@
           "additionalProperties": false,
           "properties": {
             "launch": {"type": ["string", "null"], "description": "the command that starts an interactive session on a render; {render} is the render directory. A group in [...] is kept only when the file named by its last word exists"},
-            "render_target": {"type": ["string", "null"], "description": "transitional: the --target name the packs renderer answers to; absent or null: the runtime has no packs renderer of its own, and the verb that needs one is refused with exit 3"}
+            "render_target": {"type": ["string", "null"], "description": "the --target name the packs renderer answers to; absent or null: the runtime has no packs renderer of its own, and the verb that needs one is refused with exit 3"}
           }
         },
         "notes": {

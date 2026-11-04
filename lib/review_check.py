@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Checks that an agent's output is a series of change-specific patches with their context,
-not one monolithic patch. Usage: review_check.py RUN_DIR [--allow-empty]   (exit 1 on any FAIL)
-RUN_DIR holds manifest.json and the patches (RUN_DIR/patches/*.patch or RUN_DIR/*.patch).
+not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
+OUT is the member's output directory (RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
 import glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
+unknown = [a for a in sys.argv[1:] if a.startswith("--") and a != "--allow-empty"]
+if unknown or len(args) > 1:
+    print("qargi: %s\nusage: review_check.py OUT [--allow-empty]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
+    sys.exit(2)
 allow_empty = "--allow-empty" in sys.argv   # a team member may return no commits (blocked, or nothing to change)
 run = args[0] if args else "."
 fails, warns, notes = [], [], []
@@ -14,7 +18,7 @@ F = lambda m: fails.append("FAIL " + m)
 W = lambda m: warns.append("WARN " + m)
 N = lambda m: notes.append("NOTE " + m)
 
-patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")) or glob.glob(os.path.join(run, "*.patch")))
+patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")))
 if not patches:
     # a review run returns a report, not patches
     # the report is report.md, or PREFIXreport.md when the task block gave an OUT_PREFIX (a team run: review--report.md)

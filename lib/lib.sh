@@ -84,10 +84,58 @@ class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a ba
   jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
     '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
-run_class() { # RUN_DIR -> the class of a local run (RUN/class; a run made before that file existed is judged by its ability)
+run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare writes); a directory with none counts as read-only
   local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
-  c=$(role_class "$(cat "$1/ability" 2>/dev/null || echo build)" 2>/dev/null) || c='write'
-  echo "$c"
+  echo read-only
+}
+# The lead's registry of local runs ($DA_STATE/local-runs.jsonl, one JSON line per run, written by `local prepare`, mode 600) is what decides what a run is
+# and where it came from: its directory, slug, base, temporary directory and the repository (repo: a real path; or url and cred: a repository URL and the path
+# of its credential file, never a token). The run directory is a member's to write, so nothing in it that says the same is believed (see run_record).
+#   reg_load            fills LRUNS (real path of each run directory the registry names -> its last line) and LRUNS_ORDER (those paths, first seen first)
+#   reg_has DIR         0 when the registry names the directory DIR (compared by real path)
+#   reg_get DIR FIELD   the text of FIELD in the registry's line for DIR (empty when absent or not a string)
+declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
+LRUNS_ORDER=()
+reg_load() {
+  local f=$DA_STATE/local-runs.jsonl r line rr
+  LRUNS=(); LRUNS_ORDER=()
+  [ -f "$f" ] || return 0
+  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
+  while IFS=$'\t' read -r r line; do
+    r=${r//\\\\/\\}; line=${line//\\\\/\\}
+    rr=$(readlink -f -- "$r" 2>/dev/null) || continue
+    [ -n "$rr" ] || continue
+    [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")
+    LRUNS[$rr]=$line
+  done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
+}
+reg_has() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
+reg_get() {
+  local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 0
+  [ -n "${LRUNS[$rr]+x}" ] || return 0
+  jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$rr]}" 2>/dev/null || true
+}
+# run_record RUN -> 0 and sets RUN_REPO, RUN_URL and RUN_CRED from the registry (reg_load first); 1 with the reason on stderr when the registry does not
+# name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
+# plain files. verify, clean, run and review apply take the repository, the URL and the credential path from these variables and from nothing else: git run
+# in a repository a member chose reads its configuration (core.sshCommand, credential.helper ...), and a URL and a credential path chosen by a member send
+# any file the lead can read as a token to a host of its choice.
+run_record() {
+  local run=$1 name want got
+  RUN_REPO='' RUN_URL='' RUN_CRED=''
+  reg_has "$run" || { echo "qargi: $run is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
+  RUN_REPO=$(reg_get "$run" repo); RUN_URL=$(reg_get "$run" url); RUN_CRED=$(reg_get "$run" cred)
+  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $run (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
+  for name in repo.path repo.url cred.path; do
+    case $name in repo.path) want=$RUN_REPO;; repo.url) want=$RUN_URL;; *) want=$RUN_CRED;; esac
+    if [ -z "$want" ]; then
+      [ ! -e "$run/$name" ] && [ ! -L "$run/$name" ] || { echo "qargi: $run/$name exists but the lead's registry records none: the run directory was changed after prepare" >&2; return 1; }
+      continue
+    fi
+    [ -f "$run/$name" ] && [ ! -L "$run/$name" ] || { echo "qargi: $run/$name is missing or not a plain file, and the lead's registry records $want: the run directory was changed after prepare" >&2; return 1; }
+    got=$(cat -- "$run/$name" 2>/dev/null || true)
+    [ "$got" = "$want" ] || { echo "qargi: $run/$name says '$got' but the lead's registry says '$want': the run directory was changed after prepare, nothing was run against it" >&2; return 1; }
+  done
 }
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
@@ -125,6 +173,12 @@ project_provider_if_set() { # project-or-empty surface
   p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
   [ -z "$p" ] || printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   [ -z "$p" ] || echo "$p"
+}
+# cloud_note PROJECT TOPIC: the notes topic TOPIC of the definition of the runtime the project uses on the cloud surface (output-dir and
+# clone-dir: where a hosted session keeps its outputs and its clones). The core names no hosted directory; the runtime's definition does.
+# Prints the text; on failure (no cloud runtime for the project, or it has no such topic) prints the reason on stderr and returns its status.
+cloud_note() { # project topic
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" notes "$2" --project "$1" --surface cloud </dev/null
 }
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
@@ -191,6 +245,9 @@ res_name() {
 }
 
 die() { echo "qargi: $*" >&2; exit 1; }
+need_val() { # OPTION "$#" -> exit 2 when a valued option is the last word: call it first in each valued branch of an option loop
+  [ "$2" -ge 2 ] || { echo "qargi: $1 needs a value" >&2; exit 2; }
+}
 
 # Cloud verbs that create or drive a session need --asked "<what the user
 # said>": the quote is stored in the tracker so the choice is auditable.
@@ -272,11 +329,10 @@ cred_file() { # project -> expanded credential file path, or empty
 }
 
 # git environment that authenticates over https with the token and nothing else.
-# Sets GIT_ASKPASS to a helper that reads the file at call time (the token is never in argv).
+# Sets GIT_ASKPASS to lib/askpass.sh, which reads the file named by QARGI_ASKPASS_FILE at call time (the token is never in argv, and no
+# helper file is made, so there is nothing to clean up).
 git_auth_env() { # credential-file -> exports for the caller's subshell
-  ASKPASS=$(mktemp "${TMPDIR:-/tmp}/qargi-askpass.XXXXXX")
-  printf '#!/bin/sh\ncat %s\n' "$(printf '%q' "$1")" > "$ASKPASS"; chmod 700 "$ASKPASS"
-  export GIT_ASKPASS=$ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
+  export QARGI_ASKPASS_FILE=$1 GIT_ASKPASS=$QARGI_TOOL/lib/askpass.sh GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent

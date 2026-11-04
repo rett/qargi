@@ -255,6 +255,10 @@ def cmd_check(project, a, ant):
             checked += 1
             print("== tier %s (%s %s)" % (name, t["kind"], t["location"]))
             state, _ = canon.detect("memory", lst)
+            if state == "unknown" and canon.detect("memory", lst, check_args(t, project, roles or ["build"])[1].split(","))[0] == "empty":
+                # the first files of a set-up that stopped before it wrote the marker: init finishes it from the seed, so the way out is init, not a path
+                infos.append("INFO tier %s: a set-up that was interrupted before it wrote the marker (qargi memory init %s finishes it)" % (name, name))
+                continue
             if state == "unknown":
                 how = ("qargi project set %s memory.memory_store ID" % project) if t["kind"] == "cloud" else \
                       ("qargi project set %s memory.tiers.%s.path DIR" % (project, name))

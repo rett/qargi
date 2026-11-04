@@ -4,7 +4,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); export QARGI_CONF=$T/c QARGI_STATE=$T/s
+T=$(mktemp -d); mkdir -p "$T/h"; export HOME=$T/h QARGI_CONF=$T/c QARGI_STATE=$T/s
 DA=./bin/qargi; fail=0; HANDSEAL=$PWD/tests/handseal.py
 base=$($DA project template demo | jq '.repo.url="https://github.com/example/demo"')
 chk() { # name expected(0|1) jq-filter
@@ -111,7 +111,7 @@ for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|pro
           'models.accept_no_barrier|{"local":{"by":"a","at":"t","reason":"r"}}|provider accept' 'models|{"extensions":["x"]}|provider enable' 'models|{"accept_no_barrier":{}}|provider accept'; do
   IFS='|' read -r k v want <<<"$kv"
   msg=$($DA project set demo "$k" "$v" 2>&1); rc=$?
-  { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
+  { [ $rc = 2 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) with exit 2 and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
 done
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude-code ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
 # no environment variable opens project set to the gated keys: QARGI_GATED_STORE was one, honoured from any caller, and is gone
@@ -295,6 +295,13 @@ rm -rf "$HOME/.fake"; mkdir -p "$T/real-fake"; ln -s "$T/real-fake" "$HOME/.fake
 out=$($DA project link lp --resource memory 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q "$HOME/.fake is a symbolic link; refusing" <<<"$out" && [ -z "$(ls -A "$T/real-fake")" ]; } && ok "a symbolic link above the memory link is refused and nothing is written through it" || no "parent link: rc=$rc $out"
 rm -f "$HOME/.fake"
+
+# the project memory must lie in the memory root by its real path: a link below the root that leads outside it is outside
+mkdir -p "$T/mem-outside"; echo n > "$T/mem-outside/n.md"; ln -s "$T/mem-outside" "$HOME/.qargi/memory/vialink"
+jq --arg p "$HOME/.qargi/memory/vialink" '.memory.tiers = {project:{path:$p}}' "$T/c/projects/lp.json" > "$T/lp.tmp" && cp "$T/lp.tmp" "$T/c/projects/lp.json"
+out=$($DA project link lp --resource memory 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "is placed at" <<<"$out" && grep -q "outside" <<<"$out" && [ ! -e "$LD" ] && [ ! -L "$LD" ]; } && ok "a project memory path that is a link out of the memory root is refused as outside it" || no "memory via link: rc=$rc $out"
+rm -f "$HOME/.qargi/memory/vialink" "$T/lp.tmp"; rm -rf "$T/mem-outside"; lproj lp "$LR" fakelink
 
 # a worktree gets its links by running the verb inside it; nothing lists worktrees
 $DA project link lp --resource memory,agents --plan "$($DA project link lp --resource memory,agents | tokp)" --approved test >/dev/null 2>&1

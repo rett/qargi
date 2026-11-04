@@ -269,17 +269,10 @@ jq -e --arg f "$MD/lk.toml" '.projects.linkp.lk | .file == $f and has("project")
 mkdir -p "$T/repo-l/.fake/agents"; ln -s "$MD/lk.toml" "$T/repo-l/.fake/agents/lk.toml"
 out=$($DA agent refresh lk --project linkp 2>&1); grep -q "is current" <<<"$out" && ! grep -q "does not see" <<<"$out" && ok "linked runtime: no note once the checkout has the link" || no "link note when linked: $out"
 $DA agent rename lk lk2 --project linkp >/dev/null 2>&1; [ -f "$MD/lk2.toml" ] && [ ! -e "$MD/lk.toml" ] && jq -e '.projects.linkp.lk2.file == "'"$MD"'/lk2.toml"' "$T/c/agents.json" >/dev/null && ok "linked runtime: rename keeps the member in the render" || no "linked rename: $(ls "$MD")"
-# a member an earlier version wrote into the checkout is moved to the render by refresh (the old file only while it is what qargi wrote)
 mkdir -p "$T/repo-l/.fake/agents"; rm -f "$T/repo-l/.fake/agents/lk.toml"
-$DA agent add old1 --roles build --project linkp >/dev/null 2>&1; $DA agent add old2 --roles build --project linkp >/dev/null 2>&1
-for m in old1 old2; do cp "$MD/$m.toml" "$T/repo-l/.fake/agents/$m.toml"; rm -f "$MD/$m.toml"; jq --arg m "$m" --arg f "$T/repo-l/.fake/agents/$m.toml" '.projects.linkp[$m].file = $f' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"; done
-echo '# by hand' >> "$T/repo-l/.fake/agents/old2.toml"
-out=$($DA agent refresh old1 --project linkp 2>&1)
-{ [ -f "$MD/old1.toml" ] && [ ! -e "$T/repo-l/.fake/agents/old1.toml" ] && jq -e '.projects.linkp.old1.file == "'"$MD"'/old1.toml"' "$T/c/agents.json" >/dev/null && grep -q "now in the member render" <<<"$out"; } && ok "refresh moves a member written into the checkout to the render and removes the unmodified old file" || no "refresh move: $out"
-out=$($DA agent refresh old2 --project linkp 2>&1)
-{ [ -f "$MD/old2.toml" ] && [ -f "$T/repo-l/.fake/agents/old2.toml" ] && grep -q "edited by hand and is left" <<<"$out"; } && ok "and leaves an old file that was edited by hand" || no "refresh move edited: $out"
+$DA agent add old1 --roles build --project linkp >/dev/null 2>&1
 out=$($DA agent remove old1 --project linkp 2>&1); grep -q "project link linkp --resource agents" <<<"$out" && [ ! -e "$MD/old1.toml" ] && ok "remove deletes the render's file and says to run project link" || no "remove: $out"
-$DA agent remove old2 --project linkp >/dev/null 2>&1; $DA agent remove lk2 --project linkp >/dev/null 2>&1
+$DA agent remove lk2 --project linkp >/dev/null 2>&1
 
 # a base name takes only the abilities of its class
 $DA agent add worker --project pbase --roles review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
@@ -409,5 +402,21 @@ PY
 $DA agent list | grep 'rn1 ' | grep -q 'STALE\|unsealed\|changed' && ok "a changed extension makes its member STALE" || no "extension changed: $($DA agent list | grep rn1)"
 jq 'del(.models.extensions)' "$T/c/projects/rnp.json" > "$T/a.json" && mv "$T/a.json" "$T/c/projects/rnp.json"
 $DA agent list | grep 'rn1 ' | grep -q 'STALE' && ok "and so does disabling it" || no "extension disabled: $($DA agent list | grep rn1)"
+
+# --- one broken record of another project does not stop this project's work; rename keeps a hand-edited file
+jq '.projects.zbroken.bad = {file: "x.md"}' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+out=$($DA agent for build --project pbase 2>&1); echo "$out" | grep -q 'agents.json:' && no "a broken record of another project blocks agent for: $out" || ok "agent for works in a project whose neighbour has a broken record"
+out=$($DA agent for build --project zbroken 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'member bad of project zbroken has no roles' <<<"$out"; } && ok "and the broken project itself is refused (exit 2)" || no "broken project: rc=$rc $out"
+out=$($DA agent list 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'member bad of project zbroken' <<<"$out"; } && ok "list without a project still checks every project" || no "list all: rc=$rc $out"
+$DA agent list --project pbase >/dev/null 2>&1 && ok "list --project checks that project only" || no "list --project pbase"
+jq 'del(.projects.zbroken)' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
+$DA agent add hand1 --project pbase >/dev/null 2>&1 && echo "# my edit" >> "$A/hand1.md"
+out=$($DA agent rename hand1 hand2 2>&1); rc=$?
+{ [ $rc = 0 ] && [ -f "$A/hand2.md" ] && [ -f "$A/hand1.md" ] && grep -q '^# my edit' "$A/hand1.md" && grep -q 'hand1.md was edited by hand, so it was kept' <<<"$out"; } \
+  && ok "rename keeps a hand-edited file and says so" || no "rename of a DRIFT member: rc=$rc $out"
+$DA agent add clean1 --project pbase >/dev/null 2>&1; $DA agent rename clean1 clean2 >/dev/null 2>&1
+{ [ -f "$A/clean2.md" ] && [ ! -e "$A/clean1.md" ]; } && ok "and an unedited file is removed as before" || no "rename of a current member"
 rm -rf "$T"
 exit $fail

@@ -148,31 +148,31 @@ COMMANDS = {
     "agent": {
         "summary": "Name the members: the local agents that do the work",
         "desc": ("A member is a local agent you name, rendered from the one member definition qargi ships, with the "
-                 "abilities it serves: build, write, review, test (all four by default). The task block names the ability and carries its role "
+                 "roles it serves: build, write, review, test (all four by default). The task block names the role and carries its role "
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
-                 "rule: the guard refuses changes to the clone under that ability. Under every ability it refuses the verbs that change "
+                 "rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
                  "and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for "
-                 "ABILITY prints."),
+                 "ROLE prints."),
         "scripts": ["agent.sh"],
         "verbs": {
             "add": verb("Create a member under a name you choose", [("NAME", "none")],
                         [opt("--roles", "comma-separated roles it serves (default build,write,review,test)", "LIST", ABILITIES),
-                         opt("--model", "model alias or id for the definition (default: the project's model for the first ability, else the shipped default; see agent models)", "MODEL", "model"),
+                         opt("--model", "model alias or id for the definition (default: the project's model for the first role, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
                          opt("--project", "the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project")],
                         desc=("A member belongs to a project, and the definition is rendered by the provider of that project. "
                               "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no --project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user-level directory."),
                         examples=["qargi agent add forge --roles build,test --project myproject", "qargi agent add scribe --roles write --model opus --project myproject",
                                   "qargi agent add worker --project myproject    # the write-class base: build, write and test"]),
-            "list": verb("List the members of every project, their abilities and definitions", [],
+            "list": verb("List the members of every project, their roles and definitions", [],
                          [opt("--project", "only the members of this project", "PROJECT", "project")],
-                         desc="One row per member: PROJECT, NAME, ABILITIES, MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. "
+                         desc="One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. "
                               "Members are kept per project, so two projects can each have a worker."),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
                            desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
-                            desc="The project is found as for rename. Keeps its name, abilities and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
+                            desc="The project is found as for rename. Keeps its name, roles and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
@@ -578,14 +578,16 @@ COMMANDS = {
         "summary": "List and check the model providers: tiers, models and what each can do",
         "desc": ("A provider is a descriptor, lib/providers/NAME.json, with one schema for every provider: the model each tier "
                  "(fast, balanced, deep, frontier) maps to, with the date and source it was verified, the effort levels it understands, "
-                 "which surfaces it serves (local, cloud) and a capability matrix per surface: model and effort overrides at dispatch, a fixed tool "
+                 "the one surface it serves (local or cloud) and a capability matrix for it: model and effort overrides at dispatch, a fixed tool "
                  "list per agent, a read-only barrier, a session budget ceiling, memory stores, skills and MCP. A capability that is not "
-                 "verified counts as not supported. A provider with no read-only barrier on a surface cannot serve the review role there "
-                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2)."),
+                 "verified counts as not supported. A provider with no read-only barrier on its surface cannot serve the review role there "
+                 "unless you accept that with qargi provider accept. The project's models.provider chooses the provider; there is no default, and a verb that needs one refuses a project with none (exit 2). "
+                 "A family name (what several runtimes of one vendor share) stands for the runtime of a surface only in a project's models.provider and in provider of; "
+                 "every verb that takes a NAME (show, check, model, addenda, adapter-run, effective, require-barrier, layout, launch, require-skills) takes a runtime name, and a family name is refused as an unknown provider."),
         "scripts": ["provider.py", "provider.sh", "conformance/library.py"],
         "verbs": {
-            "list": verb("List the providers with the surfaces they serve and whether the descriptor is clean"),
-            "show": verb("Print one provider: tiers and models, effort levels and the capability matrix per surface", [("NAME", "none")],
+            "list": verb("List the providers with the surface each serves and whether the descriptor is clean"),
+            "show": verb("Print one provider: tiers and models, effort levels and its capability matrix", [("NAME", "none")],
                          [opt("--json", "machine-readable"), opt("--project", "show it as this project sees it, with its verified extensions composed in", "PROJECT", "project")]),
             "accept": verb("Record that you accept a provider surface that has no read-only barrier", [("NAME", "none")],
                            [opt("--surface", "the surface the acceptance covers", "SURFACE", ("local", "cloud")),
@@ -615,16 +617,18 @@ COMMANDS = {
             "disable": verb("Stop a project using a library extension pack", [("PROJECT", "project"), ("EXTENSION", "none")], [PLAN, APPROVED]),
             "adapter-run": verb("Run one verb of a runtime's adapter (a library pack's adapter runs only as a sealed private copy, removed afterwards)", [("NAME", "none"), ("SURFACE", "none"), ("VERB", "none")],
                                 [opt("--check", "check that the adapter and the verb exist and print nothing else")],
-                                desc="A verb the definition does not list exits 3."),
+                                desc="NAME is a runtime name, not a family name. A verb the definition does not list exits 3."),
             "addenda": verb("Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface)", [("NAME", "none"), ("SURFACE", "none")],
-                            desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
+                            desc="NAME is a runtime name, not a family name. resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
                                  "A file that is missing, is not text or leaves the directory is refused."),
-            "notes": verb("Print a note of the project's local runtime, or list the topics it has", [("TOPIC", "none", True)],
-                          [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
+            "notes": verb("Print a note of the project's runtime (local unless --surface cloud), or list the topics it has", [("TOPIC", "none", True)],
+                          [opt("--project", "the project whose runtime is asked (default: the one in effect)", "PROJECT", "project"),
+                           opt("--surface", "the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output-dir, clone-dir)", "SURFACE", ("local", "cloud"))],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
-                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
-            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
+            "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")],
+                          desc="NAME is a runtime name, not a family name."),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
                             opt("--result", "the outcome", "RESULT", ("pass", "fail")), opt("--cost-cents", "what it cost, in cents", "N"),
@@ -660,11 +664,12 @@ COMMANDS = {
                         [opt("--task", "the file with the task block (default RUN/task.md)", "FILE", "file"), opt("--model", "a tier or a model id the runtime accepts (default the balanced tier)", "MODEL"),
                          opt("--effort", "an effort level; dropped with a note when the runtime cannot map it", "LEVEL"), opt("--timeout", "seconds before the process group is killed (default from the definition)", "S"),
                          opt("--again", "run a second time in the same run"), opt("--dry-run", "print the argv, the working directory and the prompt, and run nothing")],
-                        desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (Claude Code) is refused, dispatch it with the Agent tool. "
+                        desc=("Only for a runtime whose dispatch mode is command; a runtime that works inside the session (dispatch mode in-session) is refused: dispatch it as its notes say (qargi provider notes spawn). "
                               "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
-                              "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.")),
+                              "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy. "
+                              "Exit status: 0 the command succeeded, 1 it failed (or a usage error, such as no task block), 2 refused (a barrier the run cannot have, a refused definition), 3 the runtime cannot be run this way (not a command runtime, its command is not on PATH), 4 transport (the definition maps the command's exit to it).")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
-                            [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
+                            [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this https URL (no user name or password in it: that is --credential-file)", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
@@ -673,39 +678,48 @@ COMMANDS = {
                                   "BASE_SHA and CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md). "
                                   "Then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK-BLOCK MEMORY block. "
                                   "A caller that evals the output must stop at the blank line.\n"
-                                  "When the project (found by matching the repository against the stored answers) has a Claude Code render "
-                                  "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
-                                  "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
+                                  "When the project (found by matching the repository against the stored answers) has a render for its local runtime "
+                                  "(packs apply --target RUNTIME) that has drifted, prepare also prints a WARNING block to stderr with the "
+                                  "findings and the fix, packs apply --target RUNTIME PROJECT. The run goes on, and stdout and the "
                                   "TASK-BLOCK PATHS block are unchanged.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
-                           desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
+                           desc=("Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
+                                 "from it (the repository and the credential come from the registry; a member can write the run directory). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
                                  "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
-                           opt("--scratch", "with --applied: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
+                           opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
+                           opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
+                           opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
                                 "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
-                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch"]),
+                                "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
+                                "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
+                                "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
+                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only."),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
-                               "It is the list that qargi local clean --applied --scratch DIR acts on.")),
+                               "It is the list that qargi local clean --applied --scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), "
+                               "and the AGE is ? when the run's started file is not a number.")),
         },
     },
     "review": {
         "summary": "Check what an agent returned and put it on a task branch",
         "scripts": ["review_check.py", "review.sh"],
         "verbs": {
-            "check": verb("Check a run: numbered patches, messages, manifest, groups", [("RUN_DIR", "dir")],
+            "check": verb("Check what a run returned: numbered patches, messages, manifest, groups", [("OUT", "dir")],
                           [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
-                          desc=("Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
-                                "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.")),
+                          desc=("OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. "
+                                "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
+                                "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. "
+                                "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
                           desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
@@ -794,9 +808,6 @@ COMMANDS = {
             "plan": verb("Print every step needed to reach the current canon (changes nothing)", [("PROJECT", "project")],
                          [KIND]),
             "apply": verb("Run the plan", [("PROJECT", "project")], [KIND, PLAN, APPROVED]),
-            "import": verb("Merge a foreign store (the old documentation store) under a role", [("PROJECT", "project")],
-                           [opt("--from", "the source store id", "STORE_ID", "store"), opt("--role", "the role to import under", "ROLE", ROLES),
-                            opt("--map", "the layout of the source", "NAME", ("docs-v0",)), PLAN, APPROVED]),
             "seed-role": verb("Write a role's baseline notes without overwriting anything", [("PROJECT", "project")],
                               [opt("--role", "the role, or shared", "ROLE", ROLES + ("shared",)), APPROVED]),
             "promote": verb("Move a role's note to shared/", [("PROJECT", "project")],
@@ -871,7 +882,9 @@ COMMANDS = {
                  "(also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes "
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
-                 "notes go to the stores named in the project's answers. It asks at a terminal; --dry-run shows the plan without one."),
+                 "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
+                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, "
+                 "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
         "scripts": ["transfer.py"],
         "usage": [("FILE", "file")],
         "opts": [opt("--only", "the parts to import (default: ask)", "PARTS", ("config", "definitions", "memories", "state", "credentials")),
@@ -1030,23 +1043,24 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier against mistakes, not a wall.",
+        "qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
-        "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "
-        "directories, the installed copy of the tool, and the render, marshal and feature directories of the state, its ref journal and its registry of local runs. "
-        "Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
+        "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
+        "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
+        "lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). "
+        "Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home "
+        "directory is not. It refuses git push, git remote changes, git -c alias.*, gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
-        "on the command line. Write the message to a file, commit with git commit -F FILE. A cd is followed only when sure; else both "
-        "directories are judged. A check over 5 seconds is refused.",
-        "The read-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through "
-        "a name the guard cannot read that could be the run's record. Nobody copies, extracts or links into the run directory.",
+        "on the command line. Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
+        "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through "
+        "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
-        "A refusal is a result: report it and the verb you needed, and do not work around it."]),
+        "A refusal is a result: report it; do not work around it."]),
     "naming": ("How resources are named", [
         "Project and role are single lower-case tokens. An instance is <project>-<role>, for example acme-build. A session is "
         "<instance>-<task-slug>, and the agent's branch is agent/<task-slug>.",
