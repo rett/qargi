@@ -155,6 +155,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   leave its part out with `--only`), instead of producing an archive that cannot be read back.
 - The export verb says so when it leaves something out: a symbolic link in the pack library (an archive holds regular files only) and a
   memory note whose name the reader would refuse (an empty or `.` segment, which used to be written and then refused on the way back).
+- A skill's script lost its executable bit on a move between hosts: the import verb wrote every file with mode 600, so a pack's executable
+  files came back as plain files and the pack no longer matched its content (it showed as `drifted` in the skills audit). The archive's
+  manifest now carries a mode for each file (`0600`, or `0700` for an executable file of the pack library), the import verb restores it,
+  and a file that differs only in that bit is a change in the plan. An archive whose manifest holds any other mode, or none (breaking: an
+  archive made by an earlier qargi has none), is refused: export it again.
 
 ### Removed
 - `qargi credential askpass FILE` (an internal verb nothing called) and the second, unreachable `version)` branch of `bin/qargi`.

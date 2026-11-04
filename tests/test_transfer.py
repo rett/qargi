@@ -403,6 +403,7 @@ class RoundTrip(Env):
         super().setUp()
         for rel, text in self.LIB.items():
             self.write(os.path.join(self.conf, rel), text)
+        os.chmod(os.path.join(self.conf, "packs/skills/example-skill/scripts/run.sh"), 0o755)
         self.write(os.path.join(self.t, "pw"), "pw-round-trip\n")
 
     def tree(self, base, sub):
@@ -433,6 +434,10 @@ class RoundTrip(Env):
             if "config" in parts:
                 self.assertEqual(self.tree(conf, "packs"), self.tree(self.conf, "packs"), only)
                 self.assertTrue(os.path.exists(os.path.join(conf, "packs/skills/example-skill/.pack.json")), only)
+                for rel in self.LIB:
+                    if rel.startswith("packs/"):
+                        self.assertEqual(os.stat(os.path.join(conf, rel)).st_mode & 0o111 != 0, os.stat(os.path.join(self.conf, rel)).st_mode & 0o111 != 0, (only, rel))
+                self.assertTrue(os.access(os.path.join(conf, "packs/skills/example-skill/scripts/run.sh"), os.X_OK), only)
                 self.assertEqual(rd(os.path.join(conf, "profiles/alpha.md")), "profile text", only)
                 self.assertEqual(sorted(jd(os.path.join(conf, "instances.json"))), ["alpha-build", "alpha-write"], only)
             else:
@@ -475,6 +480,18 @@ class RoundTrip(Env):
         self.assertIn("memories/alpha/memory/README.md", names)
         self.assertFalse([n for n in names if "odd" in n])
 
+    def test_a_script_that_lost_its_executable_bit_is_a_change_and_gets_it_back(self):
+        arc = os.path.join(self.t, "x.tar.gz")
+        self.assertEqual(self.qargi(["export", "--only", "config", "--no-encrypt", "--out", arc]).returncode, 0)
+        t, conf, state, fake = self.fresh_target()
+        script = os.path.join(conf, "packs/skills/example-skill/scripts/run.sh")
+        self.write(script, self.LIB["packs/skills/example-skill/scripts/run.sh"])
+        os.chmod(script, 0o644)
+        r = self.qargi(["import", arc, "--only", "config", "--project", "alpha", "--mode", "overwrite"], answers=["y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertTrue(os.access(script, os.X_OK))
+        self.assertEqual(os.stat(script).st_mode & 0o777, 0o700)
+
 
 class Hostile(Env):
     def archive(self, entries, manifest_files=None, fmt=1):
@@ -485,7 +502,7 @@ class Hostile(Env):
                 if isinstance(data, tarfile.TarInfo):
                     tf.addfile(data); continue
                 ti = tarfile.TarInfo(name); ti.size = len(data); tf.addfile(ti, io.BytesIO(data))
-                files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": "alpha"}
+                files[name] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": "alpha", "mode": "0600"}
             m = json.dumps({"format": fmt, "projects": ["alpha"], "components": {"config": 1}, "files": manifest_files if manifest_files is not None else files}).encode()
             ti = tarfile.TarInfo("manifest.json"); ti.size = len(m); tf.addfile(ti, io.BytesIO(m))
         p = os.path.join(self.t, "h.tar.gz")
@@ -520,6 +537,17 @@ class Hostile(Env):
         self.assertIn("not valid for its folder", r.stderr)
         r = self.dry(self.archive([("config/other/x", b"{}")]))
         self.assertIn("not valid for its folder", r.stderr)
+
+    def test_a_mode_other_than_the_two_the_export_writes_is_refused(self):
+        for mode in ("0777", "4755", 755):
+            p = self.archive([("config/packs/skills/example-skill/SKILL.md", b"x")], manifest_files={"config/packs/skills/example-skill/SKILL.md": {"sha256": hashlib.sha256(b"x").hexdigest(), "size": 1, "project": None, "mode": mode}})
+            r = self.dry(p)
+            self.assertNotEqual(r.returncode, 0, mode)
+            self.assertIn("mode that is not valid", r.stderr)
+
+    def test_a_manifest_without_modes_is_refused(self):
+        p = self.archive([("config/profiles/a.md", b"x")], manifest_files={"config/profiles/a.md": {"sha256": hashlib.sha256(b"x").hexdigest(), "size": 1, "project": "alpha"}})
+        self.assertIn("no mode", self.dry(p).stderr)
 
     def test_a_changed_file_fails_its_checksum(self):
         p = self.archive([("config/profiles/a.md", b"one")], manifest_files={"config/profiles/a.md": {"sha256": "0" * 64, "size": 3, "project": "alpha"}})
