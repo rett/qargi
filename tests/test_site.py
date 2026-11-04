@@ -283,6 +283,68 @@ def source_copy(dest, changelog=None, commands=None):
     return dest
 
 
+class SourceChild(unittest.TestCase):
+    """S5: the child that reads lib/commands.py runs the source's code, so it is boxed in."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.probe = os.path.join(self.tmp, "probe.json")
+
+    def src(self, code):
+        return source_copy(os.path.join(self.tmp, "src%d" % len(os.listdir(self.tmp))), commands=lambda t: code + "\n" + t)
+
+    def test_the_child_runs_isolated_in_an_empty_folder_with_a_small_environment(self):
+        code = ("import json, os, sys\n"
+                "json.dump({'env': sorted(os.environ), 'cwd': os.getcwd(), 'home': os.environ.get('HOME'), 'no_site': sys.flags.no_site, 'isolated': sys.flags.isolated,\n"
+                "           'dont_write': sys.flags.dont_write_bytecode, 'listing': os.listdir('.'), 'cpu': __import__('resource').getrlimit(__import__('resource').RLIMIT_CPU)[0]},\n"
+                "          open(%r, 'w'))\nopen('marker', 'w').write('x')\n" % self.probe)
+        src = self.src(code)
+        here = os.path.join(self.tmp, "here")
+        os.makedirs(here)
+        old = os.getcwd()
+        os.chdir(here)
+        try:
+            S.load_commands(src)
+        finally:
+            os.chdir(old)
+        got = json.load(open(self.probe))
+        self.assertLessEqual(set(got["env"]), {"PATH", "LANG", "HOME"})
+        self.assertEqual((got["no_site"], got["isolated"], got["dont_write"]), (1, 1, 1))
+        self.assertNotEqual(got["cwd"], here)
+        self.assertEqual(got["home"], got["cwd"])
+        self.assertEqual(got["listing"], [])
+        self.assertEqual(os.listdir(here), [])                          # nothing was written to the caller's folder
+        self.assertFalse(os.path.exists(got["cwd"]))                    # and the empty folder is gone
+        self.assertEqual(got["cpu"], S.CHILD_CPU_SECONDS)
+
+    def test_a_runaway_source_is_stopped_and_reported_as_a_refusal(self):
+        from unittest import mock
+        with mock.patch.object(S, "CHILD_CPU_SECONDS", 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("while True:\n    pass\n"))
+            self.assertIn("cannot load", str(cm.exception))
+        with mock.patch.object(S, "CHILD_MEMORY_BYTES", 256 * 1024 * 1024):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("x = bytearray(2 * 1024 ** 3)\n"))
+            self.assertIn("MemoryError", str(cm.exception))
+        with mock.patch.object(S, "CHILD_OUTPUT_BYTES", 1024 * 1024):
+            with self.assertRaises(S.Refusal):
+                S.load_commands(self.src("print('x' * (4 * 1024 * 1024))\n"))
+        with mock.patch.object(S, "CHILD_TIMEOUT", 1):
+            with self.assertRaises(S.Refusal) as cm:
+                S.load_commands(self.src("import time\ntime.sleep(30)\n"))
+            self.assertIn("timed out", str(cm.exception))
+
+    def test_the_reported_error_has_no_control_characters(self):
+        with self.assertRaises(S.Refusal) as cm:
+            S.load_commands(self.src("raise RuntimeError('\\x1b]0;owned\\x07 boom ' + 'y' * 1000)\n"))
+        msg = str(cm.exception)
+        self.assertIn("boom", msg)
+        self.assertNotRegex(msg, r"[\x00-\x08\x0b-\x1f\x7f]")
+        self.assertLess(len(msg), 600)
+
+
 class ChangelogLinks(unittest.TestCase):
     """S3: links in the changelog are validated like links in the hand pages."""
 
