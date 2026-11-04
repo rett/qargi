@@ -2906,6 +2906,11 @@ class ThirdReview(unittest.TestCase):
             "key words 20000": "cat " + " ".join("/usr/lib/x%d" % k for k in range(20000)),
             "globs in every word": "cat " + " ".join("~/.qargi/config/*/*%d" % k for k in range(2000)),
             "2000 heredocs": "\n".join("cat <<E%d\nqq\nE%d" % (k, k) for k in range(2000)),
+            "260 KB of blanks between two words": "echo a" + " " * 260000 + "b",
+            "tabs and blanks": "echo a" + " \t" * 100000 + "b",
+            "marshal handoff x12000": "marshal handoff " * 12000,
+            "project set x20000": "project set " * 20000,
+            "packs_audit.py x15000": "packs_audit.py " * 15000,
         }
 
     def test_the_hostile_commands_of_the_review_are_judged_in_under_six_seconds_by_the_hook(self):
