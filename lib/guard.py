@@ -158,7 +158,7 @@ Failure: the guard fails closed. Any unexpected exception ends in exit 2 with th
 JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
 JSON is a non-blocking error for the runtime and the action goes ahead, so agents/member.md sets `onFailure: "block"` and a `timeout` (a runtime that does not
 enforce `onFailure` lets such a failure through), and the frontmatter hooks of a project-level agent file run only after the workspace is trusted: until then the
-subagent runs without this guard."""
+member runs without this guard."""
 import collections, fnmatch, functools, json, os, re, shlex, sys, time
 
 SEPARATOR = re.compile(r"(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))")           # the separators, kept (re.split hands them back between the pieces); no \s* around them: a long run of blanks made that quadratic

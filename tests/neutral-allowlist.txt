@@ -158,11 +158,6 @@ lib/guard.py:the home: for Claude Code ~/\.claude/skills
 lib/guard.py:installed ones: \.claude/skills and \.claude/agents
 lib/guard.py:the skills there are linked from ~/\.claude/skills
 lib/guard.py:prepare` run directory, a project directory such as \.claude/skills
-lib/guard.py:Claude Code hooks documentation
-lib/guard.py:code\.claude\.com/docs/en/hooks
-lib/guard.py:Requires Claude Code v
-lib/guard.py:code\.claude\.com/docs/en/sub-agents
-lib/guard.py:then the subagent runs without this guard
 lib/guard.py:^# The directories of Claude Code
 lib/guard.py:and those of Claude Code\.
 lib/guard.py:# of Claude Code is kept here
@@ -173,6 +168,13 @@ lib/guard.py:so a \.claude/skills there is the work product
 lib/guard.py:\.claude/skills and \.claude/agents for Claude Code
 lib/guard.py:rm -rf \.claude, with \.claude/skills in it
 lib/guard.py:hook = CLAUDE_HOOK
+# lib/guard.py: the lead's own session files and the ant profiles the guard protects (paths of the runtime qargi was first built for and of its login tool)
+lib/guard.py:~/\.config/anthropic, the lead's own git configuration
+lib/guard.py:the clone and `git init` of the home directory included\) and the lead's session files
+lib/guard.py:commands/, hooks/, ~/\.claude\.json
+lib/guard.py:^LEAD_FILES = \(
+lib/guard.py:The lead's own session settings \(~/\.claude/settings\.json
+lib/guard.py:the rest of ~/\.claude \(projects
 
 # lib/agent.sh: the member's user-level directory and the plain hook test
 lib/agent.sh:for Claude Code ~/\.claude/agents
@@ -228,6 +230,9 @@ lib/commands.py:The lead is this Claude Code session
 lib/commands.py:From Claude Code run them with
 lib/commands.py:"summary": "Claude Code hooks"
 lib/commands.py:"subagent-start": verb
+# lib/commands.py: the guard topic names the lead's session files and the ant profiles it protects
+lib/commands.py:the memory tiers, ~/\.config/anthropic
+lib/commands.py:lead's git configuration and session files \(~/\.gitconfig, ~/\.claude/settings\.json\)
 lib/commands.py:"subagent-stop": verb
 lib/commands.py:cannot message a local subagent
 lib/commands.py:your Claude Code settings\.json
