@@ -1224,6 +1224,7 @@ def memory_roots(P=None, home=None):
 
 
 JOURNAL = "ref-journal.jsonl"
+REGISTRY = "local-runs.jsonl"                                # the lead's registry of local runs: which temporary directory `qargi local clean` removes for each
 
 
 _STATE = {}
@@ -1244,21 +1245,25 @@ def state_dirs(P=None, home=None):
 
 
 def journal_roots(P=None, home=None):
-    """The lead's ref journal of the state and its lock (real paths). Rotated and temporary files next to it are found by
-    journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
-    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock")}
+    """The lead's ref journal of the state and its lock, and the registry of local runs and its lock (real paths). Rotated and temporary files next to
+    them are found by journal_sibling. Trusted only as far as the state directory is: see the module docstring."""
+    return {os.path.join(st, n) for st in state_dirs(P, home) for n in (JOURNAL, JOURNAL + ".lock", REGISTRY, REGISTRY + ".lock")}
 
 
 def journal_sibling(full):
-    """The journal root when full is a file next to the journal named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
+    """The journal (or registry) root when full is a file next to it named like it (ref-journal.jsonl.1, .tmp, ...), else None."""
     for st in state_dirs():
-        if os.path.dirname(full) == st and os.path.basename(full).startswith(JOURNAL):
-            return os.path.join(st, JOURNAL)
+        for n in (JOURNAL, REGISTRY):
+            if os.path.dirname(full) == st and os.path.basename(full).startswith(n):
+                return os.path.join(st, n)
     return None
 
 
 def refusal_text(what, dest, root):
     """The sentence for a refused write: the generic one, or for the render and the marshal's records the reason."""
+    if os.path.basename(root).startswith(REGISTRY) and (root in journal_roots() or journal_sibling(root)):
+        return MarshalReason("%s on %s would change %s, the lead's registry of local runs (it says which temporary directory `qargi local clean` removes for each run); %s"
+                             % (what, dest, root, MARSHAL_NOTE))
     if root in journal_roots() or journal_sibling(root):
         return MarshalReason("%s on %s would change %s, the lead's ref journal of branch moves; %s" % (what, dest, root, MARSHAL_NOTE))
     name = os.path.basename(dest.rstrip("/"))

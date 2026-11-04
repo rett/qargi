@@ -2967,6 +2967,25 @@ class ThirdReview(unittest.TestCase):
                 f.write(text)
             self.assertEqual(bool(J.judge("echo x > f")), refused, text)
 
+    # --- finding 9: `qargi local clean` removes the temporary directory the lead's registry names for the run, so the registry is the lead's alone
+    def test_the_registry_of_local_runs_is_the_leads_alone(self):
+        reg = os.path.join(self.state, "local-runs.jsonl")
+        with open(reg, "w") as f:
+            f.write("{}\n")
+        os.symlink(reg, os.path.join(self.clone, "to-registry"))
+        cmds = ["echo '{}' >> %s" % reg, "echo x > %s" % reg, "cp /etc/hostname %s" % reg, "sed -i s/a/b/ %s" % reg, "tee -a %s < /dev/null" % reg, "rm %s" % reg, "mv %s /tmp/x" % reg,
+                "echo x > %s.1" % reg, "echo x > %s.lock" % reg, "truncate -s0 %s" % reg, ">%s" % reg, "exec 3>>%s" % reg, "echo x >> %s/to-registry" % self.clone, "jq -c . %s > %s.new" % (reg, reg),
+                "cd %s && echo x >> local-runs.jsonl" % self.state, "mv /tmp/x %s" % reg, "ln -sf /tmp/x %s" % reg]
+        for cls in (None, "read-only"):
+            wrong = [(c, r.stderr.strip()[:100]) for c, r in self.table(cmds, cls=cls) if r.returncode != 2 or "registry of local runs" not in r.stderr]
+            self.assertEqual(wrong, [], cls)
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for path in (reg, reg + ".tmp", os.path.join(self.clone, "to-registry")):
+                r = self.call(tool, {key: path})
+                self.assertEqual(r.returncode, 2, (tool, path, r.stderr))
+                self.assertIn("registry of local runs", r.stderr)
+        self.assertEqual(self.not_allowed(["cat %s" % reg, "jq -c . %s" % reg, "wc -l %s" % reg, "grep -c run %s" % reg, "jq -r .run %s | sort > %s/out/runs.txt" % (reg, self.run_dir)]), [])
+
 
 if __name__ == "__main__":
     unittest.main()
