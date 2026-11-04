@@ -16,7 +16,7 @@ Every write holds an flock on <file>.lock, re-reads the record under it, decides
 before replacing the file (write a temporary file, then os.replace). Two racing writers therefore take turns: the
 second sees the first one's record and decides again (a lost race is a refusal, never an overwrite).
 
-A lead is LIVE when now - renewed_at < ttl minutes, STALE otherwise. The ttl is the project answer marshal.ttl (minutes),
+A lead is LIVE when now - renewed_at < ttl minutes, STALE otherwise. The ttl is the project answer marshal.lease_minutes (minutes),
 passed in with --ttl.
 
 Environment (read here and nowhere else):

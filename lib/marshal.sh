@@ -14,7 +14,7 @@
 #   marshal.sh forget NAME [--project P] [--plan TOKEN --approved WORDS]   drop this machine's accepted mark of NAME (integrity on)
 # enable without options prints the plan and a plan token; applying is --plan TOKEN --approved WORDS (audit line
 # marshal:enable). The switch is the file $DA_STATE/marshal/PROJECT.enabled, written by marshal_refs.py, never a project
-# answer (project set refuses marshal.* but marshal.ttl). enable and disable, like every verb that changes a record, are
+# answer (project set refuses marshal.* but marshal.lease_minutes). enable and disable, like every verb that changes a record, are
 # refused (exit 2) inside a member run. So are key, signers add|remove, enable --integrity and resign, which are owner verbs too:
 # key init, signers add|remove and enable print a plan and a plan token first and apply with --plan TOKEN --approved WORDS (audit
 # lines marshal:key-init, marshal:signers, marshal:enable); resign prints the head, the lead and the goal of the record it would sign and
@@ -29,7 +29,7 @@
 # inside a repository or the qargi directories), which the guard refuses to a member. A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
 # session hook uses it).
 #
-# The project answer marshal.ttl is the lease length in minutes (integer, default 15): qargi project set P marshal.ttl 20.
+# The project answer marshal.lease_minutes is the lease length in minutes (a whole number from 1 to 1440, default 15): qargi project set P marshal.lease_minutes 20.
 # The identity is --as ID, else $QARGI_LEAD, else user@host (anonymous: only ever warns).
 # Tests inject the clock with QARGI_MARSHAL_NOW=<epoch seconds> (honoured by marshal_store.py only) and shorten the
 # renewer's period with QARGI_MARSHAL_RENEW_SEC=<seconds>.
@@ -54,8 +54,9 @@ command -v die >/dev/null 2>&1 || . "$MARSHAL_LIB/lib.sh"
 
 marshal_ttl() { # PROJ -> the lease length in minutes
   local t
-  t=$(jq -r '.marshal.ttl // empty' "$DA_CONF/projects/$1.json" 2>/dev/null) || t=''
-  case $t in ''|*[!0-9]*|0) t=15;; esac
+  t=$(jq -r '.marshal.lease_minutes // empty' "$DA_CONF/projects/$1.json" 2>/dev/null) || t=''
+  case $t in ''|*[!0-9]*) t=15;; esac
+  { [ ${#t} -le 4 ] && [ "$t" -ge 1 ] && [ "$t" -le 1440 ]; } || t=15   # project set and project validate refuse anything else; a hand-edited value gets the default
   echo "$t"
 }
 marshal_repo() { # PROJ -> the repository path of the answers (REPO when the caller set it)

@@ -134,8 +134,8 @@ jq -e --arg w "$WORDS" 'select(.verb == "marshal:enable" and .approved == $w)' "
 cp "$T/m/a/c/projects/app.json" "$T/app.before"
 XE a project set app marshal.backend refs; rc=$?
 [ $rc != 0 ] && cmp -s "$T/m/a/c/projects/app.json" "$T/app.before" && ok "project set: marshal.backend is not a project answer (refused, file unchanged)" || no "SPEC project set app marshal.backend refs must be refused (rc=$rc): $(out)"
-XE a project set app marshal.ttl 15; rc=$?
-[ $rc = 0 ] && ok "project set: marshal.ttl is still allowed" || no "SPEC project set marshal.ttl must stay allowed (rc=$rc): $(out)"
+XE a project set app marshal.lease_minutes 15; rc=$?
+[ $rc = 0 ] && ok "project set: marshal.lease_minutes is still allowed" || no "SPEC project set marshal.lease_minutes must stay allowed (rc=$rc): $(out)"
 en b
 
 # ============================================================ (3) the claim is one commit with record.json only

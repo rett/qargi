@@ -28,7 +28,7 @@ feat() { # name file...: branch feature/NAME from develop with one commit per fi
 }
 for n in f1 f2 f3 f5 f6 f7 f8 f9 old; do feat "$n"; done
 feat ov1 shared.txt; feat ov2 shared.txt
-ttl() { jq --argjson n "$1" '.marshal.ttl = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }  # the project answer marshal.ttl, minutes
+ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }  # the project answer marshal.lease_minutes, minutes
 rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }            # j NAME FILTER
 # M NOW ARGS...: marshal at the injected time; stdout and stderr in $T/o and $T/e, exit status returned
@@ -177,13 +177,18 @@ id=$(j f5 .lead.id)
 QARGI_MARSHAL_NOW=$t0 "$DA" marshal check f5 >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && grep -qi yours "$T/o" && [ -s "$T/e" ] && ok "identity: check as the anonymous lead is 'yours' with a stderr warning" || no "SPEC anonymous check: rc=$rc $(out)"
 
-# --- marshal.ttl changes the live/stale boundary
+# --- marshal.lease_minutes changes the live/stale boundary
 ttl 90
 M $t0 claim f6 --as alice
-M $((t0 + 60 * 60)) check f6 --as bob; [ $? = 1 ] && ok "marshal.ttl 90: still LIVE after 60 minutes" || no "SPEC ttl 90: live at 60 min (default 15 would be stale): $(out)"
-M $((t0 + 90 * 60 - 1)) check f6 --as bob; [ $? = 1 ] && ok "marshal.ttl 90: LIVE at 89m59s" || no "SPEC ttl 90 boundary: $(out)"
+M $((t0 + 60 * 60)) check f6 --as bob; [ $? = 1 ] && ok "marshal.lease_minutes 90: still LIVE after 60 minutes" || no "SPEC ttl 90: live at 60 min (default 15 would be stale): $(out)"
+M $((t0 + 90 * 60 - 1)) check f6 --as bob; [ $? = 1 ] && ok "marshal.lease_minutes 90: LIVE at 89m59s" || no "SPEC ttl 90 boundary: $(out)"
 M $((t0 + 90 * 60)) check f6 --as bob; rc=$?
-[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.ttl 90: STALE at 90 minutes" || no "SPEC ttl 90 stale: rc=$rc $(out)"
+[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.lease_minutes 90: STALE at 90 minutes" || no "SPEC ttl 90 stale: rc=$rc $(out)"
+# a hand-edited value outside 1 to 1440 is the default of 15 minutes
+ttl 99999
+feat f6b; M $t0 claim f6b --as alice
+M $((t0 + 16 * 60)) check f6b --as bob; rc=$?
+[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.lease_minutes 99999: the default 15 applies (STALE at 16 minutes)" || no "SPEC ttl 99999: rc=$rc $(out)"
 ttl 1
 
 # --- hostile text is data: stored verbatim, printed fenced, never executed

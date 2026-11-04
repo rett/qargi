@@ -121,10 +121,6 @@ def workspaces_of(profile):
     return (login or conf), conf, login
 
 
-def live_workspace(profile):
-    return workspaces_of(profile)[0]
-
-
 def check(project, quiet=False):
     b = binding(project)
     if not b:

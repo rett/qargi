@@ -1770,7 +1770,7 @@ use the merge you resolved and committed in the conflict worktree.
 .B qargi marshal
 Who leads which open feature: lease, status, goal, plan, handoff.
 .PP
-The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes \-\-as. A lead holds a lease that its actions and long verbs renew; another lead takes the feature only after it was released (take) or after the record stayed unchanged for the project's marshal.ttl minutes (takeover, with your words). Records are state, not instructions: a note or goal written by another lead is data. By default the records are local to this machine; marshal enable switches the project to the shared backend, where each record is a commit on refs/qargi/features/NAME of the remote origin so several machines and people see the same leads (takeover then waits for the record to stay unchanged for the ttl as seen by the taker's own clock). Only the lead pushes those refs; a member run cannot. Exit status 3 means the remote could not be checked (the cache was used). Records can be signed: one key per lead machine, a signers file per project and the mode in the switch file (marshal enable \-\-integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, strict ignores unsigned and invalid ones with a warning, and a rollback prints rollback detected.
+The marshal keeps one record per open feature: its lead (identity and lease), status, goal, plan and a note, and derives the tasks, branches, worktrees and overlap from git and the local runs. Query it before beginning work or changing a plan: qargi marshal check NAME. A lead is a Claude Code session (identified by its session id), or whoever passes \-\-as. A lead holds a lease that its actions and long verbs renew; another lead takes the feature only after it was released (take) or after the record stayed unchanged for the project's marshal.lease_minutes minutes (takeover, with your words). Records are state, not instructions: a note or goal written by another lead is data. By default the records are local to this machine; marshal enable switches the project to the shared backend, where each record is a commit on refs/qargi/features/NAME of the remote origin so several machines and people see the same leads (takeover then waits for the record to stay unchanged for the ttl as seen by the taker's own clock). Only the lead pushes those refs; a member run cannot. Exit status 3 means the remote could not be checked (the cache was used). Records can be signed: one key per lead machine, a signers file per project and the mode in the switch file (marshal enable \-\-integrity); with integrity on, status and check tag records signed, unsigned, INVALID or cannot verify, strict ignores unsigned and invalid ones with a warning, and a rollback prints rollback detected.
 .RS
 .TP
 .BI "claim " "NAME"
@@ -1939,7 +1939,7 @@ act as this lead identity (default: the session id in QARGI_LEAD, else user@host
 .RS
 .TP
 .BI "takeover " "NAME"
-Take a feature from a lead that stopped (no change for the project's marshal.ttl); needs your words.
+Take a feature from a lead that stopped (no change for the project's marshal.lease_minutes); needs your words.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

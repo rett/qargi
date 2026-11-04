@@ -324,7 +324,7 @@ def cmd_search(args):
         if a == F("kind"): kind = args[i + 1]; i += 2
         elif a == F("role"): role = args[i + 1]; i += 2
         elif a == F("online"): online = True; i += 1
-        elif a.startswith("-"): die("unknown option %s (qargi help discover search)" % a)
+        elif a.startswith("-"): die("unknown option %s (qargi help discover search)" % a, 2)
         else: query.append(a); i += 1
     if kind and kind not in KINDS:
         die("--kind is one of: %s" % ", ".join(KINDS))
@@ -361,7 +361,7 @@ def cmd_recommend(args):
     while i < len(args):
         a = args[i]
         if a == F("role"): role = args[i + 1]; i += 2
-        elif a.startswith("-"): die("unknown option %s (qargi help discover recommend)" % a)
+        elif a.startswith("-"): die("unknown option %s (qargi help discover recommend)" % a, 2)
         else: project = a; i += 1
     project = project or infer_project()
     if not project or project not in project_names():
@@ -485,7 +485,7 @@ def cmd_install(args):
         a = args[i]
         if a in (F("scope"), F("project"), F("role"), F("compatible")): opts[a[2:]] = args[i + 1]; i += 2
         elif a == F("dry-run"): dry = True; i += 1
-        elif a.startswith("-"): die("unknown option %s (qargi help discover install)" % a)
+        elif a.startswith("-"): die("unknown option %s (qargi help discover install)" % a, 2)
         elif ident is None: ident = a; i += 1
         else: die("one ID at a time")
     if not ident:

@@ -15,7 +15,7 @@ case $verb in
   check)
     PROJECT=${1:-}; shift || true; ALLOW=''
     [ "${1:-}" = --allow-write-token ] && ALLOW=1
-    valid_project "$PROJECT" || die "usage: cred.sh check PROJECT [--allow-write-token]"
+    valid_project "$PROJECT" || usage_die "usage: cred.sh check PROJECT [--allow-write-token]"
     f=$(cred_file "$PROJECT"); [ -n "$f" ] || die "the project has no repo.credential_file: nothing to check (public repositories need none)"
     url=$(jq -r .repo.url "$DA_CONF/projects/$PROJECT.json")
     case $url in https://*) ;; *) die "a credential file is for https repository URLs";; esac
@@ -45,7 +45,7 @@ case $verb in
     # tool, attached to the lead's deployment, and recorded in the project's answers. Without --approved it
     # only checks and prints the plan.
     kind=${1:-}; PROJECT=${2:-}; shift 2 || true
-    [ "$kind" = lead-push ] && valid_project "$PROJECT" || die "usage: cred.sh setup lead-push PROJECT [--from-file F] [--allow-more-repos] --asked \"...\" [--plan T --approved \"...\"]"
+    [ "$kind" = lead-push ] && valid_project "$PROJECT" || usage_die "usage: cred.sh setup lead-push PROJECT [--from-file F] [--allow-more-repos] --asked \"...\" [--plan T --approved \"...\"]"
     FROM='' MORE='' ASKED='' APPROVED='' PLAN_ARG=''
     while [ $# -gt 0 ]; do
       case $1 in
@@ -54,7 +54,7 @@ case $verb in
         --asked) need_val "$1" $#; ASKED=$2; shift 2;;
         --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
         --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
-        *) die "unknown option $1";;
+        *) usage_die "unknown option $1";;
       esac
     done
     export PLAN_ARG ASKED
@@ -126,5 +126,5 @@ case $verb in
     fi
     echo "done: token file $dest, vault $vid, grant recorded (lead.push: agent branches and pull requests; merges asked of you; no releases through this tool)"
     echo "next: qargi packs apply $PROJECT-lead (adds the GitHub tool to the lead agent) and qargi instances refresh-prompt $PROJECT-lead (adds its Push section); each shows a plan first";;
-  *) die "usage: cred.sh check PROJECT | setup lead-push PROJECT";;
+  *) usage_die "usage: cred.sh check PROJECT | setup lead-push PROJECT";;
 esac

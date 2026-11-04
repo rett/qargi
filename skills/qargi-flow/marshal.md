@@ -10,10 +10,10 @@ machines and developers. `qargi help marshal` has every verb.
   (status is one of planned, active, blocked, verifying). With the flow wiring, `feature start` records you as lead and
   `feature finish` marks the record finished (`qargi marshal finish NAME` does it by hand). The SessionStart hook lists the open
   features when a session begins.
-- **Lease**: it lasts `marshal.ttl` minutes (default 15; `qargi project set PROJECT marshal.ttl N`), and each of your marshal
+- **Lease**: it lasts `marshal.lease_minutes` minutes (default 15; `qargi project set PROJECT marshal.lease_minutes N`), and each of your marshal
   actions renews it (`qargi marshal renew NAME` by hand). `feature verify` and `feature finish` renew it for their whole run, and
   `feature merge|sync|verify|finish` and `local prepare --base feature/X` refuse while another live lead holds the feature;
-  `feature status|list` show the lead.
+  `feature status|list` show the lead. Waiting on a run longer than the lease: raise it first (1 to 1440).
 - **Hand over**: `qargi marshal release NAME --note "what the next lead must know"`; the next session runs
   `qargi marshal take NAME`. To start a fresh session from stored state use `qargi marshal handoff` and `/qargi-session`.
 - **A lead that went quiet**: once the lease ran out, `qargi marshal takeover NAME --approved "<the user's words>"`. It needs the
