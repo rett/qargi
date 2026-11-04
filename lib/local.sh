@@ -50,6 +50,15 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
   fi
 }
 
+# merged_tip REPO TIP -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
+# other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A word that is not one never reaches git, so an
+# option-like text cannot become an option of for-each-ref; the value is given in the --contains=VALUE form and the ref patterns after --.
+merged_tip() {
+  case $2 in ''|*[!0-9a-f]*) return 2;; esac
+  [ "${#2}" = 40 ] || [ "${#2}" = 64 ] || return 2
+  [ -n "$(git -C "$1" for-each-ref --contains="$2" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
+}
+
 # journaled REPO NAME OLD NEW -> 0 when the lead's ref journal ($DA_STATE/ref-journal.jsonl) explains the change of the local branch
 # NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch): NEW is reachable from OLD by
 # following entries of this repository and ref with epoch >= JSTART, each from its old value to its new one. Entries that start
@@ -385,8 +394,10 @@ WRAP
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
         read -r _ab atip _ < "$RUN/applied"
         rp=$(cat "$RUN/repo.path" 2>/dev/null || true)
-        if [ -n "$rp" ] && [ -z "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then
-          die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+        if [ -n "$rp" ]; then
+          mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
+          [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
+          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
         fi
       fi
     fi
@@ -446,7 +457,7 @@ WRAP
       if [ -f "$d/applied" ]; then
         ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(cat "$d/repo.path" 2>/dev/null || true)
         if [ -z "$rp" ]; then mg='?'
-        elif [ -n "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then mg=yes; fi
+        else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
     done;;

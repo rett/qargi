@@ -266,6 +266,27 @@ git -C "$T/r6" tag t-evidence "$SA"
 out=$(./bin/qargi local clean --applied --scratch "$T/ls2" 2>&1); rca=$?
 [ $rca = 1 ] && [ -d "$LD" ] && grep -q "kept $LD: .*refs of the repository changed" <<<"$out" && ok "an applied and merged run whose refs changed is kept as evidence" || no "changed refs (rc=$rca): $out"
 git -C "$T/r6" tag -d t-evidence >/dev/null
+# the second word of RUN/applied (a member can write it) is a full hex commit name or nothing: an option-like word never reaches git
+mkdir -p "$T/ls4" "$T/gl"; LX=$(lrun lx "$T/ls4")
+cat > "$T/gl/git" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/gl/argv"
+exec $(command -v git) "\$@"
+SH
+chmod 755 "$T/gl/git"
+for w in --merged=HEAD --no-contains --help abc1234 "$(printf 'a%.0s' $(seq 1 41))" 'x;y'; do
+  printf 'agent/lx %s now\n' "$w" > "$LX/applied"; : > "$T/gl/argv"
+  out=$(PATH="$T/gl:$PATH" ./bin/qargi local list --scratch "$T/ls4" 2>&1); rcl=$?
+  { [ $rcl = 0 ] && [ "$(awk '$2=="lx"{print $4,$5}' <<<"$out")" = "yes ?" ] && ! grep -q -- "$w" "$T/gl/argv"; } \
+    && ok "list: an applied word '$w' that is no full commit name is not passed to git (merged shows ?)" || no "list '$w' (rc=$rcl): $out; git saw: $(cat "$T/gl/argv")"
+  : > "$T/gl/argv"
+  out=$(PATH="$T/gl:$PATH" ./bin/qargi local clean "$LX" 2>&1); rcc=$?
+  { [ $rcc != 0 ] && [ -d "$LX" ] && grep -q 'second word' <<<"$out" && ! grep -q -- "$w" "$T/gl/argv"; } \
+    && ok "clean refuses it with a message and keeps the run ('$w')" || no "clean '$w' (rc=$rcc): $out; git saw: $(cat "$T/gl/argv")"
+done
+SX=$(applied "$LX" agent/lx); git -C "$T/r6" update-ref refs/heads/feature/lx "$SX"
+out=$(./bin/qargi local list --scratch "$T/ls4" 2>&1)
+[ "$(awk '$2=="lx"{print $4,$5}' <<<"$out")" = "yes yes" ] && ok "a full commit name still shows merged" || no "list after fix: $out"
 # a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
 git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
 mkdir -p "$T/c/projects"
