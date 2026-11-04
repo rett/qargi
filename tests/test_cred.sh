@@ -43,4 +43,11 @@ grep -q "$TOKEN" "$T/argv.log" && no "THE TOKEN IS IN AN ARGUMENT" || ok "the to
 grep -rq "$TOKEN" "$T/s" && no "THE TOKEN IS IN THE STATE DIRECTORY (tracker or audit log)" || ok "the token is in neither the tracker nor the audit log"
 grep -q "credential file tok" "$T/s/audit.log" && ok "the audit log names the credential file, not its content" || no "audit entry missing"
 QARGI_DRY_RUN=1 ./bin/qargi start demo-build --asked "test" 2>/dev/null | grep -q "$TOKEN" && no "the dry run printed the token" || ok "the dry run masks the token"
+
+# --- the askpass helper of git_auth_env: prints the token for git and leaves no file in the temporary directory
+mkdir -p "$T/tmp"
+out=$(TMPDIR=$T/tmp bash -c '. lib/lib.sh; ( git_auth_env "$1"; "$GIT_ASKPASS" "Password for x:" )' _ "$T/secrets/tok" 2>&1)
+[ "$out" = "$TOKEN" ] && ok "git_auth_env: the helper prints the token from the credential file" || no "askpass output: $out"
+[ -z "$(ls -A "$T/tmp")" ] && ok "git_auth_env leaves no file in the temporary directory" || no "left in the temporary directory: $(ls "$T/tmp")"
+./bin/qargi credential askpass "$T/secrets/tok" >/dev/null 2>&1 && no "the internal askpass verb is still there" || ok "there is no askpass verb"
 exit $fail

@@ -11,7 +11,8 @@
   `qargi feature verify <name>` passed the whole suite).
 - A release is `qargi release start <version>`; the `VERSION` and
   `CHANGELOG.md` update is its first commit, then `qargi release verify
-  <version>` and `qargi release finish <version>`. Fixes to a released version
+  <version>`, `qargi release push <version>` (the branch and a pull request, so CI
+  runs on what will be released) and `qargi release finish <version>`. Fixes to a released version
   use `qargi release start <version> --hotfix`.
 - Pushing the tag publishes the GitHub release: `.github/workflows/release.yml` takes the version's section of `CHANGELOG.md` as the notes and attaches the
   source archive of the tag and its checksum. Only a tag on `master`'s history counts, and an existing release is left alone. A tag pushed before the

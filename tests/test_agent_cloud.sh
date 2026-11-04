@@ -12,6 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 SRC=$PWD
 T=$(mktemp -d); fail=0
+mkdir -p "$T/tmp"; export TMPDIR=$T/tmp   # the exec-copy check below looks here, wherever the caller's TMPDIR points
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s
 unset QARGI_PROJECT
@@ -127,7 +128,7 @@ P.record_verification("ovext", {c: {"hash": h, "by": "attest", "at": "2026-11-02
 PY
 [ "$(cl "$SHIP" build --project zeta)" = "zeta-worker fake-cloud-m h build" ] && ok "verified extension: the base runs for the project that enabled it, on the model and effort the library adapter resolved" || no "extension verified: $(cl "$SHIP" build --project zeta)"
 "$SHIP" agent for build --surface cloud --project eta >/dev/null 2>&1; [ $? = 2 ] && ok "and a project that did not enable it is still refused" || no "eta after verification: $(cl "$SHIP" build --project eta)"
-leftover=''; for d in "${TMPDIR:-/tmp}"/qargi-exec.*; do [ ! -e "$d" ] || leftover=$d; done
+leftover=''; for d in "$TMPDIR"/qargi-exec.*; do [ ! -e "$d" ] || leftover=$d; done
 [ -z "$leftover" ] && ok "the adapter ran as a private copy that was removed" || no "an exec copy was left: $leftover"
 
 # --- opt-in profiles

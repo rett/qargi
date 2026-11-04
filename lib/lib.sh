@@ -280,11 +280,10 @@ cred_file() { # project -> expanded credential file path, or empty
 }
 
 # git environment that authenticates over https with the token and nothing else.
-# Sets GIT_ASKPASS to a helper that reads the file at call time (the token is never in argv).
+# Sets GIT_ASKPASS to lib/askpass.sh, which reads the file named by QARGI_ASKPASS_FILE at call time (the token is never in argv, and no
+# helper file is made, so there is nothing to clean up).
 git_auth_env() { # credential-file -> exports for the caller's subshell
-  ASKPASS=$(mktemp "${TMPDIR:-/tmp}/qargi-askpass.XXXXXX")
-  printf '#!/bin/sh\ncat %s\n' "$(printf '%q' "$1")" > "$ASKPASS"; chmod 700 "$ASKPASS"
-  export GIT_ASKPASS=$ASKPASS GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
+  export QARGI_ASKPASS_FILE=$1 GIT_ASKPASS=$QARGI_TOOL/lib/askpass.sh GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
 }
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
