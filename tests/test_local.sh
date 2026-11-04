@@ -261,6 +261,17 @@ out=$(mk4 w5); [ $rcc = 1 ] && grep -qE '^ +drifted +mine ' "$T/chk" && [ ! -s "
 echo tamper >> "$T/s/render/alpha/claude-code/.claude/skills/s-w/SKILL.md"
 out=$(mk4 w6); grep -q '^WARNING: the Claude Code render of project alpha' "$T/err" && ! grep -q 'drifted' "$T/err" && ok "a tampered render still warns, without the skills section" || no "tampered render: $(cat "$T/err")"
 rm -rf "$T/s/render/alpha/claude-code" "$T/r4/.claude"
+# a local runtime that is set but does not resolve is refused (the contract addenda would be left out); none set, or no project, is not
+setmodels() { jq --argjson m "$1" '.models = $m' "$T/c/projects/alpha.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/alpha.json"; }
+setmodels '{"provider":{"local":"nosuchrt","cloud":"claude-platform"}}'
+nrun=$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l); nreg=$(wc -l < "$T/s/local-runs.jsonl")
+out=$(mk4 gh1); rcg=$?; out="$out$(cat "$T/err")"
+{ [ $rcg != 0 ] && grep -q 'nosuchrt' <<<"$out" && grep -q 'contract addenda' <<<"$out" && [ "$(find "$T" -maxdepth 1 -name 'qargi.*' | wc -l)" = "$nrun" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = "$nreg" ]; } \
+  && ok "a local provider that is set but does not resolve: prepare fails with the reason, and makes no run" || no "unresolved provider (rc=$rcg): $out"
+setmodels '{"provider":{"cloud":"claude-platform"}}'
+out=$(mk4 gh2); rcg=$?; GH2=$(runof <<<"$out")
+{ [ $rcg = 0 ] && [ "$(ls "$GH2/contract")" = "$(printf 'contract.md\noutput-format.md')" ]; } && ok "no local provider set: prepare goes on with the core's contract alone" || no "no local provider (rc=$rcg): $out"
+setmodels '{"provider":"claude-code"}'
 
 # prepare --profile: the resolver is asked before any clone; the run records the profile
 Q=./bin/qargi

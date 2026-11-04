@@ -212,8 +212,10 @@ case $verb in
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
-    if [ -n "$CPJ" ] && CPROV=$(project_provider "$CPJ" local 2>/dev/null </dev/null); then
-      ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+    if [ -n "$CPJ" ]; then
+      # a provider that is set but does not resolve is refused here, not left out of the contract
+      CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
+      [ -z "$CPROV" ] || ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
     fi
     LEAD=''
     case $BASE in

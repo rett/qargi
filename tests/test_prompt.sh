@@ -68,9 +68,13 @@ grep -qi "detached" provision/templates/cloud-preamble.md && no "the preamble re
 for k in 'mktemp -d -p "$TMP"' 'TMPDIR="$TMP"' 'interpret-trailers --parse' 'pgrep -f' '"always" gates' "profile's rules for examples"; do
   grep -qF -- "$k" <<<"$RB" && ok "the build prompt holds: $k" || no "the build prompt lacks: $k"
 done
-# no project, a project without a cloud runtime, one whose runtime does not resolve, an unknown one: no addendum, and no default runtime
+# no project, a project without a cloud runtime, an unknown one: no addendum, and no default runtime. A project whose cloud runtime is set
+# but does not resolve is not the same as none: the prompt fails with the reason instead of leaving the addendum out
 mkproj nocloud '{"local":"claude-code"}'; mkproj ghost '{"cloud":"nosuchrt"}'
-for pr in "" nocloud ghost nosuchproj; do
+out=$(bash -c ". '$PWD/lib/lib.sh'; agent_prompt build ghost" 2>&1 >/dev/null); rc=$?
+{ [ $rc != 0 ] && grep -q "nosuchrt" <<<"$out" && grep -q "cloud provider does not resolve" <<<"$out"; } && ok "a project whose cloud runtime is set but does not resolve: the prompt fails, naming the runtime" || no "ghost: rc=$rc $out"
+bash -c ". '$PWD/lib/lib.sh'; prompt_stamp build ghost" >/dev/null 2>&1 && no "a stamp was made for a prompt that failed to render" || ok "and no stamp is made for it"
+for pr in "" nocloud nosuchproj; do
   out=$(bash -c ". '$PWD/lib/lib.sh'; agent_prompt build $pr" 2>/dev/null)
   grep -qF "# Output files" <<<"$out" && ! grep -qF "# In a cloud run" <<<"$out" && ok "project '${pr:-none}': the contract without the cloud-only part" || no "project '${pr:-none}': $(grep -c 'cloud run' <<<"$out")"
 done

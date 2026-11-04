@@ -85,6 +85,15 @@ miss=''; for s in $CURRENT; do
   while IFS= read -r f; do cmp -s "$ROOT/skills/$f" "$S/$f" || miss="$miss $f"; done < <(cd "$ROOT/skills" && find "$s" -type f)
 done
 [ "$rc" = 0 ] && [ -z "$miss" ] && ok "install --user --copy copies every file of every skill, reference files included" || no "user copy: rc=$rc missing or different:$miss"
+# the copied tool is complete: every directory a modified copy needs (TOOL_DIRS) is there, and the installed command runs from it
+D=$HOME/.local/share/qargi; miss=''
+for d in $TOOL_DIRS; do [ ! -e "$ROOT/$d" ] || [ -e "$D/$d" ] || miss="$miss $d"; done
+[ -z "$miss" ] && ok "install --user --copy copies every entry of TOOL_DIRS (missing:${miss:- none})" || no "the copy lacks:$miss"
+[ -f "$D/canon/CANON.md" ] && [ -f "$D/canon/layout.json" ] && [ -f "$D/catalog/tools.json" ] && ok "the copy has canon/ and catalog/" || no "canon/ or catalog/ is not in $D"
+out=$("$HOME/.local/bin/qargi" help 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q 'discover' <<<"$out"; } && ok "the installed command runs from the copy: qargi help" || no "installed qargi help (rc=$rc): $out"
+out=$("$HOME/.local/bin/qargi" discover search pdf 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q 'skill-pdf' <<<"$out"; } && ok "and discover finds the catalog entries of catalog/tools.json" || no "installed discover (rc=$rc): $out"
 P2=$T/proj2; mkdir -p "$P2"; git init -q "$P2"
 bash "$INSTALL" --project "$P2" --copy >/dev/null 2>&1; rc=$?
 miss=''; for r in $refs; do cmp -s "$ROOT/skills/$r" "$P2/.claude/skills/$r" || miss="$miss $r"; done
