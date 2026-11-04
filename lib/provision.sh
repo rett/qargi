@@ -197,6 +197,17 @@ plan_hash() {
     [ -z "$FORCE" ] || printf 'force\n'; } | plan_token
 }
 
+# The project's bootstrap command (qargi env show), printed as text for the owner to paste into the environment's setup script. It is
+# only printed: the setup script lives with the cloud runtime, runs there before a session, and nothing here runs the command.
+setup_note() {
+  local cmd
+  [ -f "$PCFG" ] && [ "$ROLE" != lead ] || return 0
+  cmd=$(python3 -I "$here/env.py" show --project "$PROJECT" --json 2>/dev/null </dev/null | jq -r '.commands.bootstrap_command.command // empty' 2>/dev/null) || return 0
+  [ -n "$cmd" ] || return 0
+  echo "suggested setup script for the cloud environment (qargi does not run it; paste it into the environment's setup script yourself, after reading qargi env plan --project $PROJECT):"
+  echo "    $cmd"
+}
+
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
 # recorded in the project's stored answers so `qargi canon` finds them.
 canonise() {
@@ -220,6 +231,7 @@ case $verb in
     store_note memory "$PROJECT-memory" "$MEMID"
     store_note reference "$PROJECT-reference" "$REFID"
     echo "plan token: $(plan_hash)   (apply with: --plan <token> --approved \"...\")"
+    setup_note
     if [ -n "$FORCE" ]; then
       echo "--force: the server's copy of any resource changed outside this config will be overwritten with this config"
       (cd "$W" && ant apply --dry-run -v --force --lock-file "$LOCK" "${FILES[@]}")
