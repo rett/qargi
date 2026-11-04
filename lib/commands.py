@@ -106,7 +106,8 @@ COMMANDS = {
                          opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
-                              "is created: say where it goes with git. The files mention no tool of yours."),
+                              "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
+                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
                         examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
@@ -122,14 +123,16 @@ COMMANDS = {
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
                                  "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
-                                 "cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
+                                 "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
-                                "are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
+                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited). "
+                                "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
