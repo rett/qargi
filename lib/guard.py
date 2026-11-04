@@ -198,12 +198,18 @@ FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fp
 MAX_COMMAND = 262144                                         # a longer command cannot be checked in the time the hook has, so it is refused
 MAX_NESTED = 40                                              # substitutions inside substitutions, at most; the texts of nested ones hold each other, so the cost grows with the square of the depth
 GLOB_ENTRIES = 4000                                          # directory entries read, in all, to expand the globs of one word (the key checks); a pattern that needs more is refused
-BUDGET = 8.0                                                 # seconds of checking before a call is refused: the hook is killed at its timeout, and a hook that times out does not block
+BUDGET = 5.0                                                 # seconds of checking before a call is refused, counted from the start of judge() and checked in every loop (tick): the hook is killed at its timeout, and a hook that times out does not block
+MAX_BRACE = 256                                              # words one brace expression may stand for; more is refused, not cut (the words past the cut would be unchecked)
+MAX_BRACE_WORK = 20000                                       # brace words, in all, that one call may expand
 _DEADLINE = [None]
 
 
 class TooSlow(Exception):
     """The checks of one call took longer than BUDGET: the call is refused, as a hook that is killed would let it through."""
+
+
+class TooManyBraces(TooSlow):
+    """A brace expression that stands for more than MAX_BRACE words, or braces that together stand for more than MAX_BRACE_WORK: the call is refused."""
 
 
 class TooNested(TooSlow):
@@ -226,8 +232,7 @@ def blocked(command, depth=0):
         if seg in seen:
             continue
         seen.add(seg)
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
+        toks, i = parsed(seg)
         if i >= len(toks):
             continue
         prog = os.path.basename(toks[i])
@@ -279,6 +284,13 @@ def skip_wrappers(toks):
         else:
             break
     return i
+
+
+@functools.cache
+def parsed(seg):
+    """(the words of a segment, the index of its program): cmd_tokens and skip_wrappers, once per text (every check asks). The list is shared: not to be changed."""
+    toks = list(_cmd_tokens(seg))
+    return toks, skip_wrappers(toks)
 
 
 def cmd_tokens(seg):
@@ -504,8 +516,7 @@ def walk(command, here):
         for n, piece in enumerate(ps):
             tick()
             yield n, texts, piece.text, dirs
-            toks = cmd_tokens(piece.text)
-            i = skip_wrappers(toks)
+            toks, i = parsed(piece.text)
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -624,6 +635,7 @@ def run_refusal(full, here):
     return None
 
 
+@functools.cache
 def run_class(run):
     try:
         with open(os.path.join(run, "class")) as f:
@@ -632,6 +644,7 @@ def run_class(run):
         return ""
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def ability_of(run):
     try:
         with open(os.path.join(run, "ability")) as f:
@@ -651,10 +664,22 @@ def expand_path(p):
                   os.path.expanduser(p))
 
 
+@functools.cache
+def real_dir(d):
+    return os.path.realpath(d)
+
+
 @functools.cache                                     # the files do not change while one command is judged
 def resolve(here, p):
-    """The real path of p (with ~ and environment variables expanded) as seen from the directory here."""
-    return os.path.realpath(os.path.join(here, expand_path(p)))
+    """The real path of p (with ~ and environment variables expanded) as seen from the directory here. The directory part is resolved once for all the names
+    in it: a name below it that is no link is the directory's real path and the name."""
+    q = expand_path(p)
+    head, _, base = q.rpartition("/")
+    if base not in ("", ".", ".."):
+        full = os.path.join(real_dir(os.path.join(here, head) if head else here if not q.startswith("/") else "/"), base)
+        if not os.path.islink(full):
+            return full
+    return os.path.realpath(os.path.join(here, q))
 
 
 def redirect_dest(toks, k):
@@ -699,6 +724,8 @@ def write_targets(toks, i):
     target left in the segment. Sources that a command removes (mv, rm) are targets too."""
     targets, gitdir = [], None
     for k, t in enumerate(toks):                       # redirections anywhere in the segment
+        if not k % 64:
+            tick()
         dest = redirect_dest(toks, k)
         if dest is None:
             dest = attached_dest(t)
@@ -987,8 +1014,7 @@ def review_refusal(call):
         return None
     seen, places, runs_git = set(), [], False
     for n, texts, seg, dirs in walk(call.command, cwd):
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
+        toks, i = parsed(seg)
         prog = os.path.basename(toks[i]) if i < len(toks) else ""
         for here in dirs:                                    # a cd that may not happen leaves several: each is judged
             if (seg, here) in seen:                          # the same text from the same directory has been judged
@@ -1018,6 +1044,7 @@ def review_segment(toks, i, here, text=""):
             return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
     ro = reading(run_dir(here))
     for what, dest in write_targets(toks, i):
+        tick()
         why = unreadable_target(what, dest, here)
         if why:
             return why
@@ -1317,17 +1344,30 @@ def glob_paths(pattern, limit=200):
     return found
 
 
-def brace_expand(word, limit=64):
-    """The words a simple shell brace expression stands for (a{b,c}d -> abd, acd); one level per pass, at most limit words."""
+_BRACE_WORK = [0]
+
+
+@functools.cache
+def brace_expand(word, limit=MAX_BRACE):
+    """The words a simple shell brace expression stands for (a{b,c}d -> abd, acd); one level per pass. A word that stands for more than limit words is
+    refused (TooManyBraces), and so are braces that together stand for more than MAX_BRACE_WORK: cutting the list would leave the words past it unchecked."""
+    if "{" not in word:
+        return (word,)
     words, out = [word], []
-    while words and len(out) < limit:
+    while words:
+        tick()
         w = words.pop()
         m = re.search(r"\{([^{}]*,[^{}]*)\}", w)
         if not m:
             out.append(w)
         else:
             words += [w[:m.start()] + alt + w[m.end():] for alt in m.group(1).split(",")]
-    return out
+        if len(words) + len(out) > limit:
+            raise TooManyBraces()
+    _BRACE_WORK[0] += len(out)
+    if _BRACE_WORK[0] > MAX_BRACE_WORK:
+        raise TooManyBraces()
+    return tuple(out)
 
 
 @functools.cache                                     # the files do not change while one command is judged
@@ -1335,6 +1375,7 @@ def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
     is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
     `<path` redirection are read as their path too."""
+    tick()
     cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
         cands.add(word[2:])
@@ -1346,7 +1387,7 @@ def key_named(word, here, recursive):
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
             paths = glob_paths(os.path.join(here, b)) if re.search(r"[*?\[]", b) else []
-            for full in [os.path.realpath(os.path.join(here, b))] + [os.path.realpath(x) for x in paths]:
+            for full in [resolve(here, b)] + [os.path.realpath(x) for x in paths]:
                 if is_key(full) or (recursive and holds_key(full)):
                     return b
     return None
@@ -1364,6 +1405,7 @@ def key_read(toks, i, here):
     recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
     recursive = recursive or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest))
     for t in toks[:i] if prog in KEY_METADATA else toks:
+        tick()
         named = key_named(t, here, recursive)
         if named:
             return key_refusal_text(prog, named)
@@ -1441,8 +1483,7 @@ def bash_skill_refusal(command, here, depth):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
     for n, texts, seg, dirs in walk(command, here):
-        toks = cmd_tokens(seg)
-        i = skip_wrappers(toks)
+        toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
@@ -1529,14 +1570,21 @@ def unreadable_project_verb(command):
         for form in forms:
             words = lex(form)
             names = [re.sub(r"[)`;&]+$", "", w) for w, _ in words]
+            expands, xargs = any(e for _, e in words), False
             for k, w in enumerate(names):
-                if os.path.basename(w) not in ("project", "project.sh"):
-                    continue
-                rest = [(n, e) for n, (_, e) in zip(names[k + 1:], words[k + 1:]) if not n.startswith("-")]
-                named = [n for n, _ in rest[:3] if n in PROJECT_VERBS]
-                if (named or (rest and rest[0][1])) and (any(e for _, e in words) or any(os.path.basename(n) == "xargs" for n in names[:k])):
-                    return ("qargi project %s with a variable, a substitution, a brace, a glob or xargs in the command takes words the guard cannot read, and project set of a models answer, "
-                            "project init and project link are not available to an agent" % (named[0] if named else "(a verb the shell builds)"))
+                tick()
+                if os.path.basename(w) in ("project", "project.sh"):
+                    rest = []                                # the first three words after it that are no option
+                    for j in range(k + 1, len(names)):
+                        if not names[j].startswith("-"):
+                            rest.append((names[j], words[j][1]))
+                            if len(rest) == 3:
+                                break
+                    named = [n for n, _ in rest if n in PROJECT_VERBS]
+                    if (named or (rest and rest[0][1])) and (expands or xargs):
+                        return ("qargi project %s with a variable, a substitution, a brace, a glob or xargs in the command takes words the guard cannot read, and project set of a models answer, "
+                                "project init and project link are not available to an agent" % (named[0] if named else "(a verb the shell builds)"))
+                xargs = xargs or os.path.basename(w) == "xargs"
     return None
 
 
@@ -1689,6 +1737,7 @@ def protected_write(toks, i, here):
         for t in rest:
             cands += [(prog, c) for c in {t, t.split("=", 1)[-1], t[2:] if t.startswith("-") and not t.startswith("--") else t}]
     for what, dest in cands:
+        tick()
         if not dest or dest.startswith("-") and dest != "-":
             continue
         why = glob_root(what, dest, here)
@@ -1907,6 +1956,13 @@ def hook_of(name):
 
 # --- the decisions
 
+def clear_caches():
+    """Forget what was read from the files and the environment: a call is judged from one reading of them (a hook is one call; a test judges many)."""
+    _BRACE_WORK[0] = 0
+    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand):
+        f.cache_clear()
+
+
 def judge(call):
     """The refusal (a sentence for the member, ending in what to do instead) a Call earns, or None. The neutral core."""
     if call.kind == "shell" and "\0" in (call.command or ""):
@@ -1914,6 +1970,7 @@ def judge(call):
     if call.kind == "shell" and len(call.command or "") > MAX_COMMAND:
         return ("qargi guard: a command of more than %d characters cannot be checked in the time the hook has, so it is not available to an agent. "
                 "Write the text to a file with the Write tool, or run it in parts." % MAX_COMMAND)
+    clear_caches()
     _DEADLINE[0] = time.monotonic() + BUDGET
     try:
         return decide_call(call)
@@ -1923,6 +1980,9 @@ def judge(call):
     except TooBroad:
         return ("qargi guard: a glob in this command names too many directories to check (more than %d entries to read), so it is not available to an agent. "
                 "Write a narrower path." % GLOB_ENTRIES)
+    except TooManyBraces:
+        return ("qargi guard: a brace expression in this command stands for more than %d words (or the braces of the command for more than %d), which cannot be checked one by one "
+                "in the time the hook has, so it is not available to an agent. Write the paths out or run it in parts." % (MAX_BRACE, MAX_BRACE_WORK))
     except TooManyDirs:
         return ("qargi guard: this command changes directory in more than %d ways the guard cannot tell apart (a cd inside ( ), a substitution, a condition or a pipe may "
                 "or may not change where the next command runs), so it is not available to an agent. Write it in parts." % MAX_DIRS)

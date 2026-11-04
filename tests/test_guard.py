@@ -2749,6 +2749,7 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(self.not_refused(cmds), [])
         for c in ("exec 3<%s/credentials/other; cat <&3", "<%s/credentials/other cat", "ls %s/credentials/marshal_ed25519", "< %s/credentials/other cat"):
             self.assertEqual(self.not_allowed([c % self.conf]), [], c)
+
     # --- finding 2: a cd is followed only when it is a plain command of the top level
     MAYBE_CD = ("(cd D); %s", "if false; then cd D; fi; %s", ": $(cd D); %s", "echo `cd D`; %s", "false && cd D; %s", "true || cd D; %s", "cd D & %s", "cd D | cat; %s",
                 "for i in 1; do cd D; done; %s", "while false; do cd D; done; %s", "case x in y) cd D;; esac; %s", "f() { cd D; }; %s", "cd /nonexistent-zz; %s", "(cd /tmp; cd D) ; %s",
@@ -2885,6 +2886,86 @@ class ThirdReview(unittest.TestCase):
                 r = self.call(tool, {key: os.path.join(self.run_dir, name)}, None, None)
                 self.assertEqual(r.returncode, want, (tool, name, r.stderr))
 
+    # --- finding 7: the time the hook has (it is killed at 20 seconds and a hook that is killed does not block)
+    def hostile(self):
+        K = 200_000
+        return {
+            "qargi project x12000 then a write": "qargi project " * 12000 + "; echo x > ../../ability",
+            "qargi project x3000": "qargi project " * 3000,
+            "brace words 5000": " ".join("cp a{b,c}{d,e}{f,g}{h,i}{j,k}{l,m}%d" % k for k in range(5000)),
+            "empty braces x13000": "cat " + " ".join("{,}{,}{,}{,}{,}{,}" for k in range(13000)),
+            "empty braces, each different, x12000": "cat " + " ".join("{,}{,}{,}{,}{,}%d" % k for k in range(12000)),
+            "unique touch 20k": ";".join("touch f%d" % k for k in range(K // 10)),
+            "unique redirection 20k": ";".join("echo>g%d" % k for k in range(K // 10)),
+            "a; x 100k": "a;" * (K // 2),
+            "$(a) x 20k": "echo " + "$(a)" * (K // 4),
+            "unclosed $( x 40 and text": "$(" * 40 + "a " * (K // 2 - 50),
+            "redirection >a x 20k": "echo " + " >a" * (K // 4),
+            "sh -c chain 5000": ";".join("sh -c x%d" % k for k in range(5000)),
+            "cd chain 10000": ";".join("cd d%d" % k for k in range(10000)) + "; echo x > a",
+            "one word 200 KB": "echo " + "a" * K,
+            "key words 20000": "cat " + " ".join("/usr/lib/x%d" % k for k in range(20000)),
+            "globs in every word": "cat " + " ".join("~/.qargi/config/*/*%d" % k for k in range(2000)),
+            "2000 heredocs": "\n".join("cat <<E%d\nqq\nE%d" % (k, k) for k in range(2000)),
+        }
+
+    def test_the_hostile_commands_of_the_review_are_judged_in_under_six_seconds_by_the_hook(self):
+        """Whole hook processes, as Claude Code runs them: a verdict, allowed or refused, in under 6 seconds (BUDGET, checked in every loop, is 5), so the
+        hook never reaches its timeout of 20 seconds. The loops were checked once per segment, and a word, a brace or a project word could cost 25 seconds."""
+        from concurrent.futures import ThreadPoolExecutor
+        inputs = self.hostile()
+
+        def run(c):
+            t0 = time.monotonic()
+            r = self.call("Bash", {"command": c})
+            return r, time.monotonic() - t0
+        with ThreadPoolExecutor(4) as ex:
+            got = dict(zip(inputs, ex.map(run, inputs.values())))
+        slow = {n: round(t, 1) for n, (r, t) in got.items() if t >= 6.0}
+        self.assertEqual(slow, {})
+        for name in ("qargi project x12000 then a write", "brace words 5000", "empty braces, each different, x12000", "cd chain 10000"):
+            self.assertEqual(got[name][0].returncode, 2, (name, got[name][0].stderr[:200]))
+        self.assertIn("ability", got["qargi project x12000 then a write"][0].stderr)
+
+    def test_a_brace_list_is_checked_whole_or_refused_never_cut(self):
+        """Only the first 64 words of a brace expression were looked at: the signing key placed before the 64th was not."""
+        names = ",".join("a%d" % k for k in range(100))
+        key = os.path.join(self.conf, "credentials")
+        cmds = ["cat %s/{marshal_ed25519,%s}" % (key, names), "cat %s/{%s,marshal_ed25519}" % (key, names), "cat %s/{%s,marshal_ed25519,%s}" % (key, names, names),
+                "cat %s/{%s}" % (key, ",".join("x%d" % k for k in range(300))), "cat {%s}{%s}" % (names, names)]
+        self.assertEqual(self.not_refused(cmds), [])
+        self.assertEqual(self.not_allowed(["echo x > %s/{a,b,c}/x" % self.clone, "touch %s/{a,b}{1,2,3}" % self.clone, "cat %s/{credentials/other,packs}" % self.conf,
+                                           "cat %s/{other,a1,a2}" % key]), [])
+
+    def test_a_loop_inside_one_command_is_cut_short_by_the_time_budget(self):
+        """The budget is read inside the loops (the words of a segment, its write targets, the project words, the brace words), not once per segment: with
+        0.2 seconds left, each of these single segments is cut short by its own loop and not by the next check made after it."""
+        J = _Judge(LIBDIR, "guard_budget", self.clone)
+        G = J.m
+        words = ["/usr/lib/x%d" % k for k in range(15000)]
+        loops = {"key words": lambda: G.key_read(["cat"] + words, 0, self.clone), "write targets": lambda: G.protected_write(["touch"] + words, 0, self.clone),
+                 "review of the targets": lambda: G.review_segment(["touch"] + words, 0, self.clone, "touch"),
+                 "project words": lambda: G.unreadable_project_verb("qargi project " * 12000),
+                 "brace words": lambda: [G.brace_expand("a{b,c}{d,e}%d" % k) for k in range(100000)]}
+        for name, run in loops.items():
+            getattr(G, "clear_caches", lambda: None)()
+            G._DEADLINE[0] = time.monotonic() + 0.2
+            t0 = time.perf_counter()
+            try:
+                with self.assertRaises(G.TooSlow, msg=name):
+                    run()
+            finally:
+                G._DEADLINE[0] = None
+            self.assertLess(time.perf_counter() - t0, 1.5, name)
+
+    def test_what_is_read_from_the_files_is_read_again_for_each_call(self):
+        """The reading of the run's files is kept for the call that made it, not for the next: a judge that outlives one call sees the file as it is then."""
+        J = _Judge(LIBDIR, "guard_calls", os.path.join(self.clone, "sub"))
+        ability = os.path.join(self.run_dir, "ability")
+        for text, refused in (("review\n", True), ("build\n", False), ("review\n", True)):
+            with open(ability, "w") as f:
+                f.write(text)
+            self.assertEqual(bool(J.judge("echo x > f")), refused, text)
 
 
 if __name__ == "__main__":
