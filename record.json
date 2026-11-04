@@ -4,18 +4,13 @@
  "goal": "",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-03T23:49:20Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-04T08:45:23Z",
- "finished_at": null,
+ "finished_at": "2026-11-04T08:51:47Z",
  "updated_by": "rett@arc",
- "rev": 19,
- "updated_at": "2026-11-04T08:45:23Z",
+ "rev": 20,
+ "updated_at": "2026-11-04T08:51:47Z",
  "feature": "retire-render",
  "project": "qargi"
 }
