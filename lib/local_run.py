@@ -48,6 +48,7 @@ import time
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import provider as P  # noqa: E402
+import paths  # noqa: E402
 
 _print = print
 
@@ -263,19 +264,33 @@ def find_command(runtime, exe, run, keep):
     return path, "shipped with %s" % runtime
 
 
+def registry_tmp(run):
+    """The run's temporary directory as the lead's registry ($QARGI_STATE/local-runs.jsonl, written by prepare) names it for this run
+    directory, else "". The run's own tmpdir file is never read: a member can write the run directory, and that file could name another
+    run's directory (the same rule as `local clean`). The last line for the run wins; only an absolute path is taken."""
+    real, found = os.path.realpath(run), ""
+    try:
+        with open(os.path.join(paths.state(), "local-runs.jsonl"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) \
+                        and os.path.realpath(e["run"]) == real and os.path.isabs(e["tmpdir"]):
+                    found = e["tmpdir"].rstrip("/") or ""
+    except OSError:
+        pass
+    return found
+
+
 def build(run, project, runtime, cls, task_file, model, effort, timeout, keep):
     """Everything a run needs, as a dict; Stop for a refusal. Nothing is written."""
     if not os.path.isfile(os.path.join(run, "refs.before")) or not os.path.isdir(os.path.join(run, "clone")):
         fail("run needs a RUN dir made by qargi local prepare", 1)
     out = os.path.join(run, "out")
     clone = os.path.join(run, "clone")
-    tmp = ""
-    try:
-        with open(os.path.join(run, "tmpdir"), encoding="utf-8") as f:
-            tmp = f.read().strip()
-    except OSError:
-        pass
-    tmp = tmp or os.path.join(run, "tmp")
+    tmp = registry_tmp(run) or os.path.join(run, "tmp")
     comp = P.compose(runtime, "local", project)          # the definition the project's extensions complete, not the runtime's alone
     doc = comp["definition"]
     disp = doc.get("dispatch")
