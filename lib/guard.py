@@ -12,17 +12,24 @@ when the hook command names no provider; `--provider NAME` reads it from the bar
 (the shipped ones and the library's), and a provider whose definition has no usable hook data refuses every call, in the plain way (exit 2,
 reason on stderr), since it has no other. A refusal, a failure and an unknown class are given back in the provider's way.
 
-Publishing: git push, gh, ssh, scp, sftp, and changing a remote.
+Publishing: git push, send-pack, http-push and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
+push), the programs git-push, git-send-pack, git-http-push and git-receive-pack, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
+changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias or
+runs a program (alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand, include.path, diff.external, credential.* ...), `--exec-path=DIR`, and the variables
+GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
 
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
 under the protected ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
 and falls back on `qargi local prepare`, which writes the task's ability to RUN/ability; the guard refuses any write to
 that file and to the rest of the run's record (RUN_CONTROL), so a member cannot change the ability it is judged by. When the class says read-only, or
-the nearest run directory above the call's cwd or file path says review, the guard also refuses an edit outside RUN/out (the report
-and the manifest) and a Bash command that writes into the clone: a redirection into it, a command that creates,
-changes or removes files there, or a git command that changes the work tree or the history.
+the nearest run directory above the call's cwd or file path says review, the guard also refuses an edit outside OUT (RUN/out: the report
+and the manifest) and TMP (the temporary directory the lead's registry names for the run, and RUN/tmp), and a Bash command that writes anywhere else: a
+redirection, a command that creates, changes or removes files, or a git command that changes the work tree or the history (bisect, symbolic-ref with a value,
+reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
+  - the lead's runs and agents: qargi local run|prepare|verify|clean (`local clean --discard` removes another run with no token), agent remove, project new,
+    team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
@@ -48,14 +55,20 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the home: for Claude Code ~/.claude/skills and ~/.claude/agents; project_dir, found in any path outside the run's clone, a project's
     installed ones: .claude/skills and .claude/agents), ~/.claude/plugins, and the installed copy of the tool (the tool_root in install.json:
     the skills there are linked from ~/.claude/skills), and the render/ directory of the state (the renders a runtime loads
-    its skills, tools and members from: what `packs apply --target RUNTIME` makes). Inside the clone, found from the nearest `qargi local
+    its skills, tools and members from: what `packs apply --target RUNTIME` makes), the providers/ directory of the state, the memory tiers (<root>/memory and
+    ~/.qargi/memory), ~/.config/anthropic, the lead's own git configuration (~/.gitconfig, ~/.config/git, ~/.git: `git config --global|--system`, `--file` outside
+    the clone and `git init` of the home directory included) and the lead's session files (lead_files: ~/.claude/settings.json, settings.local.json, CLAUDE.md,
+    commands/, hooks/, ~/.claude.json, the shell startup files such as ~/.bashrc, ~/.ssh/config and authorized_keys), for every member whatever its class. Inside the clone, found from the nearest `qargi local
     prepare` run directory, a project directory such as .claude/skills is the work product and stays writable; the path is resolved first, so a
     symbolic link in the clone that leads to a protected root is still denied. Edit, Write and
     NotebookEdit are decided by the resolved path (symbolic links followed). A Bash command is decided by a heuristic:
     a command that names a protected path as the destination of a write construct: a redirection (also `>file`
     without a space), tee, cp, mv, rm, ln, install, rsync, touch, mkdir, chmod, chown, truncate, shred, patch,
-    `sed|perl -i`, `dd of=`, a git command that changes the tree, find with -delete or -exec, and any argument of
-    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
+    `sed|perl -i`, `awk -i inplace`, ex, vi, vim, ed, rename, sqlite3, setfacl, mkfifo, `dd of=`, a git command that changes the tree (`--work-tree` and GIT_WORK_TREE
+    name the place as -C does), find with -delete or -exec (rooted above a protected directory too when it removes), the command after find -exec|-execdir|-ok|-okdir
+    and parallel (a command of its own), ln of a protected location or a directory above one, and any argument of
+    tar, unzip, curl or wget. `~`, $HOME, $QARGI_CONF, ${NAME:-x} and ${NAME%/} (by the value of NAME when the environment has it, else a write through it is
+    refused) and cd are followed (a brace word is judged as the words it stands for; $OUT is the run's out
     directory when nothing in the command could set it; a cd only as the next paragraph says). What an agent edits in its own clone, the
     repository's `skills/` directory included, and in its run directories stays allowed: protection is by the
     resolved path relative to the roots above, never by the word `skills`.
@@ -96,8 +109,9 @@ Signing key: the one credential a member may not even read is the lead's signing
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
   globs and symbolic links are resolved, in a `<` redirection (also one before the program, `exec 3<key`, or with no program at all), an `--opt=path` and in the text of a `-c` program. A directory that holds the key
-  is refused to the recursive readers (cp, rsync, tar, grep, rg, zip, find with an action) and to Grep. ls, stat and test only
-  look at it and stay allowed; the other credentials stay readable.
+  is refused as a source to the recursive readers (cp, rsync, tar, zip, ln, mv), not as the place they write to (`cp src ~/`, `tar -C ~ -x`); grep, rg, ag, find
+  with an action and Grep are refused on the credentials directory itself only (a search that starts above it, `grep -r TODO ~`, is no read of the key; one that
+  names the key is). ls, stat and test only look at it and stay allowed; the other credentials stay readable.
   pushd and popd are followed like cd (a directory stack), a text scan reads `dir//key` and `dir/./key` as `dir/key`, and ln, mv and cp -s|-l
   are refused on a credentials directory (or a directory above one) as the recursive readers are, since a link made in the same command
   is a name the guard cannot resolve yet.
@@ -108,7 +122,7 @@ Not covered: code that writes or reads a file itself (python -c, perl -e, node -
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
-Reading a Bash command (passes(), segments()): the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
+Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
@@ -117,7 +131,8 @@ patterns, function definitions) and redirections written before it are skipped; 
 A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. No file is guessed to be run later.
 Where the shell is: the line is cut more than once (the substitutions cut out, left whole, and each on its own), and every cut starts in the directory of
 the call. A plain `cd DIR` at the top level (and pushd, popd, and a cd after an && whose chain is cds alone) changes the directory of what follows when DIR
-is there; any other cd (inside ( ), a substitution, if/for/while/case, braces, a function, after || or `cmd &&`, before a pipe or &, in quoted text, a
+is there; a cd to a word a variable, a substitution or a glob builds, with a CDPATH, or `env -C DIR` (and `builtin cd`) leaves the directory unknown (UNKNOWN_DIR),
+and a write to a path that is not absolute is refused there; any other cd (inside ( ), a substitution, if/for/while/case, braces, a function, after || or `cmd &&`, before a pipe or &, in quoted text, a
 here-document or a comment, an option, two directories, a DIR that is not there yet) leaves the old directory among those the shell may be in, `cd -` is
 any directory the line has been in, and each command is judged from each of them (walk(); more than MAX_DIRS at once is refused).
 A NUL byte, a command over 262144 characters, checks that take over BUDGET seconds (read inside the loops over words, targets, braces and project words, not
@@ -1752,7 +1767,7 @@ def key_refusal_text(prog, word, tool=None):
     return MarshalReason("%s on %s would read the marshal's signing key (credentials/%s*); %s" % (tool or prog or "a redirection", word, KEY_PREFIX, KEY_NOTE))
 
 
-KEY_SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "find"}   # these walk down from the path they are given, so only a path at or below a credentials directory reaches the key
+KEY_SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "find"}   # these walk down from the path they are given, so only the credentials directory itself reaches the key (one above it, the home directory, is a search of everything else)
 
 
 def operand_positions(words):
@@ -1797,7 +1812,7 @@ def key_read(toks, i, here):
     """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
     (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
     in front of them is. A recursive reader (cp, rsync, tar, zip ...) also reads a directory that holds the key, but not the one it only writes into
-    (`cp src/a.go ~/`); grep and find read it only when the path they walk down from is at or below a credentials directory."""
+    (`cp src/a.go ~/`); grep and find read it only when the path they walk down from is the credentials directory."""
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
     mode = False
     if prog in KEY_SEARCHERS:
