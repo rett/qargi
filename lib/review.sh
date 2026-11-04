@@ -29,6 +29,7 @@ case $verb in
     [ -f "$RUN/refs.before" ] && [ -d "$RUN/out" ] || die "apply needs a RUN dir made by qargi local prepare"
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $RUN/out/report.md; nothing was applied"
+    [ ! -L "$RUN/applied" ] && { [ ! -e "$RUN/applied" ] || [ -f "$RUN/applied" ]; } || die "$RUN/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$RUN/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$RUN/applied")): qargi feature merge, then qargi local clean $RUN"
     lib=$(dirname "$0")
     python3 -I "$lib/review_check.py" "$RUN/out" || die "review check refuses $RUN/out: nothing was applied"
@@ -72,11 +73,15 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$BRANCH" "" "$tip" review:apply
     echo "applied $(echo "$patches" | wc -l) patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
     g log --reverse --format='  %h %s' "$sha..$tip"
-    printf '%s %s %s\n' "$BRANCH" "$tip" "$(now)" > "$RUN/applied"
+    # The run directory is a member's to write: what is recorded there is written in the lead's state directory and renamed into place (mv -T replaces a link
+    # that stands in the name, it never writes through it).
+    rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the application in $RUN: $BRANCH was made at ${tip:0:12}; write 'agent/... TIP NOW' to $RUN/applied by hand"
+    printf '%s %s %s\n' "$BRANCH" "$tip" "$(now)" > "$rec" && mv -T -- "$rec" "$RUN/applied" || { rm -f "$rec"; die "could not write $RUN/applied ($BRANCH was made at ${tip:0:12})"; }
     # the branch is a change `local verify` would report: record it in the snapshot the run is compared against
     if grep -q '^local ' "$RUN/refs.before"; then
-      { { grep '^local ' "$RUN/refs.before"; echo "local refs/heads/$BRANCH $tip"; } | sort; grep -v '^local ' "$RUN/refs.before" || true; } > "$RUN/refs.before.new" \
-        && mv "$RUN/refs.before.new" "$RUN/refs.before"
+      rec=$(mktemp "$DA_STATE/apply-rec.XXXXXX") || die "could not record the branch in the snapshot of $RUN"
+      { { grep '^local ' "$RUN/refs.before"; echo "local refs/heads/$BRANCH $tip"; } | sort; grep -v '^local ' "$RUN/refs.before" || true; } > "$rec" \
+        && mv -T -- "$rec" "$RUN/refs.before" || { rm -f "$rec"; die "could not update the snapshot $RUN/refs.before"; }
     fi
     echo "next:"
     echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
