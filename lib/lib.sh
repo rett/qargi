@@ -116,6 +116,16 @@ project_provider() { # project-or-empty [surface]
   printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
   echo "$p"
 }
+# project_provider_if_set PROJECT SURFACE: like project_provider for a caller that adds something only when a provider is set. No project, a project
+# that is not stored, or no provider for the surface: prints nothing and succeeds ("no addendum"). A provider that is set and does not resolve (an unknown
+# runtime, a family that names none or several, answers that cannot be read): prints the reason on stderr and fails, so the caller refuses instead of
+# leaving out what the runtime would have added.
+project_provider_if_set() { # project-or-empty surface
+  local p
+  p=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" of-if-set "${1:-}" --conf "$DA_CONF" --surface "$2" </dev/null) || return $?
+  [ -z "$p" ] || printf '%s' "$p" | grep -Eq '^[a-z][a-z0-9-]*$' || { echo "qargi: models.provider '$p' is not a provider name (lower-case letters, digits and '-')" >&2; return 1; }
+  [ -z "$p" ] || echo "$p"
+}
 # barrier_guard SURFACE PROJECT-or-empty: a read-only role is about to run on SURFACE. Exits 2 with the reason and the
 # `qargi provider accept` command when the project's provider has no read-only barrier there and the project did not accept
 # that; a partial barrier passes and prints its note on stderr. (lib/provider.py require-barrier decides.)
@@ -297,20 +307,21 @@ tools_off() {
   if [ -f "$2" ] && jq -e --arg r "$1" '.roles[$r].tools_off' "$2" >/dev/null 2>&1; then jq -r --arg r "$1" '.roles[$r].tools_off | join(" ")' "$2"; else echo "$d"; fi
 }
 
-# The directory that holds provision/, contract/ and skills/: the checkout, or lib/ itself in an installed copy.
+# The directory that holds provision/, contract/ and skills/: the one above lib/, in the checkout and in an installed copy alike.
 prompt_root() {
-  local lib; lib=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-  if [ -d "$lib/../provision/templates" ]; then echo "$lib/.."; else echo "$lib"; fi
+  echo "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 }
 
 # cloud_contract [PROJECT]: the member contract of a cloud prompt: contract.md and output-format.md, then the contract addenda of the runtime the
 # project uses on the cloud surface (resources.contract_addenda of its definition: its own rules about its surface, which the neutral contract
-# does not name). Without a project, or when none resolves a cloud runtime, there is no addendum: no runtime is ever assumed. A runtime whose
-# addenda cannot be read (a file missing, not text, a library pack changed since it was sealed) fails the prompt rather than leaving them out.
+# does not name). Without a project, or for a project with no cloud provider set, there is no addendum: no runtime is ever assumed. A project whose
+# cloud provider is set but does not resolve, and a runtime whose addenda cannot be read (a file missing, not text, a library pack changed since it was
+# sealed), fail the prompt rather than leaving them out.
 cloud_contract() { # [project]
   local ct prov; ct=$(prompt_root)/contract
   cat "$ct/contract.md" "$ct/output-format.md" || return 1
-  prov=$(project_provider "${1:-}" cloud 2>/dev/null) || return 0
+  prov=$(project_provider_if_set "${1:-}" cloud) || { echo "qargi: the prompt of a cloud agent of project ${1:-} cannot be made: its cloud provider does not resolve, so the contract addenda of its runtime would be left out" >&2; return 1; }
+  [ -n "$prov" ] || return 0
   python3 -I "$(dirname "${BASH_SOURCE[0]}")/provider.py" addenda "$prov" cloud
 }
 

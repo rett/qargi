@@ -188,9 +188,9 @@ COMMANDS = {
             "for": verb("Print how to dispatch a role: the base member, the model alias and the effort", [("ROLE", "workrole")],
                         [opt("--project", "the project whose members serve and whose profiles apply (default: the project of the current directory)", "PROJECT", "project"),
                          opt("--profile", "a profile of the role's class (a shipped one such as auditor, advisor or researcher, or the project's own; default: the role's own)", "NAME"),
-                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered cloud instance instead of a member", "SURFACE", ("local", "cloud")),
+                         opt("--surface", "local (default) or cloud: with cloud, resolve the registered base instance (<project>-worker or -reviewer) instead of a member; needs --project", "SURFACE", ("local", "cloud")),
                          opt("--opt-in", "cloud only: confirm an opt-in profile such as researcher"),
-                         opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, legacy, model, effort)")],
+                         opt("--json", "machine-readable: role, class, profile, base, member, tier, model alias, model id, effort (cloud: instance, base, model, effort, profile, class)")],
                         desc="The base member is the one the profile names (worker for build, write and test, reviewer for review) when the project has registered it; no other member serves, and without it the verb says which base to add. A read-only role never resolves to a member that can write. Plain output is one line: MEMBER MODEL EFFORT PROFILE; pass MODEL and EFFORT to the Agent tool with the member as subagent_type."),
         },
     },
@@ -651,7 +651,7 @@ COMMANDS = {
         "opts": [ASKED],
     },
     "local": {
-        "summary": "Prepare, verify and clean a local run that has no way to push",
+        "summary": "Prepare, verify, list and clean a local run that has no way to push",
         "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
@@ -669,8 +669,10 @@ COMMANDS = {
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
-                            desc=("Prints RUN, ROLE, CLASS, CLONE, OUT, TMP, GIT and BASE_SHA, then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA, CONTRACT: the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md) to copy into the task. A caller that evals the output must stop at the blank line.\n"
+                            desc=("Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless --profile), MEMBER, MODEL and EFFORT (only with --profile), CLONE, OUT, TMP, GIT, "
+                                  "BASE_SHA and CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md). "
+                                  "Then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK-BLOCK MEMORY block. "
+                                  "A caller that evals the output must stop at the blank line.\n"
                                   "When the project (found by matching the repository against the stored answers) has a Claude Code render "
                                   "(packs apply --target claude-code) that has drifted, prepare also prints a WARNING block to stderr with the "
                                   "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
@@ -679,13 +681,21 @@ COMMANDS = {
                            desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
                                  "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
-            "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir")],
-                          [opt("--discard", "also clean a run whose output holds no manifest, or whose commits were never merged (dropped on purpose)")],
+            "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
+                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
+                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
+                           opt("--scratch", "with --applied: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
-                                "sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no "
-                                "manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
+                                "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
+                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
-                                "finished work is not deleted by mistake.")),
+                                "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
+                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard."),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch"]),
+            "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
+                         [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
+                         desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
+                               "It is the list that qargi local clean --applied --scratch DIR acts on.")),
         },
     },
     "review": {

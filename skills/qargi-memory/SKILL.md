@@ -27,9 +27,9 @@ note format, indexes and hygiene, and exits 1 on any FAIL.
 |---|---|---|
 | check | `qargi canon check PROJECT [--kind K]` | Conformance and version report. |
 | plan | `qargi canon plan PROJECT [--kind K]` | Every step to set up an empty store at the current canon. A store at an older canon is `unknown`: plan nothing, bring it in by hand or `canon import`. Changes nothing. |
-| apply | `qargi canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: renames keep identity and history, conflicts go to `/_conflicts/<date>/`, the marker is written last, a re-run resumes. Show the plan first. |
+| apply | `qargi canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: creates the missing files and updates the README's role list, the marker is written last, a re-run resumes. Show the plan first. |
 
-A store at an older version gets a plan that only adds what a note lacks and never edits a body; a new canon version means a
+A store at the current canon is kept current (missing indexes, the marker's roles); a new canon version means a
 new migration (`canon/CANON.md` § Changing the canon). The other verbs (`seed-role`, `import`, `promote`, `audit`, and
 `qargi memory split|copy|merge`) and how a new project's stores are seeded: load `curate.md`.
 

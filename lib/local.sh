@@ -5,7 +5,9 @@
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
 #   local.sh verify RUN_DIR
-#   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory
+#   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
+#   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
+#   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
@@ -210,8 +212,10 @@ case $verb in
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
-    if [ -n "$CPJ" ] && CPROV=$(project_provider "$CPJ" local 2>/dev/null </dev/null); then
-      ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
+    if [ -n "$CPJ" ]; then
+      # a provider that is set but does not resolve is refused here, not left out of the contract
+      CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
+      [ -z "$CPROV" ] || ADDENDA=$(python3 -I "$(dirname "$0")/provider.py" addenda "$CPROV" local </dev/null) || die "could not read the contract addenda of the local runtime $CPROV (qargi provider check $CPROV)"
     fi
     LEAD=''
     case $BASE in
@@ -277,7 +281,6 @@ WRAP
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
-    echo "ABILITY=$ABILITY"
     echo "ROLE=$ABILITY"
     echo "CLASS=$CLASS"
     echo "PROFILE=$PROFILE"
@@ -288,6 +291,7 @@ WRAP
     echo "GIT=$RUN/git"
     BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     echo "BASE_SHA=$BSHA"
+    echo "CONTRACT=$RUN/contract"
     echo
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
@@ -328,14 +332,46 @@ WRAP
       exit 2
     fi;;
   clean)
-    # after the series is collected and verified: remove the run (clone, bare copy, output, wrapper) and its temporary directory
-    RUN=${1:-}; shift || true; DISCARD=''
-    [ "${1:-}" != --discard ] || DISCARD=1
+    # after the series is collected and verified: remove the run (clone, bare copy, output, wrapper) and its temporary directory.
+    #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
+    #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
+    CLEAN_RUN='' DISCARD='' ALL='' SCR=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --discard) DISCARD=1; shift;;
+        --applied) ALL=1; shift;;
+        --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";;
+        -*) die "clean: unknown option $1";;
+        *) [ -z "$CLEAN_RUN" ] || die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
+      esac
+    done
+    if [ -n "$ALL" ]; then
+      [ -z "$CLEAN_RUN$DISCARD" ] || die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
+      [ -d "$SCR" ] || die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
+      scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0
+      for d in "$scr"/qargi.??????; do
+        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] || continue   # a directory prepare made, directly under DIR
+        if [ ! -f "$d/applied" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
+        if [ ! -f "$d/repo.path" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        echo "$why"; done_n=$((done_n + 1))
+      done
+      echo "cleaned $done_n run(s), kept $kept_n"
+      [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
+      exit 0
+    fi
+    [ -z "$SCR" ] || die "clean: --scratch is for --applied"
+    RUN=$CLEAN_RUN
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || die "clean needs a RUN dir made by prepare"
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
-    "$0" verify "$RUN" >/dev/null 2>&1 || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+    # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
+    if ! vout=$("$0" verify "$RUN" 2>&1 </dev/null); then
+      [ -n "$DISCARD" ] || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
+      echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
+      sed 's/^/  /' <<<"$vout" >&2
+    fi
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
     nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
@@ -350,10 +386,45 @@ WRAP
         fi
       fi
     fi
+    # the run's temporary directory is removed only when it is where prepare puts one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm
+    # (QARGI_RUN_TMP, when prepare was told to use another parent); a recorded path anywhere else is left alone
     t=$(cat "$RUN/tmpdir" 2>/dev/null || true)
-    case $t in */qargi-run.??????|"$RUN"/tmp) [ ! -d "$t" ] || rm -rf -- "$t";; esac
+    case $t in
+      "$RUN"/tmp) ;;
+      */qargi-run.??????) if [ "$(dirname "$t")" != /dev/shm ] && [ "$(dirname "$t")" != "${QARGI_RUN_TMP:-/dev/shm}" ]; then echo "qargi: note: left $t alone: it is not under /dev/shm or QARGI_RUN_TMP" >&2; t=''; fi;;
+      *) t='';;
+    esac
+    [ -z "$t" ] || [ -L "$t" ] || [ ! -d "$t" ] || rm -rf -- "$t"
     rm -rf -- "$RUN"
     echo "cleaned $RUN${t:+ and $t}";;
+  list)
+    # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
+    SCR=''
+    while [ $# -gt 0 ]; do
+      case $1 in --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";; *) die "list: unknown option $1";; esac
+    done
+    runs=()
+    if [ -n "$SCR" ]; then
+      [ -d "$SCR" ] || die "list: no such directory $SCR"
+      for d in "$(readlink -f "$SCR")"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && runs+=("$d"); done
+    elif [ -f "$DA_STATE/local-runs.jsonl" ]; then
+      while read -r d; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done < <(jq -r '.run // empty' "$DA_STATE/local-runs.jsonl" 2>/dev/null | awk '!seen[$0]++')
+    fi
+    printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
+    nowe=$(date +%s)
+    for d in ${runs[@]+"${runs[@]}"}; do
+      sl=$(jq -r --arg r "$d" 'select(.run == $r) | .slug' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
+      [ -n "$sl" ] || sl=$(git -C "$d/clone" branch --show-current 2>/dev/null | sed 's|^agent/||')
+      st=$(cat "$d/started" 2>/dev/null || stat -c %Y "$d/refs.before" 2>/dev/null || echo "$nowe"); age=$((nowe - st))
+      if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
+      ap=no; mg=no
+      if [ -f "$d/applied" ]; then
+        ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(cat "$d/repo.path" 2>/dev/null || true)
+        if [ -z "$rp" ]; then mg='?'
+        elif [ -n "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then mg=yes; fi
+      fi
+      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(cat "$d/ability" 2>/dev/null || echo '?')" "${sl:--}" "$ag" "$ap" "$mg" "$d"
+    done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
     RUN=${1:-}; shift || true
@@ -363,5 +434,5 @@ WRAP
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
-  *) die "usage: local.sh prepare|verify|clean|run ...";;
+  *) die "usage: local.sh prepare|verify|clean|list|run ...";;
 esac

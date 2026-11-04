@@ -175,7 +175,8 @@ refusal changes nothing.
    Per task: `qargi review check RUN` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi review prune [--yes]` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
-   merging any of them.
+   merging any of them. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
+   applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
@@ -365,7 +366,7 @@ Search is not a role: mapping the repository and finding call sites is done by a
 
 The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
 
-Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
+Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the base it would use; it exits 1 when the base is not registered and 2 when the provider's cloud override capabilities are not verified (a role agent is never chosen for you: start a session on it by its name). A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
 
 ## Providers and runtimes
 
