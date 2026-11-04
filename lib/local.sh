@@ -200,6 +200,8 @@ case $verb in
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
       case $URL in https://*) ;; *) die "--repo-url must be an https URL";; esac
+      uauth=${URL#https://}; uauth=${uauth%%[/?#]*}
+      case $uauth in *@*) die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
       [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
     else
       [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
@@ -215,6 +217,7 @@ case $verb in
     fi
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
+    SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
     MEMBER='' MODEL='' EFFORT=''
     if [ -n "$PROFILE" ]; then
@@ -258,6 +261,7 @@ case $verb in
     # a private temporary directory for the run's test sandboxes, on tmpfs when there is one; `clean` removes it, so a run
     # leaves nothing behind in /dev/shm and parallel runs never touch each other's files
     SHM=${QARGI_RUN_TMP:-/dev/shm}   # QARGI_RUN_TMP moves it (the tests do), so a test never leaves anything in /dev/shm
+    while [ "${SHM%/}" != "$SHM" ] && [ "$SHM" != / ]; do SHM=${SHM%/}; done   # clean compares the parent as written
     if [ -d "$SHM" ] && [ -w "$SHM" ]; then TMPD=$(mktemp -d "$SHM/qargi-run.XXXXXX"); else TMPD=$RUN/tmp; mkdir -p "$TMPD"; fi
     printf '%s\n' "$TMPD" > "$RUN/tmpdir"
     printf '%s\n' "$ABILITY" > "$RUN/ability"
@@ -377,7 +381,8 @@ WRAP
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         [ -f "$d/verified" ] || [ -f "$d/applied" ] || continue                                      # a run still in progress is never stale
-        st=$(cat "$d/started" 2>/dev/null || true); case $st in ''|*[!0-9]*) st=$(stat -c %Y "$d/refs.before" 2>/dev/null || echo "$nowe");; esac
+        st=$(cat "$d/started" 2>/dev/null || true)
+        [[ $st =~ ^[0-9]{1,12}$ ]] || { echo "skipped $d: no start time recorded, so its age is unknown"; continue; }   # the file is a member's: only digits reach the arithmetic
         age=$(( (nowe - st) / 86400 )); [ "$age" -ge "$STALE" ] || continue
         st=verified; [ ! -f "$d/applied" ] || st=applied
         if [ -z "$YES" ]; then echo "would clean $d ($st, ${age}d old)"; plan_n=$((plan_n + 1)); continue; fi
@@ -457,6 +462,7 @@ WRAP
         case $name in
           qargi-run.??????)
             for b in /dev/shm "${QARGI_RUN_TMP:-}"; do
+              while [ "${b%/}" != "$b" ] && [ "$b" != / ]; do b=${b%/}; done
               [ -n "$b" ] && [ "$par" = "$b" ] && [ "$(dirname -- "$rp")" = "$(realpath -- "$b" 2>/dev/null)" ] && rt=$rp
             done;;
           tmp) [ "$(dirname -- "$rp")" = "$(realpath -- "$RUN")" ] && rt=$rp;;

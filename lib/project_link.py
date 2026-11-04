@@ -159,10 +159,12 @@ class Context:
             raise Skip("the runtime keeps its memory directory outside the home directory (%s)" % (tpl or "none"))
         if "{checkout_key}" in tpl:
             tpl = tpl.replace("{checkout_key}", provider.checkout_key(r.get("checkout_key") or "nonalnum-dash", co))
-        tier = next(t for t in tiers.resolve(self.answers, p) if t["tier"] == "project")
+        tier = next((t for t in tiers.resolve(self.answers, p) if t["tier"] == "project"), None)
+        if tier is None:
+            die("project %s has no project memory tier, so there is no memory to link (memory.tiers.project in its answers)" % p)
         src = tier["location"]
         mroot = os.path.join(paths.root(), "memory")
-        if not src or not os.path.abspath(src).startswith(os.path.abspath(mroot) + os.sep):
+        if not src or not os.path.realpath(src).startswith(os.path.realpath(mroot) + os.sep):
             die("the memory of project %s is placed at %r, outside %s (memory.tiers.project.path); qargi links only what is kept there"
                 % (p, src, mroot))
         return Memory("memory", p, co, tpl[2:], src, mode, st, words(p, "memory"), root=os.path.expanduser("~"), source_root=mroot)
