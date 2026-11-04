@@ -110,6 +110,25 @@ for t in $topics; do run "$t" --project onclaude; [ $rc = 0 ] || missing="$missi
 run spawn --project cloudonly
 [ $rc = 2 ] && ok "claude-platform is a cloud runtime: a project with only it has no local notes" || no "cloud only spawn: rc=$rc"
 
+# the cloud surface: the notes of the runtime a project uses there (where a hosted session keeps its outputs and clones)
+run output-dir --project onclaude --surface cloud
+[ "$rc $out" = "0 /mnt/session/outputs" ] && ok "--surface cloud reads the notes of the cloud runtime (output-dir)" || no "cloud output-dir: rc=$rc out=$out err=$err"
+run clone-dir --surface cloud --project onclaude
+[ "$rc $out" = "0 /workspace" ] && ok "and clone-dir, the option before or after the project" || no "cloud clone-dir: rc=$rc out=$out err=$err"
+run --project onclaude --surface cloud
+[ "$out" = "clone-dir
+output-dir" ] && ok "listing the cloud topics" || no "cloud list: rc=$rc out=$out"
+run output-dir --project onclaude
+[ $rc = 1 ] && grep -q "no notes topic 'output-dir'" <<<"$err" && ok "the local runtime has no such topic: the surface is local unless told" || no "local output-dir: rc=$rc out=$out err=$err"
+run output-dir --project withnotes --surface cloud
+[ $rc = 2 ] && ok "a project with no cloud runtime is exit 2 for --surface cloud" || no "no cloud runtime: rc=$rc out=$out err=$err"
+fake_runtime "$SRC" "$TOOL" otherplat cloud '.notes = {"output-dir": "/srv/out", "clone-dir": "/srv/clones"}'
+mkproj otherp '{"local":"claude-code","cloud":"otherplat"}'
+run output-dir --project otherp --surface cloud
+[ "$rc $out" = "0 /srv/out" ] && ok "another cloud runtime names its own directory" || no "other platform: rc=$rc out=$out err=$err"
+run output-dir --project onclaude --surface sky
+[ $rc = 2 ] && ok "an unknown surface is a usage error" || no "bad surface: rc=$rc out=$out"
+
 # usage
 run a b --project withnotes
 [ $rc = 2 ] && ok "two topics are a usage error" || no "two topics: rc=$rc"

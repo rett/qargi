@@ -193,8 +193,8 @@
       },
       "tool_names": {
         "shell": ["Bash"],
-        "write": ["Edit", "Write", "NotebookEdit", "MultiEdit"],
-        "read": ["Read", "NotebookRead"],
+        "write": ["Edit", "Write", "NotebookEdit"],
+        "read": ["Read"],
         "search": ["Grep"]
       },
       "deny": {"exit": 2, "stream": "stderr"},

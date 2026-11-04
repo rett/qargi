@@ -523,12 +523,8 @@ class Layout(Tree):
         self.assertEqual(CODE["resources"]["skills"]["user_dir"], "~/.claude/skills")        # the definition itself is not changed
 
     def test_the_accessor_defaults_the_home_to_the_environment(self):
-        old = os.environ.get("HOME")
-        os.environ["HOME"] = "/env/home"
-        try:
+        with mock.patch.dict(os.environ, {"HOME": "/env/home"}):
             self.assertEqual(P.layout("claude-code", root=self.root)["user_skills_dir"], "/env/home/.claude/skills")
-        finally:
-            os.environ["HOME"] = old
 
     def test_require_returns_a_value_and_refuses_a_null_field_with_the_degrade_text(self):
         self.put("claude-code", self.without("resources", "skills", "project_dir"))
@@ -1687,13 +1683,14 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
                 self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
 
-    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_none(self):
+    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_the_two_directories(self):
         notes = P.definition("claude-code")["notes"]
         self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
         self.assertIn("subagent_type", notes["spawn"])
         self.assertIn('{"skillOverrides": {"NAME": "off"}}', notes["skills-dir"])
         self.assertIn("Not verified", notes["identity"])                         # it says plainly what is not verified
-        self.assertNotIn("notes", P.definition("claude-platform"))
+        # the cloud runtime has no spawn notes; its two are the hosted directories lib/team.sh and lib/collect.sh ask for (provider notes --surface cloud)
+        self.assertEqual(P.definition("claude-platform")["notes"], {"clone-dir": "/workspace", "output-dir": "/mnt/session/outputs"})
 
     def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
         self.assertEqual(P.layout("claude-code", home="/h")["user_skills_dir"], "/h/.claude/skills")
@@ -2827,7 +2824,9 @@ class EnvPass(LibraryBase):
 
     DENIED = ("HOME", "PATH", "SHELL", "USER", "TMPDIR", "IFS", "BASH_ENV", "ENV", "SHELLOPTS", "PROMPT_COMMAND", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
               "PYTHONPATH", "PYTHONSTARTUP", "PERL5LIB", "RUBYOPT", "NODE_OPTIONS", "SSH_AUTH_SOCK", "SSH_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN",
-              "GITHUB_PAT", "GITLAB_TOKEN", "GIT_DIR", "GIT_SSH_COMMAND", "QARGI_HOME", "XDG_CONFIG_HOME", "GNUPGHOME", "EDITOR")
+              "GITHUB_PAT", "GITLAB_TOKEN", "GIT_DIR", "GIT_SSH_COMMAND", "QARGI_HOME", "XDG_CONFIG_HOME", "GNUPGHOME", "EDITOR",
+              "JDK_JAVA_OPTIONS", "FPATH", "ZDOTDIR", "KSH_ENV", "LUA_INIT", "LUA_PATH", "LUA_CPATH", "LESSOPEN", "GLIBC_TUNABLES", "NPM_CONFIG_REGISTRY",
+              "npm_config_prefix", "GOFLAGS", "GOENV", "INPUTRC", "TERMINFO", "SUDO_ASKPASS")
     ALLOWED = ("OPENAI_API_KEY", "FAKECLI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "ANTHROPIC_API_KEY", "FAKE_MODE", "HTTPS_PROXY", "LANG")
 
     def test_the_names_that_must_not_reach_a_member_or_a_pack_are_refused(self):
@@ -3511,6 +3510,25 @@ class ProjectConsumers(ExtensionBase):
         self.assertEqual(os.listdir(tmp), [])
         self.assertEqual(self.run_p("adapter-run", "adcli", "local", "resolve", "--check", tmpdir=tmp)[0], 0)
         self.assertEqual(os.listdir(tmp), [])
+
+    def test_an_adapter_runs_in_a_scrubbed_environment_with_a_private_home_and_the_env_pass_names(self):
+        seen = os.path.join(self.tmp, "adapter-env")
+        d = fake_runtime("envcli", adapter="adapter", adapter_verbs=["resolve"],
+                         dispatch={"mode": "command", "argv": ["envcli", "run"], "prompt": {"via": "stdin"}, "env_pass": ["FAKE_MODE", "FAKE_ABSENT"], "output": {"format": "text"}})
+        self.put("envcli", d, files={"adapter": "#!/bin/sh\nenv > %s\necho '{}'\n" % seen}, execs=("adapter",), exec_names="adapter")
+        self.env.update(GH_TOKEN="leak-1", SSH_AUTH_SOCK="/tmp/leak-2", PYTHONPATH="/tmp/leak-3", OPENAI_API_KEY="leak-4", FAKE_MODE="passed-on")
+        tmp = os.path.join(self.tmp, "tt")
+        os.makedirs(tmp)
+        rc, out, err = self.run_p("adapter-run", "envcli", "local", "resolve", data="x", tmpdir=tmp)
+        self.assertEqual(rc, 0, err)
+        text = fread(seen)
+        self.assertNotIn("leak-", text)                                                # (not on the names: the whole environment would print)
+        for name in ("GH_TOKEN", "SSH_AUTH_SOCK", "PYTHONPATH", "OPENAI_API_KEY"):
+            self.assertNotRegex(text, r"(?m)^%s=" % name)
+        self.assertIn("FAKE_MODE=passed-on\n", text)                                   # a name the definition lists travels
+        self.assertRegex(text, r"(?m)^HOME=%s/qargi-adapter\." % tmp)                  # a private home, in the run's temporary directory
+        self.assertNotIn("HOME=%s\n" % self.home, text)
+        self.assertEqual(os.listdir(tmp), [])                                          # and removed afterwards
 
     def test_an_adapter_verb_the_runtime_does_not_list_is_unsupported_and_not_called(self):
         self.adapter_pack(verbs=("resolve",))

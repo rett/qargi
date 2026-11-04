@@ -381,7 +381,7 @@ case $verb in
   init)
     n=${1:-}; shift || true; valid_project "$n" || die "init needs a project name"
     ans='' force=''
-    while [ $# -gt 0 ]; do case $1 in --answers) ans=$2; shift 2;; --force) force=1; shift;; *) die "unknown option $1";; esac; done
+    while [ $# -gt 0 ]; do case $1 in --answers) need_val "$1" $#; ans=$2; shift 2;; --force) force=1; shift;; *) die "unknown option $1";; esac; done
     [ -f "$ans" ] || die "init needs --answers FILE (see: project template $n)"
     out=$(validate "$ans") || { echo "$out" >&2; die "the answers are not valid; nothing stored"; }
     [ "$(jq -r .project "$ans")" = "$n" ] || die "the answers are for project '$(jq -r .project "$ans")', not '$n'"
@@ -397,9 +397,9 @@ case $verb in
     n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
     meth=gitflow dir='' url='' dep='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED='' PARAMS=()
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) meth=$2; shift 2;; --dir) dir=$2; shift 2;; --url) url=$2; shift 2;; --deployment) dep=$2; shift 2;; --provider) prov=${2:-}; shift 2;;
-        --provider-local) provl=${2:-}; shift 2;; --provider-cloud) provc=${2:-}; shift 2;;
-        --param) PARAMS+=(--param "$2"); shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --methodology) need_val "$1" $#; meth=$2; shift 2;; --dir) need_val "$1" $#; dir=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --deployment) need_val "$1" $#; dep=$2; shift 2;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
+        --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
+        --param) need_val "$1" $#; PARAMS+=(--param "$2"); shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -464,9 +464,9 @@ PY
     # an existing repository: read it, show what qargi would store and what the methodology has that it lacks; store only after approval
     dir=. name='' meth=gitflow url='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --name) name=$2; shift 2;; --methodology) meth=$2; shift 2;; --url) url=$2; shift 2;; --force) force=1; shift;; --provider) prov=${2:-}; shift 2;;
-        --provider-local) provl=${2:-}; shift 2;; --provider-cloud) provc=${2:-}; shift 2;;
-        --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
+      case $1 in --name) need_val "$1" $#; name=$2; shift 2;; --methodology) need_val "$1" $#; meth=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --force) force=1; shift;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
+        --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
     done
     export PLAN_ARG   # need_plan reads it
     PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
@@ -565,7 +565,7 @@ PY
     n=${1:-}; shift || true; valid_project "$n" || die "adopt needs the name of an attached project (qargi project list)"
     meth='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) meth=${2:-}; shift 2;; --plan) PLAN_ARG=${2:-}; shift 2;; --approved) APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -623,7 +623,7 @@ PY
       models) jq -e 'type == "object" and (has("extensions") or has("accept_no_barrier"))' >/dev/null 2>&1 <<<"$val" \
                 && gated="qargi provider enable PROJECT EXTENSION, qargi provider accept NAME --surface S --no-barrier (models.extensions and models.accept_no_barrier are set by them)";;
     esac
-    [ -z "$gated" ] || die "$path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated"
+    [ -z "$gated" ] || { echo "qargi: $path is not set with project set: it changes what an agent may run on or accepts a surface with no read-only barrier, so it takes a plan token and an approval: $gated" >&2; exit 2; }
     # a runtime that exists but does not serve that surface cannot be what the project runs there: refused (exit 2), as attach and new refuse it,
     # before anything is changed. A name with no definition, an ambiguous family or a clash is stored with a finding, as before
     case $path in models.provider.local|models.provider.cloud)
@@ -663,7 +663,7 @@ PY
     res='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
       case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
-        --plan) PLAN_ARG=${2:-}; shift 2;; --approved) APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG; unset QARGI_NESTED
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"

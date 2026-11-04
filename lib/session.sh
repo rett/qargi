@@ -16,14 +16,14 @@ verb=${1:-}; shift || true
 LABEL='' SESSION='' NEW='' ASKED='' NOOUT='' WHY='' BROLE='' BPROFILE='' OPTIN='' POS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --label) LABEL=$2; shift 2;;
-    --session) SESSION=$2; shift 2;;
+    --label) need_val "$1" $#; LABEL=$2; shift 2;;
+    --session) need_val "$1" $#; SESSION=$2; shift 2;;
     --new) NEW=1; shift;;
     --no-outputs) NOOUT=1; shift;;
-    --asked) ASKED=$2; shift 2;;
-    --why) WHY=$2; shift 2;;
-    --role) BROLE=${2:-}; shift 2;;
-    --profile) BPROFILE=${2:-}; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --why) need_val "$1" $#; WHY=$2; shift 2;;
+    --role) need_val "$1" $#; BROLE=${2:-}; shift 2;;
+    --profile) need_val "$1" $#; BPROFILE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
     -*) die "unknown option $1";;
     *) POS+=("$1"); shift;;
@@ -96,8 +96,8 @@ start_with_repo() { # name [credential-file] -> session id (the lead always star
 # (start-session, a pure builder); the system comes from qargi's own files, never from the task text.
 is_base_inst() { local r=${1#*-}; [ "$r" != "$1" ] && is_base "$r"; }
 
-# A base started without --role is the role-neutral standby session of the base, as before; --role makes it a session for a role.
-no_base_opts() { # name: a legacy instance has its role in its name
+# A base started without --role is the role-neutral standby session of the base; --role makes it a session for a role.
+no_base_opts() { # name: an instance of one role has its role in its name
   if is_base_inst "$1"; then
     [ -z "$BPROFILE$OPTIN" ] || die "--profile and --opt-in need --role ROLE: $1 is a base"
   else

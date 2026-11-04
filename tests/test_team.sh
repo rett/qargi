@@ -37,6 +37,7 @@ proj() { jq -n --arg p "$1" --arg path "$T/repo" '{schema:1,project:$p,repo:{url
          write:{base:"gh-pages",push:{mode:"none"},model:"claude-opus-5-5",effort:"medium",apt:[],skills:["pdf"]},
          review:{base:"@dispatcher",push:{mode:"none"},model:"claude-opus-5-5",effort:"high",apt:["shellcheck"],skills:[]}},
   lead:{model:"claude-opus-5-5",effort:"high"},
+  models:{provider:{local:"claude-code",cloud:"claude-platform"}},
   teams:{"code-docs":{members:["build","write","review"],max_rounds:2,budget_cents:3000,standards:["shared/rules/rules.md"],scopes:{write:["site/"]},done:{write:"make check-site"}}},
   memory:{memory_store:"memstore_MEM",reference_store:"memstore_REF"},budget_cents:500}' > "$T/c/projects/$1.json"; }
 proj alpha
@@ -58,6 +59,18 @@ out=$($DA team brief alpha code-docs --task "Rename the verb" --done "make test"
 echo "$out" | grep -q "^TEAM: code-docs" && echo "$out" | grep -q "OUT_PREFIX: write--" && echo "$out" | grep -q "BASE: gh-pages" && echo "$out" | grep -q "SCOPE: site/" && echo "$out" | grep -q "DONE: make check-site" \
   && ok "the brief gives each member its base, scope, prefix and check" || no "brief: $out"
 echo "$out" | grep -q "^  OUT: /mnt/session/outputs" && ! echo "$out" | grep -q RUN_DIR && ok "each member entry gives OUT, the place the contract tells a member to write" || no "brief OUT: $out"
+echo "$out" | grep -q "^  CLONE: /workspace/build\$" && echo "$out" | grep -q "^  OUT: /mnt/session/outputs\$" && ok "OUT and CLONE come from the notes of the project's cloud runtime" || no "brief dirs: $out"
+# the cloud runtime says where its sessions write: another runtime, other directories (a copy of the tool with a second cloud runtime)
+# shellcheck source=fakeprov.sh
+. tests/fakeprov.sh
+copy_tool "$PWD" "$T/tool"; fake_runtime "$PWD" "$T/tool" otherplat cloud '.notes = {"output-dir": "/srv/out", "clone-dir": "/srv/clones"}'
+jq '.project = "alpha2" | .models.provider.cloud = "otherplat"' "$T/c/projects/alpha.json" > "$T/c/projects/alpha2.json"
+out2=$("$T/tool/bin/qargi" team brief alpha2 code-docs --task t --done d --base feature/x 2>&1)
+echo "$out2" | grep -q "^  OUT: /srv/out\$" && echo "$out2" | grep -q "^  CLONE: /srv/clones/build\$" && ! echo "$out2" | grep -q "mnt/session" && ok "the brief takes both directories from the project's cloud runtime, not from the core" || no "brief other runtime: $out2"
+jq '.project = "alpha3" | del(.models)' "$T/c/projects/alpha.json" > "$T/c/projects/alpha3.json"
+out3=$($DA team brief alpha3 code-docs --task t --done d --base feature/x 2>&1); rc3=$?
+[ $rc3 != 0 ] && ! echo "$out3" | grep -q "^TEAM" && ok "a project with no cloud runtime gets no brief (no runtime is assumed)" || no "brief without a runtime: rc=$rc3 $out3"
+rm -f "$T/c/projects/alpha3.json"
 echo "$out" | grep -A6 "role: review" | grep -q "BASE: feature/x" && ok "the review member reviews the build base" || no "review base"
 $DA team brief alpha code-docs --task t --done d >/dev/null 2>&1 && no "a brief without a base was made while the build base is @dispatcher" || ok "a brief needs --base while the build base is @dispatcher"
 $DA team brief alpha nosuch --task t --done d --base b >/dev/null 2>&1 && no "unknown team accepted" || ok "an unknown team is refused"
@@ -99,6 +112,14 @@ $DA collect sesn_z "$T/leadonly" >/dev/null 2>&1 && [ -f "$T/leadonly/lead/team.
 # a solo run is untouched
 mkdir -p "$T/solo"; : > "$FAKE/files.jsonl"; add g1 '{"status":"DONE"}' "/mnt/session/outputs/manifest.json"; add g2 'p' "/mnt/session/outputs/0001-x.patch"
 $DA collect sesn_y "$T/solo" >/dev/null 2>&1; [ -f "$T/solo/manifest.json" ] && [ -f "$T/solo/0001-x.patch" ] && ok "a single agent's outputs stay flat" || no "solo collect"
+# the output directory a listed name is stripped of is the one of the session's project's cloud runtime (notes of its definition), found by the
+# instance of the session in the tracker; with no record only the base name is kept
+echo '{"sesn_k":{"instance":"alpha2-build"}}' > "$T/s/sessions.json"
+mkdir -p "$T/known" "$T/unknown"; : > "$FAKE/files.jsonl"; add k1 '{"status":"DONE"}' "/srv/out/manifest.json"; add k2 'n' "/srv/out/notes/n.txt"
+QARGI_CONF=$T/c QARGI_STATE=$T/s "$T/tool/bin/qargi" collect sesn_k "$T/known" >/dev/null 2>&1
+[ -f "$T/known/manifest.json" ] && [ -f "$T/known/notes/n.txt" ] && ok "collect strips the output directory of the session's cloud runtime, as its definition names it" || no "known collect: $(cd "$T/known" && find . -type f | tr '\n' ' ')"
+"$T/tool/bin/qargi" collect sesn_u "$T/unknown" >/dev/null 2>&1; rm -f "$T/c/projects/alpha2.json"
+[ -f "$T/unknown/manifest.json" ] && [ -f "$T/unknown/n.txt" ] && ok "a session the tracker does not know is collected by base names" || no "unknown collect: $(cd "$T/unknown" && find . -type f | tr '\n' ' ')"
 
 # --- the team check
 rm -rf "$T/chk"; mkdir -p "$T/chk/review" "$T/chk/lead"

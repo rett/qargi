@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
+T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0; DA=$PWD/bin/qargi
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 git init -q -b main "$T/r"; cd "$T/r" || exit 1
 git config user.name t; git config user.email t@example.net
@@ -48,6 +48,11 @@ $DA review check "$T/batch" 2>&1 | grep -q "NOTE.*batch" && ok "commits made wit
 # missing commit advice / groups are warnings
 cp -r "$T/good" "$T/nogroups"; jq 'del(.patch_groups) | del(.commit_advice)' "$T/nogroups/manifest.json" > "$T/nogroups/m.json" && mv "$T/nogroups/m.json" "$T/nogroups/manifest.json"
 out=$($DA review check "$T/nogroups" 2>&1); [ $? = 0 ] && echo "$out" | grep -q "patch_groups" && ok "missing patch groups and commit advice are warned about" || no "nogroups: $out"
+# the patches are OUT/patches/*.patch, the one place apply reads: loose patches in OUT are not a series; an unknown option is an error, not ignored
+mkdir -p "$T/flat"; cp "$T/good/patches/"*.patch "$T/flat/"; cp "$T/good/manifest.json" "$T/flat/"
+out=$($DA review check "$T/flat" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "no patches found" && ok "patches loose in OUT (not in OUT/patches) are not accepted" || no "flat patches: $out"
+out=$($DA review check "$T/good" --alow-empty 2>&1); rc=$?; [ $rc = 2 ] && echo "$out" | grep -q "unknown option --alow-empty" && ok "a misspelled option is an error" || no "unknown option: rc=$rc $out"
+out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two directories are an error" || no "two args: rc=$rc $out"
 # a review run returns a report instead of patches
 mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
 printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
@@ -106,6 +111,28 @@ R5=$(newrun broken); sed -i 's/^ a$/ zzz/' "$R5"/out/patches/0002-*.patch
 out=$($DA review apply "$R5" 2>&1); rc=$?
 [ $rc != 0 ] && echo "$out" | grep -q "0002-" && ! git -C "$A" rev-parse -q --verify agent/broken >/dev/null && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -z "$(find "$T/s" -maxdepth 1 -name "apply-wt.*")" ] \
   && ok "a patch that does not apply names the patch and leaves no branch or worktree" || no "non-applying: rc=$rc $out"
+# the run is found in the registry by its real path (the help's own example is `qargi review apply ./run`), and its repository is the registry's
+git -C "$A" commit -q --allow-empty -m "moved on"   # the checked-out branch is no longer the run's base
+R6=$(newrun rel)
+out=$(cd "$T/scr" && $DA review apply "./$(basename "$R6")/" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/rel")" = 2 ] && ok "a relative run path with a trailing slash finds the run's slug and base in the registry" || no "relative apply: rc=$rc $out"
+R7=$(newrun forgedrepo); other=$T/other; git init -q -b master "$other"; echo "$other" > "$R7/repo.path"
+out=$($DA review apply "$R7" 2>&1); rc=$?
+[ $rc != 0 ] && echo "$out" | grep -q "registry" && ! git -C "$A" rev-parse -q --verify agent/forgedrepo >/dev/null && ok "a run whose repo.path differs from the registry's is refused and creates no branch" || no "forged repo.path: rc=$rc $out"
+# what apply records in the run directory (applied, the new snapshot) is not written through a link a member planted there
+R8=$(newrun linknew); ln -s "$T/victim8" "$R8/refs.before.new"
+out=$($DA review apply "$R8" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ ! -e "$T/victim8" ] && grep -q "^local refs/heads/agent/linknew " "$R8/refs.before" && [ ! -L "$R8/refs.before" ] && [ -f "$R8/applied" ] && [ ! -L "$R8/applied" ]; } \
+  && ok "a refs.before.new that is a link is not written through: the snapshot is replaced by a rename from the lead's state directory" || no "link refs.before.new: rc=$rc $out"
+$DA local verify "$R8" >/dev/null 2>&1 && ok "and verify still accepts the run" || no "verify after apply"
+R9=$(newrun linkapplied); ln -s "$T/victim9" "$R9/applied"
+out=$($DA review apply "$R9" 2>&1); rc=$?
+{ [ $rc != 0 ] && [ ! -e "$T/victim9" ] && ! git -C "$A" rev-parse -q --verify agent/linkapplied >/dev/null && grep -q "applied" <<<"$out"; } \
+  && ok "an applied that is a (dangling) link refuses the apply before any branch is made" || no "link applied: rc=$rc $out"
+# a patch file name with a space in it (a member names its files) is one patch, not two words
+R10=$(newrun spacey); mv "$R10"/out/patches/0001-*.patch "$R10/out/patches/0001-has a space.patch"; mv "$R10"/out/patches/0002-*.patch "$R10/out/patches/0002-it's  here.patch"
+out=$($DA review apply "$R10" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/spacey")" = 2 ] && echo "$out" | grep -q "applied 2 patch(es)"; } && ok "patch files whose names hold spaces are applied, as two patches" || no "spacey names: rc=$rc $out"
 # --- qargi review prune: only merged agent/* branches, only with --yes
 git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
 git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master

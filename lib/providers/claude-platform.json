@@ -60,6 +60,10 @@
     }
   },
   "resources": {"contract_addenda": ["cloud-run.md"]},
+  "notes": {
+    "clone-dir": "/workspace",
+    "output-dir": "/mnt/session/outputs"
+  },
   "agents": null,
   "dispatch": {
     "mode": "adapter"

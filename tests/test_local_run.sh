@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); fail=0
+T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
@@ -91,6 +91,39 @@ out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
 want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o,"--sandbox","read-only"]')
 [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out" && ok "read-only: class_argv (the sandbox arguments) is in the argv" || no "ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 
+# --- what a run writes in the member-writable run directory is never written through a link, a pipe or a second name ---------------------------------------
+echo precious > "$T/victim"
+for what in transcript transcript.err dispatch.json; do
+  prep "$T/r" "lk-${what%%.*}"; task
+  case $what in dispatch.json) place=$RUN/dispatch.json;; *) place=$OUT/$what;; esac
+  ln -s "$T/victim" "$place"
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && [ "$(cat "$T/victim")" = precious ] && ! grep -q Traceback <<<"$out"; } && ok "a $what that is a link is refused (also with --again), the file it points to is untouched" || no "$what link: rc=$rc $out; victim=$(cat "$T/victim")"
+  rm -f "$place"; ln "$T/victim" "$place"
+  out=$($DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && [ "$(cat "$T/victim")" = precious ]; } && ok "a $what that is another name of a file is refused, the file is untouched" || no "$what hard link: rc=$rc $out; victim=$(cat "$T/victim")"
+  rm -f "$place"; mkfifo "$place"
+  out=$(timeout 30 $DA local run "$RUN" --again 2>&1); rc=$?
+  { [ "$rc" = 2 ] && grep -q 'plain file' <<<"$out"; } && ok "a $what that is a pipe is refused, without waiting for a reader" || no "$what pipe: rc=$rc $out"
+  rm -f "$place"
+done
+prep "$T/r" lk-out; task; rm -rf "$OUT"; ln -s "$T" "$OUT"
+out=$($DA local run "$RUN" 2>&1); rc=$?
+{ [ "$rc" = 2 ] && [ ! -e "$T/transcript" ]; } && ok "an out directory that is a link elsewhere is refused" || no "out link: rc=$rc $out"
+rm -f "$OUT"; mkdir "$OUT"
+# the run's own files are read as files: a pipe in place of the ability or the task block does not stop the lead, and no ability is a refusal, not a traceback
+prep "$T/r" lk-ab; task; rm -f "$RUN/ability"
+out=$(python3 -I lib/local_run.py "$RUN" --project rproj --runtime fakecmd --class write --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'ability' <<<"$out" && ! grep -q Traceback <<<"$out"; } && ok "a run with no ability file is refused with a message" || no "no ability: rc=$rc $out"
+echo build > "$RUN/ability"; rm -f "$RUN/task.md"; mkfifo "$RUN/task.md"
+out=$(timeout 30 $DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 2 ] && grep -q 'not a regular file' <<<"$out"; } && ok "a task block that is a pipe is refused, without waiting for a writer" || no "task pipe: rc=$rc $out"
+rm -f "$RUN/task.md" "$T/victim"
+# --- the project of a run is found from the lead's registry: a repo.path a member rewrote (to a repository of another project, so another runtime) is refused ---
+prep "$T/r" fg1; task; cp "$RUN/repo.path" "$T/repo.path.keep"; echo "$T/r2" > "$RUN/repo.path"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "registry" <<<"$out" && ! grep -q '^COMMAND=' <<<"$out" && ok "run: a repo.path that differs from the registry's is refused, no runtime is looked up for it" || no "forged repo.path: rc=$rc $out"
+cp "$T/repo.path.keep" "$RUN/repo.path"; rm -f "$T/repo.path.keep"
 # --- a real run with the fake CLI --------------------------------------------------------------------------------------------------
 prep "$T/r" w2; task
 export OTHER_SECRET=leak GIT_AUTH_TOKEN=leak2
@@ -109,6 +142,14 @@ grep -q "^HOME=$RUN/home\$" "$tr" && grep -q '^GITCFG=/dev/null$' "$tr" && grep 
 $DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || no "verify after run"
 out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"
 out=$(FAKE_KEY=k2 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 0 ] && grep -q '^KEY=k2$' "$tr" && ok "--again runs it again and replaces the transcript" || no "again: rc=$rc $out"
+
+# the run's temporary directory is the registry's (as `local clean` reads it), never the run's own tmpdir file, which a member can write
+REGTMP=$(jq -r --arg r "$RUN" 'select(.run == $r) | .tmpdir' "$T/s/local-runs.jsonl" | tail -1)
+mv "$RUN/tmpdir" "$RUN/tmpdir.real"; printf '%s\n' "$T/forged-tmp" > "$RUN/tmpdir"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -n "$REGTMP" ] && grep -q "^TMP=$REGTMP\$" <<<"$out" && ! grep -q 'forged-tmp' <<<"$out"; } \
+  && ok "the run's temporary directory is the registry's: a forged RUN/tmpdir is not read" || no "forged tmpdir: rc=$rc $(grep -n 'TMP=' <<<"$out")"
+mv "$RUN/tmpdir.real" "$RUN/tmpdir"
 
 # --- the exit status maps to an outcome; a timeout is bounded ---------------------------------------------------------------------
 out=$(FAKE_MODE=exit3 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q '^OUTCOME=refused' <<<"$out" && ok "dispatch.exit maps status 3 to refused (exit 2)" || no "exit3: rc=$rc $out"

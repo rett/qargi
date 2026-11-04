@@ -58,6 +58,28 @@ class T(unittest.TestCase):
         with open(self.log) as f:
             return f.read().splitlines()
 
+    def for_args(self, *words):
+        r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "lib", "cloud.py"), "for-args", *words], capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
+        return r.stdout.split("\n")[0]
+
+    def test_an_instance_name_finds_its_project_by_any_role(self):
+        env = dict(self.env, PWD=self.t)
+        env.pop("QARGI_PROJECT", None)
+        self.env = env
+        for name in ("alpha-build", "alpha-lead", "alpha-worker", "alpha-reviewer"):
+            self.assertEqual(self.for_args(name), "alpha", name)
+        self.assertEqual(self.for_args("alpha-docs"), "", "a role nobody defined")
+        os.makedirs(os.path.join(self.conf, "roles", "docs"))                         # a role of your own
+        with open(os.path.join(self.conf, "roles", "docs", "role.json"), "w") as f:
+            json.dump({"class": "write", "description": "d"}, f)
+        self.assertEqual(self.for_args("alpha-docs"), "alpha")
+        with open(self.proj) as f:
+            d = json.load(f)
+        d["roles"]["audit"] = d["roles"]["build"]                                       # a role of the project's answers
+        with open(self.proj, "w") as f:
+            json.dump(d, f)
+        self.assertEqual(self.for_args("alpha-audit"), "alpha")
+
     def test_set_show_unset_and_validation(self):
         self.assertIn("no cloud binding", self.q("cloud", "show", "alpha").stdout)
         self.assertEqual(self.q("cloud", "set", "alpha", "--profile", "bad name", "--workspace-id", WS).returncode, 2)

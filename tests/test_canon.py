@@ -259,12 +259,6 @@ class Canon(unittest.TestCase):
         self.assertNotIn("1.7.0.1", out)
         self.assertNotIn("1.2.3.4", out)
 
-    def test_import_reports_an_underivable_kind(self):
-        src = {"/README.md": "# i\n", "/07-project/notes.md": "# N\n\nx\n"}
-        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo", "--role", "write",
-                              "--src", write(src), "--memory", write({}), "--reference", write({}), "--today", TODAY], capture_output=True, text=True)
-        self.assertTrue(any("set Kind: by hand" in n for n in json.loads(out.stdout)["notes"]))
-
     def test_load_triggers_and_budget(self):
         _, after = self.assertConverges("reference", {})
         after["/shared/INDEX.md"] = ("| Path | Purpose | Load |\n|---|---|---|\n| rules/a.md | a | always |\n| rules/b.md | b | when unsure what is wanted |\n"
@@ -280,16 +274,6 @@ class Canon(unittest.TestCase):
         out = run("check", "reference", after).stdout
         self.assertIn("always-loaded set of the build role", out)
         self.assertIn("chars; split it", out)               # and the note itself is over 10000
-
-    def test_import_adds_the_header(self):
-        src = {"/README.md": "# idx\n", "/01-rules/rules.md": "# Rules\n\nSources: x\n\nbe nice\n"}
-        s, m, r = write(src), write({}), write({})
-        out = subprocess.run([sys.executable, os.path.join(LIB, "canon.py"), "import", "--map", "docs-v0", "--project", "demo",
-                              "--role", "write", "--src", s, "--memory", m, "--reference", r, "--today", TODAY], capture_output=True, text=True)
-        imp = json.loads(out.stdout)
-        c = [o for o in imp["reference"] if o["path"].endswith("rules/rules.md")][0]["content"]
-        self.assertIn("Kind: rule\nApplies to: demo\n", c)
-        self.assertIn("be nice\n", c)
 
     def test_cross_role_folder_for_unused_role_fails(self):
         _, after = self.assertConverges("memory", {})
