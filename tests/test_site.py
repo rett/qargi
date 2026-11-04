@@ -271,6 +271,44 @@ class Check(unittest.TestCase):
         self.assertIn("error: Bad_Name.md: page names are lower-case", out)
 
 
+def source_copy(dest, changelog=None, commands=None):
+    """A copy of the source tree the generator needs (lib, VERSION, LICENSE, CHANGELOG), with edits applied by the callables."""
+    shutil.copytree(LIB, os.path.join(dest, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+    for n in ("VERSION", "LICENSE", "CHANGELOG.md"):
+        shutil.copy(os.path.join(ROOT, n), dest)
+    for rel, edit in (("CHANGELOG.md", changelog), (os.path.join("lib", "commands.py"), commands)):
+        if edit:
+            p = os.path.join(dest, rel)
+            spit(p, edit(slurp(p)))
+    return dest
+
+
+class ChangelogLinks(unittest.TestCase):
+    """S3: links in the changelog are validated like links in the hand pages."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_broken_changelog_links_fail_check_and_build(self):
+        head = re.search(r"(?m)^## \[0\.1\.0\] - .*$", slurp(os.path.join(ROOT, "CHANGELOG.md"))).group(0)
+        src = source_copy(os.path.join(self.tmp, "src"), changelog=lambda t: t.replace(
+            head, head + "\n\nSee [up](/../../../), [nope](/nope/), [frag](#nope) and [ok](/reference/#typical-use).", 1))
+        line = slurp(os.path.join(src, "CHANGELOG.md")).split("\n").index(head) + 3
+        args = ["--release", RELEASE, "--source", src, *pg(PAGES)]
+        rc, out, err = run("check", *args)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("error: CHANGELOG.md:%d: link /nope/: no such page" % line, out)
+        self.assertIn("error: CHANGELOG.md:%d: link /../../../: no such page" % line, out)
+        self.assertIn("error: CHANGELOG.md:%d: link #nope: no heading with that id on this page" % line, out)
+        self.assertNotIn("typical-use", out.split("link #nope")[0])
+        self.assertIn("3 error(s)", out)
+        o = os.path.join(self.tmp, "o")
+        rc, out, err = run("build", *args, "--out", o)
+        self.assertEqual(rc, 1, out + err)
+        self.assertFalse(os.path.exists(o))
+
+
 class Build(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
