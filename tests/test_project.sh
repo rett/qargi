@@ -111,7 +111,7 @@ for kv in 'models.extensions|["x"]|provider enable' 'models.extensions.0|"x"|pro
           'models.accept_no_barrier|{"local":{"by":"a","at":"t","reason":"r"}}|provider accept' 'models|{"extensions":["x"]}|provider enable' 'models|{"accept_no_barrier":{}}|provider accept'; do
   IFS='|' read -r k v want <<<"$kv"
   msg=$($DA project set demo "$k" "$v" 2>&1); rc=$?
-  { [ $rc != 0 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
+  { [ $rc = 2 ] && grep -q "qargi $want" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json; } && echo "ok   set refuses $k ($v) with exit 2 and points to qargi $want" || { echo "FAIL set $k $v (rc=$rc): $msg"; fail=1; }
 done
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && [ "$(jq -r .models.provider.local $T/c/projects/demo.json)" = claude-code ] && echo "ok   set still takes models.provider.local" || { echo "FAIL set models.provider.local"; fail=1; }
 # no environment variable opens project set to the gated keys: QARGI_GATED_STORE was one, honoured from any caller, and is gone

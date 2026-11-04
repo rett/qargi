@@ -60,6 +60,15 @@ def binding(project):
     return None
 
 
+def role_names():
+    """The names an instance can end in after PROJECT-: the roles (built-in ones, yours under the configuration's roles/, and lead) and the two bases.
+    project_of adds the roles of the project's own answers."""
+    import commands as C  # noqa: E402
+    mine = os.path.join(P.conf(), "roles")
+    own = [n for n in (os.listdir(mine) if os.path.isdir(mine) else []) if os.path.isfile(os.path.join(mine, n, "role.json"))]
+    return set(C.ROLES) | set(own) | {"worker", "reviewer"}
+
+
 def project_of(words):
     """The project a command is about: QARGI_PROJECT, else a stored project or an instance PROJECT-ROLE named in the words,
     else the one whose repository contains the current directory."""
@@ -70,9 +79,10 @@ def project_of(words):
     for w in words:
         if w in have:
             return w
+    roles = role_names()
     for w in words:
         for p in have:
-            if w.startswith(p + "-") and w[len(p) + 1:] in ("build", "write", "review", "test", "lead"):
+            if w.startswith(p + "-") and w[len(p) + 1:] in roles | set(_json(pfile(p)).get("roles") or {}):
                 return p
     import help as H  # noqa: E402
     return H.infer_project()
