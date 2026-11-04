@@ -223,7 +223,7 @@ COMMANDS = {
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
                          desc=("Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. "
                                "It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that "
-                               "fixes it; the main checkout, the runtime's own .claude/worktrees directories and qargi's temporary worktrees are not flagged.")),
+                               "fixes it; the main checkout, the worktrees inside it (the agent runtime makes its own there) and qargi's temporary worktrees are not flagged.")),
             "park": verb("Put the project's main checkout on its parking branch, reset to develop", [], [PROJECT_OPT],
                          desc=("qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a "
                                "parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout -B BRANCH develop in the main checkout, creating the "
