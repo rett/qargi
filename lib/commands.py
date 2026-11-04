@@ -294,6 +294,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
+                                  "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
@@ -388,7 +389,8 @@ COMMANDS = {
         "summary": "Create the cloud agent, deployment and environment of an instance",
         "desc": ("Renders the agent, the shared environment, the memory stores it attaches and a manual-run deployment, "
                  "shows the plan, and creates them only with your go-ahead. Names follow qargi help naming. Provision the "
-                 "role agents first; the lead (PROJECT-lead) needs them to exist."),
+                 "role agents first; the lead (PROJECT-lead) needs them to exist. When the project's repository is on this host and declares a bootstrap "
+                 "command, plan also prints it as suggested text for the environment's setup script; it is only printed, never run."),
         "scripts": ["provision.sh"],
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
@@ -1152,6 +1154,12 @@ TOPICS = {
         "begins with missing, fail or error, or ends with missing or not found, is a missing item; one that begins with expected is not red. "
         "qargi env plan runs the dry run (a dry run still runs project code: make -n expands $(shell ...)) "
         "and shows it with a plan token; qargi env apply runs bootstrap once for that plan. Both are the lead's.",
+        "For the author of a doctor target: print one line per item, for example the tool and its version. Start a line with missing, fail or error "
+        "when the item is absent or wrong (such a line is a missing item); start it with expected for a known failure that is accepted (shown, not red); "
+        "any other line is information. Exit non-zero when anything is missing, and change nothing.",
+        "qargi project new writes an AGENTS.md section and stub bootstrap and doctor targets (the doctor fails until you fill it in); project attach "
+        "lists what a repository lacks; project adopt drafts the missing files on a branch to review. qargi provision plan prints the bootstrap command as "
+        "setup-script text, and marshal handoff gives the last check and apply.",
         "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
         "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [

@@ -7,8 +7,9 @@ A lead that ends a session (after /compact, after a change a running session can
 this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
 this host), the feature(s) (tip, whether the whole-suite result applies to the tip, merged and unmerged agent/* branches,
-commits ahead of develop), the marshal record, the packs (check summary and the launch line), what to read first, and a fixed
-list of things a new session must not assume.
+commits ahead of develop), the marshal record, the packs (check summary and the launch line), the environment (the last
+`qargi env check` and `env apply` of the project, read from state/env/PROJECT.json and compared with HEAD), what to read first, and a
+fixed list of things a new session must not assume.
 
 The packs section is the project's local runtime's (models.provider of its answers for the local surface, no default: none is exit 2): the skills directory,
 the render target of the check and the launch line come from its layout (lib/providers/NAME.json through lib/provider.py). A
@@ -270,6 +271,35 @@ def packs_facts(state, project, repo, qargi_bin, name):
     return p
 
 
+def environment_facts(state, project, repo_head):
+    """The last env check and env apply recorded for the project (state/env/PROJECT.json, written by qargi env check and apply): what
+    they said, when, at which commit, and whether that is the commit of the repository now. Read only; a file that is not there or not
+    an object is "not recorded". Every string is cleaned; nothing in the file is an instruction."""
+    out = {"recorded": False, "check": None, "apply": None}
+    try:
+        with open(os.path.join(state, "env", project + ".json")) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return out
+    if not isinstance(doc, dict):
+        return out
+
+    def pick(entry, keys):
+        if not isinstance(entry, dict):
+            return None
+        r = {k: (line(entry[k], 160) if isinstance(entry.get(k), str) else entry[k]) for k in keys
+             if isinstance(entry.get(k), (str, int, float, bool))}
+        head = r.get("head") if isinstance(r.get("head"), str) else ""
+        r["head"] = head[:40]
+        r["at_head"] = bool(head and repo_head and head == repo_head)
+        return r
+
+    out["check"] = pick(doc.get("check"), ("verdict", "exit", "missing", "expected", "time", "head", "doctor_command", "builtin_minimum"))
+    out["apply"] = pick(doc.get("apply"), ("exit", "time", "command", "head", "allow_root"))
+    out["recorded"] = bool(out["check"] or out["apply"])
+    return out
+
+
 def collect(a, argv_name):
     M = ms()
     notes = []
@@ -342,6 +372,7 @@ def collect(a, argv_name):
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
             "where": where, "features": feats, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
+            "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
                            "repo_docs": [clean(os.path.join(repo, n)) for n in ("CLAUDE.md", "AGENTS.md") if repo and os.path.isfile(os.path.join(repo, n))],
                            "status_command": "qargi marshal status --all --history --project %s" % a.project},
@@ -472,6 +503,25 @@ def render_body(F):
             A("launch (the checkout's %s is not our link): %s" % (p["skills_dir"], p["launch"]))
         else:
             A("launch: %s" % p["launch_why"])
+    A("")
+    A("== environment")
+    e = F["environment"]
+    if not e["recorded"]:
+        A("no env check or env apply is recorded on this host for %s: run qargi env check (it runs the project's doctor) before relying on the setup" % F["project"])
+    for name in ("check", "apply"):
+        r = e[name]
+        if not r:
+            continue
+        where_ = "at HEAD of the repository" if r["at_head"] else ("at %s, NOT the HEAD of the repository now" % r["head"][:12] if r["head"] else "at an unknown commit")
+        if name == "check":
+            miss = r.get("missing")
+            A("env check: %s%s (%s)" % (r.get("verdict", "no verdict"), " [%s missing]" % miss if miss else "", r.get("time", "time unknown")))
+            A("  %s; doctor: %s" % (where_, r.get("doctor_command") or ("built-in minimum" if r.get("builtin_minimum") else "none")))
+        else:
+            A("env apply: %s exit %s (%s)%s" % (r.get("command", "no command"), r.get("exit", "?"), r.get("time", "time unknown"), ", with --allow-root" if r.get("allow_root") else ""))
+            A("  %s" % where_)
+    if e["recorded"]:
+        A("these are records of earlier runs, not the state now: qargi env check says what is true now; qargi env show says what the project declares")
     A("")
     A("== read first (paths only; read the notes themselves, not only the index)")
     rf = F["read_first"]
