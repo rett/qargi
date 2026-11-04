@@ -26,6 +26,7 @@ import os
 import posixpath
 import re
 import shlex
+import stat
 import string
 import subprocess
 import sys
@@ -102,14 +103,29 @@ def allowed_roots(source, extra):
 
 
 def safe_dir(path, roots, what):
-    """The real path of an existing directory that lies inside one of the allowed roots."""
+    """The real path of an existing directory that lies inside one of the allowed roots and is not a symbolic link."""
     rp = _real(path)
     if not os.path.isdir(rp):
         raise Refusal("%s %s is not a directory" % (what, path))
     if not any(_inside(rp, r) for r in roots):
         raise Refusal("%s %s is outside the allowed roots (the source tree, the current directory, the temporary directory, --allow-root): "
                       "refused" % (what, path))
+    if os.path.islink(path.rstrip(os.sep) or path):
+        raise Refusal("%s %s is a symbolic link: refused" % (what, path))
     return rp
+
+
+def check_trusted(path, what):
+    """Refuse a symbolic link, a path owned by someone other than this user (or root), and a folder that others can
+    write: a group-writable folder is accepted only when the group is this user's own. Returns the lstat result."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode):
+        raise Refusal("%s %s is a symbolic link: refused" % (what, path))
+    if st.st_uid not in (os.geteuid(), 0):
+        raise Refusal("%s %s is owned by another user: refused" % (what, path))
+    if stat.S_ISDIR(st.st_mode) and (st.st_mode & stat.S_IWOTH or (st.st_mode & stat.S_IWGRP and st.st_gid != os.getegid())):
+        raise Refusal("%s %s can be written by other users: refused" % (what, path))
+    return st
 
 
 def safe_file(path, roots, what):
@@ -119,6 +135,28 @@ def safe_file(path, roots, what):
     if not any(_inside(rp, r) for r in roots):
         raise Refusal("%s %s is outside the allowed roots: refused" % (what, path))
     return rp
+
+
+def check_static_file(full):
+    """Refuse a static file that is not a plain file of this user's, or that has another name elsewhere (a hard link)."""
+    st = check_trusted(full, "static file")
+    if not stat.S_ISREG(st.st_mode):
+        raise Refusal("static file %s is not a regular file: refused" % full)
+    if st.st_nlink > 1:
+        raise Refusal("static file %s is a hard link (it has %d names): refused; copy the file instead" % (full, st.st_nlink))
+
+
+def read_static(full):
+    """The bytes of a static file, opened without following a link and checked again on the open file."""
+    try:
+        fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        raise Refusal("static file %s cannot be read (%s): refused" % (full, e.strerror))
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink > 1 or st.st_uid not in (os.geteuid(), 0):
+            raise Refusal("static file %s changed while building: refused" % full)
+        return f.read(MAX_STATIC_BYTES + 1)
 
 
 def read_text(path, limit=MAX_PAGE_BYTES):
@@ -343,14 +381,19 @@ def normalize_url(url, what="url"):
 
 
 def find_config(args, pages_dir, roots):
+    """The site.json named by --config, else the one in the --pages folder; never one from a folder above it."""
     cand = []
     if args.config:
         cand = [args.config]
     elif pages_dir:
-        cand = [os.path.join(pages_dir, "site.json"), os.path.join(pages_dir, "..", "site.json")]
+        cand = [os.path.join(pages_dir, "site.json")]
     for c in cand:
-        if os.path.isfile(c):
+        if os.path.lexists(c):
+            if os.path.islink(c):
+                raise Refusal("config %s is a symbolic link: refused" % c)
             rp = safe_file(c, roots, "config")
+            check_trusted(rp, "config")
+            check_trusted(os.path.dirname(rp), "config folder")
             try:
                 cfg = Config(json.loads(read_text(rp, 1024 * 1024)), rp)
             except ValueError as e:
@@ -922,7 +965,16 @@ def validate(site, hand, rep):
         if os.path.islink(sd):
             raise Refusal("%s is a symbolic link: refused" % sd)
         if os.path.isdir(sd):
+            check_trusted(sd, "static folder")
+            checked = {sd}
             for rel in read_tree(sd, ""):
+                parts = rel.split("/")
+                for k in range(1, len(parts)):
+                    d = os.path.join(sd, *parts[:k])
+                    if d not in checked:
+                        check_trusted(d, "static folder")
+                        checked.add(d)
+                check_static_file(os.path.join(sd, *parts))
                 if not re.match(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$", rel):
                     rep.err("static/" + rel, "file names use letters, digits, dot, hyphen and underscore")
                     continue
@@ -1144,8 +1196,10 @@ def write_site(site, out):
     w.write("robots.txt", tmpl("robots.txt").substitute(sitemap=site.url + "sitemap.xml"))
     w.write(".nojekyll", b"")
     for rel, full in sorted(site.static.items()):
-        with open(full, "rb") as f:
-            w.write(rel, f.read())
+        data = read_static(full)
+        if len(data) > MAX_STATIC_BYTES:
+            raise Refusal("static file %s is larger than %d bytes" % (full, MAX_STATIC_BYTES))
+        w.write(rel, data)
     return w
 
 
@@ -1556,7 +1610,7 @@ def common(p):
     p.add_argument("--release", required=True, help="the release the source is, X.Y.Z")
     p.add_argument("--source", required=True, help="a checkout or extracted archive of that release")
     p.add_argument("--pages", help="the directory of hand pages (Markdown with front matter) and its site.json")
-    p.add_argument("--config", help="the site.json (default: site.json in --pages or beside it)")
+    p.add_argument("--config", help="the site.json (default: site.json in --pages; a site.json in a folder above is never used); its static/ folder is published as is")
     p.add_argument("--url", help="the site address, https://...; overrides site.json url")
     p.add_argument("--allow-unreleased", action="store_true", help="accept a source whose VERSION is not --release")
     p.add_argument("--allow-root", action="append", default=[], help="another directory --pages and --config may be under")
