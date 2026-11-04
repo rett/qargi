@@ -225,5 +225,44 @@ out=$($F start v1 2>&1); rc=$?
 git -C "$R3" fetch -q origin; git -C "$R3" push -q "$U3" --delete feature/theirs
 out=$($F start theirs 2>&1); rc=$?
 [ $rc = 0 ] && git -C "$R3" rev-parse -q --verify refs/heads/feature/theirs >/dev/null && ok "a stale tracking ref of a branch that is gone from origin does not block the start" || no "start after delete rc=$rc: $out"
+# --- the parking branch: the main checkout rests on it, qargi moves develop under it and fast-forwards it
+R5=$T/app5; O5=$T/origin5.git; git init -q -b master "$R5"; git init -q --bare "$O5"
+echo 0.1.0 > "$R5/VERSION"; git -C "$R5" add -A && git -C "$R5" commit -q -m one && git -C "$R5" branch develop && git -C "$R5" remote add origin "$O5" && git -C "$R5" push -q origin master develop
+git -C "$R5" checkout -q develop
+jq -n --arg p "$R5" '{schema:1, project:"app5", methodology:"gitflow", repo:{url:"https://github.com/acme/app5", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app5.json"
+export QARGI_PROJECT=app5
+feat() { # name: a verified feature with one commit
+  $F start "$1" >/dev/null 2>&1; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R5" worktree add -q "$w" "feature/$1"
+  echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "feature $1"; git -C "$R5" worktree remove --force "$w"; $F verify "$1" >/dev/null 2>&1
+}
+feat p1; t=$($F finish p1 | tok)
+out=$($F finish p1 --plan "$t" --approved go 2>&1) && no "develop was moved under the main checkout" || { grep -q "git -C $R5 switch -c scratch develop" <<<"$out" && ok "a branch held by the main checkout is refused with the parking branch to switch to" || no "message: $out"; }
+out=$($F park 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && ok "park creates the parking branch at develop and checks it out in the main checkout" || no "park rc=$rc: $out"
+echo wip > "$R5/wip.txt"
+out=$($F park 2>&1) && no "park accepted a dirty tree" || { grep -q "uncommitted changes" <<<"$out" && ok "park refuses a dirty main checkout" || no "dirty message: $out"; }
+rm "$R5/wip.txt"
+git -C "$R5" switch -q develop; git -C "$R5" switch -q -c other; git -C "$R5" switch -q scratch
+git -C "$R5" commit -q --allow-empty -m "kept on scratch"
+out=$($F park 2>&1) && no "park discarded commits of the parking branch" || { grep -q "kept on scratch" <<<"$out" && grep -q "agent task" <<<"$out" && ok "park refuses a parking branch with commits develop lacks, lists them and says what to do" || no "ahead message: $out"; }
+[ "$(git -C "$R5" log -1 --format=%s scratch)" = "kept on scratch" ] && ok "and the branch is untouched" || no "scratch changed"
+git -C "$R5" switch -q other
+out=$($F finish p1 --plan "$t" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "parking branch scratch: not advanced (the main checkout is on other)" <<<"$out" && ok "after a finish, a main checkout elsewhere gets one line saying the parking branch was left" || no "finish rc=$rc: $out"
+git -C "$R5" switch -q scratch
+feat p2; t=$($F finish p2 | tok)
+out=$($F finish p2 --plan "$t" --approved go 2>&1)
+grep -q "parking branch scratch: not advanced (scratch has 1 commit(s) that develop lacks)" <<<"$out" && ok "a parking branch with commits of its own is not advanced (and the line says so)" || no "ahead finish: $out"
+git -C "$R5" reset -q --hard develop
+feat p3; t=$($F finish p3 | tok); d_old=$(git -C "$R5" rev-parse develop)
+echo dirty > "$R5/dirty.txt"
+out=$($F finish p3 --plan "$t" --approved go 2>&1)
+grep -q "parking branch scratch: not advanced (the main checkout has uncommitted changes)" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$d_old" ] && ok "a dirty main checkout is not touched" || no "dirty finish: $out"
+rm "$R5/dirty.txt"; git -C "$R5" merge -q --ff-only develop
+feat p4; t=$($F finish p4 | tok)
+out=$($F finish p4 --plan "$t" --approved go 2>&1)
+grep -q "parking branch scratch: fast-forwarded to develop" <<<"$out" && [ "$(git -C "$R5" rev-parse scratch)" = "$(git -C "$R5" rev-parse develop)" ] && [ "$(git -C "$R5" branch --show-current)" = scratch ] && [ -z "$(git -C "$R5" status --porcelain)" ] && ok "after a finish, a clean main checkout on the parking branch is fast-forwarded to develop" || no "ff finish: $out"
+[ -z "$(git -C "$O5" for-each-ref refs/heads/scratch)" ] && ok "the parking branch is never pushed" || no "scratch pushed"
+$F park >/dev/null 2>&1 && jq '.repo.parking_branch = "rest"' "$T/c/projects/app5.json" > "$T/c/projects/app5.new" && mv "$T/c/projects/app5.new" "$T/c/projects/app5.json" && $F park >/dev/null 2>&1 && [ "$(git -C "$R5" branch --show-current)" = rest ] && ok "repo.parking_branch names another branch" || no "custom parking branch"
 rm -rf "$T"
 exit $fail

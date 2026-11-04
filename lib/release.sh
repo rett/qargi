@@ -253,6 +253,7 @@ PY
     if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
     audit_log "release:finish" "$PROJ $VER"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
+    [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
       if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
       echo "pushed master, $second and tag $VER"

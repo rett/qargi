@@ -208,6 +208,16 @@ develop cannot be merged into the detached branch. `feature start` and the other
 from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
 into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
 
+### The parking branch
+
+qargi moves develop and master without touching a working tree, so neither can be checked out in the project's main checkout
+(`need_free` refuses and says so). The checkout rests on a parking branch instead: `repo.parking_branch` in the answers, `scratch` by
+default. `git -C DIR switch -c scratch develop` makes it; `qargi feature park` refreshes it later: `checkout -B scratch develop` in the
+main checkout, refused when the tree is dirty or when `scratch` has commits develop lacks (it lists them: re-implement them with an
+agent task based on develop). After `feature finish`, `release finish` and `release finish --hotfix` moved develop, a clean main
+checkout on the parking branch with no commits of its own is fast-forwarded to develop; otherwise one line says why not. The parking
+branch is never pushed or merged.
+
 ## Feature marshal
 
 When several sessions lead the same project, the marshal says who leads which open feature. It keeps one
