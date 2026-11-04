@@ -63,8 +63,40 @@ $F verify theme >/dev/null 2>&1
 out=$($F finish theme 2>&1) && no "finish planned a merge of detached history into develop" || { grep -q "would bring in history of docs-site" <<<"$out" && ok "feature finish refuses it before any plan" || no "finish message: $out"; }
 [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && ok "develop did not move" || no "develop moved"
 
+# --- a release branch that holds detached history cannot finish (the check runs before any plan)
+git -C "$R" branch release/0.9.0 develop
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" release/0.9.0
+git -C "$w" merge -q --allow-unrelated-histories --no-edit docs-site >/dev/null 2>&1 || git -C "$w" merge --abort >/dev/null 2>&1
+git -C "$R" worktree remove --force "$w"
+git -C "$R" merge-base --is-ancestor docs-site release/0.9.0 && ok "(setup) the release branch holds the detached history by a manual merge" || no "setup release merge"
+m0=$(git -C "$R" rev-parse master); tags0=$(git -C "$R" tag | wc -l)
+out=$($DA release finish 0.9.0 2>&1) && no "release finish planned a merge of detached history into master" || { grep -q "would bring in history of docs-site" <<<"$out" && ok "release finish refuses detached history before any plan" || no "release finish message: $out"; }
+! grep -q "plan token" <<<"$out" && [ "$(git -C "$R" rev-parse master)" = "$m0" ] && [ "$(git -C "$R" rev-parse develop)" = "$dev0" ] && [ "$(git -C "$R" tag | wc -l)" = "$tags0" ] && ok "no token was offered; master, develop and the tags did not move" || no "release finish changed something: $out"
+
 # --- tasks may be based on the detached branch
 out=$($DA local prepare --repo "$R" --base docs-site --slug page --scratch "$T" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "^BASE_SHA=$(git -C "$R" rev-parse docs-site)" <<<"$out" && ok "local prepare accepts the detached branch as the base" || no "prepare rc=$rc: $out"
+
+# --- a run based on the detached branch: review apply puts agent/SLUG at the branch's head, and feature merge takes it into the branch
+out=$($DA local prepare --repo "$R" --base docs-site --slug guide --scratch "$T" 2>&1); r=$(sed -n 's/^RUN=//p' <<<"$out"); c=$r/clone
+b=$(git -C "$c" rev-parse HEAD); ds=$(git -C "$R" rev-parse docs-site)
+( cd "$c" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
+  echo "how to build the site" > guide.md; git add -A; git commit -q -m "docs: add the guide page" -m "The guide says how the site is built, because the home page only links to it."
+  mkdir -p "$r/out/patches"; git format-patch -q -o "$r/out/patches" "$b..HEAD"
+  git log --reverse --format='%H%x09%s' "$b..HEAD" | jq -R -s -c '[split("\n")[] | select(length>0) | split("\t") | {sha:.[0], subject:.[1]}] as $c
+    | {status:"DONE", commits:$c, commit_advice:($c|map(. + {why_separate:"x", depends_on:[], builds_alone:true})), patch_groups:[{name:"guide", why:"one change", commits:($c|map(.sha))}]}' > "$r/out/manifest.json"
+  echo "# series" > "$r/out/series.md" )
+out=$($DA review apply "$r" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$R" rev-parse agent/guide~1)" = "$ds" ] && ok "review apply of a run based on the detached branch makes agent/guide on that branch's head" || no "apply rc=$rc: $out"
+grep -q "feature merge NAME agent/guide" <<<"$out" && ok "and prints the next commands" || no "apply output: $out"
+dev1=$(git -C "$R" rev-parse develop); o1=$(git -C "$T/origin.git" rev-parse docs-site)
+out=$($F merge docs-site agent/guide 2>&1); t=$(tok <<<"$out")
+[ -n "$t" ] && grep -q "brings 1 commit(s) into docs-site" <<<"$out" && [ "$(git -C "$R" rev-parse docs-site)" = "$ds" ] && ok "feature merge DETACHED agent/guide prints a plan and changes nothing" || no "merge plan: $out"
+out=$($F merge docs-site agent/guide --plan "$t" --approved "take the guide" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$R" rev-list --parents -n1 docs-site | wc -w)" = 3 ] && git -C "$R" show docs-site:guide.md >/dev/null && [ "$(git -C "$R" rev-parse develop)" = "$dev1" ] && [ "$(git -C "$T/origin.git" rev-parse docs-site)" = "$o1" ] \
+  && ok "with the token it merges the applied task into the detached branch with --no-ff, locally only" || no "merge rc=$rc: $out"
+$DA local verify "$r" >/dev/null 2>&1 && ok "and local verify still accepts the run" || no "verify: $($DA local verify "$r" 2>&1)"
+out=$($DA local clean "$r" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$r" ] && ok "and local clean removes the run" || no "clean rc=$rc: $out"
 rm -rf "$T"
 exit $fail
