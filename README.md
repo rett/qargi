@@ -430,8 +430,16 @@ qargi needs Python 3.11 or later (the standard library reads the TOML files some
 
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
-`--uninstall` to remove (copies need `--force`). An existing real directory is
-never replaced without `--force`. Install at one level only. The command is
+`--uninstall` to remove. The install records every path it wrote (links, copied
+files, the directories it had to create) in `install.manifest` beside
+`install.json`, and `--uninstall` removes exactly those, copies included, and
+nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`.
+An install made before the manifest existed cannot be told from your own files;
+`--uninstall` says so and removes only the fixed paths it writes, and only with
+`--force`. An existing real directory is never replaced without `--force`. The
+skills directories come from the definition of the runtime whose session loads the
+skills (`--runtime NAME`, default `claude-code`: `~/.claude/skills`); a runtime
+with none is refused. Install at one level only. The command is
 always user-level, so install `--user` before `--project`. The instance
 registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
