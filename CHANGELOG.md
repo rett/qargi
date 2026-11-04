@@ -88,6 +88,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The word budget test (`tests/test_skill_budget.sh`) fails a ceiling in `tests/skill-budget.txt` that is above its value at the merge base with `origin/develop` unless its line carries a `# raised: reason` comment (skipped with a notice when there is no such base), and it counts the notes of each runtime definition (`lib/providers/NAME.json:notes`) as one more budgeted text.
 - `qargi team brief` and `qargi collect` no longer hard-code the hosted session's output and clone directories: they ask the notes (`output-dir`, `clone-dir`) of the project's cloud runtime. A brief for a project with no cloud runtime is refused (no runtime is assumed); `collect` finds the project from the session's instance and keeps only the base name of a listed file it cannot place.
 - `skill import` prints `note: the source's top-level .pack.json ...` when the source holds a record of its own, which was dropped without a word before.
+- The shipped `shellcheck-gate` pack has two more guidance lines: a disable for a newly introduced shellcheck code names the version that introduced it, and a lint severity the project configures itself beats `-S warning`. `packs seed` offers the update.
 
 ### Fixed
 - `agent` verbs check the `agents.json` records of the project they are about (`--project`, else the project in effect) and not of every project: one hand-broken record no longer stops `agent for` in the others (`agent list` without `--project` still checks them all).
