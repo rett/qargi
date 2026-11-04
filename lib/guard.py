@@ -126,8 +126,13 @@ names the key by its full path, a glob that expands to a protected path (for a w
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
-or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
-refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
+or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
+refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
+a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, printf, cat, tee, grep or git commit|log|status|diff|show|add
+(they print, write or search the text and run nothing from it), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
+`git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
+function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or the target of a
+redirection in quotes keeps the plain split. A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
@@ -639,6 +644,120 @@ def segments(command):
     """The commands of a Bash command line as texts, in the order of passes() (the plain, conservative split: a verb in quoted text is found too). Read once per
     command (the checks of one call all ask)."""
     return tuple(p.text for _, ps in passes(command) for p in ps)
+
+
+INERT = {"echo", "printf", "cat", "tee", "grep", "egrep", "fgrep"}   # programs that do nothing with the text of an argument or of their input but print, write or search it
+INERT_GIT = {"commit", "log", "status", "diff", "show", "add"}       # git subcommands that are in the same case (git commit -m TEXT, git commit -F -)
+MASK_BAIL = re.compile(r"[\\`\0\r\x0b\x0c]|\$[\[\x27\"({]|[<>]\(")  # a backslash, a substitution, $'..', $"..", ${..}, $[..], a control character: not read here
+MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.""", re.S)
+HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
+MASK_SEPARATORS = re.compile(r"[;|&\n]")
+
+
+def inert_command(words):
+    """True when the command whose words are given does nothing with the text of its arguments or its input (see mask_data)."""
+    return bool(words) and (words[0] in INERT or (words[0] == "git" and len(words) > 1 and words[1] in INERT_GIT))   # a quoted word carries \x01: it is no name here
+
+
+def mask_data(command):
+    """The command with its data made harmless to the plain split, or the command itself. The split (segments) cuts a line at every ; | & and newline,
+    inside quotes and heredocs too, so `git commit -m "Docs; qargi packs seed"` and a heredoc that a commit message is written from were refused as the
+    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, printf, cat, tee, grep, git commit|log|
+    status|diff|show|add), a quoted string of it cannot run anything, and a heredoc body is the input of such a command: the separators in the quoted
+    strings become blanks and the heredoc bodies are cut out (the delimiter line stays), and nothing else changes, so a redirection or a path in the
+    line is still judged. Any other command in the line (a shell, make, find, a script, a function, an assignment, a keyword, a group), a comment, a
+    backslash, a substitution, $'..', ${..}, a quote or heredoc that is never closed, a redirection's own target: the command is returned as it is, and
+    the plain split reads all of it. Used for the verbs that change a skill or the marshal, not for push/gh/ssh (blocked() reads the whole text)."""
+    if not QUOTED.search(command) or MASK_BAIL.search(command):
+        return command
+    n, pos, count = len(command), 0, 0
+    words, cur, spans, pending = [], "", [], []
+    quotes = []                                                 # (start, end) of the quoted strings that hold a separator
+
+    def end_word():
+        nonlocal cur
+        if cur:
+            words.append(cur)
+            cur = ""
+
+    while pos < n:
+        count += 1
+        if not count & 255:
+            tick()
+        t = MASK_TOKEN.match(command, pos).group()
+        end = pos + len(t)
+        if t in ("'", '"'):
+            j = command.find(t, end)
+            if j < 0:
+                return command                              # never closed
+            target = bool(re.match(r"\d*[<>]", cur)) or (not cur and bool(words) and bool(re.fullmatch(r"\d*[<>]+[|&]?", words[-1])))
+            if not target and MASK_SEPARATORS.search(command, end, j):
+                quotes.append((end, j))
+            cur += "\x01"
+            end = j + 1
+        elif t == "<<<":
+            end_word()
+            words.append(t)
+        elif t in ("<<", "<<-"):
+            end_word()
+            m = HEREDOC_WORD.match(command, end)
+            if not m:
+                return command
+            pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
+            end = m.end()
+        elif t == "(" or t == ")":
+            return command
+        elif t == "#":
+            if not cur:
+                return command                              # a comment
+            cur += t
+        elif t == "&" and (command[pos - 1:pos] in ("<", ">") or command[end:end + 1] == ">"):
+            cur += t                                        # 2>&1, <&3, &>file: a redirection, not a separator
+        elif t == "|" and command[pos - 1:pos] == ">":
+            cur += t                                        # >| file
+        elif t in (";", "|", "&", "\n"):
+            end_word()
+            if words and not inert_command(words):
+                return command
+            words = []
+            if t == "\n" and pending:
+                s = end
+                for delim, tabs in pending:
+                    body = s
+                    while True:
+                        nl = command.find("\n", s)
+                        line = command[s:n if nl < 0 else nl]
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                        if nl < 0:
+                            return command                  # the delimiter never comes
+                        s = nl + 1
+                        count += 1
+                        if not count & 255:
+                            tick()
+                    spans.append((body, s))
+                    s = n if nl < 0 else nl + 1
+                pending = []
+                end = s
+        elif t in (" ", "\t"):
+            end_word()
+        else:
+            cur += t
+        pos = end
+    end_word()
+    if pending or (words and not inert_command(words)):
+        return command
+    cuts = sorted([(a, b, False) for a, b in quotes] + [(a, b, True) for a, b in spans])
+    if not cuts:
+        return command
+    out, last = [], 0
+    for a, b, body in cuts:
+        out.append(command[last:a])
+        if not body:
+            out.append(MASK_SEPARATORS.sub(" ", command[a:b]))
+        last = b
+    out.append(command[last:])
+    return "".join(out)
 
 
 UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)
@@ -1897,7 +2016,7 @@ def skill_refusal(call):
         return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and below_key_dir(full))) else None
     if call.kind != "shell":
         return None
-    return bash_skill_refusal(call.command, call.cwd, 0)
+    return bash_skill_refusal(mask_data(call.command), call.cwd, 0)
 
 
 def names_lead(t):
@@ -2514,7 +2633,8 @@ def judge(call):
 
 
 QUOTED = re.compile(r"[\"']|<<")
-TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too: if the verb is only text (a commit message, a note), "
+TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too (not when every command of the line is echo, printf, cat, tee, grep "
+             "or git commit|log|status|diff|show|add, with no comment, backslash or substitution): if the verb is only text (a commit message, a note), "
              "write the text to a file with your file tool and commit with git commit -F FILE.")
 
 
