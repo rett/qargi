@@ -349,8 +349,14 @@ marshal_main() {
     exit "$crc"
   fi
   if [ "$verb" = handoff ]; then
-    # read only: no lease, no fetch, no record written; the file of --write is the only thing it may make
-    exec python3 -I "$MARSHAL_LIB/marshal_handoff.py" --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --repo "$(marshal_repo "$PROJ")" --ttl "$(marshal_ttl "$PROJ")" "${opt[@]}"
+    # read only: no lease, no fetch, no record written; the file of --write (and the line in $DA_STATE/handoff that says when it was written) is the only thing it may make
+    local hrc=0
+    python3 -I "$MARSHAL_LIB/marshal_handoff.py" --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --repo "$(marshal_repo "$PROJ")" --ttl "$(marshal_ttl "$PROJ")" "${opt[@]}" || hrc=$?
+    # the stage line (the lead's context, whether a compact is safe now): after the note, never inside --json; on stderr when stdout is the note itself
+    if [ "$hrc" = 0 ] && [ -z "$json" ]; then
+      case " ${opt[*]} " in *" --write "*) lead_advice;; *) lead_advice >&2;; esac
+    fi
+    exit "$hrc"
   fi
   marshal_py "$PROJ" "$verb" "${opt[@]}"
 }
