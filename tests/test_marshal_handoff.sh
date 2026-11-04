@@ -4,7 +4,7 @@
 # develop and several feature branches, records made by the marshal itself or written to the state directory by hand).
 # What this covers: the sections of the note; the repository and HEAD (a detached HEAD is said plainly); the feature facts (tip,
 # whole-suite record against the tip, merged and unmerged agent branches, commits ahead); the record text only under its DATA line
-# and without control characters; that the verb changes no record, ref, state file or audit line (also with a record whose branch
+# and without control characters; that the verb changes no record, ref, state file or audit line (but --write records when the note was written in state/handoff; also with a record whose branch
 # is gone); --write (refuses an existing file, a path inside the repository or the qargi directories, mode 600); --json; the
 # degradations (shared marshal off, switch unreadable, remote unreachable, answers absent); the packs and read-first sections;
 # the cap; the refusals. The member guard cases are in tests/test_guard.py.
@@ -152,7 +152,8 @@ H f1 --write "$T/scratch/nodir/x.md"; rc=$?
 H f1 --json --write "$T/scratch/note.json"; rc=$?
 [ $rc = 0 ] && jq -e '.kind == "qargi-handoff"' "$T/scratch/note.json" >/dev/null && [ "$(stat -c %a "$T/scratch/note.json")" = 600 ] && ok "--write --json: the file is the JSON object" || no "SPEC --write --json: rc=$rc $(out)"
 ( umask 0 && H f1 --write "$T/scratch/note0.md" ); [ "$(stat -c %a "$T/scratch/note0.md")" = 600 ] && ok "--write: mode 600 whatever the umask" || no "SPEC --write mode under umask 0"
-[ "$(snapshot)" = "$after" ] && ok "--write: nothing but the named file was made" || no "SPEC --write changed state: $(diff <(echo "$after") <(snapshot))"
+[ "$(snapshot | grep -v "^[0-9a-f]*  $S/handoff/")" = "$after" ] && jq -e '.file | endswith("/note0.md")' "$S/handoff/app.json" >/dev/null && ok "--write: nothing but the named file and the record of when it was written (state/handoff/app.json) was made" || no "SPEC --write changed state: $(diff <(echo "$after") <(snapshot))"
+rm -rf "$S/handoff"
 
 # --- --json
 H f1 --json; rc=$?

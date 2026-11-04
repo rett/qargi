@@ -297,7 +297,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
-                                  "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. "
+                                  "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
@@ -902,12 +902,29 @@ COMMANDS = {
         "examples": ["qargi import acme.tar.gz.gpg", "qargi import acme.tar.gz --dry-run --only memories"],
     },
     "lead": {
-        "summary": "Give, inspect or take away the cloud lead's right to push",
-        "desc": ("Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is "
-                 "asked of you, and it cannot publish releases. grant and revoke are interactive: each step prints its plan and asks you at the "
-                 "terminal, and your answer is the recorded approval. From Claude Code run them with !."),
-        "scripts": ["lead.sh"],
+        "summary": "The lead session: its context, and the cloud lead's right to push",
+        "desc": ("usage and compact-check keep the lead's own context small: usage says how much of it is in use, compact-check says whether a "
+                 "/compact is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* "
+                 "branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: "
+                 "each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !."),
+        "scripts": ["lead.sh", "lead_usage.py"],
         "verbs": {
+            "usage": verb("How much of this session's context is in use: tokens of the last turn, percent of the window, transcript size", [],
+                          [PROJECT_OPT, opt("--session", "read the transcript of this session id (default: QARGI_LEAD, else the newest of this directory)", "ID"),
+                           opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
+                          desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
+                                "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
+                                "lead.context_window (tokens), else the runtime's. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
+                          examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
+            "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
+                                  [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
+                                  desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
+                                        "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
+                                        "than the last merge; or a release or hotfix branch is open. It prints the restart block: the handoff note, qargi marshal status, "
+                                        "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
+                                        "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
+                                        "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off)."),
+                                  examples=["qargi lead compact-check --advise"]),
             "grant": verb("Guided: create or rotate the grant in three confirmed steps", [("PROJECT", "project:teams")],
                           [opt("--from-file", "read the token from a file instead of asking", "FILE", "file")],
                           desc="Explains how to create the fine-grained token, checks it, then: token and vault; the GitHub tool; the Push rules. Skips what is in place.",
