@@ -710,9 +710,10 @@ COMMANDS = {
         "summary": "Check what an agent returned and put it on a task branch",
         "scripts": ["review_check.py", "review.sh"],
         "verbs": {
-            "check": verb("Check a run: numbered patches, messages, manifest, groups", [("RUN_DIR", "dir")],
+            "check": verb("Check what a run returned: numbered patches, messages, manifest, groups", [("OUT", "dir")],
                           [opt("--allow-empty", "accept a manifest with no commits (a team member that was blocked or had nothing to change)")],
-                          desc=("Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
+                          desc=("OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. "
+                                "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
                                 "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches.")),
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],

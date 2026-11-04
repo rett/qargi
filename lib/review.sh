@@ -48,11 +48,13 @@ case $verb in
     [ -n "$sha" ] || die "cannot tell the run's base commit (branch '$base')"
     g cat-file -e "$sha^{commit}" 2>/dev/null || die "the base commit $sha is not in $REPO"
     branch_exists "$BRANCH" && die "$BRANCH exists already: choose another with --branch, or delete it first"
-    patches=$(find "$RUN/out/patches" -maxdepth 1 -name '*.patch' 2>/dev/null | sort)
-    [ -n "$patches" ] || die "$RUN/out/patches holds no patches: nothing to apply"
+    # the patches are the files of out/patches: read as a list, so a name with a space or a newline in it stays one name
+    patches=()
+    while IFS= read -r -d '' p; do patches+=("$p"); done < <(find "$RUN/out/patches" -maxdepth 1 -name '*.patch' -type f -print0 2>/dev/null | sort -z)
+    [ ${#patches[@]} -gt 0 ] || die "$RUN/out/patches holds no patches: nothing to apply"
     # the committer: what the repository has configured, else the author of the patches
     if [ -z "$(g config user.name || true)" ] || [ -z "$(g config user.email || true)" ]; then
-      first=$(echo "$patches" | head -1)
+      first=${patches[0]}
       GIT_COMMITTER_NAME=$(sed -n 's/^From: \(.*\) <.*>$/\1/p' "$first" | head -1)
       GIT_COMMITTER_EMAIL=$(sed -n 's/^From: .* <\(.*\)>$/\1/p' "$first" | head -1)
       [ -n "$GIT_COMMITTER_NAME" ] && [ -n "$GIT_COMMITTER_EMAIL" ] || die "no git user.name/user.email in $REPO and the first patch has no author"
@@ -61,7 +63,7 @@ case $verb in
     WT=$(mktemp -d "$DA_STATE/apply-wt.XXXXXX")
     g worktree add -q -b "$BRANCH" "$WT" "$sha" 2>/dev/null || { rm -rf "$WT"; WT=''; die "could not make a temporary worktree for $BRANCH"; }
     fail=''
-    for p in $patches; do
+    for p in "${patches[@]}"; do
       if ! git -C "$WT" am -q --3way "$p" >/dev/null 2>&1; then fail=$p; git -C "$WT" am --abort >/dev/null 2>&1 || true; break; fi
     done
     tip=$(git -C "$WT" rev-parse HEAD)
@@ -71,7 +73,7 @@ case $verb in
       die "$(basename "$fail") does not apply on $sha; the worktree and $BRANCH were removed, nothing else changed"
     fi
     journal_ref "$REPO" "refs/heads/$BRANCH" "" "$tip" review:apply
-    echo "applied $(echo "$patches" | wc -l) patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
+    echo "applied ${#patches[@]} patch(es) on $BRANCH, from ${sha:0:12} to ${tip:0:12}:"
     g log --reverse --format='  %h %s' "$sha..$tip"
     # The run directory is a member's to write: what is recorded there is written in the lead's state directory and renamed into place (mv -T replaces a link
     # that stands in the name, it never writes through it).
