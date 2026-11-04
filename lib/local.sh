@@ -195,10 +195,10 @@ case $verb in
   prepare)
     REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE=''
     while [ $# -gt 0 ]; do
-      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;; *) usage_die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
-      [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
+      [ -z "$REPO" ] || usage_die "give --repo or --repo-url, not both"
       case $URL in https://*) ;; *) die "--repo-url must be an https URL";; esac
       uauth=${URL#https://}; uauth=${uauth%%[/?#]*}
       case $uauth in *@*) die "--repo-url must not carry a user name or a password (https://USER@host): the URL is recorded and put in commands; give the token with --credential-file";; esac
@@ -216,7 +216,7 @@ case $verb in
       barrier_guard local "$BPJ"
     fi
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
-    [ -n "$BASE" ] && [ -d "$SCR" ] || die "prepare needs --base BRANCH and --scratch DIR"
+    [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
     MEMBER='' MODEL='' EFFORT=''
@@ -336,7 +336,7 @@ WRAP
       fi
     fi;;
   verify)
-    RUN=${1:-}; [ -f "$RUN/refs.before" ] || die "verify needs a RUN dir made by prepare"
+    RUN=${1:-}; [ -f "$RUN/refs.before" ] || usage_die "verify needs a RUN dir made by prepare"
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
     if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $RUN/out/report.md, and do not apply or accept the patches." >&2
@@ -368,14 +368,14 @@ WRAP
         --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
         --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
-        -*) die "clean: unknown option $1";;
-        *) [ -z "$CLEAN_RUN" ] || die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
+        -*) usage_die "clean: unknown option $1";;
+        *) [ -z "$CLEAN_RUN" ] || usage_die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
     if [ -n "$STALE" ]; then
-      [ -z "$ALL$CLEAN_RUN$DISCARD" ] || die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
-      case $STALE in ''|*[!0-9]*) die "clean --stale needs a whole number of days, got '$STALE'";; esac
-      [ -n "$SCR" ] || die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
+      [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
+      case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac
+      [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
       [ -d "$SCR" ] || die "clean --stale: no such directory $SCR"
       scr=$(readlink -f "$SCR"); nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0; reg_load
       for d in "$scr"/qargi.??????; do
@@ -396,8 +396,8 @@ WRAP
     fi
     [ -z "$YES" ] || die "clean: --yes is for --stale"
     if [ -n "$ALL" ]; then
-      [ -z "$CLEAN_RUN$DISCARD" ] || die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
-      [ -d "$SCR" ] || die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
+      [ -z "$CLEAN_RUN$DISCARD" ] || usage_die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
+      [ -d "$SCR" ] || usage_die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
       scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; reg_load
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
@@ -416,7 +416,7 @@ WRAP
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
-      || die "clean needs a RUN dir made by prepare"
+      || usage_die "clean needs a RUN dir made by prepare"
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
@@ -477,7 +477,7 @@ WRAP
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
     SCR=''
     while [ $# -gt 0 ]; do
-      case $1 in --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;; *) die "list: unknown option $1";; esac
+      case $1 in --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;; *) usage_die "list: unknown option $1";; esac
     done
     runs=(); reg_load
     if [ -n "$SCR" ]; then
@@ -507,12 +507,12 @@ WRAP
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)
     RUN=${1:-}; shift || true
-    [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || die "run needs a RUN dir made by prepare"
+    [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || usage_die "run needs a RUN dir made by prepare"
     for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
     reg_load; run_record "$RUN" || exit 2   # the project is found by the repository the lead's registry records, not by files in the run directory
     RPJ=$(project_of "$RUN_REPO" "$RUN_URL")
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
-  *) die "usage: local.sh prepare|verify|clean|list|run ...";;
+  *) usage_die "usage: local.sh prepare|verify|clean|list|run ...";;
 esac

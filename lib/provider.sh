@@ -14,7 +14,7 @@
 here=$(dirname "$(readlink -f "$0")")
 usage='usage: qargi provider accept NAME --surface local|cloud --no-barrier --asked "<your words>" [--project P] [--plan TOKEN --approved "<your go-ahead>"]'
 verb=${1:-}; shift || true
-[ "$verb" = accept ] || die "$usage"
+[ "$verb" = accept ] || usage_die "$usage"
 NAME='' SURFACE='' NOBAR='' PROJ='' ASKED='' APPROVED='' PLAN_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -24,19 +24,19 @@ while [ $# -gt 0 ]; do
     --asked) need_val "$1" $#; ASKED=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
-    -*) die "unknown option $1";;
-    *) [ -z "$NAME" ] || die "unexpected argument $1"; NAME=$1; shift;;
+    -*) usage_die "unknown option $1";;
+    *) [ -z "$NAME" ] || usage_die "unexpected argument $1"; NAME=$1; shift;;
   esac
 done
-[ -n "$NAME" ] && [ -n "$SURFACE" ] || die "$usage"
+[ -n "$NAME" ] && [ -n "$SURFACE" ] || usage_die "$usage"
 [ -n "$NOBAR" ] || die "say what you accept: --no-barrier (running a read-only role on $SURFACE without a read-only barrier). $usage"
 [ -n "$ASKED" ] || die "--asked \"<your words>\" is required: they are recorded as the reason. $usage"
-[ -z "$APPROVED" ] || [ -n "$PLAN_ARG" ] || die "--approved needs --plan TOKEN, the token the plan printed"
+[ -z "$APPROVED" ] || [ -n "$PLAN_ARG" ] || usage_die "--approved needs --plan TOKEN, the token the plan printed"
 
 [ -n "$PROJ" ] || PROJ=$(python3 -I "$here/help.py" infer)
 # the barrier of the project's runtime as composed with the extensions the project enabled: one an extension provides and has verified counts
 state=$(python3 -I "$here/provider.py" effective "$NAME" "$SURFACE" read_only_barrier ${PROJ:+--project "$PROJ"}) || exit 1
-[ -n "$PROJ" ] || die "no project: give --project P (the project whose answers record the acceptance)"
+[ -n "$PROJ" ] || usage_die "no project: give --project P (the project whose answers record the acceptance)"
 valid_project "$PROJ" && [ -f "$DA_CONF/projects/$PROJ.json" ] || die "no stored answers for project '$PROJ' (qargi project list)"
 
 if [ "$state" != no ]; then

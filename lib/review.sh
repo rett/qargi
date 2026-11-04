@@ -14,8 +14,8 @@ RUN_ARG='' BRANCH='' PROJ='' YES=''
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --branch) need_val "$1" $#; BRANCH=$2; shift 2;; --yes) YES=1; shift;;
-    -*) die "unknown option $1";;
-    *) [ -z "$RUN_ARG" ] || die "unexpected argument $1"; RUN_ARG=$1; shift;;
+    -*) usage_die "unknown option $1";;
+    *) [ -z "$RUN_ARG" ] || usage_die "unexpected argument $1"; RUN_ARG=$1; shift;;
   esac
 done
 . "$(dirname "$0")/gitflow.sh"
@@ -24,9 +24,9 @@ project_load
 
 case $verb in
   apply)
-    [ -n "${RUN_ARG%/}" ] || die "usage: qargi review apply RUN_DIR [--branch BRANCH] [--project P]"
+    [ -n "${RUN_ARG%/}" ] || usage_die "usage: qargi review apply RUN_DIR [--branch BRANCH] [--project P]"
     RUN=$(readlink -f -- "$RUN_ARG") || die "no such run directory: $RUN_ARG"   # the registry names real paths, and git -C WT am is given paths of the run
-    [ -f "$RUN/refs.before" ] && [ -d "$RUN/out" ] || die "apply needs a RUN dir made by qargi local prepare"
+    [ -f "$RUN/refs.before" ] && [ -d "$RUN/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $RUN/out/report.md; nothing was applied"
     [ ! -L "$RUN/applied" ] && { [ ! -e "$RUN/applied" ] || [ -f "$RUN/applied" ]; } || die "$RUN/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
@@ -89,7 +89,7 @@ case $verb in
     echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
     echo "  qargi local clean $RUN";;
   prune)
-    [ -z "$RUN_ARG" ] || die "usage: qargi review prune [--project P] [--yes]"
+    [ -z "$RUN_ARG" ] || usage_die "usage: qargi review prune [--project P] [--yes]"
     targets=$(g for-each-ref --format='%(refname:short)' refs/heads/develop 'refs/heads/feature/*')
     cur=$(g symbolic-ref -q --short HEAD || true); n=0
     while read -r b; do
@@ -104,5 +104,5 @@ case $verb in
       else echo "$b (${sha:0:12}) is merged into $into"; fi
     done < <(g for-each-ref --format='%(refname:short)' 'refs/heads/agent/*')
     if [ "$n" = 0 ]; then echo "no merged agent/* branches"; elif [ -z "$YES" ]; then echo "$n branch(es) would be deleted: qargi review prune --yes"; fi;;
-  *) die "usage: qargi review apply|prune ...";;
+  *) usage_die "usage: qargi review apply|prune ...";;
 esac

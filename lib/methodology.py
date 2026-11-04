@@ -23,6 +23,12 @@ NAME = re.compile(r"^[a-z][a-z0-9]{0,23}$")
 PLACEHOLDER = re.compile(r"\{\{([a-z_]+)\}\}")
 
 
+def usage_exit(msg):
+    """A usage error: the message on stderr and exit 2, as the other verbs do."""
+    print(msg if msg.startswith("qargi: ") else "qargi: " + msg, file=sys.stderr)
+    raise SystemExit(2)
+
+
 def roots():
     """[(where, directory)]: the built-in methodologies, then yours."""
     return [("built-in", os.path.join(P.tool_root(), "methodologies")), ("user", os.path.join(P.conf(), "methodologies"))]
@@ -157,7 +163,7 @@ def main(argv):
             print("%-12s %-9s %s" % (n, where, m.get("description", "")))
     elif verb == "show":
         if not rest:
-            raise SystemExit("usage: qargi methodology show NAME")
+            usage_exit("usage: qargi methodology show NAME")
         where, d, m = load(rest[0])
         print("methodology: %s (%s, %s)\ndir: %s\n" % (m.get("name"), where, "version %s" % m.get("version"), d))
         print(m.get("description", ""))
@@ -192,7 +198,7 @@ def main(argv):
         sys.exit(rc)
     elif verb == "files":
         if not rest:
-            raise SystemExit("usage: qargi methodology files NAME --param k=v ...")
+            usage_exit("usage: qargi methodology files NAME --param k=v ...")
         given, i = {}, 1
         while i < len(rest):
             if rest[i] == "--param" and i + 1 < len(rest) and "=" in rest[i + 1]:
@@ -200,11 +206,11 @@ def main(argv):
                 given[k] = v
                 i += 2
             else:
-                raise SystemExit("qargi: unknown option %s" % rest[i])
+                usage_exit("qargi: unknown option %s" % rest[i])
         print(json.dumps(render(rest[0], given), indent=2))
     elif verb == "deployment":
         if not rest:
-            raise SystemExit("usage: qargi methodology deployment NAME [ID]")
+            usage_exit("usage: qargi methodology deployment NAME [ID]")
         where, d, m = load(rest[0])
         opts = (m.get("deployment") or {}).get("options", [])
         if len(rest) > 1:
@@ -218,7 +224,7 @@ def main(argv):
             for o in opts:
                 print("%-16s %s%s" % (o["id"], o.get("title", ""), "  (can be done for you)" if o.get("automatable") else ""))
     else:
-        raise SystemExit("usage: qargi methodology list|show|check|files|deployment ...")
+        usage_exit("usage: qargi methodology list|show|check|files|deployment ...")
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 # dies on an unbound variable. The options come from the parsers themselves: every `--opt) need_val` branch of every
 # lib/*.sh option loop is run as the last word of the verbs that script serves (SCRIPTS below), and a branch that reads
 # its value without need_val, or a script with valued options that SCRIPTS does not name, fails the test.
+# The same holds for the other usage errors: an unknown option and a missing argument end with exit 2.
 # Run: tests/test_valued_opts.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -70,4 +71,29 @@ for f in lib/*.sh; do
     fi
   done
 done
+
+# an unknown option is a usage error, exit 2, on every verb of every script (lib/release.sh has its own work in hand)
+for b in "${!SCRIPTS[@]}"; do
+  [ "$b" != release.sh ] || continue
+  IFS='|' read -ra verbs <<<"${SCRIPTS[$b]}"
+  hit=''
+  for v in "${verbs[@]}"; do
+    res=$(run_last "$v" --no-such-option)
+    if [ "${res%%$'\n'*}" = 2 ] && grep -q "unknown option --no-such-option\|usage:" <<<"${res#*$'\n'}"; then hit=$v; break; fi
+  done
+  if [ -n "$hit" ]; then ok "$b: unknown option exits 2 ($hit)"; else no "$b: no verb of ${SCRIPTS[$b]} exits 2 on an unknown option (${verbs[0]}: ${res%%$'\n'*} ${res#*$'\n'})"; fi
+done
+# the Python verbs, and the shell verbs with a missing argument
+usage_exit2() { # "verb words": an unknown option ends with exit 2 and a message
+  local res; res=$(run_last "$1" --no-such-option)
+  if [ "${res%%$'\n'*}" = 2 ] && [ -n "${res#*$'\n'}" ]; then ok "exit 2: $1 --no-such-option"; else no "$1 --no-such-option: exit ${res%%$'\n'*}: ${res#*$'\n'}"; fi
+}
+for w in "cloud" "discover search" "discover recommend" "discover install" "export" "import" "methodology files x" "report" "noticed" "review check"; do usage_exit2 "$w"; done
+missing_arg() { # "verb words": no argument it needs -> exit 2 and a message
+  local out rc
+  # shellcheck disable=SC2086
+  out=$(timeout 10 ./bin/qargi $1 2>&1 </dev/null); rc=$?
+  if [ "$rc" = 2 ] && [ -n "$out" ]; then ok "exit 2: $1 (no argument)"; else no "$1 (no argument): exit $rc: $out"; fi
+}
+for w in "watch" "collect" "instances show" "instances remove" "project set demo" "team check" "agent rename" "agent refresh" "agent remove" "memory get" "provider accept" "role show"; do missing_arg "$w"; done
 exit $fail
