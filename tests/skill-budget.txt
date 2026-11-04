@@ -1,9 +1,11 @@
 # Word ceilings of the texts a member or lead loads (see tests/test_skill_budget.sh). PATH MAX_WORDS, sorted.
 # Ceilings are exact: a text over its ceiling or under it fails. Shorten a text, then lower its line to the new wc -w. Never raise one without a review.
+# A raised ceiling carries a comment on its line, `PATH N # raised: reason` (the test checks it against the merge base with origin/develop). `lib/providers/NAME.json:notes` is the topic texts of a runtime's notes.
 agents/member.body.md 118
 agents/member.md 183
 contract/contract.md 718
 contract/output-format.md 276
+lib/providers/claude-code.json:notes 262
 lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 121

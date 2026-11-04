@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The weight of the texts a member or a lead loads, and four ways it is held in place.
+# The weight of the texts a member or a lead loads, and five ways it is held in place.
 #
 # The texts: skills/**/*.md, contract/*.md, roles/*/ROLE.md, agents/member.md and agents/member.body.md, provision/templates/*.md,
 # packs/skills/**/*.md and the contract addenda of the shipped runtimes (lib/providers/*/*.md, which a cloud agent's prompt or a local run's contract directory carries). Every word of them costs context in every session that loads them, so:
@@ -20,6 +20,16 @@
 #     there: its path inside the skill, as a markdown link or inside backticks, on a line that also says "load" (any case), or
 #     nothing would tell the session when to read it. A file under skills/ that is not .md is budgeted like the texts (it needs a
 #     line in tests/skill-budget.txt and must be text), so a script or a data file cannot be added unseen.
+#
+#  5. Raising a ceiling. A ceiling above its value at the merge base with origin/develop (`git merge-base HEAD origin/develop`;
+#     the check is skipped with a notice when there is none) must carry a comment on its own line that says why:
+#         PATH 330 # raised: the new section on X, reviewed by NAME
+#     so a bigger text cannot be made to pass by editing the number alone. A new line (no value at the merge base), an unchanged
+#     one and a lowered one need no comment. The check itself is tried on small files each time the test runs.
+#
+# The notes of a runtime's definition (lib/providers/*.json, `notes`) are loaded on demand by `qargi provider notes`. All its topics
+# together are one text here, listed as `lib/providers/NAME.json:notes` with the words of the topic texts. They are not scanned for
+# vendor words (tests/test_neutral.sh): a runtime's definition is where its vendor is named.
 #
 # Run: tests/test_skill_budget.sh          the check
 #      tests/test_skill_budget.sh --report  the same, and every text with its count, ceiling and slack (nothing is changed)
@@ -46,28 +56,76 @@ mapfile -t TEXTS < <({ find skills -type f; find packs/skills contract lib/provi
 [ "${#TEXTS[@]}" -gt 10 ] || no "found only ${#TEXTS[@]} texts: the lookup is broken"
 
 # 1. the budget
-declare -A ceil=()
+# the notes of a runtime's definition count as one more text each (words of the topic texts): NAME.json:notes
+declare -A words=()
+for t in "${TEXTS[@]}"; do words[$t]=$(wc -w < "$t"); done
+ITEMS=("${TEXTS[@]}")
+for j in lib/providers/*.json; do
+  n=$(jq -r 'if (.notes | type) == "object" then [.notes[] | strings] | join("\n") else empty end' "$j" 2>/dev/null | wc -w)
+  [ "$n" -gt 0 ] || continue
+  words[$j:notes]=$n; ITEMS+=("$j:notes")
+done
+# budget_read FILE ARRAY_CEIL ARRAY_COMMENT: the lines `PATH MAX_WORDS [# comment]` of FILE; prints what is wrong with a line
+budget_read() {
+  local -n _c=$2 _m=$3; local line body path max extra bad=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    body=${line%%#*}; path='' max='' extra=''
+    read -r path max extra <<<"$body"
+    [ -n "$path" ] || continue
+    if [ -n "$extra" ] || ! [[ ${max:-} =~ ^[0-9]+$ ]]; then echo "$1: not 'PATH MAX_WORDS [# comment]': $line"; bad=1; continue; fi
+    if [ -n "${_c[$path]:-}" ]; then echo "$1: $path is listed twice"; bad=1; continue; fi
+    _c[$path]=$max; [ "$body" = "$line" ] || _m[$path]=${line#*#}
+  done < "$1"
+  return $bad
+}
+# raised_without_reason OLD NEW: a line of NEW whose ceiling is above its value in OLD (a path OLD lacks is new, not raised) and
+# that has no `# raised: REASON` comment
+raised_without_reason() {
+  # shellcheck disable=SC2034  # om is filled through a name reference
+  local -A oc=() om=() nc=() nm=(); local p
+  budget_read "$1" oc om >/dev/null || true
+  budget_read "$2" nc nm >/dev/null || true
+  for p in "${!nc[@]}"; do
+    [ -n "${oc[$p]:-}" ] && [ "${nc[$p]}" -gt "${oc[$p]}" ] || continue
+    [[ ${nm[$p]:-} =~ ^[[:space:]]*raised:[[:space:]]*[^[:space:]] ]] || echo "$p: ${oc[$p]} -> ${nc[$p]}"
+  done | LC_ALL=C sort
+}
+RT=$(mktemp -d); trap 'rm -rf "$RT"' EXIT
+# shellcheck disable=SC2034
+declare -A ceil=() cmt=()   # cmt is filled through a name reference
 bad=0
-while read -r path max extra; do
-  case $path in ''|'#'*) continue;; esac
-  if [ -n "$extra" ] || ! [[ ${max:-} =~ ^[0-9]+$ ]]; then no "$BUDGET: not 'PATH MAX_WORDS': $path ${max:-} $extra"; bad=1; continue; fi
-  if [ -n "${ceil[$path]:-}" ]; then no "$BUDGET: $path is listed twice"; bad=1; continue; fi
-  ceil[$path]=$max
-done < "$BUDGET"
+budget_read "$BUDGET" ceil cmt > "$RT/msgs" || bad=1       # not in a subshell: it fills ceil
+while IFS= read -r m; do no "$m"; done < "$RT/msgs"
 over=0 missing=0 stale=0
-for t in "${TEXTS[@]}"; do
-  n=$(wc -w < "$t")
+for t in "${ITEMS[@]}"; do
+  n=${words[$t]}
   if [ -z "${ceil[$t]:-}" ]; then no "not in $BUDGET: $t ($n words); add it with a ceiling of $n"; missing=$((missing + 1)); continue; fi
   [ "$report" = 0 ] || printf '%6d words  ceiling %6d  slack %5d  %s\n' "$n" "${ceil[$t]}" $((${ceil[$t]} - n)) "$t"
   if [ "$n" -gt "${ceil[$t]}" ]; then no "over its ceiling: $t has $n words, ceiling ${ceil[$t]} (shorten it)"; over=$((over + 1)); fi
   if [ "$n" -lt "${ceil[$t]}" ]; then no "under its ceiling: $t has $n words, ceiling ${ceil[$t]} (lower the ceiling to $n in $BUDGET)"; over=$((over + 1)); fi
 done
 for p in "${!ceil[@]}"; do
-  [ -f "$p" ] || { no "stale entry in $BUDGET: $p is gone (delete the line)"; stale=$((stale + 1)); continue; }
-  found=0; for t in "${TEXTS[@]}"; do [ "$t" != "$p" ] || { found=1; break; }; done
-  [ "$found" = 1 ] || { no "stale entry in $BUDGET: $p is not one of the shipped texts (delete the line)"; stale=$((stale + 1)); }
+  if [ -z "${words[$p]:-}" ]; then
+    case $p in
+      *.json:notes) no "stale entry in $BUDGET: ${p%:notes} has no notes any more (delete the line)";;
+      *) no "stale entry in $BUDGET: $p is gone or is not one of the shipped texts (delete the line)";;
+    esac
+    stale=$((stale + 1))
+  fi
 done
-[ $((bad + over + missing + stale)) != 0 ] || ok "all ${#TEXTS[@]} texts are listed, each with a ceiling equal to its word count"
+[ $((bad + over + missing + stale)) != 0 ] || ok "all ${#ITEMS[@]} texts (the notes of the runtimes among them) are listed, each with a ceiling equal to its word count"
+
+# 5. a raised ceiling carries its reason. First the check on files of its own, then on the budget against the merge base with develop.
+printf '%s\n' '# c' 'a.md 10' 'b.md 10' 'c.md 10' 'd.md 10' 'e.md 10' > "$RT/old"
+printf '%s\n' '# c' 'a.md 12' 'b.md 12 # raised: the new section' 'c.md 9' 'd.md 10 # note' 'e.md 11 # raised:' 'f.md 99' > "$RT/new"
+got=$(raised_without_reason "$RT/old" "$RT/new" | tr '\n' ';')
+if [ "$got" = "a.md: 10 -> 12;e.md: 10 -> 11;" ]; then ok "the raised-ceiling check flags a bare raise and an empty reason, not a reasoned one, a lowered, an unchanged or a new line"
+else no "the raised-ceiling check is wrong: it flagged '$got'"; fi
+if base=$(git merge-base HEAD origin/develop 2>/dev/null) && git show "$base:$BUDGET" > "$RT/base" 2>/dev/null; then
+  raised=$(raised_without_reason "$RT/base" "$BUDGET")
+  if [ -z "$raised" ]; then ok "no ceiling is above its value at the merge base with origin/develop without a '# raised: reason' comment"
+  else while IFS= read -r m; do no "ceiling raised without a reason (add '# raised: why' to its line in $BUDGET): $m"; done <<<"$raised"; fi
+else echo "note: no merge base with origin/develop (or no $BUDGET there): the check for raised ceilings was skipped"; fi
 
 # 4. the reference files of the skills
 nref=0 refbad=0
