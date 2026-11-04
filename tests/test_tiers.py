@@ -542,5 +542,26 @@ class Slice2Messages(Base):
         self.assertNotIn("comes later", r.stdout)
 
 
+class LinkWithoutProjectTier(Base):
+    """`project link` of memory when the resolved tiers hold no project tier: a refusal that names the project, not a StopIteration traceback."""
+
+    def test_no_project_tier_is_a_refusal(self):
+        import contextlib, io
+        import project_link as PL
+        ctx = object.__new__(PL.Context)
+        ctx.project, ctx.answers, ctx.checkout, ctx.state, ctx.runtime = P, {}, "/nowhere", "/nowhere", "fake"
+        ctx.res = {"memory": {"user_dir": "~/.x/mem", "link": {"user": "dir-symlink"}}}
+        real = PL.tiers.resolve
+        PL.tiers.resolve = lambda a, p: [t for t in real(a, p) if t["tier"] != "project"]
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                ctx.link_of("memory")
+        finally:
+            PL.tiers.resolve = real
+        self.assertIn("no project memory tier", err.getvalue())
+        self.assertIn(P, err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

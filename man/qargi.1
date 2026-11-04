@@ -2571,7 +2571,7 @@ the local repository.
 .RS
 .TP
 .BI "\-\-repo\-url " "URL"
-clone a private repository from this URL.
+clone a private repository from this https URL (no user name or password in it: that is \-\-credential\-file).
 .RE
 .RS
 .TP
@@ -2630,7 +2630,7 @@ clean every run under \-\-scratch whose work is recorded applied (review apply) 
 .RS
 .TP
 .BI "\-\-stale " "DAYS"
-list the finished runs (RUN/verified or RUN/applied exists) under \-\-scratch that are at least DAYS days old, from the run's start; with \-\-yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed.
+list the finished runs (RUN/verified or RUN/applied exists) under \-\-scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with \-\-yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed.
 .RE
 .RS
 .TP

@@ -665,7 +665,7 @@ COMMANDS = {
                               "The command is built from the definition without a shell, runs in a scrubbed environment (only the names the pack's env_pass lists, which the review shows), and its output goes to OUT/transcript. "
                               "A read-only run needs the barrier the definition declares (or your acceptance). A library pack's executable runs only from its sealed copy.")),
             "prepare": verb("Make the clone and the wrapper for a local agent", [],
-                            [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this URL", "URL"),
+                            [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this https URL (no user name or password in it: that is --credential-file)", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
@@ -686,7 +686,7 @@ COMMANDS = {
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
-                           opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start; with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
+                           opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start (a run with no start time is named as skipped); with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
                            opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "

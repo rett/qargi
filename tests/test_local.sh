@@ -370,12 +370,26 @@ out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" --yes 2>&1); rcs=$?
 { [ $rcs = 1 ] && [ ! -e "$SOLD" ] && [ ! -e "$TMSO" ] && grep -q "^cleaned $SOLD" <<<"$out" && [ -d "$SKEEP" ] && grep -q "kept $SKEEP: .*never applied" <<<"$out" \
   && [ -d "$SNEW" ] && [ -d "$SPROG" ] && grep -q '^cleaned 1 run(s), kept 1' <<<"$out"; } \
   && ok "--yes cleans a stale applied and merged run, keeps and names a stale run whose work was never applied (exit 1), and leaves the new and the unfinished" || no "stale --yes (rc=$rcs): $out"
-# a run of the old kind: finished, but never started with an epoch file: its age comes from refs.before
+# a run with no started file, or one that is not a number, has an unknown age: it is named as skipped, never aged from another file's date
 rm -f "$SKEEP/started"; touch -d '20 days ago' "$SKEEP/refs.before"
-out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); grep -q "^would clean $SKEEP " <<<"$out" && ok "a run with no started file is aged by refs.before" || no "no started: $out"
-# a bad age in the started file is ignored the same way
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); { ! grep -q "^would clean $SKEEP " <<<"$out" && grep -q "^skipped $SKEEP: no start time recorded" <<<"$out"; } && ok "a run with no started file is skipped by --stale (its age is unknown), and named" || no "no started: $out"
 echo notanumber > "$SKEEP/started"
-out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); grep -q "^would clean $SKEEP " <<<"$out" && ok "an unreadable started file falls back to refs.before" || no "bad started: $out"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); { ! grep -q "^would clean $SKEEP " <<<"$out" && grep -q "^skipped $SKEEP: no start time recorded" <<<"$out"; } && ok "so is one whose started file is not a number" || no "bad started: $out"
+out=$(./bin/qargi local list --scratch "$T/ls5" 2>&1); [ "$(awk '$2=="sk"{print $3}' <<<"$out")" = '?' ] && ok "and list shows its age as ?" || no "list age: $out"
+# a relative --repo and --scratch are recorded as real paths, and a QARGI_RUN_TMP written with a trailing slash still cleans; a URL with a user in it is refused
+ROOTD=$PWD; mkdir -p "$T/relscr"
+out=$(cd "$T" && "$ROOTD/bin/qargi" local prepare --repo ./r2 --base main --slug rel1 --scratch ./relscr 2>&1); RR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
+{ [ "$RR" = "$T/relscr/$(basename "$RR")" ] && [ "$(jq -r 'select(.slug=="rel1") | .run' "$T/s/local-runs.jsonl")" = "$RR" ] && [ "$(jq -r 'select(.slug=="rel1") | .repo' "$T/s/local-runs.jsonl")" = "$T/r2" ] && [ "$(cat "$RR/repo.path")" = "$T/r2" ]; } \
+  && ok "a relative --repo and --scratch are recorded as real paths (the run directory, the registry and RUN/repo.path)" || no "relative prepare: $out; $(grep rel1 "$T/s/local-runs.jsonl")"
+echo '{}' > "$RR/out/manifest.json"; out=$(cd "$T/relscr" && "$ROOTD/bin/qargi" local clean "$(basename "$RR")" 2>&1); [ ! -e "$RR" ] && ok "and a run prepared with relative paths is cleaned from another directory" || no "relative clean: $out"
+out=$(QARGI_RUN_TMP="$T/" ./bin/qargi local prepare --repo "$T/r2" --base main --slug slash1 --scratch "$T"); SR=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); STM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
+echo '{}' > "$SR/out/manifest.json"; QARGI_RUN_TMP="$T/" ./bin/qargi local clean "$SR" >/dev/null 2>&1
+{ [ "$STM" = "$T/$(basename "$STM")" ] && [ ! -e "$SR" ] && [ ! -e "$STM" ]; } && ok "a QARGI_RUN_TMP with a trailing slash: the temporary directory is removed with the run" || no "trailing slash QARGI_RUN_TMP: TMP=$STM run=$(ls -d "$SR" 2>&1)"
+nreg=$(wc -l < "$T/s/local-runs.jsonl")
+for u in https://user@example.invalid/x.git https://user:pw@example.invalid/x.git https://x-access-token@example.invalid/x; do
+  out=$(./bin/qargi local prepare --repo-url "$u" --base main --slug ui --scratch "$T" 2>&1); rcu=$?
+  { [ $rcu != 0 ] && grep -q "must not carry a user name" <<<"$out" && ! grep -q "pw@\|user@" <<<"$out" && [ "$(wc -l < "$T/s/local-runs.jsonl")" = "$nreg" ]; } && ok "--repo-url $u is refused, without echoing it and with no run made" || no "userinfo URL $u (rc=$rcu): $out"
+done
 # a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
 git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
 mkdir -p "$T/c/projects"
