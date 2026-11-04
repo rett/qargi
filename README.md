@@ -208,6 +208,15 @@ develop cannot be merged into the detached branch. `feature start` and the other
 from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
 into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
 
+### Feature branches on origin
+
+Two answers decide what the flow does with a feature branch on origin. `branches.push_features` is `never` (the default),
+`when-shared` or `always`: `feature start`, `feature merge` and `feature sync` push the branch (a plain push, never forced) only
+under `always`, or under `when-shared` when origin already has it. Setting it is the standing approval for those pushes; develop,
+master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
+`local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
+shows the deletion and its token covers origin's tip.
+
 ### The parking branch
 
 qargi moves develop and master without touching a working tree, so neither can be checked out in the project's main checkout
