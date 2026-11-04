@@ -3097,5 +3097,69 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
 
+class FifthReview(unittest.TestCase):
+    """The fifth audit of the Bash reader (guard-r5): every command here was run against the hook and allowed, and is refused now (the first two tests), or was
+    refused for the wrong reason and is allowed now (the *_stay_allowed tests). The base is ThirdReview's: a run directory with every protected location."""
+    tearDown, env, call, table, not_refused, not_allowed = (ThirdReview.tearDown, ThirdReview.env, ThirdReview.call, ThirdReview.table, ThirdReview.not_refused,
+                                                            ThirdReview.not_allowed)
+
+    def setUp(self):
+        ThirdReview.setUp(self)
+        for d in ("home/.config/git", "home/.ssh", "home/.claude/commands", "home/.claude/hooks"):
+            os.makedirs(os.path.join(self.t, d), exist_ok=True)
+        for name in ("home/.gitconfig", "home/.config/git/config", "home/.claude/settings.json", "home/.claude.json", "home/.claude/CLAUDE.md", "home/.bashrc", "home/.ssh/config"):
+            with open(os.path.join(self.t, name), "w") as f:
+                f.write("\n")
+        self.skill = self.targets["skills"]
+
+    # --- G1: $'...' and $"..." quoting hides no word
+    def test_ansi_c_and_translated_quotes_do_not_hide_a_word(self):
+        k, s = self.key, self.skill
+        bad = ["git $'push'", "git $'pu\\x73h'", "git $'\\160ush'", "git p$'ush'", "git $'pu'sh", "qargi $'packs' link p", 'qargi $"packs" link p', "qargi packs $'link' p",
+               "eval $'git push'", "bash -c $'git push'", "sh -c $'qargi skill new x'", "echo x | xargs $'git' push", "gh $'api' x", "$'ssh' host",
+               "echo x > $'%s'" % s, 'echo x > $"%s"' % s, "cp a $'%s'" % s, "tee $'%s' < /dev/null" % s, "cat $'%s'" % k, "cat %s/$'marshal_ed25519'" % os.path.dirname(k),
+               'cat %s/$"marshal_ed25519"' % os.path.dirname(k), "cat %s/marshal_$'ed25519'" % os.path.dirname(k), "echo x > $'%s'" % self.targets["packs"],
+               "qargi marshal $'claim' p", "cat $'\\x2f'%s" % k[1:]]
+        self.assertEqual(self.not_refused(bad), [])
+        ok = ["git status", "git log -S push", "echo $'a\\nb'", "git commit -m $'two\\nlines'", "qargi skill list", "echo $'x' > %s/f" % self.out, "echo '$'x", "echo \"cost $'5'\"",
+              "grep -n $'\\t' f", "printf $'%s\\n' hi"]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    def test_a_verb_the_shell_builds_is_refused(self):
+        bad = ["git pu$()sh", "git pu${x}sh", 'git pu"$x"sh', "git pu`true`sh", "git $x", 'git "$@"', "git -C . $sub origin", "qargi pa$()cks link p", "qargi packs li${x}nk p", "qargi skill $v new x",
+               'qargi "$v" link p', "qargi $a $b", "qargi lo$()cal run", "qargi local $v"]
+        self.assertEqual(self.not_refused(bad), [])
+        ok = ["git status $x", 'git commit -m "$m"', 'git -C "$d" status', "qargi review check $OUT", "qargi local run", 'qargi memory get "$k"', "qargi skill list $x"]
+        self.assertEqual(self.not_allowed([c for c in ok if c != "qargi local run"]), [])
+
+    # --- G2: git -c, --exec-path and the environment of git that give a command another name or run a program
+    def test_git_options_and_variables_that_give_git_another_command_are_refused(self):
+        bad = ["git -c alias.p=push p", 'git -c alias.p="!git push" p', "git -c alias.co=checkout co -- .", "git -c ALIAS.P=push p", "git -c core.pager=x log", "git -c core.editor=x commit",
+               "git -c core.fsmonitor=x status", "git -c core.hooksPath=/x commit", "git -c core.sshCommand=x fetch", "git -c diff.external=x diff", "git -c credential.helper=x fetch",
+               "git -c include.path=/x status", "git -c includeIf.gitdir:/.path=/x status", "git --exec-path=/x status", "git --config-env=alias.p=V p",
+               "git -c user.name=t -c alias.p=push p", "git -C . -c alias.p=push p", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p",
+               "GIT_CONFIG_PARAMETERS=\"'alias.p=push'\" git p", "GIT_EXEC_PATH=/x git status", "GIT_SSH_COMMAND=x git fetch", "env GIT_CONFIG_GLOBAL=/x git p", "GIT_EXTERNAL_DIFF=x git diff"]
+        self.assertEqual(self.not_refused(bad), [])
+        self.assertEqual(self.not_refused(["git -c alias.co=checkout co -- ."], None, "read-only"), [])
+        ok = ["git -c user.name=t -c user.email=t@x commit -m x", "git -c color.ui=never diff", "git -c safe.directory=/x status", "git --no-pager log", "git --exec-path", "git -c core.autocrlf=false add f"]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G3: the other ways to publish
+    def test_the_other_push_paths_are_refused(self):
+        bad = ["git send-pack origin x", "git http-push http://h/r x", "git-push origin", "git-send-pack o", "/usr/lib/git-core/git-receive-pack r", "git -C . send-pack o",
+               "git svn dcommit", "git svn dcommit --rmdir", "git-svn dcommit", "svn dcommit", "rsync -a build/ host:dst/", "rsync -a build/ user@host:dst", "rsync -a build/ rsync://h/m/",
+               "rsync -avz -e ssh host:src dst", "rsync --delete . [::1]:dst", "sudo rsync -a x h:y", "timeout 9 rsync -a x h:y"]
+        self.assertEqual(self.not_refused(bad), [])
+        ok = ["rsync -a build/ dst/", "rsync -a ./a:b dst/", "rsync -a --exclude=a:b src/ dst/", "git svn log", "git svn info", "git remote -v", "git fetch origin", "svn log"]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G14: only the subcommand names the verb
+    def test_a_word_push_that_is_no_subcommand_stays_allowed(self):
+        ok = ["git commit -m push", "git commit -m 'make push work'", "git log -S push", "git log --grep push", "git grep push", "git help push", "git config user.name push",
+              "git -C push status", "git checkout -b push", "git branch push", "git tag push", "git show push", "git log push", "git diff push..HEAD"]
+        self.assertEqual(self.not_allowed(ok), [])
+        self.assertEqual(self.not_refused(["git push", "git -C sub push", "git --no-pager -c user.name=t push", "git -C push push"]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
