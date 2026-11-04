@@ -355,7 +355,7 @@ class Skills(unittest.TestCase):
         # it records its result in verified.json, so it is not a read
         r = self.bash("qargi provider check claude")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("changes the provider definitions", r.stderr)
+        self.assertIn("qargi provider check records what it verified of a library pack", r.stderr)
 
     def test_refuses_release_publish_to_a_member(self):
         """release publish creates the GitHub release of a tag with the lead's gh; the verb, a verb held in a variable and the script run
@@ -1807,8 +1807,33 @@ class ProviderVerbs(unittest.TestCase):
         self.assertIn("qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent", r.stderr)
         self.assertNotIn("changes the provider definitions", r.stderr)
 
+    def test_check_and_adapter_run_are_refused_with_their_own_reasons(self):
+        """check records what it verified (and runs a sealed pack's code); adapter-run runs the adapter, and its --check copies a library adapter."""
+        for tail, text in (("check fakecli", "qargi provider check records what it verified"), ("check ./fakecli --project p", "qargi provider check records what it verified"),
+                           ("adapter-run fakecli local spawn", "qargi provider adapter-run runs the adapter"),
+                           ("adapter-run fakecli local spawn --check", "qargi provider adapter-run runs the adapter"),
+                           ("adapter-run --check fakecli cloud resume", "qargi provider adapter-run runs the adapter")):
+            for form in self.FORMS:
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn(text, r.stderr, c)
+
+    def test_every_provider_verb_of_the_help_is_judged_as_the_list_of_reading_verbs_says(self):
+        """A verb that commands.py lists is allowed exactly when PROVIDER_READ has it: a new verb cannot be allowed by being forgotten."""
+        sys.path.insert(0, os.path.join(os.path.dirname(BIN), "..", "lib"))
+        import commands as C
+        import guard as G
+        verbs = sorted(C.COMMANDS["provider"]["verbs"])
+        self.assertIn("model", verbs)
+        self.assertIn("check", verbs)
+        for v in verbs:
+            r = self.bash("qargi provider %s x" % v)
+            self.assertEqual(r.returncode, 0 if v in G.PROVIDER_READ else 2, (v, r.stderr))
+
     def test_lets_the_verbs_that_only_read_through(self):
-        for c in ("qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider effective claude local skills",
+        for c in ("qargi provider model claude-code local balanced", "bash -c 'qargi provider model claude-platform cloud fast'", "python3 -I lib/provider.py model claude-code local deep",
+                  "qargi provider", "qargi provider list", "qargi provider show claude --json", "qargi provider effective claude local skills",
                   "qargi provider require-barrier claude cloud --project p", "qargi provider skills-dirs", "qargi provider of p --surface local", "qargi provider layout claude",
                   "qargi provider layout claude user_skills_dir", "qargi provider require-skills claude", "qargi provider launch claude /r", "python3 -I lib/provider.py list",
                   "qargi provider notes", "qargi provider notes spawn", "qargi provider notes spawn --project p", "qargi provider notes --project p",
