@@ -48,6 +48,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local list [--scratch DIR]` (read-only) lists the local runs, from the directories under DIR that the registry (`state/local-runs.jsonl`) names or, without it, from the registry for those that still exist: role, slug, age (`?` when the run's `started` is not a number), whether the run is applied (`RUN/applied`, written by `review apply`) and whether the applied tip is on a branch other than `agent/*` (merged). `qargi local clean --applied --scratch DIR` cleans every run directly under DIR that the registry names and that is applied and merged (the plain `clean` checks, one run at a time), keeps and names the others, and exits 1 when an applied run was kept; it takes no RUN_DIR and no `--discard`.
 - `qargi local clean --stale DAYS --scratch DIR [--yes]`: lists the finished runs (verified or applied) under DIR that are at least DAYS days old, and with `--yes` cleans each by the rules of `clean RUN`, so a stale run whose work was never applied or merged is kept and named, not dropped. It changes nothing without `--yes` and is refused without `--scratch`.
 - `qargi provider notes [TOPIC] --surface cloud` reads the notes of the project's cloud runtime. The shipped cloud runtime names `output-dir` and `clone-dir` there.
+- Project answers can hold `release.sign` (`key`, `namespace`, `files`, optional `verify_command`), `release.assets` and
+  `release.notes_file`; `project validate`, `init` and `set` refuse a malformed one (a public key, an absolute or
+  `..` file name, a verify command that is not a list of words).
+- `qargi release sign VERSION` (signing is optional, off unless the project answers hold `release.sign`; without it the verb
+  exits 2 and nothing else about releases changes): signs the files of the answer `release.sign.files` with `ssh-keygen -Y sign -f KEY -n NAMESPACE FILE`,
+  run on your own terminal (stdin, stdout and stderr are yours, nothing is captured or logged), so the key's passphrase is typed
+  there and never passes through qargi, a log or an agent; no ssh agent is asked. It runs `release.sign.verify_command` (a list of
+  words, no shell) and records the result, the tag's commit and the hash of every signed file and signature under
+  `state/release/`. Only from the tag (HEAD is the commit of VERSION, on master or detached, no tracked file modified), after
+  `finish` and before `publish`; refused when stdin is no terminal, in a member run and when `QARGI_NESTED` is set (exit 2), and
+  the member guard refuses it.
+- `qargi release publish` attaches assets in the same `gh release create` call: `--asset FILE` (repeatable) and the answer
+  `release.assets`, regular files inside the repository; the plan lists each with its sha256 and the token covers them.
+  `--notes-file FILE` (or the answer `release.notes_file`, `{version}` replaced) gives the notes instead of the changelog section.
+  When `release.sign` is set it refuses until `qargi release sign VERSION` recorded an ok for the tag and none of the signed files
+  or signatures changed since (the plan notes a signed file whose `.sig` is not among the assets).
+- `qargi release status VERSION` says `awaiting signature` for a tag of a project with `release.sign` until `release sign`
+  recorded a signature that still holds (no signed file or signature changed), then `VERSION is ready for signing:
+  qargi release sign VERSION` when the repository is at the tag with the files built, or what stands in the way. It stays
+  silent about signing once GitHub has the release.
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.
