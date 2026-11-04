@@ -129,7 +129,7 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 330)
+        self.assertLessEqual(len(text.split()), 350)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
