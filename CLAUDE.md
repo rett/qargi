@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # qargi
 
 Dispatches development tasks to members and cloud agents and verifies what they return. See `README.md` and

@@ -27,6 +27,12 @@ out=$($DA project new acme --dir "$D" --param test_command="make check" --deploy
 [ "$(git -C "$D" log --oneline | wc -l)" = 1 ] && [ -z "$(git -C "$D" status --porcelain)" ] && ok "one first commit and a clean tree" || no "history"
 grep -q 'run: make check' "$D/.github/workflows/test.yml" && grep -qx '0.1.0' "$D/VERSION" && ok "the parameters are filled in" || no "params"
 grep -rqi qargi "$D" --exclude-dir=.git && no "the project mentions qargi" || ok "nothing in the project mentions qargi"
+[ "$(head -1 "$D/CLAUDE.md")" = "@AGENTS.md" ] && grep -qx '## Development environment' "$D/AGENTS.md" && grep -q '`make bootstrap`' "$D/AGENTS.md" && grep -q '`make -n bootstrap`' "$D/AGENTS.md" \
+  && grep -q '`make doctor`' "$D/AGENTS.md" && grep -q '`make check`' "$D/AGENTS.md" && ok "CLAUDE.md imports AGENTS.md, which has the Development environment section with the project's commands" || no "AGENTS.md: $(cat "$D/AGENTS.md")"
+dout=$(make -C "$D" doctor 2>&1); drc=$?
+[ "$drc" != 0 ] && grep -q '^missing: ' <<<"$dout" && make -C "$D" bootstrap 2>&1 | grep -q 'nothing is installed yet' && ok "the doctor stub exits non-zero with a missing line until it is filled in; the bootstrap stub says what to fill in" || no "stubs: rc=$drc $dout"
+ev=$($DA env show --repo "$D" 2>&1)
+grep -q "^section:.*AGENTS.md" <<<"$ev" && grep -q "^bootstrap:.*make bootstrap" <<<"$ev" && ! grep -q "^gap:" <<<"$ev" && ok "env show finds the section and the targets of a new project and no gap" || no "env show: $ev"
 grep -q "gh release create" <<<"$out" && ok "the chosen deployment's instructions are printed" || no "instructions: $out"
 [ ! -e "$T/c/projects/acme.json" ] && grep -q "no --url" <<<"$($DA project new other --dir "$T/o" 2>&1)" && ok "without --url no answers are stored" || no "answers stored without a url"
 

@@ -427,6 +427,8 @@ qargi agent add reviewer --project P
 
 qargi needs Python 3.11 or later (the standard library reads the TOML files some runtimes keep their settings in). The `agent add` lines need a project whose `models.provider.local` is set (see Providers and runtimes).
 
+To set up a checkout of this repository for development, preview with `make -n bootstrap`, install with `make bootstrap` and verify with `make doctor`; see `AGENTS.md`, Development environment.
+
 Both link to this checkout, so `git pull` updates them; add `--copy` for real
 files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove (copies need `--force`). An existing real directory is
