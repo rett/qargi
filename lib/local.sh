@@ -362,6 +362,8 @@ WRAP
     fi
     [ -z "$SCR" ] || die "clean: --scratch is for --applied"
     RUN=$CLEAN_RUN
+    while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
+    [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || die "clean needs a RUN dir made by prepare"
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
@@ -386,17 +388,29 @@ WRAP
         fi
       fi
     fi
-    # the run's temporary directory is removed only when it is where prepare puts one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm
-    # (QARGI_RUN_TMP, when prepare was told to use another parent); a recorded path anywhere else is left alone
+    # the run's temporary directory is removed only when it is where prepare puts one: RUN/tmp, or qargi-run.XXXXXX directly under /dev/shm (QARGI_RUN_TMP,
+    # when prepare was told to use another parent); a recorded path anywhere else is left alone. The recorded text is only a claim until checked: the trailing
+    # slashes are stripped (rm -rf on a link with one empties what the link leads to), a link is refused after that, the real path of the directory must be
+    # directly under the real path of that parent (no link in between), and what is removed is that real path, on its own file system.
     t=$(cat "$RUN/tmpdir" 2>/dev/null || true)
-    case $t in
-      "$RUN"/tmp) ;;
-      */qargi-run.??????) if [ "$(dirname "$t")" != /dev/shm ] && [ "$(dirname "$t")" != "${QARGI_RUN_TMP:-/dev/shm}" ]; then echo "qargi: note: left $t alone: it is not under /dev/shm or QARGI_RUN_TMP" >&2; t=''; fi;;
-      *) t='';;
-    esac
-    [ -z "$t" ] || [ -L "$t" ] || [ ! -d "$t" ] || rm -rf -- "$t"
-    rm -rf -- "$RUN"
-    echo "cleaned $RUN${t:+ and $t}";;
+    while [ "${t%/}" != "$t" ] && [ "$t" != / ]; do t=${t%/}; done
+    rt=''
+    if [ -n "$t" ] && [ ! -L "$t" ] && [ -d "$t" ]; then
+      name=$(basename -- "$t"); par=$(dirname -- "$t"); rp=$(realpath -- "$t" 2>/dev/null || true)
+      if [ -n "$rp" ] && [ "$(basename -- "$rp")" = "$name" ]; then
+        case $name in
+          qargi-run.??????)
+            for b in /dev/shm "${QARGI_RUN_TMP:-}"; do
+              [ -n "$b" ] && [ "$par" = "$b" ] && [ "$(dirname -- "$rp")" = "$(realpath -- "$b" 2>/dev/null)" ] && rt=$rp
+            done;;
+          tmp) [ "$(dirname -- "$rp")" = "$(realpath -- "$RUN")" ] && rt=$rp;;
+        esac
+      fi
+    fi
+    if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
+    [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
+    rm -rf --one-file-system -- "$RUN"
+    echo "cleaned $RUN${rt:+ and $rt}";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
     SCR=''

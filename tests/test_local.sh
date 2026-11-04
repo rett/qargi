@@ -165,6 +165,31 @@ mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/p
 err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
   && ok "a recorded TMP that is not under QARGI_RUN_TMP or /dev/shm is left alone, with a note" || no "foreign tmpdir: $err"
 rm -rf "$TM6" "$T/elsewhere"
+# a recorded temporary directory is never followed: a link to another directory (also written with a trailing slash, which makes rm -rf empty what the
+# link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
+VIC=$T/victim; mkdir -p "$VIC/sub"; echo keep > "$VIC/sub/precious"
+mkc() { ./bin/qargi local prepare --repo "$T/r2" --base main --slug "$1" --scratch "$T" | sed -n '1,/^$/s/^\(RUN\|TMP\)=//p' | paste -sd' '; }
+ln -s "$VIC" "$T/qargi-run.abcde"; ln -s "$VIC" "$T/qargi-run.abcdef"
+mkdir -p "$T/realroot/qargi-run.ghijkl"; touch "$T/realroot/qargi-run.ghijkl/precious"; ln -s "$T/realroot" "$T/linkroot"
+n=0
+for form in 'T/qargi-run.abcde/' 'T/qargi-run.abcde' 'T/qargi-run.abcdef' 'T/qargi-run.abcdef/' 'T/qargi-run.abcdef//' 'RUN/tmp/' 'RUN/tmp' 'T/linkroot/qargi-run.ghijkl' 'T/linkroot/qargi-run.ghijkl/'; do
+  n=$((n + 1)); read -r CV TV <<<"$(mkc "lk$n")"
+  case $form in
+    RUN/tmp*) ln -s "$VIC" "$CV/tmp"; rec="$CV/${form#RUN/}";;
+    T/*) rec="$T/${form#T/}";;
+  esac
+  printf '%s\n' "$rec" > "$CV/tmpdir"
+  ./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
+  [ -f "$VIC/sub/precious" ] && [ -f "$T/realroot/qargi-run.ghijkl/precious" ] && [ ! -e "$CV" ] && ok "a recorded tmpdir '$form' is left alone: what it leads to is untouched" || no "tmpdir '$form' damaged something"
+  rm -rf "$TV"
+done
+read -r CV TV <<<"$(mkc lk-slash)"; touch "$TV/x"; printf '%s/\n' "$TV" > "$CV/tmpdir"
+./bin/qargi local clean "$CV" --discard >/dev/null 2>&1
+[ ! -e "$TV" ] && [ ! -e "$CV" ] && ok "a real temporary directory recorded with a trailing slash is removed" || no "trailing slash tmpdir not removed"
+read -r CV TV <<<"$(mkc lk-run)"; echo '{}' > "$CV/out/manifest.json"; mv "$CV" "$T/real-$(basename "$CV")"; ln -s "$T/real-$(basename "$CV")" "$CV"
+./bin/qargi local clean "$CV/" >/dev/null 2>&1; ./bin/qargi local clean "$CV" >/dev/null 2>&1
+[ -f "$T/real-$(basename "$CV")/refs.before" ] && ok "a run directory that is a link is not cleaned, with or without a trailing slash" || no "a linked run dir was cleaned"
+rm -f "$CV"; rm -rf "$T/real-$(basename "$CV")" "$TV" "$T/qargi-run.abcde" "$T/qargi-run.abcdef" "$T/linkroot" "$T/realroot"
 # list and clean --applied: the runs of one scratch directory
 git init -q -b main "$T/r6" && $LC -C "$T/r6" commit -q --allow-empty -m one
 mkdir -p "$T/ls" "$T/ls2"

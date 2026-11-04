@@ -840,9 +840,14 @@ def is_review(run):
     return CLASS == "read-only" or ability_of(run) == "review" or run_class(run) == "read-only"
 
 
+RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git")
+
+
 def control_refusal(full):
-    """The reason a write to a run directory's control file (ability, class, profile, refs.before) is refused, or None."""
-    if os.path.basename(full) in ("ability", "class", "profile", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
+    """The reason a write to a run directory's own record is refused, or None. RUN_CONTROL is every file of the run directory that `qargi local` reads
+    back and trusts: the ability and class the guard is held to, the refs the run is compared with, the directory `local clean` removes (tmpdir), the
+    repository and the tip it asks whether the work is merged (repo.path, applied), the credential path, the git wrapper."""
+    if os.path.basename(full) in RUN_CONTROL and run_dir(os.path.dirname(full)) == os.path.dirname(full):
         return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
     return None
 

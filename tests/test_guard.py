@@ -141,6 +141,26 @@ class Review(unittest.TestCase):
         with open(pr) as f:
             self.assertEqual(f.read().strip(), "advisor")
 
+    def test_a_member_cannot_change_what_clean_and_list_trust(self):
+        """`local clean` removes the directory tmpdir names and asks the repository repo.path names whether the applied tip is merged; `local list`, verify and
+        review apply read the others. A member must not be able to write any of them (a link, a rewritten path, a forged tip)."""
+        self.ability("review")
+        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "git", "class", "ability", "profile", "refs.before")
+        wrong = []
+        for name in names:
+            p = os.path.join(self.run, name)
+            for cls in ((), ("--class", "read-only")):
+                for tool, inp in (("Write", {"file_path": p}), ("Edit", {"file_path": p}), ("Bash", {"command": "printf x > %s" % p}), ("Bash", {"command": "echo x >> %s" % p}),
+                                  ("Bash", {"command": "cd %s && printf x > %s" % (self.run, name)}), ("Bash", {"command": "ln -sf /etc/hostname %s" % p}),
+                                  ("Bash", {"command": "cp /etc/hostname %s" % p}), ("Bash", {"command": "rm -f %s" % p}), ("Bash", {"command": "echo /tmp | tee %s" % p}),
+                                  ("Bash", {"command": "mv %s/out/x %s" % (self.run, p)})):
+                    if self.call(tool, inp, self.out, *cls).returncode != 2:
+                        wrong.append((name, tool, inp, cls))
+        self.assertEqual(wrong, [])
+        self.ability("build")                                   # what is not a control file of the run stays writable
+        for p in (os.path.join(self.run, "out", "report.md"), os.path.join(self.run, "out", "tmpdir"), os.path.join(self.run, "clone", "applied"), os.path.join(self.run, "notes")):
+            self.assertEqual(self.call("Write", {"file_path": p}, self.out).returncode, 0, p)
+
     TAG_LISTS = ("git tag", "git tag -l", "git tag --list 'v*'", "git tag -l --sort=-creatordate", "git tag --contains HEAD", "git tag -n", "git tag -n5 -l", "git tag --points-at HEAD",
                  "git tag -l -i V1", "git tag -l --column", "git tag --merged main", "git tag --no-merged main -l", "git tag --format '%(refname)'",
                  "git tag --sort -creatordate", "git tag v1 -l", "git tag -l v1 HEAD", "git tag --list --points-at HEAD v1", "git -C . tag -l", "git tag --lis", "git tag --sort=x --contains HEAD",
