@@ -977,7 +977,7 @@ COMMANDS = {
 # skill and tool share one set of verbs
 PACK_VERBS = {
     "new": verb("Create a pack from a template", [("NAME", "none")], [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST")]),
-    "import": verb("Import a pack from a directory, file or pinned git URL, after a review", [("SOURCE", "file")],
+    "import": verb("Import a pack from a directory, file or pinned git URL, after a review (a top-level .pack.json in the source is qargi's own record: ignored, not copied)", [("SOURCE", "file")],
                    [opt("--compatible", "the providers the pack works with: runtime or family names, comma separated, or any", "LIST"), opt("--name", "store it under this name", "NAME"), opt("--ref", "the git ref to pin", "REF"), opt("--path", "a subdirectory of the source", "SUB"), PLAN, APPROVED]),
     "list": verb("List the library, or what a project and role get", [("PROJECT", "project", True), ("ROLE", "role", True)]),
     "show": verb("Show a pack", [("NAME", "pack")]),
