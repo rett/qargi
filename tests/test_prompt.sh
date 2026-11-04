@@ -52,10 +52,10 @@ grep -qF "# In a cloud run" <<<"$RL" && no "the lead got the cloud-only part" ||
 grep -qF "OUT is /mnt/session/outputs" <<<"$RB" && ok "the addendum states the cloud output directory" || no "no output directory in the addendum"
 # the neutral texts hold no hosted directory and no rule that conflicts with the contract (outputs go to OUT, memory notes are proposed)
 grep -rq "mnt/session" contract provision/templates provision/role-seeds && no "a neutral text names the hosted output directory" || ok "the contract, the preamble and the role seeds do not name the hosted output directory"
-# outside the cloud runtime's definition the hosted output directory is still named by the three files below (the brief of a cloud member, the
-# collection of a cloud session's outputs, the dispatch skill); this list can only shrink: when one is moved to the runtime's definition, remove it here
+# outside the cloud runtime's definition the hosted output directory is still named by the dispatch skill's cloud.md; this list can only shrink
+# (lib/team.sh and lib/collect.sh ask the runtime's notes: output-dir, clone-dir)
 hosted=$(grep -rl "mnt/session" bin lib agents contract packs roles skills provision 2>/dev/null | grep -v '^lib/providers/' | sort | tr '\n' ' ')
-[ "$hosted" = "lib/collect.sh lib/team.sh skills/qargi-task/cloud.md " ] && ok "only lib/collect.sh, lib/team.sh and the qargi-task skill's cloud.md name the hosted output directory outside the runtime's definition" || no "the hosted output directory is named in: $hosted"
+[ "$hosted" = "skills/qargi-task/cloud.md " ] && ok "only the qargi-task skill's cloud.md names the hosted output directory outside the runtime's definition" || no "the hosted output directory is named in: $hosted"
 grep -q "RUN_DIR" provision/templates/cloud-preamble.md provision/role-seeds/lead/contract.md && no "the preamble or the lead contract names RUN_DIR as a place" || ok "the preamble and the lead contract send outputs to OUT"
 grep -rqE "write (new )?(verified )?(facts )?only (to|under)|members write only" provision/templates provision/role-seeds/lead/contract.md && no "a prompt text lets an agent write the memory store on its own" || ok "no prompt text lets an agent write the memory store on its own"
 grep -q "RUN_DIR" <<<"$RB" && no "the build prompt names RUN_DIR" || ok "the build prompt does not name RUN_DIR"
