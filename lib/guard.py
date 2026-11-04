@@ -862,10 +862,19 @@ def out_dir(call):
 
 
 def expand_path(p):
-    """p with ~ and the variables of the environment expanded, except PWD and OLDPWD (the shell sets those, the hook's own are another directory's) and
-    the variables the environment lacks, which stay as written (OUT is the run's out directory, see out_dir)."""
-    return re.sub(r"\$(?:\{(\w+)\}|(\w+))", lambda m: m.group(0) if (m.group(1) or m.group(2)) in ("PWD", "OLDPWD")
-                  else os.environ.get(m.group(1) or m.group(2), _OUT[0] if (m.group(1) or m.group(2)) == "OUT" and _OUT[0] else m.group(0)), os.path.expanduser(p))
+    """p with ~ and the variables of the environment expanded: $NAME, ${NAME}, and ${NAME<anything>} (${NAME:-x}, ${NAME%/}, ${NAME:+y}) as the value of NAME when
+    the environment has it, whatever the rest says (a trimmed or defaulted value is read as the value, close enough to judge the path). Not PWD and OLDPWD (the shell
+    sets those, the hook's own are another directory's), and the variables the environment lacks, which stay as written (a ${NAME...} that stays is refused
+    in a write and for a key by the callers; OUT is the run's out directory, see out_dir)."""
+    def value(m):
+        name, rest = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), "")
+        if name in ("PWD", "OLDPWD"):
+            return m.group(0)
+        got = os.environ.get(name)
+        if got is None and name == "OUT" and not rest and _OUT[0]:
+            got = _OUT[0]
+        return m.group(0) if got is None else got
+    return re.sub(r"\$(?:\{(\w+)([^{}]*)\}|(\w+))", value, os.path.expanduser(p))
 
 
 @functools.cache
@@ -1210,6 +1219,9 @@ def unreadable_target(what, dest, here):
         head, _, base = c.rpartition("/")
         if ("$" in base or "`" in base) and what in OVERWRITES:
             return OwnReason("%s writes to a file whose name a variable or a substitution builds (%s), which the guard cannot read; write the path out" % (what, dest))
+        if "${" in head:
+            return OwnReason("%s writes to %s through a ${...} expansion whose value the guard cannot read (the variable is not in its environment, or it is trimmed or defaulted); "
+                             "write the path out" % (what, dest))
         if UNKNOWN.search(head):
             wild = not re.sub(r"[*?\[\]]", "", base)
             hit = [] if wild or "$" in base or "`" in base else [n for n in RUN_CONTROL if fnmatch.fnmatchcase(n, base)]
@@ -1680,6 +1692,8 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
+            if "${" in b and (recursive or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
+                return b                                      # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b

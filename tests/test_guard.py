@@ -3239,6 +3239,19 @@ class FifthReview(unittest.TestCase):
               'cd "$HOME" && echo x > f', "cd $d && echo x > $HOME/f", "env -C sub touch f", "builtin cd sub && touch f"]
         self.assertEqual(self.not_allowed(ok, self.clone, None), [])
 
+    # --- G8: ${NAME:-x}, ${NAME%/} and the like are read by the value of NAME, or refused
+    def test_a_braced_expansion_with_an_operator_is_read_by_its_variable_or_refused(self):
+        h, cred = os.path.join(self.t, "home"), os.path.join(self.conf, "credentials")
+        bad = ["echo x > ${HOME%/}/.claude/skills/x/SKILL.md", "echo x > ${HOME:-/nonexistent}/.claude/skills/x/SKILL.md", "echo x > ${HOME:+%s}/.claude/skills/x/SKILL.md" % h,
+               "echo x > ${UNSET_NAME:-%s}/.claude/skills/x/SKILL.md" % h, "echo x > ${UNSET_NAME}/f", "tee ${UNSET_NAME%/}/f < /dev/null", "touch ${UNSET_NAME:-.}/f",
+               "cp a ${UNSET_NAME:-%s}/packs/x" % self.conf, "rm -rf ${UNSET_NAME:-%s}/.claude/skills" % h,
+               "cat ${QARGI_CONF%/}/credentials/marshal_ed25519", "cat ${UNSET_NAME:-%s}/marshal_ed25519" % cred, "cat ${UNSET_NAME:-%s}/marshal_*" % cred,
+               "grep -r x ${UNSET_NAME:-%s}" % cred, "cp -r ${UNSET_NAME:-.} %s/y" % self.out]
+        self.assertEqual(self.not_refused(bad), [])
+        ok = ["echo x > ${HOME}/note.txt", "echo x > ${HOME:-/x}/note.txt", "echo x > ${HOME%/}/note.txt", "cat ${UNSET_NAME:-f}", "cat ${UNSET_NAME:-%s}/other" % cred,
+              "echo ${UNSET_NAME:-x} > f", "git commit -m ${UNSET_NAME:-x}", "cat ${QARGI_CONF%/}/credentials/other"]
+        self.assertEqual(self.not_allowed(ok), [])
+
 
 if __name__ == "__main__":
     unittest.main()
