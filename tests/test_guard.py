@@ -461,7 +461,7 @@ class Skills(unittest.TestCase):
                 self.assertIn("protected location", r.stderr)
             for p in ("skills/sample/SKILL.md", os.path.join(c, "skills/new/SKILL.md"), "src/a.go", os.path.join(self.t, "run/out/report.md"),
                       ".claude/skills/p/SKILL.md", os.path.join(c, ".claude/skills/new/SKILL.md"), "sub/.claude/skills/q/SKILL.md",
-                      os.path.join(self.t, "conf/projects/p.json"), os.path.join(ls, "../settings.json")):
+                      os.path.join(self.t, "conf/projects/p.json"), os.path.join(ls, "../history.jsonl")):
                 r = self.call(tool, {key: p})
                 self.assertEqual(r.returncode, 0, (tool, p, r.stderr))
 
@@ -497,7 +497,7 @@ class Skills(unittest.TestCase):
         for c in ("cat %s/x/SKILL.md" % ls, "cat %s/x/SKILL.md > %s/run/out/copy.md" % (ls, self.t), "cp %s/x/SKILL.md %s/run/out/" % (ls, self.t),
                   "grep -rn foo %s" % lib, "cat %s/accepted.json" % lib, "jq . %s/accepted.json" % lib, "ls -la %s" % ls, "diff -r %s/x skills/sample" % ls, "rsync -a %s/ %s/run/out/lib/" % (lib, self.t),
                   "jq . %s/links.json > %s/run/out/l.json" % (lib, self.t), "find %s -name '*.md'" % ls, "find %s -name SKILL.md -exec cat {} +" % self.clone + " > /dev/null",
-                  "tar czf %s/run/out/lib.tgz -C %s ." % (self.t, lib), "echo x > %s/home/.claude/settings.json" % self.t, "rm -rf %s/run/out/old" % self.t,
+                  "tar czf %s/run/out/lib.tgz -C %s ." % (self.t, lib), "echo x > %s/home/.claude/history.jsonl" % self.t, "rm -rf %s/run/out/old" % self.t,
                   "curl -s http://h/f -o %s/run/out/f" % self.t, "touch %s/.claude" % self.proj, "ls ~/.claude/skills", "echo ~/.claude/skills > list.txt", "cd %s && ls" % lib):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
@@ -615,7 +615,8 @@ class Skills(unittest.TestCase):
         os.symlink(real, os.path.join(home2, ".claude"))                            # ~/.claude/skills resolves to .../elsewhere/skills
         for call in (("Write", {"file_path": "~/.claude/skills/x/SKILL.md"}), ("Bash", {"command": "echo y > ~/.claude/skills/x/SKILL.md"})):
             self.assertEqual(self.call(*call, HOME=home2).returncode, 2, call)
-        self.assertEqual(self.call("Write", {"file_path": "~/.claude/settings.json"}, HOME=home2).returncode, 0)
+        self.assertEqual(self.call("Write", {"file_path": "~/.claude/settings.json"}, HOME=home2).returncode, 2)      # the lead's own settings: refused whatever the link
+        self.assertEqual(self.call("Write", {"file_path": "~/.claude/history.jsonl"}, HOME=home2).returncode, 0)
 
     def test_inside_the_clone_the_dot_claude_skills_directory_is_the_work_product(self):
         for c in ("echo y > .claude/skills/p/SKILL.md", "echo y>%s/.claude/skills/p/SKILL.md" % self.clone, "mkdir -p .claude/skills/new && touch .claude/skills/new/SKILL.md",
@@ -1737,7 +1738,8 @@ class ProviderRoots(unittest.TestCase):
         for c in ("echo y > ~/.claude/skills/x/SKILL.md", "echo y > ~/.claude/agents/m.md", "echo y > ~/.claude/plugins/p.json",
                   "echo y > %s/.claude/skills/p/SKILL.md" % self.proj, "rm -rf %s/.claude" % self.proj):
             self.refused(c)
-        self.assertEqual(self.bash("echo x > %s/home/.claude/settings.json" % self.t).returncode, 0)
+        self.assertEqual(self.bash("echo x > %s/home/.claude/settings.json" % self.t).returncode, 2)      # the lead's own settings are no member-owned directory
+        self.assertEqual(self.bash("echo x > %s/home/.claude/history.jsonl" % self.t).returncode, 0)
 
     def test_a_definition_with_an_unusable_path_protects_nothing_by_it(self):
         res = {"skills": {"project_dir": "../up/skills", "user_dir": "/etc/skills", "items": "dir-per-item"},
@@ -2585,7 +2587,7 @@ class RunRecord(unittest.TestCase):
         for cls in ("read-only", None):
             wrong = [c for c, r in self.table(self.GIT_PLACES, cls=cls) if r.returncode != 2]
             self.assertEqual(wrong, [], "class %s" % cls)
-        for c in ("echo x > ~/.gitconfig", "echo x >> ~/.config/git/config", "cat ~/.gitconfig; git log", "git config --list", "echo x > .gitattributes.txt; git status"):
+        for c in ("cat ~/.gitconfig; git log", "git config --list", "echo x > .gitattributes.txt; git status"):
             self.assertEqual(self.call("Bash", {"command": c}, self.run_dir, None).returncode, 0, c)
 
 
@@ -3181,6 +3183,48 @@ class FifthReview(unittest.TestCase):
                                            "git config --file .gitmodules submodule.a.url u", "git init sub2", "git config user.name x", "grep -n alias ~/.config/git/config"]), [])
         self.assertEqual(self.call("Write", {"file_path": "~/.gitconfig"}).returncode, 2)
         self.assertEqual(self.call("Edit", {"file_path": h + "/.config/git/config"}).returncode, 2)
+
+    # --- G6: the lead's own session settings and shell startup files
+    def test_the_leads_session_settings_and_startup_files_are_not_written_by_any_member(self):
+        h = os.path.join(self.t, "home")
+        files = ("~/.claude/settings.json", "~/.claude/settings.local.json", "~/.claude/CLAUDE.md", "~/.claude.json", "~/.claude/commands/c.md", "~/.claude/hooks/h.sh", "~/.bashrc",
+                 "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.ssh/config", "~/.ssh/authorized_keys", h + "/.claude/settings.json", "$HOME/.bashrc")
+        bad = [form % f for f in files for form in ("echo x > %s", "echo x >> %s", "tee %s < /dev/null", "cp a %s", "touch %s", "rm %s", "sed -i s/a/b/ %s")]
+        bad += ["mkdir ~/.claude/hooks/new", "rm -rf ~/.claude/commands", "mv a ~/.claude/commands/", "cd ~ && echo x >> .bashrc", "ln -sf /x ~/.bashrc"]
+        for cls in (None, "read-only"):
+            self.assertEqual(self.not_refused(bad, None, cls), [], cls)
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for f in ("~/.claude/settings.json", "~/.claude/CLAUDE.md", "~/.claude.json", "~/.claude/hooks/h.sh", "~/.bashrc", "~/.ssh/config"):
+                self.assertEqual(self.call(tool, {key: f}).returncode, 2, (tool, f))
+        ok = ["cat ~/.bashrc", "grep -n hooks ~/.claude/settings.json", "ls ~/.claude/commands", "echo x > ~/.claude/history.jsonl", "echo x > ~/.claude/todos/t.json", "echo x > ~/.ssh/known_hosts", "echo x > ~/.cache/x"]
+        self.assertEqual(self.not_allowed(ok), [])
+        self.assertEqual(self.call("Write", {"file_path": "~/.claude/history.jsonl"}).returncode, 0)
+
+    # --- G17: the read-only class writes OUT and TMP, in Bash as with the file tools, and nothing else
+    def test_the_read_only_class_writes_out_and_tmp_and_nothing_else_in_bash_and_with_the_file_tools(self):
+        tmp = os.path.join(self.t, "shm-tmp")
+        os.makedirs(tmp)
+        with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
+            f.write(json.dumps({"run": self.run_dir, "tmpdir": tmp}) + "\n")
+        runtmp = os.path.join(self.run_dir, "tmp")
+        os.makedirs(runtmp)
+        allowed = ["echo x > %s/report.md" % self.out, "echo x > %s/n" % tmp, "echo x > %s/n" % runtmp, "cp r %s/" % tmp, "git log > %s/l" % tmp, "echo x > /dev/null", "echo x > /dev/stderr",
+                   "sort -o %s/s f" % tmp, "tee %s/t < /dev/null" % self.out]
+        self.assertEqual(self.not_allowed(allowed, None, "read-only"), [])
+        elsewhere = os.path.join(self.t, "elsewhere")
+        refused = ["echo x > %s" % elsewhere, "echo x > %s/notes" % self.run_dir, "echo x > /tmp/qargi-zzz", "touch %s" % elsewhere, "cp r %s" % elsewhere, "echo x > ~/.claude/history.jsonl",
+                   "echo x > %s/n" % self.t, "mkdir %s/d" % self.t, "tee %s < /dev/null" % elsewhere, "sed -i s/a/b/ %s" % elsewhere, "echo x > %s/../n" % tmp]
+        self.assertEqual(self.not_refused(refused, None, "read-only"), [])
+        self.assertEqual(self.not_allowed(refused[:3], None, None), [])
+        for tool in ("Write", "Edit"):
+            for f in (os.path.join(self.out, "report.md"), os.path.join(tmp, "n"), os.path.join(runtmp, "n")):
+                self.assertEqual(self.call(tool, {"file_path": f}, None, "read-only").returncode, 0, (tool, f))
+            for f in (os.path.join(self.run_dir, "notes"), elsewhere, os.path.join(self.clone, "a.go")):
+                r = self.call(tool, {"file_path": f}, None, "read-only")
+                self.assertEqual(r.returncode, 2, (tool, f))
+                self.assertIn("report and the manifest in OUT", r.stderr)
+        for f in ("ability", "class", "tmpdir"):
+            self.assertEqual(self.call("Write", {"file_path": os.path.join(self.run_dir, f)}, None, "read-only").returncode, 2, f)
 
 
 if __name__ == "__main__":

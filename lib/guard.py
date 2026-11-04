@@ -773,6 +773,34 @@ def run_dir_refusal(full):
     return None
 
 
+@functools.cache                                     # the files do not change while one command is judged
+def run_tmps(run):
+    """The temporary directories of a run that are the member's (TMP): the one the lead's registry names for it, as `qargi local clean` reads it (the run's own
+    tmpdir file is not read: a member can write it), and run/tmp, where prepare puts it when there is no /dev/shm."""
+    real = os.path.realpath(run)
+    out = [os.path.join(real, "tmp")]
+    for st in state_dirs():
+        try:
+            with open(os.path.join(st, REGISTRY), encoding="utf-8", errors="replace") as f:
+                for n, line in enumerate(f):
+                    if not n % 256:
+                        tick()
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(e, dict) and isinstance(e.get("run"), str) and isinstance(e.get("tmpdir"), str) and os.path.realpath(e["run"]) == real and os.path.isabs(e["tmpdir"]):
+                        out.append(os.path.realpath(e["tmpdir"]))
+        except OSError:
+            pass
+    return tuple(out)
+
+
+def member_space(full, run):
+    """True when the real path full is in OUT or TMP of the run: all that a member of the read-only class writes."""
+    return inside(full, os.path.join(os.path.realpath(run), "out")) or any(inside(full, t) for t in run_tmps(run))
+
+
 def run_refusal(full, here):
     """The reason a command that removes or moves the path full takes the run directory (or a directory above it) away, with the record in it, or None."""
     run = run_dir(here)
@@ -1211,8 +1239,8 @@ def review_refusal(call):
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
         if CLASS == "read-only" and not run:
             return OwnReason(NO_RUN)
-        if run and is_review(run) and not inside(full, os.path.join(run, "out")):
-            return "under the read-only class only the report and the manifest in OUT may be written (%s is not)" % fp
+        if run and is_review(run) and not member_space(full, run):
+            return "under the read-only class only the report and the manifest in OUT, and the temporary directory (TMP), may be written (%s is not)" % fp
         return None
     if call.kind != "shell":
         return None
@@ -1247,6 +1275,9 @@ def review_segment(toks, i, here, text=""):
         if bad:
             return OwnReason("under the read-only class %s is not set: the tools it runs read their programs and options from it" % bad)
     ro = reading(run_dir(here))
+    src_last = None                                          # cp -t DIR SRC: write_targets names SRC too (as it always did); it is read, not written
+    if prog in COPIERS and prog != "rsync" and any(cluster_value(toks[i + 1:], n, "t") is not None or toks[i + 1 + n].startswith("--target-directory") for n in range(len(toks) - i - 1)):
+        src_last = (operands(toks[i + 1:]) or [None])[-1]
     for what, braced in write_targets(toks, i):
         for dest in brace_expand(braced):                  # echo x > OUT/{a,../clone/b}: each word it stands for
             tick()
@@ -1267,8 +1298,8 @@ def review_segment(toks, i, here, text=""):
                 why = run_refusal(full, here)
                 if why and not (what == "mv" and fits_beside(move_places(toks[i + 1:]), dest, full, here, lambda p: run_refusal(p, here))):
                     return why
-            if run and reading(run) and inside(full, os.path.join(run, "clone")):
-                return "under the read-only class nothing in the clone may be changed (%s into %s)" % (what, dest)
+            if run and reading(run) and not DEVICE.match(dest) and not member_space(full, run) and braced != src_last:
+                return "under the read-only class only OUT and the temporary directory (TMP) are written: nothing in the clone or anywhere else may be changed (%s into %s)" % (what, dest)
     if prog in TOUCHERS or prog == "find":                    # the sources of cp, mv and ln, and every file a command takes away, are the run's record too
         rest = toks[i + 1:]
         files = operands(rest, any(os.path.basename(t) == "xargs" for t in toks[:i])) + [t[3:] for t in rest if t.startswith(("if=", "of="))]
@@ -1375,8 +1406,21 @@ def _protected_roots():
     roots.update(switch_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
-    roots.update(lead_roots(home))
-    return sorted(os.path.realpath(r) for r in roots)
+    roots.update(lead_roots(home) | lead_files(home))
+    lead = lead_files(home)                                   # the skills, the library and the like first: a refusal names the most specific reason
+    return sorted(r for r in {os.path.realpath(r) for r in roots} if r not in lead) + sorted(lead)
+
+
+LEAD_FILES = (".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md", ".claude.json", ".claude/commands", ".claude/hooks", ".bashrc", ".bash_profile",
+              ".bash_login", ".profile", ".zshrc", ".zshenv", ".zprofile", ".ssh/config", ".ssh/authorized_keys")   # the settings and startup files of the lead's own session
+
+
+def lead_files(home=None):
+    """The lead's own session settings (~/.claude/settings.json, CLAUDE.md, commands/, hooks/, ~/.claude.json) and the files its shell and ssh read at start
+    (~/.bashrc ... ~/.ssh/config): a hook, a command or a program set there runs in the lead's session (real paths). The skills and agents directories are
+    the provider definitions' own (resource_dirs); the rest of ~/.claude (projects, todos ...) is the runtime's working space and stays open."""
+    home = home or os.path.expanduser("~")
+    return {os.path.realpath(os.path.join(home, f)) for f in LEAD_FILES}
 
 
 def lead_roots(home=None):
@@ -1491,6 +1535,9 @@ def refusal_text(what, dest, root):
                              % (what, dest, root, MARSHAL_NOTE))
     if root in switch_roots():
         return MarshalReason("%s on %s would change %s, the marshal's per-project switch of the shared-refs backend; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in lead_files():
+        return OwnReason("%s on %s would change %s, a setting or startup file of the lead's own session (a hook, a command or a program set there runs in the lead's session); "
+                         "a member does not change it, propose the change in your report" % (what, dest, root))
     if root in lead_roots():
         return OwnReason("%s on %s would change %s, the lead's own git configuration (git reads it for every repository, so an alias or a hook set there runs in the lead's commands); "
                          "a member does not change it, propose the change in your report" % (what, dest, root))
@@ -2225,7 +2272,7 @@ def hook_of(name):
 def clear_caches():
     """Forget what was read from the files and the environment: a call is judged from one reading of them (a hook is one call; a test judges many)."""
     _BRACE_WORK[0] = 0
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand):
+    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps):
         f.cache_clear()
 
 
