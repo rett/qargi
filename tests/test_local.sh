@@ -287,6 +287,34 @@ done
 SX=$(applied "$LX" agent/lx); git -C "$T/r6" update-ref refs/heads/feature/lx "$SX"
 out=$(./bin/qargi local list --scratch "$T/ls4" 2>&1)
 [ "$(awk '$2=="lx"{print $4,$5}' <<<"$out")" = "yes yes" ] && ok "a full commit name still shows merged" || no "list after fix: $out"
+# clean --stale DAYS --scratch DIR: a plan of the finished runs older than DAYS, cleaned only with --yes, each by the rules of clean
+mkdir -p "$T/ls5"
+SOLD=$(lrun so "$T/ls5"); SKEEP=$(lrun sk "$T/ls5"); SNEW=$(lrun sn "$T/ls5"); SPROG=$(lrun sp "$T/ls5"); rm -f "$SPROG/verified"
+SOA=$(applied "$SOLD" agent/so); git -C "$T/r6" update-ref refs/heads/feature/so "$SOA"
+TMSO=$(cat "$SOLD/tmpdir")
+SNA=$(applied "$SNEW" agent/sn); git -C "$T/r6" update-ref refs/heads/feature/sn "$SNA"
+for r in "$SOLD" "$SKEEP" "$SPROG"; do printf '%s\n' "$(( $(date +%s) - 20 * 86400 ))" > "$r/started"; done
+for bad in "--stale" "--stale x --scratch $T/ls5" "--stale 5" "--stale 5 --scratch $T/nonexistent" "--stale 5 --applied --scratch $T/ls5" "--stale 5 --discard --scratch $T/ls5" "--stale 5 --scratch $T/ls5 $SOLD" "--yes --scratch $T/ls5" "--yes $SOLD"; do
+  # shellcheck disable=SC2086
+  ./bin/qargi local clean $bad >/dev/null 2>&1 && no "clean $bad was accepted" || ok "clean $bad is refused"
+done
+before=$(find "$T/ls5" -type f -printf '%p %T@ %s\n' | sort | sha256sum)
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); rcs=$?
+{ [ $rcs = 0 ] && grep -q "^would clean $SOLD (applied, 20d old)\$" <<<"$out" && grep -q "^would clean $SKEEP (verified, 20d old)\$" <<<"$out" \
+  && ! grep -q "$SNEW" <<<"$out" && ! grep -q "$SPROG" <<<"$out" && grep -q '^plan: 2 finished run(s) older than 7 day(s)' <<<"$out" \
+  && [ "$before" = "$(find "$T/ls5" -type f -printf '%p %T@ %s\n' | sort | sha256sum)" ]; } \
+  && ok "clean --stale is a plan: the finished runs older than DAYS are named, a newer run and one in progress are not, nothing changes" || no "stale plan (rc=$rcs): $out"
+out=$(./bin/qargi local clean --stale 30 --scratch "$T/ls5" 2>&1); grep -q '^plan: 0 ' <<<"$out" && ok "no run is that old: an empty plan" || no "stale 30: $out"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" --yes 2>&1); rcs=$?
+{ [ $rcs = 1 ] && [ ! -e "$SOLD" ] && [ ! -e "$TMSO" ] && grep -q "^cleaned $SOLD" <<<"$out" && [ -d "$SKEEP" ] && grep -q "kept $SKEEP: .*never applied" <<<"$out" \
+  && [ -d "$SNEW" ] && [ -d "$SPROG" ] && grep -q '^cleaned 1 run(s), kept 1' <<<"$out"; } \
+  && ok "--yes cleans a stale applied and merged run, keeps and names a stale run whose work was never applied (exit 1), and leaves the new and the unfinished" || no "stale --yes (rc=$rcs): $out"
+# a run of the old kind: finished, but never started with an epoch file: its age comes from refs.before
+rm -f "$SKEEP/started"; touch -d '20 days ago' "$SKEEP/refs.before"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); grep -q "^would clean $SKEEP " <<<"$out" && ok "a run with no started file is aged by refs.before" || no "no started: $out"
+# a bad age in the started file is ignored the same way
+echo notanumber > "$SKEEP/started"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/ls5" 2>&1); grep -q "^would clean $SKEEP " <<<"$out" && ok "an unreadable started file falls back to refs.before" || no "bad started: $out"
 # a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
 git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
 mkdir -p "$T/c/projects"
