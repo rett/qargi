@@ -23,7 +23,7 @@ is larger than 1 MB is not read. check runs the doctor command and reads the qar
 plan and apply run project code (even a dry run does) and are the lead's: lib/env_apply.py, and the member guard refuses them.
 
 As a module: detect(repo) -> dict, effective(repo, answers) -> dict (detection plus the answers' overrides, the
-form the later check, plan and apply verbs read), problems(env_answers) -> list of messages (project validation).
+form the later check, plan and apply verbs read), commands_for(runner), problems(env_answers) -> list of messages (project validation).
 """
 import json, os, re, stat, sys, tomllib
 
@@ -300,9 +300,16 @@ def derive(tg):
     return cmds
 
 
-def detect(repo_dir):
-    """What the repository declares. Reads files only; the answers are not consulted (see effective)."""
-    repo = Repo(repo_dir)
+def commands_for(runner):
+    """{bootstrap_command, dry_run_command, doctor_command} the conventional targets have in a runner (make when it is not one of them)."""
+    c = COMMAND.get(runner) or COMMAND["make"]
+    return {"bootstrap_command": c[0].format(t="bootstrap"), "dry_run_command": c[1].format(t="bootstrap"), "doctor_command": c[0].format(t="doctor")}
+
+
+def detect(repo_dir, repo=None):
+    """What the repository declares. Reads files only; the answers are not consulted (see effective).
+    repo: an object that reads the files in place of repo_dir (read, present, first, root, notes, refused), such as the tree of a commit."""
+    repo = repo or Repo(repo_dir)
     rs = runners(repo)
     tg = pick_targets(rs)
     d = {"repo": repo.root, "section": section(repo), "pins": pins(repo), "submodules": submodules(repo), "runners": rs,

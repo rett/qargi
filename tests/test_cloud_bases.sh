@@ -181,6 +181,12 @@ done
 BAL=$(jq -r .tiers.balanced.model lib/providers/catalogs/claude.json)
 out=$($DA provision plan --project gamma --role worker 2>&1); rc=$?
 [ $rc = 0 ] && grep -q '^plan token: [0-9a-f]\{12\}' <<<"$out" && ok "provision plan gamma-worker succeeds with stored answers and no roles.worker" || no "worker plan (rc=$rc): $(tail -3 <<<"$out")"
+# the project's bootstrap command is printed as setup-script text, never run (no repository, no text)
+grep -q "suggested setup script" <<<"$out" && no "a setup script was suggested for a project with no repository" || ok "no setup script is suggested when the project's repository is not there"
+mkdir -p "$T/gammarepo"; printf '.PHONY: bootstrap\nbootstrap:\n\ttouch %s/ran\n' "$T" > "$T/gammarepo/Makefile"
+$DA project set gamma repo.path "$T/gammarepo" >/dev/null 2>&1 || no "set gamma repo.path"
+out=$($DA provision plan --project gamma --role worker 2>&1)
+grep -q "^suggested setup script for the cloud environment" <<<"$out" && grep -qx "    make bootstrap" <<<"$out" && [ ! -e "$T/ran" ] && ok "provision plan prints the bootstrap command as suggested setup-script text and does not run it" || no "setup note: $out"
 A=$PD/gamma-worker/agents/gamma-worker
 f=$(front "$A/agent.md")
 grep -q '^name: gamma-worker$' <<<"$f" && ok "the agent is named gamma-worker" || no "worker name"

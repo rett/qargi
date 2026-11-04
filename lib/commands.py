@@ -106,7 +106,8 @@ COMMANDS = {
                          opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
-                              "is created: say where it goes with git. The files mention no tool of yours."),
+                              "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
+                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
                         examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
@@ -122,14 +123,16 @@ COMMANDS = {
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
                                  "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
-                                 "cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
+                                 "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
-                                "are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
+                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited). "
+                                "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
@@ -291,6 +294,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
+                                  "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
@@ -352,7 +356,7 @@ COMMANDS = {
                                 "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
-                                "The verdict, HEAD, time and commands are recorded in state/env/PROJECT.json (mode 600); no command output is."),
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
                           examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
             "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
@@ -375,7 +379,7 @@ COMMANDS = {
                                 "executables, and when the plan has privileged lines and --allow-root is not given. Then the bootstrap command runs once, without a "
                                 "shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run "
                                 "it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), "
-                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check, or says to run it. QARGI_DRY_RUN stops it "
+                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check (the project's doctor), whose verdict ends the output and whose exit status is the verb's. QARGI_DRY_RUN stops it "
                                 "after the checks, before the bootstrap runs. A member's guard refuses it."),
                           examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make",
                                     "qargi env apply --plan 0123456789ab --approved \"go\" --approve-exec make,pacman --allow-root"]),
@@ -385,7 +389,8 @@ COMMANDS = {
         "summary": "Create the cloud agent, deployment and environment of an instance",
         "desc": ("Renders the agent, the shared environment, the memory stores it attaches and a manual-run deployment, "
                  "shows the plan, and creates them only with your go-ahead. Names follow qargi help naming. Provision the "
-                 "role agents first; the lead (PROJECT-lead) needs them to exist."),
+                 "role agents first; the lead (PROJECT-lead) needs them to exist. When the project's repository is on this host and declares a bootstrap "
+                 "command, plan also prints it as suggested text for the environment's setup script; it is only printed, never run."),
         "scripts": ["provision.sh"],
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
@@ -1149,6 +1154,12 @@ TOPICS = {
         "begins with missing, fail or error, or ends with missing or not found, is a missing item; one that begins with expected is not red. "
         "qargi env plan runs the dry run (a dry run still runs project code: make -n expands $(shell ...)) "
         "and shows it with a plan token; qargi env apply runs bootstrap once for that plan. Both are the lead's.",
+        "For the author of a doctor target: print one line per item, for example the tool and its version. Start a line with missing, fail or error "
+        "when the item is absent or wrong (such a line is a missing item); start it with expected for a known failure that is accepted (shown, not red); "
+        "any other line is information. Exit non-zero when anything is missing, and change nothing.",
+        "qargi project new writes an AGENTS.md section and stub bootstrap and doctor targets (the doctor fails until you fill it in); project attach "
+        "lists what a repository lacks; project adopt drafts the missing files on a branch to review. qargi provision plan prints the bootstrap command as "
+        "setup-script text, and marshal handoff gives the last check and apply.",
         "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
         "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [

@@ -59,11 +59,12 @@ git -C "$R" branch agent/unmerged feature/f1; commit_on agent/unmerged u.txt
 # --- the plain note
 H f1; rc=$?
 [ $rc = 0 ] && ok "handoff NAME exits 0" || no "handoff f1: rc=$rc $(out)"
-for sec in "== where" "== features" "== marshal record" "== packs" "== read first" "== do not assume"; do
+for sec in "== where" "== features" "== marshal record" "== packs" "== environment" "== read first" "== do not assume"; do
   grep -q "^$sec" "$T/o" && ok "plain note: has the section '$sec'" || no "SPEC plain note: no section '$sec': $(cat "$T/o")"
 done
-a=$(secno "== where"); b=$(secno "== features"); c=$(secno "== marshal record"); d=$(secno "== packs"); e=$(secno "== read first"); f=$(secno "== do not assume")
-[ "${a:-9}" -lt "${b:-0}" ] && [ "$b" -lt "${c:-0}" ] && [ "$c" -lt "${d:-0}" ] && [ "$d" -lt "${e:-0}" ] && [ "$e" -lt "${f:-0}" ] && ok "plain note: the sections come in the order where, features, record, packs, read first, do not assume" || no "SPEC section order: $a $b $c $d $e $f"
+a=$(secno "== where"); b=$(secno "== features"); c=$(secno "== marshal record"); d=$(secno "== packs"); g=$(secno "== environment"); e=$(secno "== read first"); f=$(secno "== do not assume")
+[ "${a:-9}" -lt "${b:-0}" ] && [ "$b" -lt "${c:-0}" ] && [ "$c" -lt "${d:-0}" ] && [ "$d" -lt "${g:-0}" ] && [ "$g" -lt "${e:-0}" ] && [ "$e" -lt "${f:-0}" ] && ok "plain note: the sections come in the order where, features, record, packs, environment, read first, do not assume" || no "SPEC section order: $a $b $c $d $g $e $f"
+grep -q "^no env check or env apply is recorded on this host for app" "$T/o" && ok "environment: nothing recorded is said, with the command to run" || no "SPEC environment, none recorded: $(sed -n '/^== environment/,/^== read first/p' "$T/o")"
 [ "$(grep -c '^== do not assume' "$T/o")" = 1 ] && ok "plain note: the forged heading in the record is not a heading" || no "SPEC a record text made a second heading: $(cat "$T/o")"
 grep -q "^repository: $R\$" "$T/o" && ok "where: the repository path of the project" || no "SPEC where: repository path: $(sed -n '/== where/,/== features/p' "$T/o")"
 grep -q "^HEAD there: branch parked at $(tip HEAD | cut -c1-12)" "$T/o" && ok "where: the branch and sha at HEAD of the repository" || no "SPEC where: HEAD: $(sed -n '/== where/,/== features/p' "$T/o")"
@@ -202,6 +203,21 @@ H f1; grep -q "claude --add-dir $S/render/app/claude-code --mcp-config $S/render
 mkdir -p "$R/.claude"; ln -s "$S/render/app/claude-code/.claude/skills" "$R/.claude/skills"
 H f1
 grep -q "launch: $R/.claude/skills is linked to the render" "$T/o" && grep -q "no flag" "$T/o" && grep -q "any OTHER worktree" "$T/o" && ok "packs: a linked checkout needs no flag, another worktree does" || no "SPEC linked: $(sed -n '/== packs/,/== read/p' "$T/o")"
+# --- the environment section, from state/env/app.json (written by env check and env apply)
+mkdir -p "$S/env"; headnow=$(git -C "$R" rev-parse HEAD)
+jq -n --arg h "$headnow" '{check:{verdict:"ENV INCOMPLETE: 1 missing", exit:1, missing:1, expected:0, time:"2026-11-01T10:00:00Z", head:$h, doctor_command:"make doctor"},
+  apply:{exit:0, time:"2026-11-01T09:00:00Z", command:"make bootstrap\u001b[31m", head:"0123456789abcdef0123456789abcdef01234567", allow_root:true}}' > "$S/env/app.json"
+before=$(snapshot); H f1; rc=$?; sec=$(sed -n '/^== environment/,/^== read first/p' "$T/o")
+[ $rc = 0 ] && grep -q "^env check: ENV INCOMPLETE: 1 missing \[1 missing\] (2026-11-01T10:00:00Z)" <<<"$sec" && grep -q "^  at HEAD of the repository; doctor: make doctor" <<<"$sec" \
+  && ok "environment: the last check, its time and whether it was at HEAD" || no "SPEC environment check: $sec"
+grep -q "^env apply: make bootstrap.*31m exit 0 (2026-11-01T09:00:00Z), with --allow-root" <<<"$sec" && grep -q "^  at 0123456789ab, NOT the HEAD of the repository now" <<<"$sec" && ! grep -q "$(printf '\033')" <<<"$sec" \
+  && ok "environment: the last apply, an older commit is said, control characters are removed" || no "SPEC environment apply: $sec"
+grep -q "records of earlier runs, not the state now" <<<"$sec" && [ "$before" = "$(snapshot)" ] && ok "environment: the section says it is a record, and reading it changes nothing" || no "SPEC environment note or changed state"
+H f1 --json; jq -e '.environment.recorded == true and .environment.check.at_head == true and .environment.apply.at_head == false and .environment.check.missing == 1' "$T/o" >/dev/null && ok "environment: --json carries the same facts" || no "SPEC environment json: $(jq -c .environment "$T/o")"
+printf 'not json' > "$S/env/app.json"; H f1; sec=$(sed -n '/^== environment/,/^== read first/p' "$T/o")
+grep -q "no env check or env apply is recorded" <<<"$sec" && ok "environment: an unreadable record is treated as none" || no "SPEC environment unreadable: $sec"
+rm -rf "$S/env"
+
 rm -rf "$R/.claude"
 mkdir -p "$HOME/.qargi/memory/projects/app/roles/lead" "$R/qargi/memory/shared"
 echo "SECRET-MEMORY-BODY" > "$HOME/.qargi/memory/projects/app/roles/lead/INDEX.md"; echo "SECRET-MEMORY-BODY" > "$R/qargi/memory/shared/INDEX.md"; echo "AGENT-DOC-BODY" > "$R/CLAUDE.md"

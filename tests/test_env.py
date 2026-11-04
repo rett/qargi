@@ -491,8 +491,8 @@ class Check(Fixtures):
         with open(f) as fh:
             raw = fh.read()
         self.assertNotIn("sekrit-line-7f3a", raw)
-        j = json.loads(raw)
-        self.assertEqual((j["project"], j["verdict"], j["exit"], j["missing"], j["doctor_command"], j["builtin_minimum"]), ("acme", "ENV INCOMPLETE: 1 missing", 1, 1, "sh ./doctor.sh", False))
+        j = json.loads(raw)["check"]
+        self.assertEqual((j["verdict"], j["exit"], j["missing"], j["doctor_command"], j["builtin_minimum"]), ("ENV INCOMPLETE: 1 missing", 1, 1, "sh ./doctor.sh", False))
         self.assertEqual(j["head"], self.git(d, "rev-parse", "HEAD").strip())
         self.assertRegex(j["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertIn("dry_run_command", j)
@@ -500,7 +500,7 @@ class Check(Fixtures):
             fh.write("echo ok\n")
         self.assertEqual(self.check(d)[0], 0)
         with open(f) as fh:
-            self.assertEqual(json.load(fh)["verdict"], "ENV OK")
+            self.assertEqual(json.load(fh)["check"]["verdict"], "ENV OK")
 
     def test_no_state_file_without_a_stored_project(self):
         d = self.gitrepo("lone", {"doctor.sh": "echo ok\n"})
@@ -523,7 +523,7 @@ class Check(Fixtures):
         rc, out, _ = self.check(clone)
         self.assertEqual((rc, out.splitlines()[-1]), (0, "ENV OK"), out)
         with open(os.path.join(self.t, "state", "env", "acme.json")) as fh:
-            self.assertTrue(json.load(fh)["builtin_minimum"])
+            self.assertTrue(json.load(fh)["check"]["builtin_minimum"])
 
     def test_the_builtin_minimum_checks_tags_and_pinned_tools(self):
         major = str(sys.version_info.major)

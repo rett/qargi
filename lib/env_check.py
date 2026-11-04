@@ -24,8 +24,8 @@ and memory are linked; the project's members are current (STALE, DRIFT and MISSI
 is a note, not a missing item.
 
 The verdict is one line: `ENV OK`, or `ENV INCOMPLETE: N missing (...)`. Exit status 0, 1 (incomplete) or 2 (usage, no such project, no
-repository). For a stored project the result is recorded in state/env/PROJECT.json (mode 600): HEAD, time, verdict, exit status, the
-commands. The output of the doctor is not kept.
+repository). For a stored project the result is recorded under "check" in state/env/PROJECT.json (mode 600): HEAD, time, verdict, exit status, the
+commands; the other keys of the file are kept. The output of the doctor is not kept.
 """
 import contextlib, io, json, os, re, shlex, shutil, signal, subprocess, sys, tempfile, time
 
@@ -456,21 +456,30 @@ def verdict_of(missing):
 
 
 def record(project, d, repo, verdict, code, expected, missing, command, builtin_used):
-    """state/env/PROJECT.json, mode 600: HEAD, time, the verdict without the names of what is missing (they are lines the doctor printed), the commands."""
+    """state/env/PROJECT.json, mode 600: the file is read again and its "check" key set (HEAD, time, the verdict without the names of what is
+    missing, which are lines the doctor printed, the commands); every other key, such as apply's, is kept; written through a temporary file."""
     rc, head = git(repo, "rev-parse", "HEAD")
     dest = os.path.join(P.state(), "env")
     os.makedirs(dest, mode=0o700, exist_ok=True)
-    doc = {"schema": 1, "project": project, "repo": repo, "head": head.strip() if rc == 0 else "",
+    entry = {"repo": repo, "head": head.strip() if rc == 0 else "",
            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "verdict": verdict.split(" (")[0], "exit": code,
            "missing": len(missing), "expected": expected, "doctor_command": command, "builtin_minimum": builtin_used,
            "dry_run_command": d["commands"]["dry_run_command"]["command"]}
+    final = os.path.join(dest, project + ".json")
+    try:
+        with open(final) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        doc = {}
+    doc = doc if isinstance(doc, dict) else {}
+    doc["check"] = entry
     fd, tmp = tempfile.mkstemp(prefix=".%s." % project, dir=dest)
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(doc, f, indent=2, sort_keys=True)
             f.write("\n")
         os.chmod(tmp, 0o600)
-        os.replace(tmp, os.path.join(dest, project + ".json"))
+        os.replace(tmp, final)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(tmp)

@@ -25,6 +25,7 @@ import hashlib, json, os, re, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marshal_refs as MR  # noqa: E402  (in_member_run)
 import methodology as M  # noqa: E402
+import env as ENV  # noqa: E402
 import provider as PV  # noqa: E402
 
 
@@ -59,6 +60,73 @@ class Tree:
     def listdir(self, rel):
         pre = rel.rstrip("/") + "/"
         return [p[len(pre):] for p in self.files if p.startswith(pre) and "/" not in p[len(pre):]]
+
+
+class TreeRepo:
+    """A Tree as lib/env.py reads a repository (read, present, first, root, notes, refused), so the environment is detected in a commit."""
+
+    def __init__(self, tree, root):
+        self.t, self.root, self.notes, self.refused = tree, root, [], []
+
+    def present(self, rel):
+        return rel in self.t.files
+
+    def read(self, rel):
+        if rel not in self.t.files:
+            return None
+        text = self.t.read(rel)
+        if len(text) > ENV.CAP:
+            self.notes.append("%s is larger than %d KB: not read" % (rel, ENV.CAP // 1024))
+            return None
+        return text
+
+    def first(self, names):
+        for n in names:
+            t = self.read(n)
+            if t is not None:
+                return n, t
+        return None, None
+
+
+def env_view(m, tree, root):
+    """What the development environment of a tree is and what a methodology's scaffold adds to it: {found, skip, gaps, params}.
+    found: the summary detect reports; skip: the scaffold destinations that are not written or listed because the piece they hold exists
+    elsewhere; gaps: the pieces that are missing and that no scaffold file will supply; params: the scaffold parameters that fit the runner."""
+    envd = ENV.detect(root, TreeRepo(tree, root))
+    tg = envd["targets"]
+    runner = envd["runner"] or (envd["runners"][0]["runner"] if envd["runners"] else None) or "make"
+    cmds = ENV.commands_for(runner)
+    for k, v in ((k, c["command"]) for k, c in envd["commands"].items()):
+        if v:
+            cmds[k] = v
+    params = dict(cmds, runner=runner)
+    skip, writes, section_file = {}, set(), None
+    for item in m.get("scaffold") or []:
+        kind = item.get("env")
+        if kind == "section":
+            section_file = section_file or item["dest"]
+            if envd["section"]:
+                skip[item["dest"]] = True
+            elif not tree.exists(item["dest"]):
+                writes.add("section")
+        elif kind == "targets":
+            if envd["runners"]:
+                skip[item["dest"]] = True
+            elif not tree.exists(item["dest"]):
+                writes.add("targets")
+    gaps = []
+    if not envd["section"] and "section" not in writes:
+        gaps.append({"kind": "env", "what": "Development environment section",
+                     "why": "no section headed Development environment, Environment or Setup in AGENTS.md or README.md; add one that names the bootstrap and doctor commands"})
+    if "targets" not in writes:
+        for role in ("bootstrap", "doctor"):
+            if not tg[role]:
+                files = ", ".join(r["file"] for r in envd["runners"]) or "a Makefile"
+                gaps.append({"kind": "env", "what": "%s target" % role, "why": "none (%s) in %s; add one" % (" or ".join(ENV.WANTED[role]), files)})
+    found = {"section": (envd["section"] or {}).get("file"), "runner": envd["runner"], "bootstrap_command": envd["commands"]["bootstrap_command"]["command"],
+             "doctor_command": envd["commands"]["doctor_command"]["command"], "pins": ["%s %s" % (p["tool"], p["version"]) for p in envd["pins"]],
+             "submodules": len(envd["submodules"])}
+    return {"found": found, "skip": skip, "gaps": gaps, "params": params}
 
 
 def read(t, rel):
@@ -230,6 +298,7 @@ def detect(d, name=None, methodology="gitflow", provider=None):
     ref, ref_why = integration_ref(d, (m.get("branches") or {}).get("long_lived", []), branches)
     dpath, d = d, Tree(d, ref)   # from here on d is the tree of ref
     cmd, why = test_command(d)
+    ev = env_view(m, d, dpath)
     ci = sorted(f for f in d.listdir(".github/workflows") if f.endswith((".yml", ".yaml")))
     found = {
         "ref": ref and git(dpath, "rev-parse", "--abbrev-ref", ref) or ref, "ref_why": ref_why,
@@ -238,7 +307,7 @@ def detect(d, name=None, methodology="gitflow", provider=None):
         "test_command": cmd, "test_command_from": why, "language": language(d), "ci_workflows": ci,
         "files": {f: exists(d, f) for f in ("README.md", "CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", "LICENSE", ".gitignore")},
         "dirty": bool(git(dpath, "status", "--porcelain")),
-        "url": https_url(remote) if remote else "",
+        "url": https_url(remote) if remote else "", "env": ev["found"],
     }
     pname = name or project_name(dpath, remote)
     questions = []
@@ -281,8 +350,9 @@ def detect(d, name=None, methodology="gitflow", provider=None):
         answers["test_command"] = cmd
     gaps = []
     for item in m.get("scaffold") or []:
-        if not exists(d, item["dest"]):
+        if not exists(d, item["dest"]) and item["dest"] not in ev["skip"]:
             gaps.append({"kind": "file", "what": item["dest"], "why": "the %s methodology starts a project with it" % methodology})
+    gaps += ev["gaps"]
     for b in (m.get("branches") or {}).get("long_lived", []):
         if b not in branches and not (b == "master" and "main" in branches):
             gaps.append({"kind": "branch", "what": b, "why": "the methodology keeps a long-lived %s branch" % b})
@@ -362,7 +432,9 @@ def adopt_plan(project, answers_file, methodology=None):
     adopt_exists = bool(git(d, "rev-parse", "--verify", "-q", "refs/heads/" + adopt_branch) or git(d, "rev-parse", "--verify", "-q", "refs/remotes/origin/" + adopt_branch))
     tree = Tree(d, integ_sha)
     lower = {p.lower() for p in tree.files | tree.dirs}
+    ev = env_view(m, tree, d)
     params = {"project": project}
+    params.update({k: v for k, v in ev["params"].items() if k in (m.get("params") or {})})
     if answers.get("test_command") and "test_command" in (m.get("params") or {}) and "\n" not in answers["test_command"]:
         params["test_command"] = answers["test_command"]
     versioning, ci = m.get("versioning") or {}, m.get("ci") or {}
@@ -372,7 +444,7 @@ def adopt_plan(project, answers_file, methodology=None):
         parts = dest.split("/")
         prefixes = ["/".join(parts[:i]) for i in range(1, len(parts))]
         why = ""
-        if tree.exists(dest):
+        if tree.exists(dest) or dest in ev["skip"]:
             continue
         if any(p in tree.files for p in prefixes):
             why = "a file is in the way of its directory"
@@ -394,6 +466,7 @@ def adopt_plan(project, answers_file, methodology=None):
     if adopt_exists:
         files = []
     left = [g for g in det["gaps"] if g["kind"] in ("format", "tags", "ci")]
+    left += [dict(g, why="not written: " + g["why"]) for g in ev["gaps"]]
     left += [{"kind": "file", "what": x["what"], "why": "not written: " + x["why"]} for x in skipped]
     if any(f["dest"] == ci.get("file") for f in files):   # the template replaces the "no CI" gap; its content is still the owner's to judge
         left = [g for g in left if g["kind"] != "ci"] + [{"kind": "ci", "what": ci["file"], "why": "written from the template: check that its steps fit this project"}]
