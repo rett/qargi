@@ -308,8 +308,9 @@ def man(date_from=None):
     w(".SH EXIT STATUS")
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
-    w("The skills qargi\\-task, qargi\\-team, qargi\\-project, qargi\\-instances, qargi\\-provision, qargi\\-memory, qargi\\-packs "
-      "and qargi\\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).")
+    skills = sorted(n for n in os.listdir(os.path.join(ROOT, "skills")) if os.path.isfile(os.path.join(ROOT, "skills", n, "SKILL.md")))
+    w("The skills " + ", ".join(esc(n) for n in skills[:-1]) + " and " + esc(skills[-1]) + ", loaded by the lead's session "
+      "(qargi help roles for the roles, which come as role text with the task block).")
     return "\n".join(x for x in o if x != "") + "\n"
 
 

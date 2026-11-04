@@ -53,7 +53,7 @@ ASKED = opt("--asked", "the request, in your words, that names the cloud instanc
 PLAN = opt("--plan", "the plan token printed by the same command without --approved", "TOKEN")
 APPROVED = opt("--approved", "your go-ahead for exactly that plan, in your words; recorded in the audit log", "WORDS")
 EXEC = opt("--approve-exec", "name every executable the pack holds, separated by commas, to approve running them", "NAMES")
-TARGET = opt("--target", "claude-code renders for a local Claude Code session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
+TARGET = opt("--target", "claude-code renders for a local session; managed-agents (the default for apply) is the cloud update", "TARGET", ("claude-code", "managed-agents"))
 PREFIX = opt("--prefix", "pick the notes under this path (repeat for several)", "PATH")
 ROLE_SEL = opt("--role", "pick the notes under /roles/ROLE/", "ROLE", ROLES)
 NOTE_KIND = opt("--note-kind", "pick the notes whose Kind: header is KIND (setup, gate, rule, ...)", "KIND")
@@ -399,14 +399,14 @@ COMMANDS = {
             "render": verb("Write what a role gets into a directory (used by provisioning)", [("PROJECT", "project"), ("ROLE", "role"), ("OUTDIR", "dir")]),
             "load": verb("Show what a role has enabled, or print one pack's text", [("[PACK]", "pack")], [opt("--role", "the role whose packs (required)", "ROLE", ROLES), opt("--project", "the project (default: inferred from here)", "PROJECT", "project")],
                          desc="Read-only, and evaluated from the links when called, so enabling or disabling a pack takes effect at once. Refuses a pack that fails its review or changed since it was approved."),
-            "apply": verb("Update an existing cloud agent, or render for a local Claude Code session", [("INSTANCE|PROJECT", "instance")], [TARGET, ASKED, PLAN, APPROVED],
+            "apply": verb("Update an existing cloud agent, or render for a local runtime", [("INSTANCE|PROJECT", "instance")], [TARGET, ASKED, PLAN, APPROVED],
                           desc=("Without --target (or with managed-agents) this updates the existing cloud agent INSTANCE with its skills and tools; "
                                 "the lead's GitHub tool arrives this way when the project grants a cloud push. It needs --asked, and always needs --plan "
                                 "(QARGI_NESTED does not skip it); a local member's guard refuses it.\n"
                                 "With --target claude-code it takes PROJECT instead of INSTANCE and needs no --asked. Without --approved it prints a plan token. "
                                 "With --plan and --approved it renders the project's enabled skills and tools into $QARGI_STATE/render/PROJECT/RUNTIME (claude-code for this target), replacing the "
                                 "previous render atomically, and prints the exact `claude --add-dir ...` launch line (with --mcp-config and --settings when the "
-                                "render has them). Claude Code cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
+                                "render has them). A local runtime cannot enforce role scoping, so the render is the union of the project's roles and role scoping "
                                 "is advisory there. Skills render under .claude/skills; tool packs render mcp.json and settings.json. Nothing is written into a "
                                 "repository or into ~/.claude, and members cannot write under the state's render/ directory.\n"
                                 "The plan refuses, naming the pack and writing nothing, a skill whose SKILL.md name differs from the pack name, whose "
@@ -420,7 +420,7 @@ COMMANDS = {
                                "(add, update, current or kept) and a plan token. A pack you edited and sealed, or one of your own with the same name, is kept and "
                                "never overwritten; an untouched shipped copy is updated when qargi ships a newer text. Seeding never links a pack: nothing "
                                "reaches a project or an agent until you link it.")),
-            "check": verb("Check a Claude Code render for drift (read only)", [("PROJECT", "project")], [TARGET],
+            "check": verb("Check a render for drift (read only)", [("PROJECT", "project")], [TARGET],
                           desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
@@ -1015,21 +1015,21 @@ TOPICS = {
     "concepts": ("The model in one page", [
         "Task: you describe one task and an executable check that decides it is done. An agent works on it in its own clone and hands back "
         "numbered patches, one per commit, with a manifest. Nothing is pushed.",
-        "Roles are the four abilities and the lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each ability is defined by its role text, which comes with the task block. The local workers are members you name and give abilities (qargi agent add NAME --roles build,test); qargi agent for ABILITY prints the member that serves it. "
+        "Roles are build, write, review, test and lead: build changes code, write writes the operational docs, review judges a change and changes no file, test writes and runs tests, lead coordinates a team. Each role is defined by its role text, which comes with the task block. The local workers are members you name and give roles (qargi agent add NAME --roles build,test); qargi agent for ROLE prints the member that serves it. "
         "A role has its own model, effort, skills and packages, stored in the project's answers.",
         "Local or cloud: local (a member on this machine) is the default. The cloud is used only when your request for that task names it, "
         "and every cloud verb records your words with --asked.",
         "You decide: the coordinator re-verifies everything an agent returns (qargi review check), applies it as separate commits, and "
         "asks you before anything is pushed."]),
-    "roles": ("Roles, abilities and members", [
-        "Role build: the ability build; changes the code with its tests, manual page, help and changelog.",
-        "Role write: the ability write; writes the operational documentation on its own branch.",
-        "Role review: the ability review; reads a change, runs its checks and reports a verdict, and changes no file.",
-        "Role test: the ability test; writes and repairs tests and proves them failing first and stable.",
-        "Role lead: no ability of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
+    "roles": ("Roles and members", [
+        "Role build: changes the code with its tests, manual page, help and changelog.",
+        "Role write: writes the operational documentation on its own branch.",
+        "Role review: reads a change, runs its checks and reports a verdict, and changes no file.",
+        "Role test: writes and repairs tests and proves them failing first and stable.",
+        "Role lead: it does no work of its own; it coordinates a team of members on one task (qargi team, the skill qargi-team).",
         "A member is a local agent you name (qargi agent add forge --roles build,test), rendered from the one member definition "
-        "qargi ships. The task block names the ability and carries its role text; there is no ability skill to load. qargi agent for ABILITY prints the member "
-        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its ability's role text in its prompt.",
+        "qargi ships. The task block names the role and carries its role text; there is no role skill to load. qargi agent for ROLE prints the member "
+        "dispatch spawns. A cloud agent serves one role, is named <project>-<role> and carries its role text in its prompt.",
         ]),
     "approvals": ("Plans, tokens and your go-ahead", [
         "A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done.",
@@ -1125,7 +1125,7 @@ WORKFLOW = [
     ("Once per project", ["qargi project template acme > acme.json   # edit it", "qargi project init acme --answers acme.json",
                           "qargi provision plan acme-build    # then apply it with --plan and --approved"]),
     ("One task, cloud", ['qargi send acme-build "$BRIEF" --label rename-verb --asked "use the cloud builder"',
-                         "qargi watch SID    # in the background", "qargi collect SID ./run", "qargi review check ./run"]),
+                         "qargi watch SID    # in the background", "qargi collect SID ./out", "qargi review check ./out"]),
     ("A team", ["qargi team brief acme code-docs --task \"rename the verb\" --done \"make test\" --base develop",
                 "qargi lead status acme", "qargi team check ./run"]),
 ]
