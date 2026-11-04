@@ -13,6 +13,10 @@ description) converted by lib/site_md.py. `check` validates the hand pages again
 `build` runs the same checks and then writes the site; `check-output` validates a built tree; `diff` lists what
 changed in the command line between two sources and which hand pages still name what is gone.
 
+Trust: reading the command line IMPORTS lib/commands.py of --source (and --source-old/--source-new for `diff`), which runs
+that source's code. Give only a source you trust. The import happens in a boxed child (python -I -S -B, an empty working
+folder, a minimal environment, limits on cpu time, memory, output size and time), which limits the damage but is not a sandbox.
+
 Exit status: 0 ok, 1 errors found (warnings never fail), 2 a usage error or a refusal (an unsafe path).
 Run it as `python3 -I lib/site.py ...`: it loads its own parts by path and needs nothing installed.
 """
@@ -259,9 +263,17 @@ class Writer:
 
 
 # ------------------------------------------------------------------ the source
+CHILD_CPU_SECONDS = 30                      # limits for the child that reads lib/commands.py
+CHILD_MEMORY_BYTES = 1024 * 1024 * 1024
+CHILD_OUTPUT_BYTES = 8 * 1024 * 1024
+CHILD_TIMEOUT = 60
 _LOADER = (
-    "import json, sys\n"
-    "sys.path.insert(0, sys.argv[1])\n"
+    "import json, resource, sys\n"
+    "lib = sys.argv[1]\n"
+    "cpu, mem, out = (int(x) for x in sys.argv[2:5])\n"
+    "for what, n in ((resource.RLIMIT_CPU, cpu), (resource.RLIMIT_AS, mem), (resource.RLIMIT_FSIZE, out), (resource.RLIMIT_CORE, 0)):\n"
+    "    resource.setrlimit(what, (n, n))\n"
+    "sys.path.insert(0, lib)\n"
     "import commands as C\n"
     "keys = ('TAGLINE', 'INTRO', 'COMMANDS', 'GROUPS', 'TOPICS', 'ENVIRONMENT', 'FILES', 'WORKFLOW')\n"
     "print(json.dumps({k: getattr(C, k) for k in keys}))\n"
@@ -299,21 +311,44 @@ class Cmds:
         return {o["flag"]: o for o in spec.get("opts", [])}
 
 
+def _plain(s, limit=200):
+    """One line of text from another program's output that is safe to print: printable ASCII only, cut short."""
+    s = re.sub(r"[^\x20-\x7e]", "?", s.strip())
+    return s if len(s) <= limit else s[:limit] + "..."
+
+
 def load_commands(source):
+    """Read the command line from lib/commands.py of the source. THIS RUNS THE SOURCE'S CODE (importing commands.py runs
+    its module-level code and that of the modules it imports), so only a source you trust may be given. The child is
+    boxed in: python -I -S -B, an empty working folder that is also its HOME, a minimal environment, limits on cpu
+    time, memory and output size, and a time limit; what it reports back is cleaned before it is shown."""
     lib = os.path.join(source, "lib")
     if not os.path.isfile(os.path.join(lib, "commands.py")):
         raise Refusal("%s has no lib/commands.py" % source)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8"}
+    work = tempfile.mkdtemp(prefix="site-source-")
     try:
-        r = subprocess.run([sys.executable, "-I", "-B", "-c", _LOADER, lib], capture_output=True, text=True, env=env, timeout=120)
-    except subprocess.TimeoutExpired:
-        raise Refusal("loading %s/commands.py timed out" % lib)
-    if r.returncode != 0:
-        raise Refusal("cannot load %s/commands.py: %s" % (lib, r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "exit %d" % r.returncode))
+        env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": work}
+        cmd = [sys.executable, "-I", "-S", "-B", "-c", _LOADER, lib, str(CHILD_CPU_SECONDS), str(CHILD_MEMORY_BYTES), str(CHILD_OUTPUT_BYTES)]
+        with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:
+            try:
+                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fo, stderr=fe, env=env, cwd=work, timeout=CHILD_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                raise Refusal("loading %s/commands.py timed out after %d seconds" % (lib, CHILD_TIMEOUT))
+            fe.seek(0, os.SEEK_END)
+            fe.seek(max(0, fe.tell() - 4096))
+            err = fe.read().decode("utf-8", "replace")
+            fo.seek(0)
+            raw = fo.read(CHILD_OUTPUT_BYTES + 1)
+        if r.returncode != 0:
+            last = [ln for ln in err.splitlines() if ln.strip()]
+            why = _plain(last[-1]) if last else ("stopped by signal %d (a time, memory or size limit)" % -r.returncode if r.returncode < 0 else "exit %d" % r.returncode)
+            raise Refusal("cannot load %s/commands.py: %s" % (lib, why))
+    finally:
+        shutil.rmtree(work, True)
     try:
-        return Cmds(json.loads(r.stdout))
+        return Cmds(json.loads(raw.decode("utf-8")))
     except (ValueError, KeyError) as e:
-        raise Refusal("lib/commands.py of %s does not describe the command line as expected (%s)" % (source, e))
+        raise Refusal("lib/commands.py of %s does not describe the command line as expected (%s)" % (source, _plain(str(e))))
 
 
 _REL_HEAD = re.compile(r"^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?[ ]*$")
@@ -1694,7 +1729,7 @@ def run_diff(args):
 # ------------------------------------------------------------------ command line
 def common(p):
     p.add_argument("--release", required=True, help="the release the source is, X.Y.Z")
-    p.add_argument("--source", required=True, help="a checkout or extracted archive of that release")
+    p.add_argument("--source", required=True, help="a checkout or extracted archive of that release; its lib/commands.py is imported, which runs its code: only a source you trust")
     p.add_argument("--pages", help="the directory of hand pages (Markdown with front matter) and its site.json")
     p.add_argument("--config", help="the site.json (default: site.json in --pages; a site.json in a folder above is never used); its static/ folder is published as is")
     p.add_argument("--url", help="the site address, https://...; overrides site.json url")
