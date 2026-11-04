@@ -2075,6 +2075,43 @@ class TrimmedExpansions(unittest.TestCase):
             self.assertIn("signing key", r.stderr, c)
 
 
+class TrimmedExpansions(unittest.TestCase):
+    """${var%%:*}, ${var%/*} and ${var##*/} cut a part off the variable's own value: the * and the / belong to the pattern, so the word is no glob on the
+    signing key. A default (${X:-dir}) or a recursive reader still is."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_a_trimming_expansion_is_no_glob_on_the_key(self):
+        for c in ('f=a:b; echo "${f%%:*}"', "f=a:b; x=${f%%:*}; echo $x", 'echo "${f%%:*}" > out.txt', "d=${PWD%%/*}; ls $d", "echo ${f%:*} ${g##*/} ${h#*:}",
+                  "for f in a:b; do echo ${f%%:*}; done", "p=${f%/*}/other; cat $p", "n=${f##*/}; echo $n", 'echo "${f%%:*}=${f#*:}"'):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_a_default_a_glob_or_a_recursive_reader_is_still_refused(self):
+        for c in ("cat ${X:-/nowhere}/marshal_x", "cat ${X:-dir}/marshal_*", "cat ${f%%:*}/marshal_*", "cat ${f%%:*}/${X:-marshal_*}", "cat ${X:-d}/${f%%:*}*",
+                  "cp -r ${f%%:*} out", "tar cf x.tar ${f%%:*}", "cat ${f%%:*}/marshal_?"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("signing key", r.stderr, c)
+
+
+class InPlaceScripts(unittest.TestCase):
+    """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+
+    def test_a_script_with_a_glob_a_variable_or_a_flag_is_no_file(self):
+        for c in ("sed -i -e 's/ -S[a-z]*//' -e 's/$X/y/' lib/x.sh", 'sed -i -e "s/$FLAGS -S/x/" lib/x.sh', "sed -i -f ./s*.sed lib/x.sh", "sed -ni -e 's/a/-S/p' lib/x.sh",
+                  "perl -pi -e 's/-S*/x/' lib/x.pl", "sed -i -e 's/git commit -S/git commit/' docs/a.md", "sed -i --expression 's/-S*/x/' lib/x.sh", "sed -i -es/-S*/x/ lib/x.sh",
+                  "sed -i -e 's/a/b/' -- lib/x.sh", "perl -pi -e 's/$x[0]/-S/' lib/x.pl"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_the_file_of_an_in_place_edit_is_still_judged(self):
+        for c in ("sed -i -e 's/a/b/' ~/.claude/settings.json", "sed -i -e 's/a/b/' -e 's/c/d/' ~/.bashrc", "sed -i --expression='s/a/b/' ~/.bashrc",
+                  "sed -i --expression 's/a/b/' ~/.bashrc", "sed -i -f s.sed ~/.bashrc", "perl -pi -e 's/a/b/' ~/.bashrc", "sed -ie 's/a/b/' ~/.bashrc",
+                  "sed -i -es/a/b/ ~/.bashrc", "sed -i -e 's/a/b/' $X", "sed -i -e 's/a/-S/' lib/*.sh ~/.bashrc", "sed -n -i s/a/b/ ~/.bashrc"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+
+
 class _Judge:
     """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
     judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None."""

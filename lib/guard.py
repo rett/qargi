@@ -989,6 +989,19 @@ def option_value(rest, k, names):
     return None
 
 
+def script_values_off(rest):
+    """rest without the words that -e, -f, --expression and --file hand a sed or perl script (or the file of one): they are no files to change, whatever
+    characters the script holds (a glob, a $, a -S)."""
+    out, skip = [], False
+    for t in rest:
+        if skip:
+            skip = False
+            continue
+        skip = t in ("--expression", "--file") or bool(re.match(r"^-[A-Za-z]*[ef]$", t))
+        out.append(t)
+    return out
+
+
 def write_targets(toks, i):
     """(what, destination) of everything a segment writes, by its redirections and its program (git included). A destination of "" is a redirection with no
     target left in the segment. Sources that a command removes (mv, rm) are targets too."""
@@ -1022,8 +1035,10 @@ def write_targets(toks, i):
         elif prog in ("awk", "gawk", "mawk") and any(t in ("inplace", "-iinplace", "--include=inplace") for t in rest):    # gawk -i inplace edits its files
             targets += [("awk -i inplace", a) for a in (args if any(t in ("-f", "--file") for t in rest) else args[1:])]
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
-            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
-            targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
+            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) or t.startswith(("--expression=", "--file="))
+                           or re.match(r"^-[A-Za-z]*[ef]\S", t) for t in rest)        # a script given by an option: every operand is a file (-es/a/b/ and -ifoo count too: more files, never fewer)
+            files = operands(script_values_off(rest), any(os.path.basename(t) == "xargs" for t in toks[:i]))     # sed -i -e SCRIPT FILE: the script is no file
+            targets += [(prog + " -i", a) for a in (files if scripted else args[1:])]
         elif prog in TARS and tar_extracts(rest):
             targets += [("tar", d) for d in tar_dirs(rest)] or [("tar", ".")]          # an archive is extracted below -C DIR, else below where the shell is
         elif prog == "unzip" and not set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t))) & set("lptZvcz"):
