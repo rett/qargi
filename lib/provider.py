@@ -1799,10 +1799,6 @@ def cmd_list():
     return 0
 
 
-def _verified(cell):
-    return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified" + (", counts as no" if cell.get("value") != "no" else "")
-
-
 def _backing(name, surface, c, cell):
     """What stands behind a claimed capability, for show: a shipped definition, its date; a library one, the record or the lack of one."""
     if cell.get("value") == "no":
