@@ -198,6 +198,56 @@ with `--plan TOKEN --approved "<your words>"`. A merge that conflicts changes no
 naming a worktree with the merge in progress: resolve and commit there, then run the same command
 with `--resolved`.
 
+### Detached branches
+
+A long-lived branch that must never meet the git-flow branches, such as a documentation site, is listed in the answers as
+`repo.detached` (`qargi project set NAME repo.detached '["docs-site"]'`). qargi then refuses every merge between it and
+develop, master, a release, a hotfix or a feature branch, in either direction (`feature merge`, `feature sync`, `feature finish`,
+`release finish`), by name and by history: a branch cut from the detached branch cannot be merged into a feature, a branch cut from
+develop cannot be merged into the detached branch. `feature start` and the other feature verbs refuse its name. Tasks are cut
+from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
+into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
+
+### Feature branches on origin
+
+Two answers decide what the flow does with a feature branch on origin. `branches.push_features` is `never` (the default),
+`when-shared` or `always`: `feature start`, `feature merge` and `feature sync` push the branch (a plain push, never forced) only
+under `always`, or under `when-shared` when origin already has it. Setting it is the standing approval for those pushes; develop,
+master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
+`local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
+shows the deletion and its token covers origin's tip.
+
+### Pruning merged branches
+
+`qargi branch prune [--remote]` prints the merged `agent/*` and `feature/*` branches of the project (with `--remote`, the same
+branches on origin, asked live) and the worktrees qargi made for them, with a token; apply it with `--plan TOKEN --approved
+"<your words>"`. A branch is merged when it was merged with `--no-ff` into develop, or, for an agent branch, into an open
+feature; a branch that only sits at the tip of develop or of a feature was never merged and is kept. It never deletes master,
+develop, the branches of `repo.long_lived` or `repo.detached`, the parking branch, an unmerged branch, or a branch checked out in a
+worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
+the reason. A remote branch is deleted as a lease on the tip the plan showed. `qargi review prune --yes` still deletes the
+merged `agent/*` branches of the local repository without a token.
+
+### The worktree root
+
+qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one
+per branch at `ROOT/<branch>`. `qargi feature start NAME --worktree` creates `ROOT/feature/NAME` and prints the path. While a
+clean worktree of a feature is under the root, `feature merge` and `feature sync` bring it up to date, and `feature finish`
+detaches and removes it after the merge, when it deletes the branch; a dirty one stops each of them with its path. `feature list`
+and `feature status` flag every other worktree of the project, with the `git worktree move` that fixes it. The main checkout, the
+worktrees inside the main checkout (the agent runtime makes its own there, under `.claude/worktrees/` for Claude Code) and qargi's
+temporary worktrees are not flagged.
+
+### The parking branch
+
+qargi moves develop and master without touching a working tree, so neither can be checked out in the project's main checkout
+(`need_free` refuses and says so). The checkout rests on a parking branch instead: `repo.parking_branch` in the answers, `scratch` by
+default. `git -C DIR switch -c scratch develop` makes it; `qargi feature park` refreshes it later: `checkout -B scratch develop` in the
+main checkout, refused when the tree is dirty or when `scratch` has commits develop lacks (it lists them: re-implement them with an
+agent task based on develop). After `feature finish`, `release finish` and `release finish --hotfix` moved develop, a clean main
+checkout on the parking branch with no commits of its own is fast-forwarded to develop; otherwise one line says why not. The parking
+branch is never pushed or merged.
+
 ## Feature marshal
 
 When several sessions lead the same project, the marshal says who leads which open feature. It keeps one
