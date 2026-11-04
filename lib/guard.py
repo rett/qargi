@@ -148,14 +148,12 @@ agent file run only after the workspace trust dialog is accepted (https://code.c
 then the subagent runs without this guard."""
 import collections, fnmatch, functools, json, os, re, shlex, sys, time
 
-SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*")      # the plain split on every separator (segments())
-NOCLOBBER = re.compile(r"\s*(?:&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))\s*")   # the same, with >| left whole: it is a redirection
-SEPARATOR = re.compile(r"(\s*(?:&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*)")           # SEGMENT with the separators kept (re.split hands them back between the pieces)
-NOCLOBBER_SEPARATOR = re.compile(r"(\s*(?:&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))\s*)")
+SEPARATOR = re.compile(r"(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))")           # the separators, kept (re.split hands them back between the pieces); no \s* around them: a long run of blanks made that quadratic
+NOCLOBBER_SEPARATOR = re.compile(r"(&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))")
 SUBST = re.compile(r"\$\(|`|[<>]\(")                       # command substitution and process substitution start a command of their own
-HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
-PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
-AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*[^;&|\n]*(?:\$\(|`)")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
+HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
+PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
+AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
@@ -233,6 +231,20 @@ class TooBroad(TooSlow):
 def tick():
     if _DEADLINE[0] is not None and time.monotonic() > _DEADLINE[0]:
         raise TooSlow()
+
+
+SUBST_START = re.compile(r"\$\(|`")
+
+
+def word_then_subst(word, text):
+    """True when a command (the text between separators) has the pattern word and, after its first occurrence, a command substitution (`handoff ... $(...)`).
+    The first occurrence is the one with the most text after it, so this is what the pattern word followed by [^;&|\\n]* and a substitution said, in one pass and
+    not one scan of the rest of the command per occurrence (a long run of the word took minutes)."""
+    for chunk in re.split(r"[;&|\n]", text):
+        m = word.search(chunk)
+        if m and SUBST_START.search(chunk, m.end()):
+            return True
+    return False
 
 
 def blocked(command, depth=0):
@@ -443,7 +455,8 @@ def pieces(text, whole=False, top=True):
         depth = max(0, depth + opens - closes)
         top_level = (top and depth == 0 and not quote and not heredoc and not comment and before.strip() in SEQUENCE + ("&&",) and after.strip() not in ("|", "&")
                      and not ahead and not opens and not closes)
-        out.append(Piece(piece, top_level, before.strip() == "&&"))
+        if piece.strip():
+            out.append(Piece(piece.strip(), top_level, before.strip() == "&&"))
         words = piece.split()
         first = words[0] if words else ""
         depth = max(0, depth + piece.count("(") - piece.count(")") + (first in KEYWORDS_OPEN) - (first in KEYWORDS_CLOSE) + words.count("{") - words.count("}"))
@@ -1529,12 +1542,12 @@ def lead_refusal(prog, rest, pre):
 
 def bash_skill_refusal(command, here, depth):
     joined = command.replace("\\\n", "")                 # a line continuation joins the lines (segments() does the same, and reads an escaped backslash right)
-    if HANDOFF_SUBST.search(joined):
+    if word_then_subst(HANDOFF_SUBST, joined):
         return MarshalReason("qargi marshal handoff with a command substitution in its arguments could be given --write, which writes a file and is not available to an agent; %s"
                              % MARSHAL_NOTE)
-    if PROJECT_SET_SUBST.search(joined):
+    if word_then_subst(PROJECT_SET_SUBST, joined):
         return "qargi project set with a command substitution in its arguments takes a path the guard cannot read, which could be a models answer, and is not available to an agent"
-    if AUDIT_SUBST.search(joined):
+    if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
     for n, texts, seg, dirs in walk(command, here):
