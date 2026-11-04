@@ -81,7 +81,8 @@ journaled() {
 # compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
 # (remote refs, refs/remotes, tags, stash, ...) must be identical (except refs/qargi/, see drop_qargi_refs). A local branch may only move
 # forward (old tip is an ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
-# lead's own merges do. Used with refs.before while the run has no passing verify, with RUN/verified after one.
+# lead's own merges do; any other branch (a detached long-lived one) may move only as far as the lead's ref journal explains.
+# Used with refs.before while the run has no passing verify, with RUN/verified after one.
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
   local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
@@ -105,7 +106,7 @@ compare() {
     new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
     if [ -z "$new" ]; then echo "branch deleted: $name (was $old)"; bad=1
     elif [ "$new" != "$old" ]; then
-      if ! allowed "$name"; then echo "branch moved, not an allowed branch: $name $old -> $new"; bad=1
+      if ! allowed "$name" && ! journaled "$repo" "$name" "$old" "$new"; then echo "branch moved, not an allowed branch: $name $old -> $new"; bad=1
       elif ! git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then echo "branch rewritten (not a fast-forward): $name $old -> $new"; bad=1; fi
     fi
   done < <(grep "$hd" "$ref")
