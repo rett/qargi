@@ -175,7 +175,8 @@ refusal changes nothing.
    Per task: `qargi review check RUN` and `qargi review apply RUN` (puts the series on `agent/<slug>`),
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi review prune [--yes]` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
-   merging any of them.
+   merging any of them. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
+   applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
@@ -262,7 +263,7 @@ Eleven skills, all prefixed `qargi-`, drive one `qargi` command. `/qargi-task` d
 
 Packs are enabled for a project by links (`qargi skill|tool link NAME --scope project ...`, see `/qargi-packs`). Each pack declares `compatible_providers` (runtime names, family names or `any`; required, and part of the content hash), and a project renders only the packs that match its local runtime: the others are skipped with a note, never attached silently (`--compatible LIST` on `skill|tool new|import|seal`). To use the packs in a Claude Code session on your machine, render them. `qargi packs apply --target claude-code PROJECT` prints a plan and a token; run it again with `--plan TOKEN --approved "<your words>"` to apply (the target is the render target of the project's local runtime).
 
-The apply renders the union of the packs of all the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (RUNTIME is the runtime's name, here `claude-code`; `QARGI_HOME` or `QARGI_STATE` move it): the runtime's skills directory (`.claude/skills` for Claude Code), `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. Renders made by an earlier version are in `state/claude/PROJECT`; `qargi packs migrate-render` moves them (plan, token, approval; nothing is deleted). It then prints the launch line that starts Claude Code with the render:
+The apply renders the union of the packs of all the project's roles into `~/.qargi/state/render/PROJECT/RUNTIME/` (RUNTIME is the runtime's name, here `claude-code`; `QARGI_HOME` or `QARGI_STATE` move it): the runtime's skills directory (`.claude/skills` for Claude Code), `mcp.json` and `settings.json` for the tools, and `MANIFEST.json` with the hash of every file. It then prints the launch line that starts Claude Code with the render:
 
 ```
 claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
@@ -365,7 +366,7 @@ Search is not a role: mapping the repository and finding call sites is done by a
 
 The earlier suggested members auditor, advisor and researcher are profiles now; `qargi agent remove` them if you added them.
 
-Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the instance it would use; a base is used only when registered and the provider's cloud override capabilities are verified, otherwise the role agent serves and a profile that needs a different model is refused. A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
+Cloud: the four role agents (`<project>-build`, `-write`, `-review`, `-test`) keep working with explicit model ids from the runtime's catalog and the project's answers (`roles.<role>.model` and `effort`). A project can also provision the two bases, `<project>-worker` and `<project>-reviewer`, and start a session of a role and profile on one with `qargi start|send <project>-worker --role build --profile build --asked ...`: the model and effort are overridden for that session (always as a full model object), the role's prompt is rendered for it, and the tools stay those of the base. `qargi agent for ROLE --surface cloud --project P` prints the base it would use; it exits 1 when the base is not registered and 2 when the provider's cloud override capabilities are not verified (a role agent is never chosen for you: start a session on it by its name). A reviewer base needs the project's `qargi provider accept NAME --surface cloud --no-barrier --asked ...` first, because the cloud has no read-only barrier.
 
 ## Providers and runtimes
 

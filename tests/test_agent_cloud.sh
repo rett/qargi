@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # qargi agent for ROLE --surface cloud --project PROJ: which cloud instance runs a profile, from the instance registry. The base
 # instance (<project>-worker or <project>-reviewer) takes the session's model and effort as overrides, so it is used only when the
-# provider's per_dispatch_model_override (and per_dispatch_effort_override, when an effort is asked) is verified yes; otherwise the
-# legacy role instance (<project>-build ...) runs, and only with the model it was provisioned with. Hermetic: a copy of the tool in
+# provider's per_dispatch_model_override (and per_dispatch_effort_override, when an effort is asked) is verified yes; otherwise the verb
+# refuses (exit 2), and a project with no base gets exit 1: an instance of one role (<project>-build ...) is never chosen for you, it is
+# addressed by its name (tests/test_session_profiles.sh). Hermetic: a copy of the tool in
 # a temporary root holds the descriptors with the capabilities verified, so the shipped claude-platform.json is never changed. Offline.
 # Run: tests/test_agent_cloud.sh
 set -u
@@ -23,7 +24,7 @@ TOOL=$T/tool; mkdir -p "$TOOL"
 copy_tool "$SRC" "$TOOL"
 SHIPT=$T/ship; mkdir -p "$SHIPT"
 copy_tool "$SRC" "$SHIPT"
-# the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
+# the checkout once had the cloud overrides unverified; the copy keeps that state so the refusal stays tested
 jq '.capabilities.per_dispatch_model_override.verified_on = null
   | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"
 SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
@@ -37,7 +38,7 @@ python3 -I "$TOOL/lib/provider.py" check claude-platform >/dev/null && python3 -
 [ "$(python3 -I "$SHIPT/lib/provider.py" effective claude-platform cloud per_dispatch_model_override)" = no ] && ok "shipped (unverified copy): the cloud model override counts as no (unverified)" || no "shipped capability"
 [ "$(python3 -I "$TOOL/lib/provider.py" effective claude-platform cloud per_dispatch_model_override)" = yes ] && [ "$(python3 -I "$TOOL/lib/provider.py" effective effunver cloud per_dispatch_effort_override)" = no ] && ok "the copy: model yes, and effort no for effunver" || no "copy capability"
 
-# the projects: alpha has a base pair and the legacy instances, beta only the legacy ones, gamma only a worker, delta nothing
+# the projects: alpha has a base pair and the role instances, beta only the role instances, gamma only a worker, delta nothing
 for p in alpha beta gamma delta epsilon; do
   jq -n --arg p "$p" --argjson v "$BOTH" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:$v},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
@@ -56,7 +57,7 @@ cj() { "$1" agent for "${@:2}" --surface cloud --json 2>/dev/null; }
 
 # --- the verified provider: the base instance wins
 [ "$(cl "$YES" build --project alpha)" = "alpha-worker $S high build" ] && ok "verified: the worker base, the profile's model id and effort" || no "worker: $(cl "$YES" build --project alpha)"
-cj "$YES" build --project alpha | jq -e '.instance == "alpha-worker" and .base == "worker" and .legacy == false and .model == "claude-sonnet-5-5" and .effort == "high" and .profile == "build" and .class == "write"' >/dev/null && ok "--json: instance, base, legacy, model, effort, profile, class" || no "json: $(cj "$YES" build --project alpha)"
+cj "$YES" build --project alpha | jq -e '.instance == "alpha-worker" and .base == "worker" and (has("legacy") | not) and .model == "claude-sonnet-5-5" and .effort == "high" and .profile == "build" and .class == "write"' >/dev/null && ok "--json: instance, base, model, effort, profile, class (no legacy)" || no "json: $(cj "$YES" build --project alpha)"
 [ "$(cl "$YES" test --project alpha)" = "alpha-worker $S low test" ] && [ "$(cl "$YES" write --project alpha)" = "alpha-worker $S medium write" ] && ok "every write profile maps to the worker" || no "test/write: $(cl "$YES" test --project alpha)"
 [ "$(cl "$YES" review --project alpha)" = "alpha-reviewer $O high review" ] && [ "$(cl "$YES" review --profile auditor --project alpha)" = "alpha-reviewer $H low auditor" ] && [ "$(cl "$YES" review --profile advisor --project alpha)" = "alpha-reviewer $O high advisor" ] && ok "reviewer profiles map to the reviewer base, each with its own model" || no "reviewer: $(cl "$YES" review --profile auditor --project alpha)"
 cj "$YES" review --project alpha | jq -e '.instance == "alpha-reviewer" and .base == "reviewer" and .class == "read-only"' >/dev/null && ok "the reviewer base is read-only" || no "reviewer json"
@@ -72,29 +73,28 @@ jq '.profiles = {pm:{base:"worker",model:"claude-opus-5-5"}, scout:{base:"review
 [ "$(cl "$YES" build --profile pm --project alpha)" = "alpha-worker $O medium pm" ] && ok "verified: a project profile with another model still runs on the worker" || no "pm: $(cl "$YES" build --profile pm --project alpha)"
 [ "$(cl "$YES" review --profile scout --project alpha)" = "alpha-reviewer $H medium scout" ] && ok "a project-only reviewer profile" || no "scout"
 
-# --- shipped: the override capability is unverified, so the legacy role instance runs
-[ "$(cl "$SHIP" build --project alpha)" = "alpha-build $S high build" ] && ok "unverified: falls back to the legacy build instance" || no "legacy: $(cl "$SHIP" build --project alpha)"
-cj "$SHIP" build --project alpha | jq -e '.instance == "alpha-build" and .base == null and .legacy == true and .model == "claude-sonnet-5-5" and .class == "write"' >/dev/null && ok "--json: base null, legacy true" || no "legacy json: $(cj "$SHIP" build --project alpha)"
-[ "$(cl "$SHIP" review --project alpha)" = "alpha-review $O high review" ] && ok "unverified: review runs on the legacy review instance" || no "legacy review: $(cl "$SHIP" review --project alpha)"
-e=$("$SHIP" agent for review --profile auditor --surface cloud --project alpha 2>&1 >/dev/null); rc=$?
-{ [ $rc = 2 ] && grep -q 'alpha-review' <<<"$e" && grep -q "$O" <<<"$e" && grep -q "$H" <<<"$e" && grep -q 'per_dispatch_model_override' <<<"$e"; } && ok "degrade: the legacy instance cannot run another model; exit 2 naming the instance, both models and the capability" || no "degrade refusal: rc=$rc $e"
-e=$("$SHIP" agent for build --profile pm --surface cloud --project alpha 2>&1 >/dev/null); [ $? = 2 ] && ok "degrade: a build profile with another model is refused too" || no "pm legacy"
-[ "$(cl "$SHIP" test --project beta)" = "beta-test $S low test" ] && ok "the role's own legacy instance comes before the class's row instance" || no "beta test: $(cl "$SHIP" test --project beta)"
-[ "$(cl "$SHIP" test --project alpha)" = "alpha-build $S low test" ] && ok "a role with no instance of its own falls back to its class's row instance (the local order), a base registered or not" || no "alpha test: $(cl "$SHIP" test --project alpha)"
-# the base is registered, the legacy instance is not
+# --- shipped: the override capability is unverified, so the base cannot be used and no instance of the role is chosen instead
+e=$("$SHIP" agent for build --surface cloud --project alpha 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'alpha-worker' <<<"$e" && grep -q 'per_dispatch_model_override' <<<"$e" && ! grep -q 'alpha-build' <<<"$e" && grep -q 'qargi send NAME' <<<"$e"; } \
+  && ok "unverified: exit 2 naming the base and the capability; the role instance alpha-build is not chosen" || no "unverified build: rc=$rc $e"
+e=$("$SHIP" agent for review --surface cloud --project alpha --json 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'alpha-reviewer' <<<"$e" && ! grep -q 'alpha-review[^e]' <<<"$e"; } && ok "unverified: review is refused the same way (the reviewer base)" || no "unverified review: rc=$rc $e"
+e=$("$SHIP" agent for test --surface cloud --project beta 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q 'beta-worker' <<<"$e" && grep -q 'registered' <<<"$e" && ! grep -q '^beta-test' <<<"$e"; } && ok "a project with only role instances: exit 1 naming the base it expects, no role instance chosen" || no "beta test: rc=$rc $e"
 e=$("$SHIP" agent for build --surface cloud --project gamma 2>&1); rc=$?
 { [ $rc = 2 ] && grep -q 'gamma-worker' <<<"$e" && grep -q 'per_dispatch_model_override' <<<"$e"; } && ok "only an unusable base registered: exit 2 saying why" || no "gamma: rc=$rc $e"
 [ "$(cl "$YES" build --project gamma)" = "gamma-worker $S high build" ] && ok "the same base is used once the capability is verified" || no "gamma yes"
+e=$("$YES" agent for build --profile pm --surface cloud --project alpha 2>&1); [ "$e" = "alpha-worker $O medium pm" ] && ok "verified: a profile with another model runs on the base (nothing to degrade to)" || no "pm yes: $e"
 
 # --- effort: asked, so its override must be verified too
-[ "$(cl "$YES" build --project epsilon | cut -d' ' -f1)" = "epsilon-build" ] && ok "effort override unverified: an effort is asked, so the legacy instance" || no "epsilon: $(cl "$YES" build --project epsilon)"
-cl "$YES" build --project epsilon | head -1 | grep -q "^epsilon-build $S high build$" && ok "and it keeps the profile's effort in the answer" || no "epsilon line"
+e=$("$YES" agent for build --surface cloud --project epsilon 2>&1); rc=$?
+{ [ $rc = 2 ] && grep -q 'epsilon-worker' <<<"$e" && grep -q 'per_dispatch_effort_override' <<<"$e" && ! grep -q 'per_dispatch_model_override' <<<"$e"; } && ok "effort override unverified: an effort is asked, so the base is refused (exit 2), naming only that capability" || no "epsilon: rc=$rc $e"
 jq --argjson v "$EFFUN" '.models = {provider: $v} | .profiles = {pm:{base:"worker",model:"claude-opus-5-5"}}' "$T/c/projects/epsilon.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/epsilon.json"
 "$YES" agent for build --profile pm --surface cloud --project epsilon >/dev/null 2>&1; [ $? = 2 ] && ok "effort unverified and another model: refused" || no "epsilon pm"
 
 # --- an extension the project enabled counts: fakecloud is a runtime of the pack library (data and a sealed adapter, no file in lib/providers)
 # that claims no per-dispatch override; ovext, an extension pack, provides both. Once ovext has been verified for THIS runtime, the project
-# that enabled it runs sessions on the base; before that, and for a project that did not enable it, the legacy instance runs.
+# that enabled it runs sessions on the base; before that, and for a project that did not enable it, the verb refuses.
 FC=$T/ext/fc; OV=$T/ext/ovext; mkdir -p "$FC" "$OV"
 cat > "$FC/adapter" <<'EOS'
 #!/bin/sh
@@ -117,7 +117,8 @@ for p in zeta eta; do
 done
 jq '.models.extensions = ["ovext"]' "$T/c/projects/zeta.json" > "$T/e.json" && mv "$T/e.json" "$T/c/projects/zeta.json"
 jq --argjson w "$(inst x fake-cloud-m h)" '. + {"zeta-worker":$w,"zeta-build":$w,"eta-worker":$w,"eta-build":$w}' "$T/c/instances.json" > "$T/e.json" && mv "$T/e.json" "$T/c/instances.json"
-[ "$(cl "$SHIP" build --project eta | cut -d' ' -f1)" = eta-build ] && [ "$(cl "$SHIP" build --project zeta | cut -d' ' -f1)" = zeta-build ] && ok "unverified extension: the legacy instance runs, as it does for a project that did not enable it" || no "extension unverified: $(cl "$SHIP" build --project zeta) / $(cl "$SHIP" build --project eta)"
+"$SHIP" agent for build --surface cloud --project eta >/dev/null 2>&1; r1=$?; "$SHIP" agent for build --surface cloud --project zeta >/dev/null 2>&1; r2=$?
+[ $r1 = 2 ] && [ $r2 = 2 ] && ok "unverified extension: both are refused, as is a project that did not enable it" || no "extension unverified: $r1 $r2"
 python3 -I - "$SHIPT/lib" <<'PY'
 import sys; sys.path.insert(0, sys.argv[1])
 import provider as P
@@ -125,7 +126,7 @@ h = P.extension_hash("ovext", "fakecloud", "cloud")
 P.record_verification("ovext", {c: {"hash": h, "by": "attest", "at": "2026-11-02", "note": "test"} for c in ("per_dispatch_model_override", "per_dispatch_effort_override")})
 PY
 [ "$(cl "$SHIP" build --project zeta)" = "zeta-worker fake-cloud-m h build" ] && ok "verified extension: the base runs for the project that enabled it, on the model and effort the library adapter resolved" || no "extension verified: $(cl "$SHIP" build --project zeta)"
-[ "$(cl "$SHIP" build --project eta | cut -d' ' -f1)" = eta-build ] && ok "and a project that did not enable it still runs the legacy instance" || no "eta after verification: $(cl "$SHIP" build --project eta)"
+"$SHIP" agent for build --surface cloud --project eta >/dev/null 2>&1; [ $? = 2 ] && ok "and a project that did not enable it is still refused" || no "eta after verification: $(cl "$SHIP" build --project eta)"
 leftover=''; for d in "${TMPDIR:-/tmp}"/qargi-exec.*; do [ ! -e "$d" ] || leftover=$d; done
 [ -z "$leftover" ] && ok "the adapter ran as a private copy that was removed" || no "an exec copy was left: $leftover"
 
@@ -134,14 +135,14 @@ e=$("$YES" agent for review --profile researcher --surface cloud --project alpha
 { [ $rc = 2 ] && grep -q 'opt-in' <<<"$e"; } && ok "researcher is refused without --opt-in (exit 2)" || no "researcher: rc=$rc $e"
 [ "$("$YES" agent for review --profile researcher --opt-in --surface cloud --project alpha 2>&1)" = "alpha-reviewer $F high researcher" ] && ok "researcher with --opt-in: the reviewer base at the frontier model" || no "researcher opt-in"
 "$YES" agent for review --profile researcher --opt-in --surface cloud --project alpha --json | jq -e '.model == "claude-fable-5-1" and .profile == "researcher"' >/dev/null && ok "and --json carries it" || no "researcher json"
-"$SHIP" agent for review --profile researcher --opt-in --surface cloud --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "opt-in does not lift the degrade rule (legacy review runs opus)" || no "researcher legacy"
+"$SHIP" agent for review --profile researcher --opt-in --surface cloud --project alpha >/dev/null 2>&1; [ $? = 2 ] && ok "opt-in does not lift the refusal of an unverified base" || no "researcher unverified"
 
 # --- nothing registered
 e=$("$YES" agent for build --surface cloud --project delta 2>&1); rc=$?
 { [ $rc = 1 ] && grep -q 'delta' <<<"$e" && grep -q 'registered' <<<"$e"; } && ok "no cloud instance (a local one does not count): exit 1 with a clear message" || no "delta: rc=$rc $e"
 e=$("$YES" agent for build --surface cloud --project nosuchproject 2>&1); rc=$?
 { [ $rc = 2 ] && [ "$e" = "qargi: no such project 'nosuchproject'" ]; } && ok "a project that is not stored: exit 2 and it says so (there is no provider to look up)" || no "nosuchproject: rc=$rc $e"
-e=$("$YES" agent for review --surface cloud --project beta 2>&1); [ "$e" = "beta-review $O high review" ] && ok "a project with only the legacy reviewer works" || no "beta review: $e"
+e=$("$YES" agent for review --surface cloud --project beta 2>&1); rc=$?; { [ $rc = 1 ] && grep -q 'beta-reviewer' <<<"$e"; } && ok "a project with only the review instance: exit 1 naming the reviewer base" || no "beta review: rc=$rc $e"
 echo '{}' > "$T/c/instances.json"; "$YES" agent for build --surface cloud --project alpha >/dev/null 2>&1; [ $? = 1 ] && ok "an empty registry: exit 1, none invented" || no "empty registry"
 [ "$(cat "$T/c/instances.json")" = '{}' ] && ok "and the registry is left as it was" || no "registry changed"
 

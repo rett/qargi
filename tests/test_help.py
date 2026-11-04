@@ -130,7 +130,7 @@ class Render(unittest.TestCase):
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
         self.assertLessEqual(len(text.split()), 330)
-        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push"):
+        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
         self.assertIn(title, H.show_topic("guard"))
@@ -160,6 +160,18 @@ class Render(unittest.TestCase):
             self.assertIn(needle, text)
         stale = sorted(v for v in self.GUARD_TOPIC_EXEMPT if v in words or v not in refused)
         self.assertFalse(stale, "stale exemptions: %s" % stale)
+
+    def test_the_guard_topic_names_every_provider_verb_it_refuses_and_none_it_allows(self):
+        """Each provider verb of commands.py is one of the guard's reading verbs (PROVIDER_READ) or is named in the topic's list of refused ones."""
+        text = " ".join(C.TOPICS["guard"][1])
+        m = re.search(r"provider ([a-z, -]+?) \(", text)
+        self.assertTrue(m, "the guard topic has no 'provider new, ... and adapter-run (...)' list of refused verbs")
+        named = set(re.findall(r"[a-z][a-z-]*", m.group(1))) - {"and"}
+        verbs, read = set(C.COMMANDS["provider"]["verbs"]), set(G.PROVIDER_READ) - {""}
+        missing = sorted(v for v in verbs if v not in read and v not in named)
+        self.assertFalse(missing, "provider verbs the guard refuses and the topic does not name: %s" % missing)
+        self.assertFalse(sorted(named & read), "the topic names as refused a verb the guard allows")
+        self.assertFalse(sorted(named - verbs), "the topic names provider verbs that commands.py does not list")
 
     def test_the_man_page_holds_the_approvals_and_guard_topics_as_man_writes_them(self):
         page, shipped = H.man(), slurp(os.path.join(ROOT, "man", "qargi.1"))

@@ -8,8 +8,8 @@
 # (case-sensitive) matched against the text of a hit line; the first colon ends the file name. `#` starts a comment, blank lines are
 # ignored. Group the entries of a file under a comment that says why they are there.
 #
-# A second section holds the texts a member or a lead loads to the same rule: skills/, roles/, agents/, contract/ and packs/skills/ should not
-# name a vendor, a model family or the vendor's cloud CLI (case-insensitive: claude, anthropic, managed agents, haiku, sonnet, opus, ant as a
+# A second section holds the texts a member or a lead loads, and what the tool writes into a repository, to the same rule: skills/, roles/, agents/,
+# contract/, packs/skills/, provision/templates/*.md and methodologies/ should not name a vendor, a model family or the vendor's cloud CLI (case-insensitive: claude, anthropic, managed agents, haiku, sonnet, opus, ant as a
 # word, the Agent tool). A runtime is reached through the notes of its definition. tests/vendor-words-allowlist.txt lists what may stay as
 # `FILE:COUNT` (COUNT is the number of lines of FILE with a hit): a file with more hits than that, or a file not listed that has one, fails,
 # and so does an entry that is more than the hits of its file ("lower it"). So the list can only shrink. Group the entries under a
@@ -80,8 +80,8 @@ while IFS= read -r raw || [ -n "$raw" ]; do
 done < "$VLIST"
 while IFS=: read -r vf vn; do
   [ "$vn" = 0 ] || vhits[$vf]=$vn
-done < <(grep -rIicE -e "$VRE" skills roles agents contract packs/skills 2>/dev/null | sort)
-vnfiles=$(find skills roles agents contract packs/skills -type f | wc -l)
+done < <(grep -rIicE -e "$VRE" skills roles agents contract packs/skills methodologies provision/templates/*.md 2>/dev/null | sort)
+vnfiles=$(find skills roles agents contract packs/skills methodologies provision/templates -type f \( -path 'provision/templates/*' -name '*.md' -o ! -path 'provision/templates/*' \) | wc -l)
 [ "$vnfiles" -gt 30 ] || { no "found only $vnfiles files: the lookup is broken"; vbad=1; }
 for vf in "${!vhits[@]}"; do
   if [ -z "${vallowed[$vf]:-}" ]; then no "vendor word in $vf (${vhits[$vf]} lines): $(grep -iEm1 -e "$VRE" "$vf" | cut -c1-110) (say it neutrally, or point at the notes of the runtime)"; vbad=1
@@ -91,5 +91,5 @@ for vf in "${!vallowed[@]}"; do
   if [ -z "${vhits[$vf]:-}" ]; then no "stale entry in $VLIST: $vf has no vendor word any more (delete the line)"; vbad=1
   elif [ "${vhits[$vf]}" -lt "${vallowed[$vf]}" ]; then no "stale entry in $VLIST: $vf has ${vhits[$vf]} lines, the entry allows ${vallowed[$vf]} (lower it)"; vbad=1; fi
 done
-[ $vbad = 0 ] && ok "the $vnfiles files of skills/, roles/, agents/, contract/ and packs/skills/ name a vendor only where tests/vendor-words-allowlist.txt allows (${#vallowed[@]} files)"
+[ $vbad = 0 ] && ok "the $vnfiles files of skills/, roles/, agents/, contract/, packs/skills/, provision/templates/*.md and methodologies/ name a vendor only where tests/vendor-words-allowlist.txt allows (${#vallowed[@]} files)"
 exit $fail
