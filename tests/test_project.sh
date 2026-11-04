@@ -52,6 +52,13 @@ chkm "abilities not a list"         '.profiles.tiny={base:"worker",abilities:"bu
 chkm "abilities unknown role"       '.profiles.tiny={base:"worker",abilities:["nosuch"]}' 'profiles.tiny.abilities: '
 chkm "abilities class conflict"     '.profiles.tiny={base:"worker",abilities:["review"]}' 'profiles.tiny.abilities: review is read-only, but base worker is write'
 chkm "unknown profile key"          '.profiles.tiny={base:"worker",colour:"red"}' 'profiles.tiny.colour: '
+# env: the overrides of the detected environment commands (lib/env.py)
+chk  "env overrides"                 0 '.env={doctor_command:"make doctor",bootstrap_command:"make bootstrap",dry_run_command:"make -n bootstrap",known_failures:["expected: x"]}'
+chkm "env not an object"            '.env="make"' 'env: '
+chkm "env unknown key"              '.env={colour:"red"}' 'env.colour: unknown key'
+chkm "env command not a string"     '.env={doctor_command:["make"]}' 'env.doctor_command: '
+chkm "env command with a newline"   '.env={bootstrap_command:"a\nb"}' 'env.bootstrap_command: '
+chkm "env known_failures not a list" '.env={known_failures:"x"}' 'env.known_failures: '
 # models.accept_no_barrier: what `qargi provider accept` records, exactly {by, at, reason} per surface
 ACC='{by:"rett",at:"2026-10-31T12:00:00Z",reason:"review on cloud, no barrier, my call"}'
 chk  "accept_no_barrier recorded"   0 ".models.accept_no_barrier.cloud=$ACC"
