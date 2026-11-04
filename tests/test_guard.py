@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """qargi __guard: the PreToolUse hook that keeps a local agent's Bash from publishing."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
-import json, os, shutil, subprocess, sys, tempfile, unittest
+import importlib.util, io, json, os, re, shutil, subprocess, sys, tarfile, tempfile, time, unittest
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")
+LIBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
 
 
 def guard(command):
@@ -139,6 +140,55 @@ class Review(unittest.TestCase):
             self.assertEqual(f.read().strip(), "review")
         with open(pr) as f:
             self.assertEqual(f.read().strip(), "advisor")
+
+    def test_a_member_cannot_change_what_clean_and_list_trust(self):
+        """`local clean` removes the directory tmpdir names and asks the repository repo.path names whether the applied tip is merged; `local list`, verify and
+        review apply read the others. A member must not be able to write any of them (a link, a rewritten path, a forged tip)."""
+        self.ability("review")
+        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "git", "class", "ability", "profile", "refs.before")
+        wrong = []
+        for name in names:
+            p = os.path.join(self.run, name)
+            for cls in ((), ("--class", "read-only")):
+                for tool, inp in (("Write", {"file_path": p}), ("Edit", {"file_path": p}), ("Bash", {"command": "printf x > %s" % p}), ("Bash", {"command": "echo x >> %s" % p}),
+                                  ("Bash", {"command": "cd %s && printf x > %s" % (self.run, name)}), ("Bash", {"command": "ln -sf /etc/hostname %s" % p}),
+                                  ("Bash", {"command": "cp /etc/hostname %s" % p}), ("Bash", {"command": "rm -f %s" % p}), ("Bash", {"command": "echo /tmp | tee %s" % p}),
+                                  ("Bash", {"command": "mv %s/out/x %s" % (self.run, p)})):
+                    if self.call(tool, inp, self.out, *cls).returncode != 2:
+                        wrong.append((name, tool, inp, cls))
+        self.assertEqual(wrong, [])
+        self.ability("build")                                   # what is not a control file of the run stays writable
+        for p in (os.path.join(self.run, "out", "report.md"), os.path.join(self.run, "out", "tmpdir"), os.path.join(self.run, "clone", "applied"), os.path.join(self.run, "notes")):
+            self.assertEqual(self.call("Write", {"file_path": p}, self.out).returncode, 0, p)
+
+    TAG_LISTS = ("git tag", "git tag -l", "git tag --list 'v*'", "git tag -l --sort=-creatordate", "git tag --contains HEAD", "git tag -n", "git tag -n5 -l", "git tag --points-at HEAD",
+                 "git tag -l -i V1", "git tag -l --column", "git tag --merged main", "git tag --no-merged main -l", "git tag --format '%(refname)'",
+                 "git tag --sort -creatordate", "git tag v1 -l", "git tag -l v1 HEAD", "git tag --list --points-at HEAD v1", "git -C . tag -l", "git tag --lis", "git tag --sort=x --contains HEAD",
+                 "git tag -l --color=always", "git tag --no-column -l", "git tag -l -- v1 -d")
+    TAG_CHANGES = ("git tag v1", "git tag --format -l NAME", "git tag --form -l NAME", "git tag --trailer -l NAME", "git tag --trailer=-l -l v3", "git tag -l --del NAME",
+                   "git tag -l --anno NAME", "git tag -l --create-reflog v4", "git tag -lf v5", "git tag -l -d v1", "git tag -lm x v1", "git tag -s -l v1", "git tag --list --delete v1",
+                   "git tag --no-create-reflog v16", "git tag -- -l", "git tag --list=v1", "git tag --contains HEAD v1", "git tag --sort -l v1", "git tag -l --foo v1", "git tag -l --no-c v1",
+                   "git tag -ln -f v1", "git tag -l -u key v1", "git tag --local-user key -l v1", "git tag -F f -l", "git tag --file f -l", "git tag --message m -l", "git tag --cleanup=strip -l v1",
+                   "git tag -m x", "git tag -a v1", "git tag --edit -l", "git tag -l -e", "git tag --sign -l", "git tag --force -l v1", "git tag -v v1", "git tag --verify v1",
+                   "git tag -n 5", "git tag --points-at HEAD v1", "git tag --merged main v1")
+
+    def test_tag_listing_is_allowed_and_every_option_that_makes_changes_or_deletes_a_tag_is_not(self):
+        for setup in (lambda: (self.ability("review"), ()), lambda: (self.ability("build"), ("--class", "read-only"))):
+            _, cls = setup()
+            wrong = [c for c in self.TAG_LISTS if self.call("Bash", {"command": c}, None, *cls).returncode != 0]
+            self.assertEqual(wrong, [], "a listing was refused")
+            wrong = [c for c in self.TAG_CHANGES if self.call("Bash", {"command": c}, None, *cls).returncode != 2]
+            self.assertEqual(wrong, [], "a tag was made, changed or deleted")
+
+    def test_review_sees_a_change_that_a_careless_reading_of_the_text_would_miss(self):
+        self.ability("review")
+        for c in ("echo a\\ #; touch newfile", "echo a\\\n#; git commit -qam x", 'trap "true; git commit -qam x; true" EXIT', "echo $[1<<2]\ntouch newfile\n2]",
+                  'X="true; touch newfile; true"; eval $X', "cat > ../a <<'E'\ntouch newfile\nE\nbash <../a", 'sh -c "true; touch newfile; true"',
+                  'env sh -c "true; git commit -qam x; true"', "echo ${x:-1}\ntouch newfile", "echo '#'; touch newfile"):
+            r = self.call("Bash", {"command": c})
+            self.assertEqual(r.returncode, 2, (c, r.stderr))
+        for c in ("echo 'x; touch newfile'", "git log --format='%s; touch newfile' -3", "echo hi # touch newfile"):
+            self.assertEqual(self.call("Bash", {"command": c}).returncode, 0, c)
 
     def test_an_unknown_class_refuses_every_call(self):
         self.assertEqual(self.call("Bash", {"command": "ls"}, None, "--class", "root").returncode, 2)
@@ -1881,7 +1931,6 @@ class BashText(unittest.TestCase):
         "echo '$(qargi upgrade)'",
         'echo "\\$(qargi upgrade)"',
         'python3 tests/test_guard.py && git commit -m "$(cat <<\'EOF\'\nDocs\n\nqargi upgrade is lead-only\nEOF\n)"',
-        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt && python3 tests/x.py",
         "for f in a b; do echo \"$f; qargi upgrade\"; done",
         "if [ -f x ]; then echo 'then qargi upgrade'; fi",
     )
@@ -2000,6 +2049,403 @@ class BashText(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, (c, r.stderr))
             self.assertIn("Agents never push", r.stderr)
+
+
+class _Judge:
+    """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
+    judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None."""
+    managed = []
+
+    def __init__(self, lib, name, cwd):
+        self.lib, self.cwd, self.mods = lib, cwd, {}
+        _Judge.managed.append(lib)
+        self.m = self.run(lambda: self.load(name))
+
+    def load(self, name):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(self.lib, "guard.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    @staticmethod
+    def owned(lib):
+        return {k: v for k, v in list(sys.modules.items()) if getattr(v, "__file__", None) and os.path.dirname(os.path.abspath(v.__file__)) == lib}
+
+    def run(self, fn):
+        stashed = {}
+        for lib in _Judge.managed:
+            stashed.update(self.owned(lib))
+        for k in stashed:
+            sys.modules.pop(k, None)
+        sys.modules.update(self.mods)
+        sys.path.insert(0, self.lib)
+        try:
+            return fn()
+        finally:
+            self.mods = self.owned(self.lib)
+            for k in self.mods:
+                sys.modules.pop(k, None)
+            sys.modules.update(stashed)
+            while self.lib in sys.path:
+                sys.path.remove(self.lib)
+
+    def judge(self, command, cls=""):
+        def go():
+            self.m.CLASS = cls
+            try:
+                return self.m.judge(self.m.Call("shell", "Bash", command, "", self.cwd))
+            except Exception as e:                               # the hook ends in a refusal on an exception
+                return "exception %s: %s" % (type(e).__name__, e)
+        return self.run(go)
+
+
+def old_lib(test, rev="2b41028"):
+    """The lib directory of the repository at rev (the guard whose plain split on every separator is the conservative reading), or skip the test."""
+    root = os.path.dirname(os.path.dirname(BIN))
+    r = subprocess.run(["git", "-C", root, "archive", rev, "lib"], capture_output=True)
+    if r.returncode:
+        test.skipTest("the history before %s is not available here (%s)" % (rev, r.stderr.decode(errors="replace").strip()[:100]))
+    d = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, d, True)
+    tar = tarfile.open(fileobj=io.BytesIO(r.stdout))
+    try:
+        tar.extractall(d, filter="data")
+    except TypeError:
+        tar.extractall(d)
+    return os.path.join(d, "lib")
+
+
+class ReviewedReading(unittest.TestCase):
+    """The adversarial review of the Bash reader: commands that the guard before it (the plain split on every separator, now the fallback) refused and the
+    quote-aware reading let through while they still run a refused verb or git push. The quote-aware reading applies only to a command whose every
+    segment runs nothing from its arguments (INERT in lib/guard.py); any other command is read as the plain split reads it."""
+    setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
+    maxDiff = None
+
+    REFUSED = (
+        'echo a\\ #; qargi upgrade',
+        'echo a\\\n#b; qargi upgrade',
+        'echo a\\\t#b; git push',
+        'echo ${x/<<E/y}\nqargi upgrade\nE/y}',
+        ': ${x:-<<E}\ngit push\nE}',
+        'trap "true; qargi upgrade; true" EXIT',
+        'trap "true; git push; true" EXIT',
+        'X="true; qargi upgrade; true"; eval $X',
+        'X="true; git push origin x; true"\neval $X',
+        'sudo -u root sh -c "true; qargi upgrade; true"',
+        'env -C /tmp sh -c "true; qargi upgrade; true"',
+        'timeout -s KILL 5 sh -c "true; git push; true"',
+        'find . -maxdepth 0 -exec sh -c "true; qargi upgrade; true" \\;',
+        'perl -e \'system "true; qargi upgrade; true"\'',
+        'python3 -c "import os; os.system(\'true; qargi upgrade; true\')"',
+        'awk \'BEGIN{system("true; qargi upgrade; true")}\'',
+        'busybox sh -c "true; qargi upgrade; true"',
+        'fish -c "true; qargi upgrade; true"',
+        'script -qc "true; qargi upgrade; true" /dev/null',
+        'flock /tmp/l -c "true; qargi upgrade; true"',
+        'su -c "true; qargi upgrade; true"',
+        'git rebase --exec "true; qargi upgrade; true" HEAD~1',
+        'git -c alias.z="!true; qargi upgrade; true" z',
+        'watch -n1 "true; qargi upgrade; true"',
+        'echo "true; qargi upgrade; true" > a.sh; sh a.sh',
+        "cat > a <<'E'\nqargi upgrade\nE\ncp a b; sh b",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash <a",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash 0<a",
+        "cat > a <<'E'\nqargi upgrade\nE\n. <(cat a)",
+        "cat > a <<'E'\ngit push\nE\nbash <(cat a)",
+        "cat <<'E' | tee a >/dev/null\nqargi upgrade\nE\nsh a",
+        "cat > a <<'E'\nqargi upgrade\nE\nsh a*",
+        "cat > a <<'E'\nqargi upgrade\nE\nfind . -name a -exec sh {} \\;",
+        "cat > Makefile <<'E'\nall:\n\tqargi upgrade\nE\nmake",
+        "cat > .git/hooks/pre-commit <<'E'\nqargi upgrade\nE\nchmod +x .git/hooks/pre-commit; git commit -m x",
+        'cat > a <<E\nqargi upgrade\nE\nsh ./"a"',
+        'cat > a <<E\ngit push\nE\nchmod +x a; PATH=.:$PATH; a',
+        'cat > a <<E\ngit push\nE\nmv a b && sh b',
+        "alias z='true; qargi upgrade; true'\nz",
+        'f() { eval "$1"; }; f "true; qargi upgrade; true"',
+        'while read l; do eval "$l"; done <<\'E\'\nqargi upgrade\nE',
+        'cat <<E\n`qargi upgrade`\nE',
+        '"qargi" "upgrade"',
+        "q'a'rgi upgrade",
+        'command -p qargi upgrade',
+        'exec qargi upgrade',
+        'nohup qargi upgrade &',
+        '{ qargi upgrade; }',
+        'time qargi upgrade',
+        'x=1 y=2 qargi upgrade',
+        "echo x # '\nqargi upgrade",
+        'echo \'x\' #"\ngit push',
+        'echo hi\nqargi upgrade',
+        'echo hi\ngit push',
+        "shopt -s expand_aliases\nalias z='true; qargi upgrade; true'\nz",
+        'for ((i=1<<2;i<0;i++)); do :; done\nqargi upgrade\n2',
+        'echo $[1<<2]\nqargi upgrade\n2]',
+        'env -S "sh -s" <<\'E\'\nqargi upgrade\nE',
+        "stdbuf -oL sh <<'E'\ngit push\nE",
+        'builtin eval "$(cat)" <<\'E\'\nqargi upgrade\nE',
+        'echo "true; qargi upgrade; true" | stdbuf -oL sh',
+        "ionice -c3 bash <<'E'\nqargi upgrade\nE",
+        "cat > a <<'E'\nqargi upgrade\nE\nBASH_ENV=a bash -c true",
+        "cat > a <<'E'\nqargi upgrade\nE\nbash --rcfile a -i </dev/null",
+        'cat > a <<\'E\'\nqargi upgrade\nE\nPROMPT_COMMAND=". ./a" bash -i </dev/null',
+        'mapfile -t a <<\'E\'\nqargi upgrade\nE\n"${a[@]}"',
+        "read -r a b <<'E'\nqargi upgrade\nE\n$a $b",
+        "cat > .git/hooks/pre-commit <<'E'\nqargi upgrade\nE\ngit commit -m x",
+        "x='a[$(qargi upgrade)]'\necho $[x]\nqargi upgrade",
+        "a[0]='x; qargi upgrade; y'; echo hi",
+        "rg --pre 'x; qargi upgrade; y' f",
+        "sort --compress-program 'x; qargi upgrade; y' f",
+        "sort --comp='x; qargi upgrade; y' f",
+        "PAGER='x; qargi upgrade; y' git log",
+        "BASH_ENV='x; qargi upgrade; y' git log",
+        "GIT_EXTERNAL_DIFF='x; qargi upgrade; y' git diff",
+        "git -c core.pager='x; qargi upgrade; y' log",
+        "git --exec-path='x; qargi upgrade; y' log",
+        "git grep -O'x; qargi upgrade; y' foo",
+        "echo hi # a\\\nqargi upgrade",
+        "echo ${x:-a}\nqargi upgrade",
+        "echo $((1<<2))\nqargi upgrade\n2))",
+        "echo ((a))\ngit push",
+        "[[ a<<b ]]\nqargi upgrade\nb",
+        "echo hi\r\nqargi upgrade",
+        "echo hi\r\ngit push",
+        "cat <<'E'\r\nqargi upgrade\r\nE\r\nqargi upgrade",
+        "git commit -m x\ngit push",
+        "cat <<'E' > n.txt\nhi\nE\ngit push",
+        "git log --oneline | tee n.txt; qargi upgrade",
+        "echo 'a' ; echo 'b' ; qargi upgrade ; echo 'c'",
+        "echo '#'; qargi upgrade",
+        "echo \"#\"; qargi upgrade",
+        "echo $#; qargi upgrade",
+        "echo a#b; qargi upgrade",
+        "echo a\\\n#b; git push",
+        "echo a\\ \\#b; git push",
+        "echo \\#; git push",
+        "echo hi &\n# c\nqargi upgrade",
+        "echo hi\n  # c\n\tqargi upgrade",
+    )
+    # still allowed: the text of a command that runs nothing from its arguments, however much it looks like a command
+    ALLOWED = (
+        'git commit -m "x; qargi upgrade; y"',
+        'echo "a; qargi packs seed; b"',
+        "cat <<'E'\n`qargi upgrade`\nE",
+        "git commit -F - <<'EOF'\nDocs\n\nqargi upgrade now fails\ngit push is for the lead\nEOF",
+        'git log --format="%s; qargi upgrade" -3',
+        "git log --oneline | grep 'qargi upgrade' | head -3",
+        "echo hi #; qargi upgrade",
+        "echo hi # git push",
+        "echo hi\n# qargi upgrade\nls",
+        "echo $#; echo 'x; qargi upgrade'",
+        "echo a#b; echo 'x; qargi upgrade'",
+        "git status && git diff --stat | tail -1 && git commit -m 'a; qargi packs seed; b'",
+        "if [ -f x ]; then echo 'qargi upgrade; git push'; fi",
+        "for f in a b; do echo \"$f; git push\"; done",
+        "cat <<'E' > n.txt\nqargi upgrade\nE\ngit add n.txt && git commit -m 'n.txt: qargi upgrade; git push'",
+        "qargi provider list && echo 'qargi upgrade; git push'",
+        "python3 tests/test_guard.py && git commit -m 'qargi upgrade; git push'",
+        "python3 tests/test_guard.py && git commit -m \"$(cat <<'EOF'\nDocs\n\nqargi upgrade is lead-only\nEOF\n)\"",
+        "git tag -l 'v*' | sort | tail -3; echo 'qargi upgrade'",
+    )
+    # read as the plain split reads them from now on (a refusal that a careful reading would not make): the cost of not guessing
+    CONSERVATIVE = (
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\ngit commit -F msg.txt && python3 tests/x.py",
+        "cat <<'E' > msg.txt\nqargi upgrade\nE\nmkdir -p out",
+        "make gate; git commit -m 'a; qargi upgrade; b'",
+        "echo 'a; qargi upgrade; b' | tr a b",
+        "x=1; sh -c 'echo hi'; git commit -m 'a; qargi upgrade; b'",
+    )
+
+    def verdicts(self, cmds):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:
+            return list(zip(cmds, ex.map(self.bash, cmds)))
+
+    def test_every_command_the_review_found_is_refused(self):
+        wrong = [c for c, r in self.verdicts(self.REFUSED) if r.returncode != 2]
+        self.assertEqual(wrong, [], "allowed, but they run a refused verb or git push")
+
+    def test_text_that_only_a_command_which_runs_nothing_carries_is_still_not_a_command(self):
+        wrong = [(c, r.stderr.strip()) for c, r in self.verdicts(self.ALLOWED) if r.returncode != 0]
+        self.assertEqual(wrong, [], "refused, but only text")
+
+    def test_a_command_with_anything_else_in_it_is_read_conservatively(self):
+        wrong = [c for c, r in self.verdicts(self.CONSERVATIVE) if r.returncode != 2]
+        self.assertEqual(wrong, [], "the plain split refuses these; the reader no longer guesses which file a heredoc is run through")
+
+    def test_the_review_found_the_variants_a_member_could_try(self):
+        """Not only the single commands: each refused verb is wrapped in the shapes a member could use to hide it."""
+        shapes = ('sh -c "@@"', "bash -c '@@'", 'eval "@@"', 'env sh -c "@@"', 'timeout 5 sh -c "@@"', 'trap "@@" EXIT', 'X="@@"; eval $X',
+                  "f() { eval \"$1\"; }; f \"@@\"", "python3 -c 'import os; os.system(\"@@\")'", "echo '@@' | sh", "cat <<'E' | sh\n@@\nE",
+                  "cat > a.sh <<'E'\n@@\nE\nsh a.sh", "echo a\\ #; @@", "echo ${x:-1}\n@@", "echo $[1<<2]\n@@\n2]")
+        wrong = [c for c, r in self.verdicts([s.replace("@@", p) for s in shapes for p in ("true; qargi upgrade; true", "true; git push; true")]) if r.returncode != 2]
+        self.assertEqual(wrong, [])
+
+
+class ReaderUnits(unittest.TestCase):
+    """segments() in the process: what it returns, once per command, and how fast."""
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.J = _Judge(LIBDIR, "guard_units", cls.tmp)
+        cls.G = cls.J.m
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_quote_aware_reading_is_only_for_commands_that_run_nothing_from_their_words(self):
+        G = self.G
+        texts, exact = G.segments('git commit -m "a; qargi upgrade"')
+        self.assertTrue(exact)
+        self.assertEqual(list(texts), ['git commit -m "a; qargi upgrade"'])
+        for c in ('sh -c "a; b"', 'eval "a; b"', 'trap "a; b" EXIT', 'X="a; b"; eval $X', 'find . -exec sh -c "a; b" \\;', 'git -c alias.z="!a; b" z',
+                  'git rebase --exec "a; b" HEAD', 'env sh -c "a; b"', 'python3 -c "a; b"', 'awk \'BEGIN{system("a; b")}\'', 'f() { git log; }; echo "a; b"',
+                  'alias z="a; b"', 'echo "a; b"; unknown-program', 'echo "$x" | bash', '$x "a; b"', 'echo ${x:-"a; b"}', 'echo $((1 + 2)); echo "a; b"',
+                  'echo $[1 + 2]; echo "a; b"', 'echo "a; b"\r\nls', 'cat <<E\n$(ls)\nE\nsh'):
+            texts, exact = G.segments(c)
+            self.assertFalse(exact, c)
+        texts, exact = G.segments('echo "a; b"; sh -c x')
+        self.assertFalse(exact)
+        self.assertIn('b"', [t.strip() for t in texts])                          # the plain split cuts at every separator, quotes or not
+
+    def test_a_program_found_after_assignments_keywords_and_redirects_decides(self):
+        G = self.G
+        for c in ("FOO=1 git status", "if git status; then echo ok; fi", "{ git log; }", "(git log)", "! git diff", ">/dev/null git status", "2>&1 echo hi",
+                  "while git diff --quiet; do sleep 1; done", "git -C /x status", "git --no-pager log -3", "x=1", "cd /x && git status"):
+            self.assertTrue(G.segments(c + " # 'x'")[1] or c.startswith("while"), c)
+        for c in ("FOO=1 sh x", "BASH_ENV=a git log", "GIT_PAGER=less git log", "PATH=. git log", "git -c core.pager=x log", "git --exec-path=x log", "git rebase -i",
+                  "git config alias.z '!x'", "git diff --ext-diff-x; python3 -c x", "rg --pre x y", "sort --compress-program x", "printf -v 'a[1]' x",
+                  "test -v a[1]", "[[ x ]]", "((x))", "let x=1", "a[1]=2", "function f { git log; }", "f() { git log; }", "case x in x) git log;; esac", "x=1 y=2 make", "git log; make",
+                  "cat > .git/hooks/post-commit <<'E'\nhi\nE", "git commit -m x > .git/config"):
+            self.assertFalse(G.segments(c + " # 'x'")[1], c)
+
+    def test_segments_is_read_once_per_command(self):
+        G, calls = self.G, []
+        real = G.read_segments
+        G.read_segments = lambda c: calls.append(c) or real(c)
+        try:
+            c = 'git status; echo "a; b"\n# once %s' % time.time()
+            self.assertIs(G.segments(c), G.segments(c))
+            self.assertEqual(len(calls), 1)
+            calls.clear()
+            c2 = 'echo "a; b"; git status # twice %s' % time.time()
+            why = self.J.judge(c2)
+            self.assertIsNone(why, why)
+            self.assertEqual(len(calls), 1, calls)
+        finally:
+            G.read_segments = real
+
+    def test_a_huge_command_is_read_by_the_plain_split(self):
+        G = self.G
+        text = "echo 'a; b'\n" * 20000
+        self.assertGreater(len(text), 200000)
+        self.assertFalse(G.segments(text)[1])
+        self.assertTrue(G.segments("echo 'a; b'\n" * 100)[1])
+
+    def test_a_nul_byte_refuses_and_so_does_a_carriage_return_in_the_reading(self):
+        why = self.J.judge("echo hi\x00; git status")
+        self.assertTrue(why and "NUL" in why, why)
+        self.assertFalse(self.G.segments("echo hi\r\nls")[1])
+
+    def test_comments_start_at_the_beginning_of_a_word_only(self):
+        G = self.G
+        for c, has in (("echo a #; ls", False), ("echo a\\ #; ls", True), ("echo a\\\n#; ls", True), ("echo a\\\t#; ls", True), ("echo a#; ls", True),
+                       ("echo $#; ls", True), ("echo 'a'#; ls", True), ("echo \"a\"#; ls", True), ("echo a;#; ls", False), ("echo a&#; ls", False), ("echo a\n#; ls", False),
+                       ("echo a>#; ls", True), ("echo a<#; ls", True)):
+            self.assertEqual(any(t.strip() == "ls" for t in G.segments(c)[0]), has, c)
+
+    def test_two_thousand_heredocs_and_a_megabyte_are_read_in_seconds(self):
+        """The hook has 20 seconds and a hook that times out does not block. The quote-aware reading and the plain split, a command of 2000 small heredocs
+        and commands of a size near the limit, in the process (the callers of segments() included); a megabyte is refused at once."""
+        inert = "".join("cat > f%d <<'E'\nbody %d\nE\n" % (i, i) for i in range(2000))
+        shapes = {"2000 heredocs, quote-aware": (inert, None), "2000 heredocs, plain split": (inert + "make\n", None),
+                  "150 KB heredoc body, quote-aware": ("cat <<'E'\n" + "a line of text; and more text %d\n" * 5000 % tuple(range(5000)) + "E\n", None),
+                  "200 KB of words": ("echo " + "word " * 40000, None),
+                  "100 KB heredoc body, plain split": ("cat <<'E'\n" + "a line of text; and more text %d\n" * 3500 % tuple(range(3500)) + "E\nmake\n", None),
+                  "120 KB of commands, plain split": ("".join("git status %d; " % i for i in range(7000)) + "make", None),
+                  "1 MB heredoc body": ("cat <<'E'\n" + "a line of text; and more text\n" * 35000 + "E\n", "cannot be checked"),
+                  "1 MB of commands": ("git status; " * 80000, "cannot be checked"),
+                  "1 MB of pipes": ("echo x | " * 120000 + "sh", "cannot be checked"),
+                  "1 MB of words": ("echo " + "word " * 200000, "cannot be checked")}
+        for name, (c, refused) in shapes.items():
+            t0 = time.perf_counter()
+            why = self.J.judge(c)
+            took = time.perf_counter() - t0
+            self.assertLess(took, 2.0, "%s: %.1f s" % (name, took))
+            if refused:
+                self.assertIn(refused, why or "", name)
+            else:
+                self.assertIsNone(why, (name, why))
+        t0 = time.perf_counter()
+        self.G.read_segments(inert)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertEqual(self.G.read_segments(inert)[1], True)
+
+    def test_a_command_that_takes_too_long_to_check_is_refused_not_let_through(self):
+        G = self.G
+        real = G.BUDGET
+        G.BUDGET = 0.0
+        try:
+            why = self.J.judge("git status; echo hi; git log %s" % time.time())
+        finally:
+            G.BUDGET = real
+        self.assertIn("took longer", why or "")
+
+
+class OldReading(unittest.TestCase):
+    """The anti-regression property of the Bash reader: every command that the guard of 2b41028 refused (it cut a command at every separator, whatever the
+    quotes) is refused now, except the commands that only carry text for a program that runs nothing from its words (NARROWED)."""
+    PAYLOADS = ("qargi upgrade", "true; qargi upgrade; true", "git push", "true; git push origin x; true", "qargi packs seed")
+    NARROWED = ('echo "@@"', "echo '@@'", 'git commit -m "@@"', "git commit -m '@@'", "printf '%s\\n' '@@'", "grep -n '@@' f", "cat <<'E'\n@@\nE",
+                "git log --format='@@' -3", "git commit -F - <<'E'\n@@\nE", "cat <<'E' > n.txt\n@@\nE", "echo hi # @@")
+    RUNNING = ('sh -c "@@"', "bash -c '@@'", 'eval "@@"', "eval @@", 'env sh -c "@@"', 'sudo -u root sh -c "@@"', 'timeout 5 sh -c "@@"', 'nice -n 5 sh -c "@@"',
+               'nohup sh -c "@@" &', 'xargs -I% sh -c "@@"', 'find . -maxdepth 0 -exec sh -c "@@" \\;', "python3 -c '@@'", "perl -e 'system \"@@\"'",
+               "ruby -e 'system(\"@@\")'", "awk 'BEGIN{system(\"@@\")}'", "node -e 'require(\"child_process\").execSync(\"@@\")'", 'trap "@@" EXIT',
+               'X="@@"; eval $X', 'X="@@"\neval $X', "alias z='@@'\nz", 'f() { eval "$1"; }; f "@@"', 'su -c "@@"', 'watch "@@"', 'flock l -c "@@"',
+               "script -qc '@@' /dev/null", "busybox sh -c '@@'", "fish -c '@@'", 'git -c alias.z="!@@" z', "git rebase --exec '@@' HEAD",
+               "echo '@@' | sh", "echo '@@' | bash -s", "printf '%s' '@@' | xargs sh -c", "sh <<'E'\n@@\nE", "bash <<E\n@@\nE", "python3 <<'E'\n@@\nE",
+               "cat <<'E' | sh\n@@\nE", "cat > a.sh <<'E'\n@@\nE\nsh a.sh", "cat > a <<'E'\n@@\nE\nbash <a", "cat > a <<'E'\n@@\nE\ncp a b; sh b",
+               "echo '@@' > a.sh; sh a.sh", "cat > Makefile <<'E'\nall:\n\t@@\nE\nmake", "for x in 1; do @@; done", "{ @@; }", "(@@)", "if true; then @@; fi",
+               "x=$(@@)", "echo $(@@)", "echo `@@`", 'echo "$(@@)"', "diff <(@@) x", "cat <<E\n$(@@)\nE", "echo a\\ #; @@", "echo ${x:-1}\n@@",
+               "echo $[1<<2]\n@@\n2]", "echo hi\n@@", "echo 'x' #\"\n@@", "echo '@@' ; @@")
+
+    def corpus(self):
+        out = list(BashText.REFUSED) + list(ReviewedReading.REFUSED) + list(ReviewedReading.CONSERVATIVE)
+        out += [t.replace("@@", p) for t in self.RUNNING for p in self.PAYLOADS]
+        return list(dict.fromkeys(out))
+
+    def test_the_new_refusals_contain_the_old_ones_but_the_narrowed(self):
+        lib = old_lib(self)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old, new = _Judge(lib, "guard_old", tmp), _Judge(LIBDIR, "guard_new", tmp)
+        narrowed = {t.replace("@@", p) for t in self.NARROWED for p in self.PAYLOADS}
+        corpus = self.corpus() + sorted(narrowed)
+        self.assertGreaterEqual(len(corpus), 150)
+        refused_by_old = [c for c in corpus if old.judge(c)]
+        self.assertGreaterEqual(len(refused_by_old), 150, "the corpus must be mostly commands the old guard refused")
+        lost = [c for c in refused_by_old if c not in narrowed and not new.judge(c)]
+        self.assertEqual(lost, [], "the old guard refused these, the new one allows them")
+        lost_narrowed = [c for c in narrowed if not old.judge(c) and new.judge(c)]
+        self.assertEqual(lost_narrowed, [], "the new guard refuses text the old one allowed")
+
+    def test_the_fallback_cuts_where_the_old_split_cut(self):
+        """Without the history: the plain split of 2b41028 (its SEGMENT, vendored) cut a command into pieces; every piece is a piece (or a part of one) of the
+        fallback, and every command of the review is read by the fallback."""
+        old_split = re.compile(r"\s*(?:&&|\|\||;|\||\n)\s*")
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        G = _Judge(LIBDIR, "guard_fallback", tmp).m
+        subst = re.compile(r"\$\(|`")
+        for c in self.corpus():
+            texts, exact = G.segments(c)
+            if exact:
+                continue
+            have = {t.strip() for t in texts}
+            for piece in old_split.split(subst.sub(";", c.replace("\\\n", ""))):
+                for part in (g.text for g in G.plain_segments(piece)):
+                    self.assertIn(part.strip(), have | {""}, c)
+        self.assertEqual([c for c in ReviewedReading.REFUSED if G.segments(c)[1]], [])
 
 
 class LibraryScripts(unittest.TestCase):

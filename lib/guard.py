@@ -106,15 +106,19 @@ Not covered: code that writes or reads a file itself (python -c, perl -e, node -
 names the key by its full path, a glob that expands to a protected path (for a write), a path built from a variable the guard cannot see
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
-Reading a Bash command (segments()): it is cut into commands at the separators the shell sees (& && || | ; and a newline), so a separator in a quoted
-string, a comment or a heredoc body cuts nothing, and a refused verb written there is text, not a command: `git commit -m "Docs; qargi packs seed"`
-is allowed. A $( ) or backtick substitution, also inside double quotes and in an unquoted heredoc, is a command of its own, and so is <( ). A quoted
-string given to `sh -c`, eval and the like is read again whole (shell_string). A heredoc body whose delimiter is quoted is left out only when what
-reads it only carries text (cat, tee, git ...): it is read line by line when a shell, eval, source, xargs, an interpreter or a loop that evals reads it,
-or when a later command runs the file it was written to (cat > s.sh <<'E' ... bash s.sh). When a segment pipes into a shell that reads its script from
-standard input (| sh, bash -s, . /dev/stdin, xargs, an interpreter), and whenever the text cannot be read with confidence (an unbalanced quote, an
-unfinished heredoc), the whole command is cut at every separator whatever the quotes, and what feeds the pipe is also read as a script. Not seen:
-a script built by code (python -c ...), a program or a verb held in a variable, a wrapper's option that takes a value (sudo -u root qargi ...).
+Reading a Bash command (segments()): the quote-aware reading is only for commands that run nothing from their arguments; everything else is read
+conservatively. When EVERY segment runs a program of INERT (echo, printf, cat, tee, grep, rg, ls, head, tail, wc, sort, uniq, diff, cmp, test, cd, true, a
+qargi verb that only reads, git with a subcommand that runs nothing from its words, and a python file named with nothing written by the command), the command
+is cut into commands at the separators the shell sees (& && || | ; and a newline), so a separator in a quoted string, a comment or a heredoc body cuts
+nothing, and a refused verb written there is text, not a command: `git commit -m "Docs; qargi packs seed"` is allowed. A $( ) or backtick substitution,
+also inside double quotes and in an unquoted heredoc, and <( ) are commands of their own, and each must be inert too. A comment starts at the beginning of a
+word only. In every other case (a shell, eval, trap, source, an alias or a function, find, xargs, env, sudo, timeout, an interpreter, make, awk, sed, a
+variable or an unknown program in the place of a command, an option such as git -c, rebase --exec or rg --pre; or text that cannot be read with confidence: an
+unbalanced quote or heredoc, ${ } with more than a name, $[ ], $(( )), (( )), a carriage return, a command over 200000 characters) the command is cut at
+every separator whatever the quotes, a comment and a heredoc body are read as commands, a line continuation is read both ways, what feeds a pipe or a
+here-string into a shell is also read as a script, and the substitutions the quote-aware cut finds are added. No file is guessed to be run later: a heredoc written to a file and a shell that runs it make the whole
+command conservative. A NUL byte, a command over 262144 characters and checks that take over 8 seconds are refused, since a hook that times out does not block.
+Not seen: a script built by code (python -c ...), a program or a verb held in a variable, a wrapper's option that takes a value (sudo -u root qargi ...).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
 JSON is still let through (exit 0), as before. Known limits outside this file, from the Claude Code hooks documentation
@@ -124,7 +128,7 @@ hook with `onFailure` set to \"block\""), so agents/member.md sets `onFailure: "
 "Requires Claude Code v2.1.295 or later"; an older version does not enforce it). Frontmatter hooks of a project-level
 agent file run only after the workspace trust dialog is accepted (https://code.claude.com/docs/en/sub-agents): until
 then the subagent runs without this guard."""
-import collections, glob, json, os, re, shlex, sys
+import collections, functools, glob, json, os, re, shlex, sys, time
 
 SEGMENT = re.compile(r"\s*(&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*")    # the plain split on every separator (segments(): the reading that follows the quotes)
 SUBST = re.compile(r"\$\(|`")                               # command substitution starts a command of its own
@@ -177,10 +181,27 @@ SHELL_C = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
 DESTRUCTIVE = {"rm", "rmdir", "shred", "unlink", "mv"}      # these also remove a directory that holds a protected one
 EXTRACTORS = {"tar", "unzip", "curl", "wget"}              # write where an option says: any argument that names a protected path
 FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"}
+MAX_COMMAND = 262144                                         # a longer command cannot be checked in the time the hook has, so it is refused
+BUDGET = 8.0                                                 # seconds of checking before a call is refused: the hook is killed at its timeout, and a hook that times out does not block
+_DEADLINE = [None]
+
+
+class TooSlow(Exception):
+    """The checks of one call took longer than BUDGET: the call is refused, as a hook that is killed would let it through."""
+
+
+def tick():
+    if _DEADLINE[0] is not None and time.monotonic() > _DEADLINE[0]:
+        raise TooSlow()
 
 
 def blocked(command, depth=0):
+    seen = set()
     for seg in segments(command)[0]:
+        tick()
+        if seg in seen:
+            continue
+        seen.add(seg)
         toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if i >= len(toks):
@@ -202,9 +223,15 @@ def blocked(command, depth=0):
     return None
 
 
+@functools.cache
+def split_words(seg):
+    """shlex.split of one segment, cut once per text (the checks of a call all ask); raises ValueError for an unbalanced quote."""
+    return tuple(shlex.split(seg))
+
+
 def tokens(seg):
     try:
-        toks = shlex.split(seg)
+        toks = list(split_words(seg))
     except ValueError:
         toks = seg.split()
     return toks
@@ -232,7 +259,12 @@ def skip_wrappers(toks):
 
 def cmd_tokens(seg):
     """The words of a segment, without what the grammar puts around a command: the ( stuck to the first word, a case pattern (x)), and the ) that closes
-    a group or a substitution stuck to the last."""
+    a group or a substitution stuck to the last. Cut once per text (a command is asked about by several checks); the list is the caller's."""
+    return list(_cmd_tokens(seg))
+
+
+@functools.cache
+def _cmd_tokens(seg):
     toks = tokens(seg)
     if toks[:1] == ["function"]:                             # function NAME { ...
         toks = toks[2:]
@@ -251,7 +283,7 @@ def cmd_tokens(seg):
         toks[-1] = toks[-1].rstrip(")")
         if not toks[-1]:
             toks.pop()
-    return toks
+    return tuple(toks)
 
 
 # --- reading a Bash command: its commands, not the text they carry
@@ -272,9 +304,16 @@ class Seg:
             parent.children.append(self)
 
 
+# ${NAME} and ${NAME:-text} with plain text (no expansion, quote, redirection or bracket in it) are read as the word they are; every other ${ }, and $[ ] and
+# $(( )), can evaluate its words as an expression or hide a `<<` or a quote, so the text is not read with confidence (the plain split reads it)
+SIMPLE_BRACE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-+][^$`\"'\\{}<>()\[\]\n]*)?\}")
+
+
 class _Scanner:
     """Cuts a command line into Segs the way the shell reads it: a separator inside quotes, a comment or a heredoc body is not one. A substitution
-    ($( ), backticks, <( ) and >( ), also inside double quotes and in an unquoted heredoc) is a command of its own, in a Seg of its own."""
+    ($( ), backticks, <( ) and >( ), also inside double quotes and in an unquoted heredoc) is a command of its own, in a Seg of its own. A comment starts
+    at the beginning of a word only (a # after a character of the word, an escaped blank, a quote, a < or a > is part of it, which reads more commands, never
+    fewer)."""
     MAX_DEPTH = 12
 
     def __init__(self, s, out=None, depth=0):
@@ -288,11 +327,26 @@ class _Scanner:
         self.out.append(g)
         return g
 
+    def dollar(self, add):
+        """At a $ that opens ${ }, $[ ] or $(( )): a simple ${NAME} is taken as text, anything else is unreadable."""
+        s, i = self.s, self.i
+        if s.startswith("${", i):
+            m = SIMPLE_BRACE.match(s, i)
+            if m:
+                add(m.group())
+                self.i = m.end()
+                return True
+            raise _Unreadable("parameter expansion")
+        if s.startswith(("$[", "$(("), i):
+            raise _Unreadable("arithmetic")
+        return False
+
     def commands(self, closer, parent):
         """Read commands to the end of the text, or (closer) to the `)` that ends a $( ). Returns the raw text read, with comments and heredoc bodies left out."""
         s, n = self.s, self.n
         raw, cur, pending, depth = [], [], [], 0           # pending: heredocs whose body starts after the next newline
         seg = self.new("", parent)
+        word = False                                        # inside a word: a # here is part of it
 
         def add(text):
             cur.append(text)
@@ -312,14 +366,17 @@ class _Scanner:
                 else:
                     add(s[i:i + 2])
                     self.i += 2
+                    word = True
             elif c == "'":
                 j = s.find("'", i + 1)
                 if j < 0:
                     raise _Unreadable("quote")
                 add(s[i:j + 1])
                 self.i = j + 1
+                word = True
             elif c == '"':
                 self.dquote(add, seg)
+                word = True
             elif c == "$" and s.startswith("$'", i):       # $'...': a backslash escapes the next character, a quote included
                 j = i + 2
                 while j < n and s[j] != "'":
@@ -328,53 +385,64 @@ class _Scanner:
                     raise _Unreadable("quote")
                 add(s[i:j + 1])
                 self.i = j + 1
+                word = True
+            elif c == "$" and self.dollar(add):
+                word = True
+            elif c == "(" and s.startswith("((", i):
+                raise _Unreadable("arithmetic command")
             elif c == "$" and s.startswith("$(", i) or c in "<>" and s.startswith("(", i + 1):
                 self.subst(add, seg, s[i:i + 2])
+                word = True
             elif c == "`":
                 self.backtick(add, seg)
-            elif c == "#" and (i == 0 or s[i - 1] in " \t\n;&|("):    # a comment: to the end of the line (an apostrophe in it opens no quote)
+                word = True
+            elif c == "#" and not word:                      # a comment: to the end of the line (an apostrophe in it opens no quote)
                 j = s.find("\n", i)
                 self.i = n if j < 0 else j
             elif c == "\n":
                 self.i += 1
                 cut("\n")
-                for (word, quoted), strip, rseg in pending:
-                    rseg.heredocs.append(self.body(word, quoted, strip))
+                word = False
+                for (wd, quoted), strip, rseg in pending:
+                    rseg.heredocs.append(self.body(wd, quoted, strip))
                 pending = []
             elif c == ";" or c == "|" and not s.startswith("||", i) or c == "&" and not s.startswith("&&", i) and s[i - 1:i] not in "<>&" and s[i + 1:i + 2] != ">":
                 self.i += 1
                 cut(c)
+                word = False
             elif c in "&|" and s.startswith(c * 2, i):
                 self.i += 2
                 cut(c * 2)
+                word = False
             elif c == "<" and s.startswith("<<", i) and not s.startswith("<<<", i):
                 j, strip = i + 2, False
                 if s[j:j + 1] == "-":
                     j, strip = j + 1, True
                 while j < n and s[j] in " \t":
                     j += 1
-                word, quoted = [], False
+                wd, quoted = [], False
                 while j < n and s[j] not in " \t\n;&|()<>":
                     ch = s[j]
                     if ch in "'\"":
                         k = s.find(ch, j + 1)
                         if k < 0 or "\\" in s[j:k]:
                             raise _Unreadable("heredoc delimiter")
-                        word.append(s[j + 1:k])
+                        wd.append(s[j + 1:k])
                         quoted, j = True, k + 1
                     elif ch == "\\" and j + 1 < n:
-                        word.append(s[j + 1])
+                        wd.append(s[j + 1])
                         quoted, j = True, j + 2
                     elif ch in "$`\\":
                         raise _Unreadable("heredoc delimiter")
                     else:
-                        word.append(ch)
+                        wd.append(ch)
                         j += 1
-                if not word:
+                if not wd:
                     raise _Unreadable("heredoc delimiter")
                 add(s[i:j])
-                pending.append((("".join(word), quoted), strip, seg))
+                pending.append((("".join(wd), quoted), strip, seg))
                 self.i = j
+                word = False
             elif c == ")" and depth == 0 and closer:
                 if pending:
                     raise _Unreadable("heredoc in a substitution that ends first")
@@ -385,6 +453,7 @@ class _Scanner:
                 depth += (c == "(") - (c == ")" and depth > 0)
                 add(c)
                 self.i += 1
+                word = not (c in " \t(")
         if closer:
             raise _Unreadable("end of text")
         seg.text = "".join(cur)
@@ -404,6 +473,8 @@ class _Scanner:
                 if s[i + 1:i + 2] != "\n":
                     add(s[i:i + 2])
                 self.i += 2
+            elif c == "$" and self.dollar(add):
+                pass
             elif s.startswith("$(", i):
                 self.subst(add, seg, "$(")
             elif c == "`":
@@ -494,37 +565,16 @@ def payload_forms(text):
     return [f.replace("\\n", "\n") for f in [" ".join(toks), raw] + toks if f.strip()]
 
 
-def pipeline_before(segs, k):
-    """The segments that feed the pipe into segs[k], in the same command list (not those in a substitution)."""
-    g, found, j = segs[k], [], k - 1
-    cur = g
-    while cur.sep == "|":
-        while j >= 0 and segs[j].parent is not g.parent:
-            j -= 1
-        if j < 0:
-            break
-        found.append(segs[j])
-        cur, j = segs[j], j - 1
-    return found
-
-
-def written_then_run(segs, info, k):
-    """True when a later segment runs a file that segment k names (cat > s.sh <<'E' ... E; bash s.sh): the heredoc is then a script."""
-    ct, i, _ = info[k]
-    names = {os.path.basename(w.lstrip("0123456789>&")) for w in ct[i + 1:] if not w.startswith(("-", "<"))} - {""}
-    for ct2, i2, prog2 in info[k + 1:]:
-        if i2 < len(ct2) and (runs_text(prog2) or os.path.basename(ct2[i2]) in names) and names & {os.path.basename(w) for w in ct2[i2:]}:
-            return True
-    return False
-
-
 def body_commands(body):
-    """The Segs of the substitutions in an unquoted heredoc body: the shell expands them, so they run."""
+    """The Segs of the substitutions in an unquoted heredoc body: the shell expands them, so they run. A body with an expansion that is not read with
+    confidence (${x:-$(...)}, $[ ], $(( ))) raises _Unreadable."""
     sc, noop = _Scanner(body), lambda t: None
     while sc.i < sc.n:
         c = body[sc.i]
         if c == "\\":
             sc.i += 2
+        elif c == "$" and sc.dollar(noop):
+            pass
         elif body.startswith("$(", sc.i):
             sc.subst(noop, None, "$(")
         elif c == "`":
@@ -535,81 +585,226 @@ def body_commands(body):
 
 
 def plain_segments(command):
-    """The command split at every separator whatever the quotes (and at every substitution): the old reading, which is also the conservative one."""
-    command = SUBST.sub(";", command.replace("\\\n", ""))
-    segs, pos, sep = [], 0, ""
-    for m in SEGMENT.finditer(command):
-        segs.append(Seg(sep, None, command[pos:m.start()]))
-        sep, pos = m.group(1), m.end()
-    segs.append(Seg(sep, None, command[pos:]))
+    """The command split at every separator whatever the quotes (and at every substitution): the old reading, which is also the conservative one. A line
+    continuation is read both ways, joined (the shell joins the lines) and as the newline it is when it sits in a comment, where the shell does not join."""
+    segs = []
+    for text in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
+        text, pos, sep = SUBST.sub(";", text), 0, ""
+        for m in SEGMENT.finditer(text):
+            segs.append(Seg(sep, None, text[pos:m.start()]))
+            sep, pos = m.group(1), m.end()
+        segs.append(Seg(sep, None, text[pos:]))
     return segs
 
 
-def feeds(segs, info, exact):
-    """The texts that segments hand a shell as a script through a pipe, a here-string, a heredoc or a substitution: the arguments of what feeds it. With
-    xargs in front, the words stand behind the program (echo packs seed | xargs qargi is qargi packs seed)."""
-    extra = []
+def feeds(segs, info):
+    """The texts that segments of the plain split hand a shell as a script through a pipe or a here-string: the arguments of what feeds it. With
+    xargs in front, the words stand behind the program (echo packs seed | xargs qargi is qargi packs seed). Linear in the commands: a segment feeds
+    each shell once (handed)."""
+    extra, handed = [], {}
 
     def hand(ct, i, forms):
         if any(os.path.basename(t) == "xargs" for t in ct[:i + 1]):
             target = " ".join(ct[i:])
             forms = [target.replace("{}", f.replace("\n", " ")) if "{}" in target else target + " " + f.replace("\n", " ") for f in forms] + forms
         extra.extend(g.text for f in forms for g in plain_segments(f))
-    # a shell that reads standard input, or one given a word the shell builds (eval "$x", sh "$f"): a quoted heredoc anywhere in the command may be what it runs
-    dynamic = any(i < len(ct) and (reads_stdin(ct, i, prog) or (prog in SHELLS or prog in ("eval", "source", ".")) and any(c in t for t in ct[i + 1:] for c in "$`"))
-                  for ct, i, prog in info)
     for k, g in enumerate(segs):
+        tick()
         ct, i, prog = info[k]
         if i >= len(ct):
             continue
         stdin = reads_stdin(ct, i, prog)
         if stdin and g.sep == "|":
-            hand(ct, i, [f for p in pipeline_before(segs, k) for f in payload_forms(p.text)])
+            done, j, feeders = handed.setdefault(" ".join(ct[i:]) if any(os.path.basename(t) == "xargs" for t in ct[:i + 1]) else "", set()), k, []
+            while j > 0 and segs[j].sep == "|":              # the segments of the pipeline in front, each handed once to the same kind of shell
+                j -= 1
+                if j in done:
+                    break
+                done.add(j)
+                feeders.append(segs[j])
+            hand(ct, i, [f for p in feeders for f in payload_forms(p.text)])
         if stdin or runs_text(prog):
-            for t in ct:                                    # a here-string
+            for n, t in enumerate(ct):                      # a here-string
                 if t.startswith("<<<"):
-                    operand = t[3:] or (ct[ct.index(t) + 1] if ct.index(t) + 1 < len(ct) else "")
+                    operand = t[3:] or (ct[n + 1] if n + 1 < len(ct) else "")
                     hand(ct, i, [operand.replace("\\n", "\n")] if operand else [])
-        if exact and (prog in SHELLS or prog in ("eval", "source", ".")):
-            for ch in g.children:                           # sh -c "$(cmd)", eval "$(cmd)", bash <(cmd): what cmd prints is the script
-                hand(ct, i, payload_forms(ch.text))
-        if exact and g.heredocs:
-            scripts, a = runs_text(prog) or dynamic or written_then_run(segs, info, k), g.parent
-            while a is not None and not scripts:
-                scripts, a = runs_text(seg_prog(a.text)[2]), a.parent
-            for quoted, body in g.heredocs:
-                if scripts:
-                    extra.extend(segments(body)[0])
-                elif not quoted:
-                    sub = body_commands(body)
-                    extra.extend([g.text for g in sub] + feeds(sub, [seg_prog(g.text) for g in sub], True))
     return extra
 
 
-def segments(command):
-    """(texts, exact): the commands of a Bash command line, as the shell would cut them. A separator in a quoted string, a comment or a heredoc body does not
-    cut, and a heredoc whose delimiter is quoted and which is read by anything but a shell, eval, source, xargs or an interpreter is only text and is left out
-    (an unquoted one still runs its substitutions); a substitution is a command of its own. exact is False when the plain split on every separator was used
-    instead, which it is when the text cannot be read with confidence (an unbalanced quote, ...) and when a segment pipes into a shell that reads its script
-    from standard input (the quoted text before the pipe is then the script, so none of it is skipped, and the words of what feeds the pipe are read as a
-    script too). The plain split is the old reading and refuses more, never less."""
-    segs = None
+# --- the quote-aware reading is only for a command that runs nothing from its words
+# A quoted string, a comment or a heredoc body can be left out of the commands only when nothing in the command makes a command of text: every segment
+# runs a program from INERT (below), whose arguments are never run. A program that is not on the list (a shell, eval, trap, source, an alias or a function,
+# find, xargs, env, sudo, timeout, an interpreter, make, awk, sed, a variable as the program, an unknown program) decides that the whole command is read as
+# the plain split reads it: at every separator, quotes or not.
+
+INERT = {"true", "false", ":", "test", "[", "echo", "printf", "cat", "tee", "grep", "rg", "ls", "head", "tail", "wc", "sort", "uniq", "diff", "cmp", "cd",
+         "pwd", "basename", "dirname"}
+INERT_GIT = {"add", "blame", "branch", "cat-file", "checkout", "cherry-pick", "commit", "describe", "diff", "diff-tree", "for-each-ref", "log", "ls-files",
+             "ls-tree", "merge", "merge-base", "mv", "name-rev", "notes", "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "shortlog", "show",
+             "show-ref", "stash", "status", "switch", "tag"}                  # not rebase (--exec), config and -c (aliases), grep -O, bisect, submodule, apply, am, fetch ...
+INERT_GIT_GLOBAL = {"--no-pager", "-P", "--no-optional-locks", "--no-replace-objects", "--literal-pathspecs", "--bare"}
+INERT_QARGI = {"list", "show", "status", "effective", "search", "tiers", "lint", "help", "version"}   # qargi VERB list | show ...: a verb that only reads
+SKIP_WORDS = {"if", "then", "elif", "else", "while", "until", "do", "!", "{", "(", "fi", "done", "}", ")"}   # a command follows or they close one
+DANGEROUS_ENV = {"PATH", "ENV", "IFS", "HOME", "SHELL", "SHELLOPTS", "CDPATH", "GLOBIGNORE", "PAGER", "EDITOR", "VISUAL", "MANPAGER", "LESSOPEN", "TMPDIR",
+                 "SSH_ASKPASS", "XDG_CONFIG_HOME"}
+DANGEROUS_ENV_PREFIX = ("GIT_", "LD_", "BASH", "PS", "PYTHON", "PERL", "RUBY", "NODE", "QARGI_")
+ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\[[^=]*\])?\+?=")
+GIT_PLACES = re.compile(r"(?:^|/)\.git(?:/|$)|hook", re.I)           # the hooks, the configuration and the attributes of a repository: a file a git command runs
+PYTHON = re.compile(r"^python[0-9.]*$")
+PYTHON_PLAIN = {"-I", "-u", "-B", "-E", "-s", "-S", "-O", "-OO"}
+SEGMENT_TEXT_MAX = 50000                                     # a longer segment is not tokenized for the narrow reading
+NARROW_MAX = 200000                                          # a longer command is read by the plain split only
+
+
+def inert_args(prog, args):
+    """True when the arguments of an INERT program cannot make it run one of them (an option that names a program, an arithmetic subscript)."""
+    if prog in ("printf", "test", "["):
+        return not any("[" in a for a in args) and not (prog != "printf" and any(a in ("-v", "-R") for a in args))   # printf -v 'a[$(...)]', test -v 'a[$(...)]'
+    if prog == "sort":
+        return not any(a.startswith("--co") for a in args)   # --compress-program
+    if prog == "rg":
+        return not any(a.startswith(("--pre", "--host")) for a in args)   # --pre COMMAND, --hostname-bin COMMAND
+    return True
+
+
+def inert_git(args):
+    k = 0
+    while k < len(args) and args[k].startswith("-"):
+        if args[k] == "-C" and k + 1 < len(args):
+            k += 2
+        elif args[k] in INERT_GIT_GLOBAL or args[k].startswith(("--git-dir=", "--work-tree=")):
+            k += 1
+        else:
+            return False                                    # -c, --exec-path, --config-env, --paginate, -p ...
+    return k >= len(args) or args[k] in INERT_GIT
+
+
+def inert(g):
+    """0 when the segment can run something from its words (or cannot be read as one that does not), 1 when it runs a program that runs nothing from its
+    words, 2 when it runs a python file by name (inert only if the command writes no file, see narrowed)."""
+    if len(g.text) > SEGMENT_TEXT_MAX:
+        return 0
     try:
-        sc = _Scanner(command)
-        sc.commands(False, None)
-        segs = [g for g in sc.out if g.text.strip() or g.heredocs]
-        info = [seg_prog(g.text) for g in segs]
-        if any(g.sep == "|" and reads_stdin(*info[k]) for k, g in enumerate(segs)):
-            segs = None
-    except (_Unreadable, RecursionError):
-        segs = None
-    if segs is not None:
-        return [g.text for g in segs] + feeds(segs, info, True), True
+        raw = split_words(g.text)
+    except ValueError:
+        return 0
+    if not raw:
+        return 1
+    if raw[0] == "function" or any(t == "()" or t.endswith("()") for t in raw[:2]):
+        return 0                                            # a function is defined here, and called later
+    if raw[0] in ("for", "select"):                         # for NAME [in WORDS]: the words are not run (a substitution in them is a segment of its own)
+        return 1 if len(raw) > 1 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw[1]) and (len(raw) == 2 or raw[2] == "in") else 0
+    ct = cmd_tokens(g.text)
+    if any(GIT_PLACES.search(t) for t in ct):
+        return 0
+    i = 0
+    while i < len(ct):
+        t, m = ct[i], ASSIGNMENT.match(ct[i])
+        if m:
+            if m.group(2) or m.group(1) in DANGEROUS_ENV or m.group(1).startswith(DANGEROUS_ENV_PREFIX):
+                return 0
+            i += 1
+        elif t in SKIP_WORDS:
+            i += 1
+        elif LEADING_REDIR.match(t):
+            i += 2 if BARE_REDIR.match(t) else 1
+        else:
+            break
+    if i >= len(ct):
+        return 1
+    prog, args = ct[i], ct[i + 1:]
+    if prog in INERT:
+        return 1 if inert_args(prog, args) else 0
+    if prog == "git":
+        return 1 if inert_git(args) else 0
+    if prog == "qargi":
+        words = [a for a in args if not a.startswith("-")]
+        return 1 if words and (words[0] in ("help", "version") or (len(words) > 1 and words[1] in INERT_QARGI)) else 0
+    if PYTHON.match(prog):                                  # python3 [-I ...] FILE ...: runs a file that is already there, not its words
+        k = 0
+        while k < len(args) and args[k] in PYTHON_PLAIN:
+            k += 1
+        file_ok = k < len(args) and re.fullmatch(r"[A-Za-z0-9_./+-]+", args[k]) and not args[k].startswith("-")
+        fed = g.heredocs or g.sep in ("|", "&") or any(t.startswith("<") for t in ct)     # standard input of a script is a way to hand it text
+        return 2 if file_ok and not fed else 0
+    return 0
+
+
+def writes_file(text):
+    """True when the segment writes a file by name: a redirection to anything but /dev/null and the terminal, or tee with a file."""
+    ct = cmd_tokens(text)
+    for k, t in enumerate(ct):
+        m = REDIR.match(t)
+        if m and not t.startswith(">&") and not re.match(r"^\d*>&\d+$", t):
+            if (m.group(1) or (ct[k + 1] if k + 1 < len(ct) else "")) not in ("/dev/null", "/dev/stderr", "/dev/stdout"):
+                return True
+    i = skip_wrappers(ct)
+    return i < len(ct) and os.path.basename(ct[i]) == "tee" and any(not a.startswith("-") for a in ct[i + 1:])
+
+
+def narrowed(command):
+    """(texts, inert): the texts of the commands of a Bash command line as the shell would cut them (a separator in a quoted string, a comment or a
+    heredoc body cuts nothing, a substitution is a command of its own), and whether every one of them runs a program that runs nothing from its words.
+    Raises _Unreadable when the text cannot be read with confidence."""
+    sc = _Scanner(command)
+    sc.commands(False, None)
+    work, texts, runner, ok, k = [g for g in sc.out if g.text.strip() or g.heredocs], [], False, True, 0
+    while k < len(work):
+        tick()
+        g, k = work[k], k + 1
+        texts.append(g.text)
+        if ok:
+            kind = inert(g)
+            ok = bool(kind)
+            runner = runner or kind == 2
+        for quoted, body in g.heredocs:                      # a quoted body is text; an unquoted one runs its substitutions
+            if not quoted:
+                work.extend(body_commands(body))
+    if runner and any(writes_file(t) for t in texts):        # a file written by this command could be what the python file is
+        ok = False
+    if not ok:                                               # sh -c "$(cmd)", eval "$(cmd)", bash <(cmd): what cmd prints is the script
+        for g in work:
+            ct, i, prog = seg_prog(g.text)
+            if i < len(ct) and (prog in SHELLS or prog in ("eval", "source", ".")):
+                texts.extend(s.text for ch in g.children for f in payload_forms(ch.text) for s in plain_segments(f))
+    return texts, ok
+
+
+_READ = {}
+
+
+def segments(command):
+    """(texts, exact), read once per command (the checks of one call all ask)."""
+    got = _READ.get(command)
+    if got is None:
+        if len(_READ) >= 64:
+            _READ.clear()
+        got = _READ[command] = read_segments(command)
+    return got
+
+
+def read_segments(command):
+    """(texts, exact): the commands of a Bash command line. When every segment runs a program that runs nothing from its words (INERT), as the shell would
+    cut them: a separator in a quoted string, a comment or a heredoc body does not cut, a heredoc whose delimiter is quoted is only text and is left out
+    (an unquoted one still runs its substitutions), a substitution is a command of its own; exact is True. In every other case (a program that may run its
+    words, a text that cannot be read with confidence: an unbalanced quote, an unfinished heredoc, ${ } with more than a name, $[ ], (( )); a carriage
+    return; a command over NARROW_MAX) the plain split on every separator whatever the quotes, which refuses more, never less, and the words of what
+    feeds a shell through a pipe are read as a script too, and the commands of the quote-aware cut as well when it could be made (a substitution inside
+    double quotes is then a command); exact is False."""
+    scanned = []
+    if len(command) <= NARROW_MAX and "\r" not in command and "\0" not in command:
+        try:
+            scanned, ok = narrowed(command)
+        except (_Unreadable, RecursionError):
+            scanned, ok = [], False
+        if ok:
+            return tuple(scanned), True
     segs = plain_segments(command)
     info = [seg_prog(g.text) for g in segs]
-    return [g.text for g in segs] + feeds(segs, info, False), False
+    return tuple([g.text for g in segs] + feeds(segs, info) + scanned), False
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def run_dir(path):
     """The nearest directory at or above path that `qargi local prepare` made (it holds ability and refs.before)."""
     p = os.path.realpath(path) if path else ""
@@ -645,9 +840,14 @@ def is_review(run):
     return CLASS == "read-only" or ability_of(run) == "review" or run_class(run) == "read-only"
 
 
+RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git")
+
+
 def control_refusal(full):
-    """The reason a write to a run directory's control file (ability, class, profile, refs.before) is refused, or None."""
-    if os.path.basename(full) in ("ability", "class", "profile", "refs.before") and run_dir(os.path.dirname(full)) == os.path.dirname(full):
+    """The reason a write to a run directory's own record is refused, or None. RUN_CONTROL is every file of the run directory that `qargi local` reads
+    back and trusts: the ability and class the guard is held to, the refs the run is compared with, the directory `local clean` removes (tmpdir), the
+    repository and the tip it asks whether the work is merged (repo.path, applied), the credential path, the git wrapper."""
+    if os.path.basename(full) in RUN_CONTROL and run_dir(os.path.dirname(full)) == os.path.dirname(full):
         return "%s is the run's own record (the coordinator wrote it); a member does not change it" % full
     return None
 
@@ -672,6 +872,7 @@ def inside(path, base):
     return path == base or path.startswith(base + os.sep)
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def resolve(here, p):
     """The real path of p (with ~ and environment variables expanded) as seen from the directory here."""
     return os.path.realpath(os.path.join(here, os.path.expandvars(os.path.expanduser(p))))
@@ -710,15 +911,55 @@ def write_targets(toks, i):
     return targets
 
 
-TAG_CHANGES = re.compile(r"^-[A-Za-z]*[dasufmFe]|^--(?:delete|annotate|sign|no-sign|local-user|force|message|file|edit|create-reflog|cleanup)")   # an option that makes, replaces or deletes a tag
+TAG_FLAGS = {"list", "ignore-case", "omit-empty", "no-omit-empty", "color", "no-color", "column", "no-column", "no-sort", "no-format"}   # change nothing
+TAG_FILTERS = {"sort", "format", "points-at", "contains", "no-contains", "merged", "no-merged"}       # list options that take a value (the next word)
+TAG_CHANGES = {"annotate", "no-annotate", "sign", "no-sign", "local-user", "force", "no-force", "delete", "no-delete", "verify", "no-verify", "message", "file", "edit",
+               "no-edit", "cleanup", "create-reflog", "no-create-reflog", "trailer", "no-trailer"}   # make, replace, delete or check a tag (or take a value for one)
+
+
+def tag_option(name):
+    """The long option of git tag that NAME (without the dashes) stands for, an exact name or a unique abbreviation among those git knows, or None."""
+    known = TAG_FLAGS | TAG_FILTERS | TAG_CHANGES
+    if name in known:
+        return name
+    found = [k for k in known if k.startswith(name)]
+    return found[0] if len(found) == 1 and name else None
 
 
 def lists_tags(args):
-    """True when `git tag ARGS` only lists tags: no tag name given, or -l/--list and no option that makes, replaces or deletes one."""
-    opts = [a for a in args if a.startswith("-")]
-    if any(TAG_CHANGES.match(a) for a in opts):
-        return False
-    return not [a for a in args if not a.startswith("-")] or any(a == "--list" or re.match(r"^-[A-Za-z]*l[A-Za-z]*$", a) for a in opts)
+    """True when `git tag ARGS` only lists tags: -l/--list or no tag name, and no option that makes, replaces or deletes one. Read the way git reads its
+    arguments: an option that takes a value (--format, --sort, --contains, --points-at, --merged ...) takes the next word, a long option may be abbreviated
+    (--form, --del, --anno), words after -- are names, and an option this does not know is a change."""
+    listing, names, k = False, 0, 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            names += len(args) - k - 1
+            break
+        if a.startswith("--"):
+            name, eq, _ = a[2:].partition("=")
+            opt = tag_option(name)
+            if opt is None or opt in TAG_CHANGES or (eq and opt not in ("color", "column", "sort", "format", "points-at", "contains", "no-contains", "merged", "no-merged")):
+                return False
+            listing = listing or opt == "list"
+            if opt in TAG_FILTERS and not eq:
+                k += 1
+        elif a.startswith("-") and a != "-":
+            for n, ch in enumerate(a[1:]):
+                if ch == "l":
+                    listing = True
+                elif ch == "i":
+                    continue
+                elif ch == "n":                              # -n[NUM]: the number is stuck to it
+                    if not a[n + 2:].isdigit() and a[n + 2:]:
+                        return False
+                    break
+                else:
+                    return False
+        else:
+            names += 1
+        k += 1
+    return listing or names == 0
 
 
 def review_refusal(call):
@@ -738,13 +979,17 @@ def review_refusal(call):
         return None
     if call.kind != "shell":
         return None
-    here = cwd
+    here, seen = cwd, set()
     for seg in segments(call.command)[0]:
+        tick()
         toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if i < len(toks) and toks[i] == "cd" and i + 1 < len(toks):
             here = os.path.realpath(os.path.join(here, os.path.expanduser(toks[i + 1])))
             continue
+        if (seg, here) in seen:                              # the same text from the same directory has been judged
+            continue
+        seen.add((seg, here))
         why = review_segment(toks, i, here)
         if why:
             return why
@@ -822,8 +1067,19 @@ def resource_dirs():
     return _RESOURCE_DIRS[0]
 
 
+_ROOTS = {}
+
+
 def protected_roots():
-    """The locations whose content is a skill, the library of them, a credential or the install record (real paths)."""
+    """The locations whose content is a skill, the library of them, a credential or the install record (real paths). Worked out once per
+    environment (a command of thousands of segments asks for every one)."""
+    key = tuple(os.environ.get(k) for k in ("HOME", "QARGI_CONF", "QARGI_HOME", "QARGI_STATE", "XDG_CONFIG_HOME"))
+    if key not in _ROOTS:
+        _ROOTS[key] = _protected_roots()
+    return _ROOTS[key]
+
+
+def _protected_roots():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import paths as P                                     # here, not at the top: an import failure is then a refusal (see main)
     home = os.path.expanduser("~")
@@ -904,12 +1160,21 @@ def memory_roots(P=None, home=None):
 JOURNAL = "ref-journal.jsonl"
 
 
+_STATE = {}
+
+
 def state_dirs(P=None, home=None):
+    key = tuple(os.environ.get(k) for k in ("HOME", "QARGI_CONF", "QARGI_HOME", "QARGI_STATE")) if P is None and home is None else None
+    if key is not None and key in _STATE:
+        return _STATE[key]
     if P is None:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import paths as P
     home = home or os.path.expanduser("~")
-    return {os.path.realpath(st) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    got = {os.path.realpath(st) for st in (P.state(), os.path.join(P.root(), "state"), os.path.join(home, ".qargi", "state"))}
+    if key is not None:
+        _STATE[key] = got
+    return got
 
 
 def journal_roots(P=None, home=None):
@@ -985,6 +1250,7 @@ def brace_expand(word, limit=64):
     return out
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
     is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
@@ -1032,6 +1298,7 @@ def in_clone(full):
     return bool(run) and inside(full, os.path.join(os.path.realpath(run), "clone"))
 
 
+@functools.cache                                     # the files do not change while one command is judged
 def protected(full, destructive=False):
     """The protected location a real path belongs to, or None. A destructive command (rm, mv) also reaches a directory
     that holds one. A project's own skills and agents directories (.claude/skills and .claude/agents for Claude Code; resource_dirs
@@ -1093,8 +1360,9 @@ def bash_skill_refusal(command, here, depth):
     if AUDIT_SUBST.search(joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     segs, exact = segments(command)
-    stack = []                                           # the directories pushd left behind
+    stack, seen = [], set()                              # the directories pushd left behind; the (text, directory) pairs judged
     for n, seg in enumerate(segs):
+        tick()
         toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
@@ -1120,6 +1388,9 @@ def bash_skill_refusal(command, here, depth):
             continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
+        if (seg, here) in seen:                              # judged already
+            continue
+        seen.add((seg, here))
         why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=here, exe=toks[i])
         if why:
             return why
@@ -1136,6 +1407,7 @@ def bash_skill_refusal(command, here, depth):
     return unreadable_project_verb(command)
 
 
+@functools.cache
 def lex(seg):
     """The words of a command segment as the shell would cut them, each with whether the shell expands it: [(word, bool)]. Quotes are taken off and a
     backslash makes the next character plain; a variable or a substitution expands outside single quotes, a brace or a glob outside any quote."""
@@ -1171,7 +1443,7 @@ def lex(seg):
         k += 1
     if cur or started:
         out.append(("".join(cur), expands))
-    return out
+    return tuple(out)
 
 
 def unreadable_project_verb(command):
@@ -1181,7 +1453,12 @@ def unreadable_project_verb(command):
     turn out to say. A segment that hands a string to a shell (sh -c, eval) is read again with every quote and backslash taken off, since the string
     is cut into words once more there. This runs after the readable forms were judged (their reasons are the better ones), and does not look at a
     program held in a variable (the limit of the whole guard)."""
+    seen = set()
     for seg in segments(command)[0]:
+        tick()
+        if seg in seen:
+            continue
+        seen.add(seg)
         forms = [seg]
         if any(os.path.basename(w) in SHELLS or w == "eval" for w, _ in lex(seg)):
             forms.append(re.sub(r"[\\'\"]", "", seg))
@@ -1581,6 +1858,22 @@ def hook_of(name):
 
 def judge(call):
     """The refusal (a sentence for the member, ending in what to do instead) a Call earns, or None. The neutral core."""
+    if call.kind == "shell" and "\0" in (call.command or ""):
+        return "qargi guard: a NUL byte in a command cuts it short for the shell and hides the rest from this check, so it is not available to an agent. Write the text without it."
+    if call.kind == "shell" and len(call.command or "") > MAX_COMMAND:
+        return ("qargi guard: a command of more than %d characters cannot be checked in the time the hook has, so it is not available to an agent. "
+                "Write the text to a file with the Write tool, or run it in parts." % MAX_COMMAND)
+    _DEADLINE[0] = time.monotonic() + BUDGET
+    try:
+        return decide_call(call)
+    except TooSlow:
+        return ("qargi guard: checking this command took longer than %d seconds, so it is not available to an agent. "
+                "Run it in smaller parts." % BUDGET)
+    finally:
+        _DEADLINE[0] = None
+
+
+def decide_call(call):
     why = blocked(call.command) if call.kind == "shell" else None
     if why:
         return "qargi guard: %s. Agents never push; return patches instead." % why
