@@ -30,7 +30,8 @@ verb=${1:-}; shift || true
 VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) PROJ=$2; shift 2;; --date) DATE=$2; shift 2;; --plan) PLAN_ARG=$2; shift 2;; --approved) APPROVED=$2; shift 2;;
+    --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
@@ -51,6 +52,9 @@ if [ -n "$HOTFIX" ]; then BR=${HOT_PAT//\{version\}/$VER} BASE=master KIND=hotfi
 RELPREFIX=${REL_PAT%%\{version\}*}
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
+notes=''   # the temporary file of `publish`
+rel_exit() { [ -z "$notes" ] || rm -f "$notes"; on_exit; }   # the one EXIT handler: what gitflow.sh cleans up, and the notes file
+trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
   local out rc=0
@@ -87,11 +91,10 @@ case $verb in
   start)
     branch_exists "$BR" && die "$BR exists already"
     branch_exists "$BASE" || die "no $BASE branch to start from"
+    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
     if [ "$KIND" = release ]; then
       v=$(verified "$BASE")
       [ "$v" = "$(sha_of develop) pass" ] || die "the whole suite has no passing run at the head of develop (qargi release verify $VER); run it at the checkpoint, then start"
-    else
-      g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already"
     fi
     [ -n "$DATE" ] || DATE=$(date +%F)
     printf '%s' "$DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' || die "--date YYYY-MM-DD"
@@ -191,8 +194,8 @@ PY
     need_plan "$tok"
     g push -q -u origin "$BR" || die "pushing $BR failed"
     audit_log "release:push" "$PROJ $BR"
-    command -v gh >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
-    url=$(cd "$REPO" && gh pr create --base master --head "$BR" --title "$VER" --body "$KIND $VER" 2>&1) || die "pushed $BR; gh pr create failed: $url"
+    command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
+    url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || die "pushed $BR; gh pr create failed: $url"
     echo "pushed $BR and opened: $url"
     echo "when its checks pass: qargi release finish $VER${HOTFIX:+ --hotfix}";;
   finish)
@@ -222,8 +225,8 @@ PY
           g merge-base --is-ancestor "origin/$b" "$b" || die "$b is behind or differs from origin/$b: reconcile them first"
         fi
       done
-      command -v gh >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
-      gh -R "$(jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||')" pr checks "$BR" >/dev/null 2>&1 || die "the pull request's checks have not all passed (or there is no pull request for $BR): nothing was merged or pushed"
+      command -v "$GH" >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
+      "$GH" -R "$(repo_slug)" pr checks "$BR" >/dev/null 2>&1 || die "the pull request's checks have not all passed (or there is no pull request for $BR): nothing was merged or pushed"
     else
       [ "$(verified "$BR")" = "$h pass" ] || die "the repository has no origin, so no CI: the whole suite must have a passing run at the head of $BR (qargi release verify $VER${HOTFIX:+ --hotfix})"
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
@@ -257,7 +260,7 @@ PY
     fi;;
   publish)
     tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it)"
-    notes=$(mktemp "$DA_STATE/.release-notes.XXXXXX"); trap 'rm -f "$notes"; on_exit' EXIT
+    notes=$(mktemp "$DA_STATE/.release-notes.XXXXXX")
     g show "$tc:CHANGELOG.md" > "$notes" 2>/dev/null || die "the tagged commit of $VER has no CHANGELOG.md to take the notes from"
     sect=$(bash "$(dirname "$0")/changelog_section.sh" "$VER" "$notes" 2>/dev/null) || die "tag $VER: no changelog section for $VER in CHANGELOG.md at the tagged commit (it is missing or empty): nothing to publish"
     printf '%s\n' "$sect" > "$notes"
