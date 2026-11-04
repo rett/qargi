@@ -31,19 +31,19 @@ qargi lead grant and revoke are interactive instead: you confirm each step at th
 .PP
 The rules. The token covers the plan the person saw, and an apply refuses when the plan is no longer that one. The \-\-approved text is recorded, not verified: it is not proof that a person agreed. Never allow\-list a gated verb in the runtime's settings: the permission prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person (what the member's guard refuses: qargi help guard).
 .SH GUARD
-The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of what the member returned is the backstop.
+qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier against mistakes, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (check records results, adapter\-run runs code; the other provider verbs read); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
 .PP
-It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.
+It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin directories, the installed copy of the tool, and the render, marshal and feature directories of the state, its ref journal and its registry of local runs. Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.
 .PP
-A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text on the command line. Write the message to a file, commit with git commit \-F FILE.
+A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text on the command line. Write the message to a file, commit with git commit \-F FILE. A cd is followed only when sure; else both directories are judged. A check over 5 seconds is refused.
 .PP
-The read\-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through a name the guard cannot read that could be the run's record.
+The read\-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through a name the guard cannot read that could be the run's record. Nobody writes the run directory outside OUT, the clone and TMP.
 .PP
-Setting QARGI_NESTED is refused: it skips a plan token check and does not stand in for one. Setting or unsetting QARGI_LEAD is refused too.
+Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.
 .PP
-A refusal is a result: report it and the verb you needed, and do not work around it. The lead or the person runs it.
+A refusal is a result: report it and the verb you needed, and do not work around it.
 .SH NAMING
 Project and role are single lower\-case tokens. An instance is <project>\-<role>, for example acme\-build. A session is <instance>\-<task\-slug>, and the agent's branch is agent/<task\-slug>.
 .PP
