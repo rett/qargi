@@ -224,6 +224,26 @@ records its starter as lead, `feature merge|sync|verify|finish` and `local prepa
 refuse while another live lead holds the feature, and `feature status|list` show the lead. See
 `qargi help marshal`.
 
+A restart gives the lead session a new id. `qargi marshal claim NAME --as-successor-of ID` (the `marshal handoff` note prints the line)
+continues as the lead without the owner's takeover when the old lease is stale and the old record's host, OS user and work tree are
+yours (the work tree is stored as a digest, not a path). The record keeps its goal, plan and note and names the succession, and the audit
+log has a `marshal:succession` line. `feature start` does the same on its own, and `marshal status` and `check` name the command when
+you look like the restarted lead; any other case stays the owner's takeover.
+
+### The lead's context
+
+The lead's own context is the cost to keep low. `qargi lead usage` says how much of it is in use: the input, cache-read and
+cache-creation tokens of the last assistant turn of the session transcript, as a share of the window (the project answer
+`lead.context_window`, else the runtime's 200000). Where the transcripts are and how to read them is part of the runtime's definition
+(`resources.transcripts`), not of the code. `qargi lead compact-check [--advise]` exits 0 when a `/compact` is safe now and 1 when it is
+not, naming the reasons (a local run prepared and not verified, verified and not applied, or applied and not merged; a merge waiting in
+the conflicts directory; a whole-suite run in progress; a handoff note older than the last merge; an open release or hotfix branch),
+and prints what to re-read afterwards (the handoff note, `qargi marshal status`, `qargi feature status`, the open runs). With
+`--advise` it adds "compact advised" from 50% of the window and "compact strongly advised" from 70%. `feature finish`, the last
+`feature merge` of a feature's runs, `release finish` and `marshal handoff` print one line when the context is at or above
+`lead.compact_advice_pct` (default 40, 0 turns it off). qargi only measures and advises: no hook can run `/compact`, so the lead or the
+person does.
+
 Several machines or people on one project: `qargi marshal enable` (plan and token, then `--plan TOKEN --approved "<your words>"`)
 switches the project from the local records to the shared ones. Each record is then a commit on `refs/qargi/features/NAME` of the
 remote `origin` (ordinary branches and tags are never touched), a claim is a create-only push so two machines cannot both win, every
