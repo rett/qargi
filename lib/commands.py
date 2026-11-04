@@ -1044,7 +1044,7 @@ TOPICS = {
         "on the command line. Write the message to a file, commit with git commit -F FILE. A cd is followed only when sure; else both "
         "directories are judged. A check over 5 seconds is refused.",
         "The read-only class (review) writes only its report and manifest to OUT: every change to the clone is refused, git included, and a write through "
-        "a name the guard cannot read that could be the run's record. Nobody writes the run directory outside OUT, the clone and TMP.",
+        "a name the guard cannot read that could be the run's record. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it and the verb you needed, and do not work around it."]),
     "naming": ("How resources are named", [
