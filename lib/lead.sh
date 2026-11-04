@@ -21,7 +21,7 @@ LEAD=$PROJECT-lead
 FROM=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --from-file) FROM=$2; shift 2;;
+    --from-file) need_val "$1" $#; FROM=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done

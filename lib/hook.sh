@@ -30,8 +30,8 @@ verb=${1:-}; shift || true
 PRJ='' HROLE=lead
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) PRJ=$2; shift 2;;
-    --role) HROLE=$2; shift 2;;
+    --project) need_val "$1" $#; PRJ=$2; shift 2;;
+    --role) need_val "$1" $#; HROLE=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done

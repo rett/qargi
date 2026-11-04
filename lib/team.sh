@@ -16,11 +16,11 @@ brief() {
   local task='' done_cmd='' base='' write_done='' review_done=''
   while [ $# -gt 0 ]; do
     case $1 in
-      --task) task=$2; shift 2;;
-      --done) done_cmd=$2; shift 2;;
-      --base) base=$2; shift 2;;
-      --write-done) write_done=$2; shift 2;;
-      --review-done) review_done=$2; shift 2;;
+      --task) need_val "$1" $#; task=$2; shift 2;;
+      --done) need_val "$1" $#; done_cmd=$2; shift 2;;
+      --base) need_val "$1" $#; base=$2; shift 2;;
+      --write-done) need_val "$1" $#; write_done=$2; shift 2;;
+      --review-done) need_val "$1" $#; review_done=$2; shift 2;;
       *) die "unknown option $1";;
     esac
   done

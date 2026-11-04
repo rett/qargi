@@ -18,8 +18,8 @@ case $verb in
     SID='' NOW='' ASKED=''
     while [ $# -gt 0 ]; do
       case $1 in
-        --asked) ASKED=${2:-}; shift 2 || die "--asked needs the request";;
-        --now) NOW=${2:-}; shift 2 || die "--now needs a time";;
+        --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+        --now) need_val "$1" $#; NOW=$2; shift 2;;
         -*) die "unknown option $1";;
         *) [ -z "$SID" ] || die "nudge takes one session id"; SID=$1; shift;;
       esac

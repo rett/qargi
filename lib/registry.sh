@@ -21,22 +21,22 @@ PLAN_ARG='' SESSION_ARG='' ARG2='' IFSTALE=''
 LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --location) LOC=$2; shift 2;;
-    --deployment) DEP=$2; shift 2;;
-    --agent) AGENT_FILE=$2; shift 2;;
-    --name) NAME=$2; shift 2;;
+    --location) need_val "$1" $#; LOC=$2; shift 2;;
+    --deployment) need_val "$1" $#; DEP=$2; shift 2;;
+    --agent) need_val "$1" $#; AGENT_FILE=$2; shift 2;;
+    --name) need_val "$1" $#; NAME=$2; shift 2;;
     --no-session) NOSESS=1; shift;;
-    --asked) ASKED=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
     --reconcile) RECON=1; shift;;
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
     --provision) PROVISION=1; shift;;
-    --apt) APT=$2; shift 2;;
-    --networking) NETWORKING=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --budget) BUDGET=$2; shift 2;;
-    --session) SESSION_ARG=$2; shift 2;;
+    --apt) need_val "$1" $#; APT=$2; shift 2;;
+    --networking) need_val "$1" $#; NETWORKING=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --budget) need_val "$1" $#; BUDGET=$2; shift 2;;
+    --session) need_val "$1" $#; SESSION_ARG=$2; shift 2;;
     --if-stale) IFSTALE=1; shift;;
     -*) die "unknown option $1";;
     *) if [ -z "$ARG" ]; then ARG=$1; else ARG2=$1; fi; shift;;

@@ -47,17 +47,17 @@ KIND=${1:-}; VERB=${2:-}; shift 2 || true
 COMPAT_ARG='' INSTALL='' USER_SCOPE='' RENDER_ONLY='' TARGET='' SCOPE='' PROJECT='' ROLE='' NAME='' REF='' SUBPATH='' APPROVED='' PLAN_ARG='' ARGS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --scope) SCOPE=$2; shift 2;;
-    --project) PROJECT=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --name) NAME=$2; shift 2;;
-    --ref) REF=$2; shift 2;;
-    --path) SUBPATH=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --asked) ASKED=$2; shift 2;;
-    --compatible) [ $# -ge 2 ] || die "--compatible needs a list: any, or runtime or family names separated by commas"; COMPAT_ARG=$2; shift 2;;
-    --target) TARGET=$2; shift 2;;
+    --scope) need_val "$1" $#; SCOPE=$2; shift 2;;
+    --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --name) need_val "$1" $#; NAME=$2; shift 2;;
+    --ref) need_val "$1" $#; REF=$2; shift 2;;
+    --path) need_val "$1" $#; SUBPATH=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --compatible) need_val "$1" $#; COMPAT_ARG=$2; shift 2;;
+    --target) need_val "$1" $#; TARGET=$2; shift 2;;
     --install) INSTALL=1; shift;;
     --user) USER_SCOPE=1; shift;;
     '--render-only') RENDER_ONLY=1; shift;;   # internal (lib/local.sh): check the render alone, without the section of the skills a session would load

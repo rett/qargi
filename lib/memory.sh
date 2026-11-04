@@ -23,13 +23,13 @@ store_verbs() {
   export PLAN_ARG
   while [ $# -gt 0 ]; do
     case $1 in
-      --prefix) PREFIX+=("$2"); shift 2;;
-      --role) ROLE=$2; shift 2;;
-      --note-kind) NKIND=$2; shift 2;;
+      --prefix) need_val "$1" $#; PREFIX+=("$2"); shift 2;;
+      --role) need_val "$1" $#; ROLE=$2; shift 2;;
+      --note-kind) need_val "$1" $#; NKIND=$2; shift 2;;
       --archive) ARCHIVE=1; shift;;
-      --policy) POLICY=$2; shift 2;;
-      --plan) PLAN_ARG=$2; shift 2;;
-      --approved) APPROVED=$2; shift 2;;
+      --policy) need_val "$1" $#; POLICY=$2; shift 2;;
+      --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+      --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
       *) die "unknown option $1";;
     esac
   done
@@ -78,7 +78,7 @@ fi
 KIND=recipes
 while [ $# -gt 0 ]; do
   case $1 in
-    --kind) KIND=$2; shift 2;;
+    --kind) need_val "$1" $#; KIND=$2; shift 2;;
     *) die "unknown option $1";;
   esac
 done

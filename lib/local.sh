@@ -195,7 +195,7 @@ case $verb in
   prepare)
     REPO='' URL='' CRED='' BASE='' SLUG='' SCR='' ROLE=build PROFILE=''
     while [ $# -gt 0 ]; do
-      case $1 in --repo) REPO=$2; shift 2;; --repo-url) URL=$2; shift 2;; --credential-file) CRED=$2; shift 2;; --base) BASE=$2; shift 2;; --slug) SLUG=$2; shift 2;; --scratch) SCR=$2; shift 2;; --role) ROLE=$2; shift 2;; --profile) PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --repo) need_val "$1" $#; REPO=$2; shift 2;; --repo-url) need_val "$1" $#; URL=$2; shift 2;; --credential-file) need_val "$1" $#; CRED=$2; shift 2;; --base) need_val "$1" $#; BASE=$2; shift 2;; --slug) need_val "$1" $#; SLUG=$2; shift 2;; --scratch) need_val "$1" $#; SCR=$2; shift 2;; --role) need_val "$1" $#; ROLE=$2; shift 2;; --profile) need_val "$1" $#; PROFILE=$2; shift 2;; *) die "unknown option $1";; esac
     done
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
@@ -365,9 +365,9 @@ WRAP
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
-        --stale) STALE=${2:-}; shift 2 || die "--stale needs a number of days";;
+        --stale) need_val "$1" $#; STALE=${2:-}; shift 2;;
         --yes) YES=1; shift;;
-        --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";;
+        --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;;
         -*) die "clean: unknown option $1";;
         *) [ -z "$CLEAN_RUN" ] || die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
@@ -477,7 +477,7 @@ WRAP
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
     SCR=''
     while [ $# -gt 0 ]; do
-      case $1 in --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";; *) die "list: unknown option $1";; esac
+      case $1 in --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;; *) die "list: unknown option $1";; esac
     done
     runs=(); reg_load
     if [ -n "$SCR" ]; then

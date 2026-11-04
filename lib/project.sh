@@ -662,7 +662,7 @@ PY
     n=${1:-}; shift || true; valid_project "$n" || die "$verb needs a project name (lower-case letters and digits)"
     res='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
+      case $1 in --resource) need_val "$1" $#; res=${2// /}; shift 2;;
         --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
     done
     export PLAN_ARG; unset QARGI_NESTED
