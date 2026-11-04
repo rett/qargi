@@ -452,7 +452,7 @@ class Skills(unittest.TestCase):
 
     def test_edit_tools_are_decided_by_the_resolved_path(self):
         c, lib, ls = self.clone, self.lib, self.lskill
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (os.path.join(lib, "skills/s/SKILL.md"), os.path.join(lib, "links.json"), os.path.join(lib, "accepted.json"), os.path.join(ls, "x/SKILL.md"), "../home/.claude/skills/x/SKILL.md",
                       "link-to-library/skills/s/SKILL.md", os.path.join(self.proj, ".claude/skills/p/SKILL.md"), "../../proj/.claude/skills/new/SKILL.md",
                       "~/.claude/skills/x/SKILL.md", "~/.claude/agents/m.md", "~/.claude/plugins/p/plugin.json"):
@@ -680,7 +680,7 @@ class RenderTree(unittest.TestCase):
 
     def test_edit_tools_refuse_every_path_under_the_render_directory(self):
         r = self.render
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (os.path.join(r, "skills/s/SKILL.md"), os.path.join(r, "new.md"), os.path.join(self.state, "render/other/x"),
                       os.path.join(self.state, "render"), "to-render/skills/s/SKILL.md", "to-renders/proj/new.md", "../../state/render/proj/claude-code/CLAUDE.md"):
                 for cls in ((), ("--class", "read-only")):
@@ -785,7 +785,7 @@ class Marshal(unittest.TestCase):
 
     def test_edit_tools_refuse_every_path_under_features(self):
         f = self.feat
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (f + "/proj-f.json", f + "/proj-new.json", f, "to-features/proj-f.json", "../../state/features/x.json"):
                 for cls in ((), ("--class", "read-only")):
                     res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
@@ -917,7 +917,7 @@ class Marshal(unittest.TestCase):
         os.makedirs(m)
         open(os.path.join(m, "proj.enabled"), "w").close()
         os.symlink(m, os.path.join(self.clone, "to-marshal"))
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (m + "/proj.enabled", m + "/new.enabled", m, "to-marshal/proj.enabled", "../../state/marshal/x.enabled"):
                 for cls in ((), ("--class", "read-only")):
                     res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
@@ -1019,8 +1019,7 @@ class Marshal(unittest.TestCase):
         cred = self.make_key()
         os.symlink(cred, os.path.join(self.clone, "to-creds"))
         for tool, inp in (("Read", {"file_path": os.path.join(cred, "marshal_ed25519")}), ("Read", {"file_path": os.path.join(cred, "marshal_ed25519.pub")}),
-                          ("Read", {"file_path": "to-creds/marshal_ed25519"}), ("NotebookRead", {"notebook_path": os.path.join(cred, "marshal_ed25519")}),
-                          ("Grep", {"pattern": "BEGIN", "path": os.path.join(cred, "marshal_ed25519")}), ("Grep", {"pattern": "BEGIN", "path": cred}),
+                          ("Read", {"file_path": "to-creds/marshal_ed25519"}), ("Grep", {"pattern": "BEGIN", "path": os.path.join(cred, "marshal_ed25519")}), ("Grep", {"pattern": "BEGIN", "path": cred}),
                           ("Grep", {"pattern": "BEGIN", "path": "to-creds"})):
             res = self.call(tool, inp)
             self.assertEqual(res.returncode, 2, (tool, inp, res.stderr))
@@ -1121,7 +1120,7 @@ class Marshal(unittest.TestCase):
         for p in (m + "/proj.signers", f + "/.accepted-proj.json"):
             open(p, "a").close()
         os.symlink(m, os.path.join(self.clone, "to-marshal"))
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p, text in ((m + "/proj.signers", "allowed signers"), (m + "/new.signers", "allowed signers"), ("to-marshal/proj.signers", "allowed signers"),
                             ("../../state/marshal/x.signers", "allowed signers"), (f + "/.accepted-proj.json", "acceptance marks"),
                             (f + "/.accepted-new.json", "acceptance marks"), ("to-features/.accepted-proj.json", "acceptance marks")):
@@ -1201,7 +1200,7 @@ class RefJournal(unittest.TestCase):
 
     def test_edit_tools_refuse_the_journal_its_lock_and_rotated_files(self):
         j = self.jn
-        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (j, j + ".lock", j + ".1", j + ".tmp", j + ".2024.gz", "to-journal", "../../state/ref-journal.jsonl"):
                 for cls in ((), ("--class", "read-only")):
                     res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
@@ -1340,7 +1339,7 @@ class MemoryTiers(unittest.TestCase):
 
     def test_edit_tools_refuse_every_path_under_the_memory_root(self):
         for root in (self.mem, "to-memory"):
-            for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+            for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
                 for p in (root + "/shared/README.md", root + "/projects/demo/CANON.md", root + "/new.md", root, "../../qh/memory/shared/x.md"):
                     for cls in ((), ("--class", "read-only")):
                         res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
@@ -1405,9 +1404,7 @@ class HookProtocol(unittest.TestCase):
                            ({"tool_input": {"command": "ls"}, "cwd": "/w"}, ("shell", None, "ls", "", "/w")),
                            ({"tool_name": "Edit", "tool_input": {"file_path": "a", "path": "b"}, "cwd": "/w"}, ("write", "Edit", "", "a", "/w")),
                            ({"tool_name": "NotebookEdit", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("write", "NotebookEdit", "", "n", "/w")),
-                           ({"tool_name": "MultiEdit", "tool_input": {"path": "b"}, "cwd": "/w"}, ("write", "MultiEdit", "", "", "/w")),
                            ({"tool_name": "Read", "tool_input": {"file_path": "r"}, "cwd": "/w"}, ("read", "Read", "", "r", "/w")),
-                           ({"tool_name": "NotebookRead", "tool_input": {"notebook_path": "n"}, "cwd": "/w"}, ("read", "NotebookRead", "", "n", "/w")),
                            ({"tool_name": "Grep", "tool_input": {"path": "d", "pattern": "x"}, "cwd": "/w"}, ("search", "Grep", "", "d", "/w")),
                            ({"tool_name": "Glob", "tool_input": {"pattern": "*"}, "cwd": "/w"}, (None, "Glob", "", "", "/w")),
                            ({"tool_name": "Bash", "tool_input": None, "cwd": None}, ("shell", "Bash", "", "", os.getcwd()))):
@@ -3045,7 +3042,7 @@ class ThirdReview(unittest.TestCase):
         for cls in (None, "read-only"):
             wrong = [(c, r.stderr.strip()[:100]) for c, r in self.table(cmds, cls=cls) if r.returncode != 2 or "registry of local runs" not in r.stderr]
             self.assertEqual(wrong, [], cls)
-        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path")):
             for path in (reg, reg + ".tmp", os.path.join(self.clone, "to-registry")):
                 r = self.call(tool, {key: path})
                 self.assertEqual(r.returncode, 2, (tool, path, r.stderr))
@@ -3193,7 +3190,7 @@ class FifthReview(unittest.TestCase):
         bad += ["mkdir ~/.claude/hooks/new", "rm -rf ~/.claude/commands", "mv a ~/.claude/commands/", "cd ~ && echo x >> .bashrc", "ln -sf /x ~/.bashrc"]
         for cls in (None, "read-only"):
             self.assertEqual(self.not_refused(bad, None, cls), [], cls)
-        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path"), ("MultiEdit", "file_path")):
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path")):
             for f in ("~/.claude/settings.json", "~/.claude/CLAUDE.md", "~/.claude.json", "~/.claude/hooks/h.sh", "~/.bashrc", "~/.ssh/config"):
                 self.assertEqual(self.call(tool, {key: f}).returncode, 2, (tool, f))
         ok = ["cat ~/.bashrc", "grep -n hooks ~/.claude/settings.json", "ls ~/.claude/commands", "echo x > ~/.claude/history.jsonl", "echo x > ~/.claude/todos/t.json", "echo x > ~/.ssh/known_hosts", "echo x > ~/.cache/x"]
