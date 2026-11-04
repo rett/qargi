@@ -104,12 +104,12 @@ s1=$(sha feature/sy)
 jhas feature/sy "$s0" "$s1" && [ "$s1" != "$s0" ] && ok "feature sync journals the move" || no "feature sync left no journal line"
 out=$(verify "$RS"); [ $? = 0 ] && ok "a run prepared before the sync verifies" || no "verify after sync: $out"
 
-# --- prune journals the deletions
-for b in p1 p2; do git -C "$A" branch "agent/$b" develop; done
-RP=$(mkrun prune-run); n=$(jn)
-$DA review prune >/dev/null 2>&1; [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "prune without --yes (a listing) journals nothing" || no "prune listing journaled"
-pout=$($DA review prune --yes 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
-jhas agent/p1 "$(sha develop)" "$Z" && jhas agent/p2 "$(sha develop)" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "prune --yes journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
+# --- branch prune journals the deletions (agent/a and agent/b were merged into the open feature/fa above)
+RP=$(mkrun prune-run); n=$(jn); b0=$(sha agent/b)
+pout=$($DA branch prune 2>&1); pt=$(tok <<<"$pout")
+[ -n "$pt" ] && [ -f "$J" ] && [ "$(jn)" = "$n" ] && ok "a branch prune plan (a listing) journals nothing" || no "prune plan journaled or has no token: $pout"
+pout=$($DA branch prune --plan "$pt" --approved "prune them" 2>&1); dels=$(grep -c '^deleted ' <<<"$pout")
+jhas agent/a "$a0" "$Z" && jhas agent/b "$b0" "$Z" && [ "$(jn)" -ge $((n + 2)) ] && ok "branch prune journals each deletion (new is all zeros)" || no "prune left no journal lines: $pout"
 [ "$(jq -c 'select(.new == "0000000000000000000000000000000000000000")' "$J" | tail -n "$dels" | wc -l)" = "$dels" ] && ok "one deletion line per deleted branch" || no "deletion lines vs '$pout'"
 out=$(verify "$RP"); [ $? = 0 ] && ok "a run prepared before the prune verifies" || no "verify after prune: $out"
 
