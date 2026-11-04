@@ -28,7 +28,7 @@ out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug old --scratch "
 git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with plain git
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && no "verify missed a push to the remote" || ok "verify catches a push to the remote"
 [ "$(jq -r 'select(.slug=="demo") | .run' "$T/s/local-runs.jsonl")" = "$RUN" ] && [ "$(wc -l < "$T/s/local-runs.jsonl")" = 2 ] && ok "prepare registers each run (one line, run directory, slug, ability, base, start)" || no "registry: $(cat "$T/s/local-runs.jsonl")"
-grep -q "$T/r" "$T/s/local-runs.jsonl" && no "the registry names the repository path" || ok "the registry holds no repository path"
+grep -qi 'token\|secret' "$T/s/local-runs.jsonl" && no "the registry holds a secret" || ok "the registry holds a repository path and no token"
 [ "$(jq -r 'select(.slug=="demo") | .tmpdir' "$T/s/local-runs.jsonl")" = "$TMP" ] && [ "$(jq -r 'select(.slug=="demo") | .slug' "$T/s/local-runs.jsonl")" = demo ] \
   && ok "the registry names each run's temporary directory (and its slug): the lead's record of what clean removes" || no "registry tmpdir: $(cat "$T/s/local-runs.jsonl")"
 # clean: a collected, verified run goes away with its temporary directory; anything else is refused
@@ -211,6 +211,51 @@ mkdir -p "$CX/tmp"; touch "$CX/tmp/x"; printf '%s\n' "$TY" > "$CX/tmpdir"
 ./bin/qargi local clean "$CX" --discard >/dev/null 2>&1
 [ -f "$TY/precious" ] && [ ! -e "$CX" ] && [ -d "$TX" ] && ok "with no registry line only RUN/tmp goes: the tmpdir file's directory and the unrecorded temporary directory are left" || no "no record: other=$(ls "$TY" 2>&1) run=$(ls -d "$CX" 2>&1)"
 rm -rf "$TX" "$TY" "$CY"
+# the repository, its URL and the credential path come from the lead's registry, never from the run directory (repo.path, repo.url and cred.path are a member's
+# to write): a run whose files disagree with the registry is refused by verify, clean and run before any git is run for it
+read -r CF TF <<<"$(mkc rf-a)"; echo '{}' > "$CF/out/manifest.json"
+[ "$(jq -r 'select(.slug=="rf-a") | .repo' "$T/s/local-runs.jsonl")" = "$(readlink -f "$T/r2")" ] && [ "$(jq -r 'select(.slug=="rf-a") | has("url")' "$T/s/local-runs.jsonl")" = false ] \
+  && [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && [ "$(cat "$CF/repo.path")" = "$(readlink -f "$T/r2")" ] \
+  && ok "prepare records the repository's real path in the registry (mode 600), the same text as RUN/repo.path" || no "registry repo: $(grep rf-a "$T/s/local-runs.jsonl")"
+mkdir -p "$T/fg"; cat > "$T/fg/git" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$T/fg/argv"
+exec $(command -v git) "\$@"
+SH
+chmod 755 "$T/fg/git"
+git init -q -b main "$T/evil" && $LC -C "$T/evil" commit -q --allow-empty -m one && git -C "$T/evil" remote add origin ssh://nowhere.invalid/x
+git -C "$T/evil" config core.sshCommand "touch $T/pwn-ssh; false"
+: > "$T/fg/argv"; cp "$CF/repo.path" "$T/repo.path.keep"; echo "$T/evil" > "$CF/repo.path"
+out=$(PATH="$T/fg:$PATH" ./bin/qargi local verify "$CF" 2>&1); rcv=$?
+{ [ $rcv != 0 ] && grep -q "registry" <<<"$out" && [ ! -e "$T/pwn-ssh" ] && ! grep -q "$T/evil" "$T/fg/argv"; } \
+  && ok "verify refuses a run whose repo.path was changed, and runs no git in the repository it names" || no "forged repo.path (rc=$rcv): $out; git saw: $(cat "$T/fg/argv")"
+out=$(PATH="$T/fg:$PATH" ./bin/qargi local clean "$CF" 2>&1); rcc=$?
+{ [ $rcc != 0 ] && [ -d "$CF" ] && [ ! -e "$T/pwn-ssh" ] && grep -q "registry" <<<"$out"; } && ok "clean refuses it too and keeps the run" || no "clean forged repo.path (rc=$rcc): $out"
+cp "$T/repo.path.keep" "$CF/repo.path"
+./bin/qargi local verify "$CF" >/dev/null 2>&1 && ok "with the file as prepare wrote it, verify passes again" || no "verify after restoring repo.path"
+# a repository URL and a credential path a member adds: no git call, no token read
+printf 'secret-token-text\n' > "$T/secret.txt"; : > "$T/fg/argv"
+printf '%s\n' "https://nowhere.invalid/x" > "$CF/repo.url"; printf '%s\n' "$T/secret.txt" > "$CF/cred.path"
+out=$(PATH="$T/fg:$PATH" ./bin/qargi local verify "$CF" 2>&1); rcv=$?
+{ [ $rcv != 0 ] && grep -q "repo.url" <<<"$out" && ! grep -q "nowhere.invalid" "$T/fg/argv"; } \
+  && ok "verify refuses a repo.url and a cred.path the registry does not record: nothing is sent anywhere" || no "forged repo.url (rc=$rcv): $out; git saw: $(cat "$T/fg/argv")"
+rm -f "$CF/repo.url" "$CF/cred.path"
+# the other way: the files of the run are gone, or the run is not in the registry at all
+mv "$CF/repo.path" "$T/repo.path.gone"
+./bin/qargi local verify "$CF" >/dev/null 2>&1 && no "verify accepted a run with no repo.path" || ok "a missing repo.path is a disagreement too"
+mv "$T/repo.path.gone" "$CF/repo.path"
+cp "$T/s/local-runs.jsonl" "$T/lr.keep"; jq -c --arg r "$CF" 'select(.run != $r)' "$T/lr.keep" > "$T/s/local-runs.jsonl"
+out=$(./bin/qargi local verify "$CF" 2>&1); rcv=$?; out2=$(./bin/qargi local clean "$CF" 2>&1); rcc=$?
+{ [ $rcv != 0 ] && [ $rcc != 0 ] && [ -d "$CF" ] && grep -q "not in the lead's registry" <<<"$out$out2"; } && ok "a run the registry does not name is refused by verify and clean" || no "unregistered (rc=$rcv,$rcc): $out $out2"
+cp "$T/lr.keep" "$T/s/local-runs.jsonl"
+# a run of a repository URL: the URL and the credential path the registry records are the ones used (the files must agree with it)
+jq -c --arg r "$CF" 'if .run == $r then del(.repo) | .url = "https://nowhere.invalid/real" | .cred = "'"$T"'/secret.txt" else . end' "$T/lr.keep" > "$T/s/local-runs.jsonl"
+rm -f "$CF/repo.path"; printf '%s\n' "https://nowhere.invalid/real" > "$CF/repo.url"; printf '%s\n' "$T/secret.txt" > "$CF/cred.path"; : > "$T/fg/argv"
+out=$(PATH="$T/fg:$PATH" ./bin/qargi local verify "$CF" 2>&1)
+{ grep -q "x-access-token@nowhere.invalid/real" "$T/fg/argv" && ! grep -q "secret-token-text" "$T/fg/argv"; } \
+  && ok "a URL run asks the URL of the registry (with the token passed in the environment, never in argv)" || no "URL run: $out; git saw: $(cat "$T/fg/argv")"
+cp "$T/lr.keep" "$T/s/local-runs.jsonl"; cp "$T/repo.path.keep" "$CF/repo.path"; rm -f "$CF/repo.url" "$CF/cred.path"
+./bin/qargi local clean "$CF" --discard >/dev/null 2>&1; rm -rf "$TF" "$T/evil" "$T/fg" "$T/repo.path.keep" "$T/repo.path.gone" "$T/lr.keep" "$T/secret.txt"
 # list prints no control or escape byte a run's files hold
 read -r CZ TZ <<<"$(mkc ls-ctl)"; printf 'bui\033]0;pwn\007ld\n' > "$CZ/ability"
 jq -c --arg r "$CZ" 'if .run == $r then .slug = "s\u001b[2Jl\u0007ug" else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"
@@ -297,7 +342,7 @@ LGS=$(applied "$LG" agent/lg); git -C "$T/r6" update-ref refs/heads/feature/lg "
 printf 'a[$(touch %s/pwn-reg)]\n' "$T" > "$LG/started"
 out=$(./bin/qargi local list --scratch "$T/ls6" 2>&1); outr=$(./bin/qargi local list 2>&1)
 { [ ! -e "$T/pwn-forged" ] && [ ! -e "$T/pwn-reg" ] && ! grep -q forged <<<"$out$outr" && [ "$(awk '$2=="lg"{print $3}' <<<"$out")" = '?' ] && [ "$(awk '$2=="lg"{print $3}' <<<"$outr")" = '?' ]; } \
-  && ok "list: a sibling directory the registry does not name is not listed, and a started file with a command substitution runs nothing (age ?)" || no "list forged: $out; $outr; $(ls "$T" | grep pwn)"
+  && ok "list: a sibling directory the registry does not name is not listed, and a started file with a command substitution runs nothing (age ?)" || no "list forged: $out; $outr; $(find "$T" -maxdepth 1 -name "pwn-*")"
 out=$(./bin/qargi local clean --applied --scratch "$T/ls6" 2>&1); out2=$(./bin/qargi local clean --stale 0 --scratch "$T/ls6" --yes 2>&1)
 { [ -d "$FG" ] && [ ! -e "$T/pwn-forged" ] && [ ! -e "$T/pwn-reg" ] && ! grep -q forged <<<"$out$out2"; } \
   && ok "clean --applied and --stale leave a directory the registry does not name alone" || no "clean forged: $out; $out2"

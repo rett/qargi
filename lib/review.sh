@@ -24,7 +24,8 @@ project_load
 
 case $verb in
   apply)
-    RUN=${RUN_ARG%/}; [ -n "$RUN" ] || die "usage: qargi review apply RUN_DIR [--branch BRANCH] [--project P]"
+    [ -n "${RUN_ARG%/}" ] || die "usage: qargi review apply RUN_DIR [--branch BRANCH] [--project P]"
+    RUN=$(readlink -f -- "$RUN_ARG") || die "no such run directory: $RUN_ARG"   # the registry names real paths, and git -C WT am is given paths of the run
     [ -f "$RUN/refs.before" ] && [ -d "$RUN/out" ] || die "apply needs a RUN dir made by qargi local prepare"
     [ "$(run_class "$RUN")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $RUN/out/report.md; nothing was applied"
@@ -32,16 +33,14 @@ case $verb in
     lib=$(dirname "$0")
     python3 -I "$lib/review_check.py" "$RUN/out" || die "review check refuses $RUN/out: nothing was applied"
     "$lib/local.sh" verify "$RUN" || die "local verify refuses $RUN: nothing was applied"
-    [ -f "$RUN/repo.path" ] && [ "$(readlink -f "$(cat "$RUN/repo.path")")" != "$(readlink -f "$REPO")" ] \
-      && die "the run was made from $(cat "$RUN/repo.path"), not from the repository of $PROJ ($REPO)"
-    slug=$(jq -r --arg r "$RUN" 'select(.run == $r) | .slug' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
-    base=$(jq -r --arg r "$RUN" 'select(.run == $r) | .base' "$DA_STATE/local-runs.jsonl" 2>/dev/null | tail -1)
-    if [ -z "$slug" ]; then
-      b=$(git -C "$RUN/clone" symbolic-ref -q --short HEAD 2>/dev/null || true); slug=${b#agent/}
-    fi
+    # the repository, the slug and the base are the lead's registry's (looked up by real path, so ./run and run/ are the same run), never the run directory's own files
+    reg_load; run_record "$RUN" || exit 1
+    [ -z "$RUN_REPO" ] || [ "$(readlink -f "$RUN_REPO")" = "$(readlink -f "$REPO")" ] \
+      || die "the run was made from $RUN_REPO, not from the repository of $PROJ ($REPO)"
+    slug=$(reg_get "$RUN" slug); base=$(reg_get "$RUN" base)
     [ -n "$BRANCH" ] || { [ -n "$slug" ] || die "the run records no slug: give --branch"; BRANCH=agent/$slug; }
     git check-ref-format "refs/heads/$BRANCH" || die "'$BRANCH' is not a branch name"
-    [ -n "$base" ] || base=$(git -C "$RUN/clone" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)
+    [ -n "$base" ] || die "the registry records no base branch for $RUN"
     # the base commit: the one the base branch had when prepare took its snapshot
     sha=$(awk -v b="refs/heads/$base" '$1=="local" && $2==b {print $3}' "$RUN/refs.before")
     [ -n "$sha" ] || sha=$(git -C "$RUN/bare.git" rev-parse -q --verify "refs/heads/$base" 2>/dev/null || true)

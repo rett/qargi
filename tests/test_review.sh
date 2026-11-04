@@ -106,6 +106,14 @@ R5=$(newrun broken); sed -i 's/^ a$/ zzz/' "$R5"/out/patches/0002-*.patch
 out=$($DA review apply "$R5" 2>&1); rc=$?
 [ $rc != 0 ] && echo "$out" | grep -q "0002-" && ! git -C "$A" rev-parse -q --verify agent/broken >/dev/null && [ "$(git -C "$A" worktree list | wc -l)" = 1 ] && [ -z "$(find "$T/s" -maxdepth 1 -name "apply-wt.*")" ] \
   && ok "a patch that does not apply names the patch and leaves no branch or worktree" || no "non-applying: rc=$rc $out"
+# the run is found in the registry by its real path (the help's own example is `qargi review apply ./run`), and its repository is the registry's
+git -C "$A" commit -q --allow-empty -m "moved on"   # the checked-out branch is no longer the run's base
+R6=$(newrun rel)
+out=$(cd "$T/scr" && $DA review apply "./$(basename "$R6")/" 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/rel")" = 2 ] && ok "a relative run path with a trailing slash finds the run's slug and base in the registry" || no "relative apply: rc=$rc $out"
+R7=$(newrun forgedrepo); other=$T/other; git init -q -b master "$other"; echo "$other" > "$R7/repo.path"
+out=$($DA review apply "$R7" 2>&1); rc=$?
+[ $rc != 0 ] && echo "$out" | grep -q "registry" && ! git -C "$A" rev-parse -q --verify agent/forgedrepo >/dev/null && ok "a run whose repo.path differs from the registry's is refused and creates no branch" || no "forged repo.path: rc=$rc $out"
 # --- qargi review prune: only merged agent/* branches, only with --yes
 git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
 git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master

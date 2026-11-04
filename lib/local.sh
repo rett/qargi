@@ -21,9 +21,11 @@
 # A run based on feature/X of a stored project first asks the marshal (marshal_check): another live lead holds X -> refused, no run
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
-# start time, temporary directory; never a repository path or a token), so `qargi report` can list the local runs. The
-# registry is the lead's: `clean` removes the temporary directory that this line names for the run, not the one the run's
-# own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
+# start time, temporary directory, and the repository: its real path (repo), or its URL (url) and the path of its credential file (cred), never a token;
+# mode 600), so `qargi report` can list the local runs. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
+# about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
+# (files a member can write) differ is refused, as is a directory the registry does not name. `clean` removes the temporary directory that this line names
+# for the run, not the one the run's own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
 # After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
@@ -118,14 +120,15 @@ compare() {
 # check RUN -> 0 and records RUN/verified when the refs are as the rule allows; 2 otherwise
 check_run() {
   local run=$1 repo='' ref strict=1
+  run_record "$run" || return 3   # the repository and the credential come from the lead's registry, never from the run directory
   ref=$run/refs.before
   # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; with none, no change is journaled
-  JSTART=$(cat "$run/started" 2>/dev/null || true)
+  JSTART=$(cat "$run/started" 2>/dev/null || true); [[ $JSTART =~ ^[0-9]{1,12}$ ]] || JSTART=''
   [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
-  if [ -f "$run/repo.url" ]; then
-    snapshot_url "$(cat "$run/repo.url")" "$(cat "$run/cred.path" 2>/dev/null)" > "$run/refs.after"
+  if [ -n "$RUN_URL" ]; then
+    snapshot_url "$RUN_URL" "$RUN_CRED" > "$run/refs.after"
   else
-    repo=$(cat "$run/repo.path"); snapshot "$repo" > "$run/refs.after"
+    repo=$RUN_REPO; snapshot "$repo" > "$run/refs.after"
   fi
   if compare "$repo" "$ref" "$run/refs.after" "$strict" > "$run/refs.diff"; then
     cp "$run/refs.after" "$run/verified"
@@ -187,31 +190,6 @@ project_of() {
   return 0
 }
 
-# reg_load -> fills REG (real path of each run directory the lead's registry, $DA_STATE/local-runs.jsonl, names -> its last line) and REG_ORDER
-# (those paths, first seen first). The registry is the lead's: a directory that looks like a run (it holds refs.before and ability) is one only when
-# the registry names it, because a member can write next to its own run and make a sibling directory that looks like one. Nothing a member can write
-# is read here.
-declare -A REG=()
-REG_ORDER=()
-reg_load() {
-  local f=$DA_STATE/local-runs.jsonl r line rr
-  REG=(); REG_ORDER=()
-  [ -f "$f" ] || return 0
-  # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
-  while IFS=$'\t' read -r r line; do
-    r=${r//\\\\/\\}; line=${line//\\\\/\\}
-    rr=$(readlink -f -- "$r" 2>/dev/null) || continue
-    [ -n "$rr" ] || continue
-    [ -n "${REG[$rr]+x}" ] || REG_ORDER+=("$rr")
-    REG[$rr]=$line
-  done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
-}
-# reg_has DIR -> 0 when the registry names the directory DIR (compared by real path)
-reg_has() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 1; [ -n "${REG[$rr]+x}" ]; }
-# reg_get DIR FIELD -> the text of FIELD in the registry's line for DIR (empty when absent or not a string)
-reg_get() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 0; [ -n "${REG[$rr]+x}" ] || return 0
-  jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${REG[$rr]}" 2>/dev/null || true; }
-
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -222,9 +200,10 @@ case $verb in
     if [ -n "$URL" ]; then
       [ -z "$REPO" ] || die "give --repo or --repo-url, not both"
       case $URL in https://*) ;; *) die "--repo-url must be an https URL";; esac
-      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || die "--credential-file: no such file"; }
+      [ -z "$CRED" ] || { CRED=${CRED/#\~/$HOME}; [ -f "$CRED" ] || die "--credential-file: no such file"; CRED=$(readlink -f -- "$CRED"); }
     else
       [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "--repo must be a git working tree"
+      REPO=$(readlink -f -- "$REPO")   # recorded as a real path: the registry and RUN/repo.path say the same text
     fi
     [ "$ABILITY" != lead ] && valid_role "$ABILITY" || die "--role: one of $DA_ROLES (qargi role list)"
     CLASS=$(role_class "$ABILITY")
@@ -313,8 +292,9 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" \
-      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}' >> "$DA_STATE/local-runs.jsonl"
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ABILITY" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" \
+      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}
+       + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; cat >> "$DA_STATE/local-runs.jsonl" )
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
@@ -358,7 +338,10 @@ WRAP
       echo "qargi: $RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $RUN/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
-    if check_run "$RUN"; then
+    reg_load; crc=0; check_run "$RUN" || crc=$?
+    if [ "$crc" = 3 ]; then
+      exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
+    elif [ "$crc" = 0 ]; then
       if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
       else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi
     else
@@ -414,7 +397,7 @@ WRAP
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         if [ ! -f "$d/applied" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
-        if [ ! -f "$d/repo.path" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        if [ -z "$(reg_get "$d" repo)" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done
@@ -423,6 +406,7 @@ WRAP
       exit 0
     fi
     [ -z "$SCR" ] || die "clean: --scratch is for --applied and --stale"
+    reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
@@ -431,7 +415,12 @@ WRAP
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
-    if ! vout=$("$0" verify "$RUN" 2>&1 </dev/null); then
+    vrc=0; vout=$("$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
+      [ -n "$DISCARD" ] || die "${vout#qargi: }"
+      echo "qargi: warning: the lead's registry does not vouch for $RUN; dropped on purpose:" >&2
+      sed 's/^/  /' <<<"$vout" >&2
+    elif [ "$vrc" != 0 ]; then
       [ -n "$DISCARD" ] || die "the refs of the repository changed during this run: keep $RUN as evidence and tell the user (qargi local verify $RUN)"
       echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
@@ -444,7 +433,7 @@ WRAP
       else
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
         read -r _ab atip _ < "$RUN/applied"
-        rp=$(cat "$RUN/repo.path" 2>/dev/null || true)
+        rp=$(reg_get "$RUN" repo)   # the lead's registry, never RUN/repo.path
         if [ -n "$rp" ]; then
           mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
           [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
@@ -458,12 +447,7 @@ WRAP
     # left alone. The recorded text is only a claim until checked: the trailing slashes are stripped (rm -rf on a link with one empties what the link leads
     # to), a link is refused after that, the real path of the directory must be directly under the real path of that parent (no link in between), and what
     # is removed is that real path, on its own file system.
-    t=''; rrun=$(readlink -f -- "$RUN" 2>/dev/null || true)
-    if [ -n "$rrun" ] && [ -f "$DA_STATE/local-runs.jsonl" ]; then
-      while IFS=$'\t' read -r rr rt; do
-        [ -n "$rr" ] && [ "$(readlink -f -- "$rr" 2>/dev/null)" = "$rrun" ] && t=$rt
-      done < <(jq -r 'select((.tmpdir | type) == "string") | [.run, .tmpdir] | @tsv' "$DA_STATE/local-runs.jsonl" 2>/dev/null)
-    fi
+    t=$(reg_get "$RUN" tmpdir)
     [ -n "$t" ] || t=$RUN/tmp
     while [ "${t%/}" != "$t" ] && [ "$t" != / ]; do t=${t%/}; done
     rt=''
@@ -494,7 +478,7 @@ WRAP
       [ -d "$SCR" ] || die "list: no such directory $SCR"
       for d in "$(readlink -f "$SCR")"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" && runs+=("$d"); done
     else
-      for d in ${REG_ORDER[@]+"${REG_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
+      for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
     fi
     printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
     nowe=$(date +%s)
@@ -508,7 +492,7 @@ WRAP
       else ag='?'; fi
       ap=no; mg=no
       if [ -f "$d/applied" ]; then
-        ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(cat "$d/repo.path" 2>/dev/null || true)
+        ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(reg_get "$d" repo)
         if [ -z "$rp" ]; then mg='?'
         else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       fi
@@ -519,7 +503,8 @@ WRAP
     RUN=${1:-}; shift || true
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || die "run needs a RUN dir made by prepare"
     for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
-    RPJ=$(project_of "$(cat "$RUN/repo.path" 2>/dev/null || true)" "$(cat "$RUN/repo.url" 2>/dev/null || true)")
+    reg_load; run_record "$RUN" || exit 2   # the project is found by the repository the lead's registry records, not by files in the run directory
+    RPJ=$(project_of "$RUN_REPO" "$RUN_URL")
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
