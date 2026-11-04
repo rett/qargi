@@ -220,10 +220,6 @@ lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills
 lib/commands.py:for Claude Code \.claude/skills
-lib/commands.py:\(Claude Code\) is refused
-lib/commands.py:has a Claude Code render
-lib/commands.py:\(packs apply --target claude-code\)
-lib/commands.py:packs apply --target claude-code PROJECT
 lib/commands.py:The lead is this Claude Code session
 lib/commands.py:From Claude Code run them with
 lib/commands.py:"summary": "Claude Code hooks"
