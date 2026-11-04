@@ -447,9 +447,6 @@ COMMANDS = {
                            desc=("Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills "
                                  "directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token "
                                  "and approval as link; nothing else is deleted.")),
-            "migrate-render": verb("Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME", [], [PLAN, APPROVED],
-                                   desc=("Prints the move and a plan token; with --plan and --approved it moves the directory, re-points the checkout's skills link only "
-                                         "when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.")),
         },
     },
     "start": {
@@ -1026,7 +1023,7 @@ TOPICS = {
         "The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of "
         "what the member returned is the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link, unlink and migrate-render; project set (models answers), init, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
         "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",

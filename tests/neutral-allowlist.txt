@@ -156,7 +156,7 @@ lib/guard.py:CLAUDE_RESOURCE_DIRS
 lib/guard.py:protected ~/\.claude/agents
 lib/guard.py:the home: for Claude Code ~/\.claude/skills
 lib/guard.py:installed ones: \.claude/skills and \.claude/agents
-lib/guard.py:the claude/ and render/ directories of the state
+lib/guard.py:the skills there are linked from ~/\.claude/skills
 lib/guard.py:prepare` run directory, a project directory such as \.claude/skills
 lib/guard.py:Claude Code hooks documentation
 lib/guard.py:code\.claude\.com/docs/en/hooks
@@ -169,16 +169,6 @@ lib/guard.py:# of Claude Code is kept here
 lib/guard.py:os\.path\.join\(home, "\.claude", "plugins"\)
 lib/guard.py:"anthropic"\)\)   # the ant profiles
 lib/guard.py:~/\.claude/skills/qargi-\* are links
-lib/guard.py:claude_render_roots\(P, home\)
-lib/guard.py:def claude_render_roots
-lib/guard.py:which Claude Code loads with --add-dir
-lib/guard.py:the claude/ one is what
-lib/guard.py:"""The claude/ directory of the state
-lib/guard.py:os\.path\.join\(st, "claude"\)
-lib/guard.py:as claude_render_roots does
-lib/guard.py:for the claude render and the marshal
-lib/guard.py:in claude_render_roots\(\)
-lib/guard.py:that Claude Code loads; it is managed
 lib/guard.py:so a \.claude/skills there is the work product
 lib/guard.py:\.claude/skills and \.claude/agents for Claude Code
 lib/guard.py:rm -rf \.claude, with \.claude/skills in it
@@ -188,19 +178,12 @@ lib/guard.py:hook = CLAUDE_HOOK
 lib/agent.sh:for Claude Code ~/\.claude/agents
 lib/agent.sh:guard\.CLAUDE_HOOK
 
-# lib/packs.sh and lib/packs_render.py: the render directory an earlier version wrote under state/claude, and the target name claude-code
+# lib/packs.sh and lib/packs_render.py: the target name claude-code
 lib/packs.sh:claude-code for Claude Code
-lib/packs.sh:state/claude/PROJECT
-lib/packs.sh:must be claude-code
 lib/packs.sh:packs-apply-claude-code
 lib/packs_render.py:`claude --add-dir DIR`
 lib/packs_render.py:Claude Code: \.claude/skills
-lib/packs_render.py:made under <state>/claude/<project>/
 lib/packs_render.py:make Claude Code load it
-lib/packs_render.py:<state>/claude/<project> to
-lib/packs_render.py:LEGACY = "claude"
-lib/packs_render.py:LEGACY_TARGET = "claude-code"
-lib/packs_render.py:under <state>/claude\. An action
 
 # lib/hook.sh and lib/supervise.py: the hook verbs of the runtime that has hooks (event names, the environment file)
 lib/hook.sh:Claude Code hooks
@@ -237,7 +220,6 @@ lib/commands.py:Needs --target claude-code
 lib/commands.py:by ~/\.claude/skills or by the
 lib/commands.py:checkout's \.claude/skills
 lib/commands.py:for Claude Code \.claude/skills
-lib/commands.py:\(state/claude/PROJECT\)
 lib/commands.py:\(Claude Code\) is refused
 lib/commands.py:has a Claude Code render
 lib/commands.py:\(packs apply --target claude-code\)

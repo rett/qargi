@@ -33,7 +33,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 The guard is a hook on a local member's shell, edit, write and read calls. It is a barrier against mistakes, not a wall; qargi local verify of what the member returned is the backstop.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link, unlink and migrate\-render; project set (models answers), init, link and unlink; every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run.
 .PP
 It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin directories, the installed copy of the tool, and the render, marshal and feature directories of the state and its ref journal. Reading stays allowed except the lead's signing key. It refuses git push, changing a git remote, gh, ssh, scp and sftp.
 .PP
@@ -1550,23 +1550,6 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 Undo packs link.
 .br
 Removes only the symbolic link that points to this project's render and, if the backup exists, moves it back to the skills directory. Refuses a link to anywhere else, a real directory in its place, and a backup with no link of ours. Same plan token and approval as link; nothing else is deleted.
-.RS
-.TP
-.BI "\-\-plan " "TOKEN"
-the plan token printed by the same command without \-\-approved.
-.RE
-.RS
-.TP
-.BI "\-\-approved " "WORDS"
-your go\-ahead for exactly that plan, in your words; recorded in the audit log.
-.RE
-.RE
-.RS
-.TP
-.B migrate\-render
-Move every earlier render (state/claude/PROJECT) to state/render/PROJECT/RUNTIME.
-.br
-Prints the move and a plan token; with \-\-plan and \-\-approved it moves the directory, re\-points the checkout's skills link only when it points exactly at the old render, and removes the empty old directory. Nothing is deleted; a member's guard refuses it.
 .RS
 .TP
 .BI "\-\-plan " "TOKEN"
