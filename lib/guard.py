@@ -140,6 +140,8 @@ import collections, fnmatch, functools, json, os, re, shlex, sys, time
 
 SEGMENT = re.compile(r"\s*(?:&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*")      # the plain split on every separator (segments())
 NOCLOBBER = re.compile(r"\s*(?:&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))\s*")   # the same, with >| left whole: it is a redirection
+SEPARATOR = re.compile(r"(\s*(?:&&|\|\||;|\||\n|(?<![<>&])&(?![>&]))\s*)")           # SEGMENT with the separators kept (re.split hands them back between the pieces)
+NOCLOBBER_SEPARATOR = re.compile(r"(\s*(?:&&|\|\||;|(?<!>)\||\n|(?<![<>&])&(?![>&]))\s*)")
 SUBST = re.compile(r"\$\(|`|[<>]\(")                       # command substitution and process substitution start a command of their own
 HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_handoff\.py)[\"']*[^;&|\n]*(?:\$\(|`)")   # `marshal handoff ... $(...)`: the substitution may produce --write, and splitting it off hides that
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s[^;&|\n]*(?:\$\(|`)")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
@@ -350,27 +352,178 @@ def substitutions(text, depth=0):
     return out
 
 
-def cut(text):
-    """The text cut at every separator, quotes or not, with each substitution made a command of its own: the plain split. `>|` is a redirection and is not cut."""
-    return (NOCLOBBER if ">|" in text else SEGMENT).split(SUBST.sub(";", text))
+Piece = collections.namedtuple("Piece", "text top chained")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&
+SEQUENCE = ("", ";")                                         # separators after which a command runs whatever came before (a newline strips to "")
+KEYWORDS_OPEN, KEYWORDS_CLOSE = ("if", "while", "until", "for", "select", "case"), ("fi", "done", "esac")
+
+
+def subst_cut(text):
+    """text with the start of every substitution replaced by `;` (the line cut at them), and where: the position in the new text of each replaced
+    character, with 1 for the start of a command of its own and -1 for the backtick that closes a pair."""
+    out, marks, last, length, in_backtick = [], [], 0, 0, False
+    for m in SUBST.finditer(text):
+        out.append(text[last:m.start()])
+        length += len(out[-1])
+        if m.group() == "`":
+            in_backtick = not in_backtick
+        marks.append((length, 1 if m.group() != "`" or in_backtick else -1))
+        out.append(";")
+        length += 1
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out), marks
+
+
+def quote_after(text, quote):
+    """The quote ('', "'" or '"') that is open at the end of text, given the one open at its start."""
+    k = 0
+    while k < len(text):
+        c = text[k]
+        if quote == "'":
+            quote = "" if c == "'" else quote
+        elif c == "\\":
+            k += 1
+        elif c == "'" and quote == "":
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote else '"'
+        k += 1
+    return quote
+
+
+def pieces(text, whole=False, top=True):
+    """The pieces of the line (the plain split on every separator, whatever the quotes), each with whether it is certainly run at the top level of the
+    line, in order and unconditionally. The text of a piece is the cut that was always made: with the substitutions cut out (cut), or left whole
+    (whole). top is False for a piece a cd in which may not change the directory of what follows: one that comes after || | or & (not after &&: see
+    walk), or before a | or & (a pipeline and a background job run in a subshell), one inside ( ), a substitution, if/while/for/case, braces or a function, one after a quote that
+    is still open, a here-document or a comment, or one cut off from the rest of its command by a substitution (`cd $(x)/y`)."""
+    body, marks = (text, []) if whole else subst_cut(text)
+    parts = (NOCLOBBER_SEPARATOR if ">|" in text else SEPARATOR).split(body)
+    ends, pos = [], 0                                        # where each part ends, to find the separator a substitution's `;` is in
+    for part in parts:
+        pos += len(part)
+        ends.append(pos)
+    counted, j = {}, 1                                       # separator index -> [substitutions it starts, backticks it ends]
+    for at, kind in marks:
+        while ends[j] <= at:
+            j += 2
+        counted.setdefault(j, [0, 0])[0 if kind > 0 else 1] += 1
+    out, depth, quote, heredoc, comment = [], 0, "", False, False
+    for k in range(0, len(parts), 2):
+        tick()
+        piece = parts[k]
+        before, after = (parts[k - 1] if k else ""), (parts[k + 1] if k + 1 < len(parts) else "")
+        opens, closes = counted.get(k - 1, (0, 0))
+        ahead = counted.get(k + 1, (0, 0))[0]                # a substitution starts behind this piece: its command goes on after it
+        if "\n" in before:
+            comment = False
+        depth = max(0, depth + opens - closes)
+        top_level = (top and depth == 0 and not quote and not heredoc and not comment and before.strip() in SEQUENCE + ("&&",) and after.strip() not in ("|", "&")
+                     and not ahead and not opens and not closes)
+        out.append(Piece(piece, top_level, before.strip() == "&&"))
+        words = piece.split()
+        first = words[0] if words else ""
+        depth = max(0, depth + piece.count("(") - piece.count(")") + (first in KEYWORDS_OPEN) - (first in KEYWORDS_CLOSE) + words.count("{") - words.count("}"))
+        comment = comment or (not quote and bool(re.search(r"(?:^|\s)#", piece)))
+        heredoc = heredoc or bool(re.search(r"<<(?!<)", piece))
+        quote = quote_after(piece, quote)
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=64)
+def passes(command):
+    """The cuts of a Bash command line, read once per command (the checks of one call all ask): [(kind, pieces)], kind "main" for a cut of the whole line
+    (every one starts in the directory the call does) and "inner" for the text of a substitution cut on its own (it runs wherever the line was). The line
+    is cut at every ; && || | & and newline whatever the quotes, a comment or a heredoc body; a $( ), <( ), >( ) or backtick substitution is cut off as a
+    command of its own, and the text inside each is also cut on its own; the cut with the substitutions left whole is read too (`git $(true) push`); a line
+    continuation is read both ways, joined (the shell joins the lines) and as the newline it is in a comment."""
+    out = []
+    for form in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
+        tick()
+        out.append(("main", pieces(form)))
+        if SUBST.search(form):                               # and the line cut with its substitutions whole: a word a substitution builds stays in the command it belongs to
+            out.append(("main", pieces(form, whole=True)))
+        for inner in substitutions(form):
+            out.append(("inner", pieces(inner, top=False)))
+    return tuple(out)
 
 
 @functools.lru_cache(maxsize=64)
 def segments(command):
-    """The commands of a Bash command line, read once per command (the checks of one call all ask). The line is cut at every ; && || | & and newline
-    whatever the quotes, a comment or a heredoc body (it reads text as commands, which refuses more and never less than the shell would: a verb in
-    quoted text is refused too); a $( ), <( ), >( ) or backtick substitution is cut off as a command of its own, and the text inside each is also cut
-    on its own (so `echo "$(qargi upgrade) x"` shows `qargi upgrade`), and the cut with the substitutions left whole is read too (`git $(true) push`); a line continuation is read both ways, joined (the shell joins the lines) and as
-    the newline it is in a comment."""
-    texts = []
-    for form in ((command.replace("\\\n", ""), command) if "\\\n" in command else (command,)):
+    """The commands of a Bash command line as texts, in the order of passes() (the plain, conservative split: a verb in quoted text is found too). Read once per
+    command (the checks of one call all ask)."""
+    return tuple(p.text for _, ps in passes(command) for p in ps)
+
+
+MAX_DIRS = 24                                                # directories the shell may be in at once, at most: a cd that may or may not happen doubles them
+CD_FLAGS = ("-P", "-L", "-e", "-@", "--")
+PLAIN_CD = re.compile(r"\s*(?:cd|pushd|popd)(?:\s|$)")
+
+
+class TooManyDirs(TooSlow):
+    """A command line that changes directory in more than MAX_DIRS ways that cannot be told apart (each cd that may not happen doubles the places the next
+    command may run in): the call is refused, not judged from some of them."""
+
+
+def moved(dirs, args, certain, visited):
+    """The directories the shell may be in after `cd ARGS` from any of dirs. certain: the cd is a plain command of the top level, so it changes the
+    directory when the directory is there (a directory that is not there yet may be made by a command before it: both are kept). Anything else keeps
+    the directory it was in as well. `cd -` is any directory the line has been in."""
+    ops = [t for t in args if t not in CD_FLAGS]
+    if ops == ["-"]:
+        return list(dict.fromkeys(dirs + visited))
+    target = ops[0] if ops else "~"
+    certain = certain and len(ops) <= 1 and not target.startswith("-") and not UNKNOWN.search(target)
+    new = []
+    for d in dirs:
         tick()
-        texts += cut(form)
-        if SUBST.search(form):                               # and the line cut with its substitutions whole: a word a substitution builds stays in the command it belongs to
-            texts += (NOCLOBBER if ">|" in form else SEGMENT).split(form)
-        for inner in substitutions(form):
-            texts += cut(inner)
-    return tuple(texts)
+        r = resolve(d, target)
+        new += [r] if certain and os.path.isdir(r) else [d, r]
+    new = list(dict.fromkeys(new))
+    if len(new) > MAX_DIRS:
+        raise TooManyDirs()
+    return new
+
+
+def walk(command, here):
+    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, texts, text, dirs). texts: the pieces of the
+    cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
+    them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
+    subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
+    leaves the directory it was in among them, and every command is judged from each. pushd and popd are followed like cd. Each cut starts in the
+    directory of the call, and a substitution's own text in any directory the line has been in, so a cd is never applied twice to one command."""
+    start = list(dict.fromkeys([here] if isinstance(here, str) else here))
+    visited = list(start)
+    for kind, ps in passes(command):
+        dirs = list(start) if kind == "main" else list(visited)
+        if len(dirs) > MAX_DIRS:
+            raise TooManyDirs()
+        stack, ran = [], False                               # ran: the piece before was a cd that is certain
+        texts = [p.text for p in ps]
+        for n, piece in enumerate(ps):
+            tick()
+            yield n, texts, piece.text, dirs
+            toks = cmd_tokens(piece.text)
+            i = skip_wrappers(toks)
+            prog = os.path.basename(toks[i]) if i < len(toks) else ""
+            if prog not in ("cd", "pushd", "popd"):
+                ran = False
+                continue
+            certain, rest = piece.top and bool(PLAIN_CD.match(piece.text)) and (ran or not piece.chained), toks[i + 1:]    # after &&, only when everything before it in the chain is such a cd
+            ran = certain
+            if prog == "cd":
+                dirs = moved(dirs, rest, certain, visited)
+            elif prog == "pushd":
+                named = [t for t in rest if not t.startswith(("-", "+"))]
+                if named and "-n" not in rest:
+                    stack.append(dirs)
+                    dirs = moved(dirs, named[:1], certain, visited)
+                elif not named:
+                    dirs = list(dict.fromkeys(dirs + visited))
+            elif stack and "-n" not in rest:
+                popped = stack.pop()
+                dirs = popped if certain else list(dict.fromkeys(dirs + popped))
+            visited += [d for d in dirs if d not in visited]
 
 
 RUN_MARKERS = ("ability", "refs.before", "refs.after", "refs.diff", "repo.path", "repo.url", "cred.path", "tmpdir")   # files only `qargi local prepare` makes in a run directory
@@ -743,23 +896,20 @@ def review_refusal(call):
         return None
     if call.kind != "shell":
         return None
-    here, seen, places, runs_git = cwd, set(), [], False
-    for seg in segments(call.command):
-        tick()
+    seen, places, runs_git = set(), [], False
+    for n, texts, seg, dirs in walk(call.command, cwd):
         toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
-        if i < len(toks) and toks[i] == "cd" and i + 1 < len(toks):
-            here = os.path.realpath(os.path.join(here, expand_path(toks[i + 1])))
-            continue
-        if (seg, here) in seen:                              # the same text from the same directory has been judged
-            continue
-        seen.add((seg, here))
-        why = review_segment(toks, i, here, seg)
-        if why:
-            return why
         prog = os.path.basename(toks[i]) if i < len(toks) else ""
-        runs_git = runs_git or prog == "git" or (prog in SHELLS or prog in ("eval", "xargs", "find", "make")) and bool(re.search(r"\bgit\b", seg))
-        places += [dest for what, dest in write_targets(toks, i) if dest and GIT_PLACE.search(resolve(here, dest))]
+        for here in dirs:                                    # a cd that may not happen leaves several: each is judged
+            if (seg, here) in seen:                          # the same text from the same directory has been judged
+                continue
+            seen.add((seg, here))
+            why = review_segment(toks, i, here, seg)
+            if why:
+                return why
+            runs_git = runs_git or prog == "git" or (prog in SHELLS or prog in ("eval", "xargs", "find", "make")) and bool(re.search(r"\bgit\b", seg))
+            places += [dest for what, dest in write_targets(toks, i) if dest and GIT_PLACE.search(resolve(here, dest))]
     if places and runs_git:
         return OwnReason("%s is where git reads its configuration or its hooks from, and this command also runs git: what it holds, git would run; write it in a command of its own "
                          "or not at all" % places[0])
@@ -1200,10 +1350,8 @@ def bash_skill_refusal(command, here, depth):
         return "qargi project set with a command substitution in its arguments takes a path the guard cannot read, which could be a models answer, and is not available to an agent"
     if AUDIT_SUBST.search(joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
-    segs = segments(command)
-    stack, seen = [], set()                              # the directories pushd left behind; the (text, directory) pairs judged
-    for n, seg in enumerate(segs):
-        tick()
+    seen = set()                                         # the (text, directory) pairs judged
+    for n, texts, seg, dirs in walk(command, here):
         toks = cmd_tokens(seg)
         i = skip_wrappers(toks)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
@@ -1212,41 +1360,25 @@ def bash_skill_refusal(command, here, depth):
         why = lead_refusal(prog, rest, toks[:i + 1])
         if why:
             return why
-        if i >= len(toks):                               # redirections and nothing else (`>f`, `exec 3>f`, `<key`): still a write and a read
-            why = protected_write(toks, i, here) or key_read(toks, i, here)
-            if why:
-                return why
-            continue
-        if prog == "cd" and rest:
-            here = resolve(here, rest[0])
-            continue
-        if prog == "pushd":                              # like cd, and popd goes back; -n changes the stack only, and the words are read as paths either way
-            dirs = [t for t in rest if not t.startswith("-") and not t.startswith("+")]
-            if dirs and "-n" not in rest:
-                stack.append(here)
-                here = resolve(here, dirs[0])
-            continue
-        if prog == "popd":
-            if stack and "-n" not in rest:
-                here = stack.pop()
-            continue
         if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
-        if (seg, here) in seen:                              # judged already
-            continue
-        seen.add((seg, here))
-        why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=here, exe=toks[i])
-        if why:
-            return why
-        inner = shell_string(prog, rest) if depth < 3 else None
-        if inner is not None:
-            inner += " ; " + " ; ".join(segs[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the segments that follow as part of it
-            why = bash_skill_refusal(inner, here, depth + 1)
+        for at in dirs:                                      # a cd that may not happen leaves several directories: each is judged
+            if (seg, at) in seen:                            # judged already
+                continue
+            seen.add((seg, at))
+            if i < len(toks) and prog not in ("cd", "pushd", "popd"):
+                why = skill_verb(prog, rest, via_xargs=any(os.path.basename(t) == "xargs" for t in toks[:i]), here=at, exe=toks[i])
+                if why:
+                    return why
+                inner = shell_string(prog, rest) if depth < 3 else None
+                if inner is not None:
+                    inner += " ; " + " ; ".join(texts[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
+                    why = bash_skill_refusal(inner, [at], depth + 1)
+                    if why:
+                        return why
+            why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
-        why = protected_write(toks, i, here) or key_read(toks, i, here)
-        if why:
-            return why
     return unreadable_project_verb(command)
 
 
@@ -1702,6 +1834,9 @@ def judge(call):
     except TooBroad:
         return ("qargi guard: a glob in this command names too many directories to check (more than %d entries to read), so it is not available to an agent. "
                 "Write a narrower path." % GLOB_ENTRIES)
+    except TooManyDirs:
+        return ("qargi guard: this command changes directory in more than %d ways the guard cannot tell apart (a cd inside ( ), a substitution, a condition or a pipe may "
+                "or may not change where the next command runs), so it is not available to an agent. Write it in parts." % MAX_DIRS)
     except TooSlow:
         return ("qargi guard: checking this command took longer than %d seconds, so it is not available to an agent. "
                 "Run it in smaller parts." % BUDGET)
