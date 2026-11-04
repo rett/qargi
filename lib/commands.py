@@ -74,7 +74,7 @@ TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no G
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
-    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["feature", "marshal", "release", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -323,6 +323,23 @@ COMMANDS = {
                                   "the VERSION section of CHANGELOG.md at the tag and the command: gh release create VERSION --verify-tag --title \"PROJECT VERSION\" --notes-file FILE "
                                   "(gh is run through QARGI_GH, default gh, and must be logged in). It refuses when GitHub has the release already, when the tag is missing, "
                                   "and when the changelog section is empty; --verify-tag makes gh refuse a tag that is not on origin. Needs the plan token and an approval; a member run cannot publish.")),
+        },
+    },
+    "env": {
+        "summary": "What a repository declares about its development environment",
+        "desc": ("qargi defines no file for this. A project declares its environment with a section of AGENTS.md (or README.md) headed "
+                 "Development environment, Environment or Setup, the version pins in the standard files, and two runnable targets: bootstrap "
+                 "(install or update, idempotent) and doctor (check only). qargi reads them; see qargi help environment."),
+        "scripts": ["env.py"],
+        "verbs": {
+            "show": verb("Print what was found (section, pins, submodules, runner, targets) and the commands in effect", [],
+                         [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                          opt("--json", "print the result as JSON")],
+                         desc=("Read-only, and a member may run it. Nothing is executed: make, just, task and mise are never run, their files are read as text "
+                               "(at most 1 MB each; a symbolic link that leaves the repository is refused). The commands are derived from the targets "
+                               "(make bootstrap, make -n bootstrap, make doctor) and replaced by the project's answers env.doctor_command, "
+                               "env.bootstrap_command and env.dry_run_command; env.known_failures lists doctor lines accepted on this host. Each line says where it came from."),
+                         examples=["qargi env show", "qargi env show --project acme --json", "qargi project set acme env.doctor_command 'make doctor'"]),
         },
     },
     "provision": {
@@ -1082,6 +1099,15 @@ TOPICS = {
         "A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge "
         "tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.",
         "The GitHub tool cannot create releases; those stay with this session."]),
+    "environment": ("Declaring a development environment", [
+        "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
+        "Development environment, Environment or Setup; version pins in go.mod, .tool-versions, mise.toml, .python-version, .nvmrc or package.json; "
+        ".gitmodules; and two targets of its task runner (Makefile, justfile, Taskfile.yml or mise.toml tasks): bootstrap, which installs "
+        "everything idempotently, and doctor, which only checks and exits non-zero on a missing item. setup and check are accepted names.",
+        "Anyone, with or without qargi, runs the dry run (make -n bootstrap), reads it, runs bootstrap, then doctor. qargi env show prints what it "
+        "found and the commands it would use; it runs nothing.",
+        "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
+        "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [
         "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
         "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
