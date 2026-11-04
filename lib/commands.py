@@ -136,7 +136,7 @@ COMMANDS = {
                         examples=["qargi project set acme roles.write.effort high"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
-            "validate": verb("Check an answers file without storing it", [("FILE", "file")]),
+            "validate": verb("Check an answers file without storing it (a WARN line for each pack linked to a role that is not in the pack library)", [("FILE", "file")]),
             "link": verb("Make this work tree load the project's skills, agents and memory from ~/.qargi", [("PROJECT", "project", True)],
                          [opt("--resource", "what to link: skills, agents, memory (comma separated; default every one the runtime links and that exists)", "LIST", ("skills", "agents", "memory")), PLAN, APPROVED],
                          desc=("One plan and one token for every resource, each placed and linked the way the project's runtime says (a directory link, one link per entry, or a copy). "

@@ -314,4 +314,9 @@ $DA skill check cpj build 2>&1 | grep -q "FAIL skill:cpy: content changed since 
 rm -rf "$T/c/packs/skills/cpy/refs"
 $DA skill check cpj build 2>&1 | grep -q "^ok   skill:cpy$" && ok "without it the pack is clean again" || no "cpy not clean: $($DA skill check cpj build 2>&1)"
 
+# --- check on a project that no pack reaches says so (a library of its own: the main one has a pack linked at the user scope)
+mkdir -p "$T/c2/projects" "$T/s2"; proj nolink; mv "$T/c/projects/nolink.json" "$T/c2/projects/nolink.json"
+out=$(QARGI_CONF=$T/c2 QARGI_STATE=$T/s2 $DA skill check nolink build 2>&1)
+[ "$out" = "no pack is linked to any role of nolink" ] && ok "skill check names the project when no pack is linked to any of its roles" || no "nolink check: $out"
+$DA skill check cpj build 2>&1 | grep -q "no pack is linked" && no "the line appears for a project with packs" || ok "and not for a project that has packs"
 exit $fail
