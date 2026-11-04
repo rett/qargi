@@ -150,7 +150,8 @@ UNREADABLE = "$`{}*?[]"                                     # in a word: a varia
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred"}
-COPIERS = {"cp", "mv", "ln", "install", "rsync"}            # the last argument is the destination
+COPIERS = {"cp", "mv", "ln", "install", "rsync", "ditto"}   # the last argument is the destination
+TARS = {"tar", "gtar", "bsdtar"}
 INPLACE = {"sed", "perl"}                                   # with -i
 GIT_WRITES = {"add", "commit", "apply", "am", "checkout", "switch", "reset", "rm", "mv", "stash", "merge", "rebase",
               "cherry-pick", "revert", "restore", "clean", "tag", "branch", "pull", "fetch", "init", "clone", "worktree",
@@ -605,6 +606,16 @@ def control_refusal(full):
     return None
 
 
+def run_dir_refusal(full):
+    """The reason a write to the real path full lands in the run directory itself, or None. The run directory holds the record the run is judged by, the
+    contract and the git wrapper: a copy into it (`cp -r Y/. ..`), an extraction (`tar -C .. -xf`), a link, a move or a redirection is refused whatever
+    way the path is written, for every member. OUT, the clone and TMP (RUN/tmp) are the member's."""
+    run = run_dir(full if os.path.isdir(full) else os.path.dirname(full))
+    if run and inside(full, run) and os.path.relpath(full, run).split(os.sep)[0] not in ("out", "clone", "tmp"):
+        return "%s is in the run directory (%s), outside its OUT, its clone and its TMP: the record and the contract there are the coordinator's" % (full, run)
+    return None
+
+
 def run_refusal(full, here):
     """The reason a command that removes or moves the path full takes the run directory (or a directory above it) away, with the record in it, or None."""
     run = run_dir(here)
@@ -704,13 +715,21 @@ def write_targets(toks, i):
                 targets += [(prog, a) for a in args[:-1]]                 # the sources are removed
             if prog == "rsync" and any(t.startswith("--remove-source") for t in rest):
                 targets += [(prog, a) for a in args[:-1]]
-            for k in range(len(rest)) if prog != "rsync" else ():         # -t DIR, --target-directory=DIR, -tDIR (rsync -t keeps times)
+            for k in range(len(rest)) if prog != "rsync" else ():         # -t DIR, --target-directory=DIR, -tDIR, -rt DIR, -Dt DIR (rsync -t keeps times)
                 v = option_value(rest, k, ("--target-directory", "-t"))
+                v = cluster_value(rest, k, "t") if v is None else v
                 if v is not None:
                     targets.append((prog, v))
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
             scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
             targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
+        elif prog in TARS and tar_extracts(rest):
+            targets += [("tar", d) for d in tar_dirs(rest)] or [("tar", ".")]          # an archive is extracted below -C DIR, else below where the shell is
+        elif prog == "unzip" and not set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t))) & set("lptZvcz"):
+            dirs = [v for v in (cluster_value(rest, k, "d") for k in range(len(rest))) if v is not None]
+            targets += [("unzip", d) for d in dirs] or [("unzip", ".")]               # unzip -d DIR, else where the shell is (-l, -p, -t ... only look)
+        elif prog in ("curl", "wget"):
+            targets += download_targets(prog, rest)
         elif prog == "dd":
             targets += [(prog, t[3:]) for t in rest if t.startswith("of=")]
         elif prog == "sort":
@@ -729,13 +748,68 @@ def write_targets(toks, i):
             sub = rest[k] if k < len(rest) else ""
             if sub in GIT_WRITES and not (sub == "tag" and lists_tags(rest[k + 1:])):
                 targets.append(("git " + sub, gitdir or "."))
-            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE
-                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()))
+            places = [t for t in rest[k + 1:] if not t.startswith("-")]
+            if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
+                targets.append(("git clone", places[-1]))
+            elif sub in ("init", "worktree") and places[sub == "worktree":][:1]:
+                targets.append(("git " + sub, places[sub == "worktree":][0]))
+            for n in range(k + 1, len(rest)):                             # git log|diff|show --output=FILE, format-patch -o DIR, archive -o FILE, apply --directory=DIR
+                v = option_value(rest, n, ("--output", "--output-directory") + (("-o",) if sub in GIT_OUTPUT_DIRS else ()) + (("--directory",) if sub == "apply" else ()))
                 if v is not None:
                     targets.append(("git " + sub + " --output", v))
             if sub == "bundle" and rest[k + 1:k + 2] == ["create"] and len(rest) > k + 2:
                 targets.append(("git bundle create", rest[k + 2]))
     return targets
+
+
+def cluster_value(rest, k, letter):
+    """The value of the short option LETTER when rest[k] is a cluster of short options that holds it (`-d DIR`, `-dDIR`, `-od DIR`, `-rt DIR`, `-tDIR`): the
+    rest of the cluster after the letter, else the next word. None when rest[k] is no such cluster."""
+    m = re.match(r"^-[A-Za-z0-9]*?" + re.escape(letter) + r"(.*)$", rest[k])
+    if not m:
+        return None
+    return m.group(1) or (rest[k + 1] if k + 1 < len(rest) else None)
+
+
+def tar_extracts(rest):
+    """True when the tar command line extracts (x, --extract, --get)."""
+    modes = [t.lstrip("-") for k, t in enumerate(rest) if re.match(r"^-?[A-Za-z]+$", t) and (k == 0 or t.startswith("-"))]
+    return any("x" in m for m in modes) or any(t.split("=")[0] in ("--extract", "--get") for t in rest if t.startswith("--"))
+
+
+def tar_dirs(rest):
+    """The directories a tar command is told to extract into (-C DIR, -CDIR, --directory=DIR, --directory DIR). A cluster that holds C (`-xCf DIR x.tar`)
+    leaves it open which word is the directory, so every word after it counts."""
+    out = []
+    for k, t in enumerate(rest):
+        if t == "--directory" and k + 1 < len(rest):
+            out.append(rest[k + 1])
+        elif t.startswith("--directory="):
+            out.append(t.split("=", 1)[1])
+        elif re.fullmatch(r"-[A-Za-z]+", t) and "C" in t and t != "-C":
+            out += [w for w in rest[k + 1:] if not w.startswith("-")]
+        elif t == "-C" and k + 1 < len(rest):
+            out.append(rest[k + 1])
+        elif t.startswith("-C") and len(t) > 2 and not t.startswith("--"):
+            out.append(t[2:])
+    return out
+
+
+def download_targets(prog, rest):
+    """What curl and wget write: the file or the directory an option names, else a file in the directory the shell is in (curl -O, wget); curl with no
+    output option and wget -O - write to the terminal."""
+    out, names, stdout = [], False, False
+    for k, t in enumerate(rest):
+        if prog == "curl":
+            v = option_value(rest, k, ("--output", "--output-dir", "-o")) or cluster_value(rest, k, "o")
+            names = names or t in ("-O", "--remote-name", "--remote-name-all") or bool(re.fullmatch(r"-[A-Za-z]*O[A-Za-z]*", t))
+        else:
+            v = option_value(rest, k, ("--output-document", "--directory-prefix", "-O", "-P")) or cluster_value(rest, k, "O") or cluster_value(rest, k, "P")
+            stdout = stdout or v == "-"
+            names = True
+        if v and v != "-":
+            out.append((prog, v))
+    return out if out or stdout and not names else [(prog, ".")] if names else out
 
 
 TAG_FLAGS = {"list", "ignore-case", "omit-empty", "no-omit-empty", "color", "no-color", "column", "no-column", "no-sort", "no-format"}   # change nothing
@@ -900,7 +974,7 @@ def review_refusal(call):
         if not fp:
             return None
         full = os.path.realpath(os.path.join(cwd, fp))
-        why = control_refusal(full)
+        why = control_refusal(full) or run_dir_refusal(full)
         if why:
             return why
         run = run_dir(os.path.dirname(full)) or run_dir(cwd)
@@ -951,7 +1025,7 @@ def review_segment(toks, i, here, text=""):
             return OwnReason("under the read-only class %s writes through a directory name that a variable, a substitution or a glob builds (%s), which the guard cannot read "
                              "to tell the clone from OUT; write the path out" % (what, dest))
         full = resolve(here, dest)
-        why = control_refusal(full)
+        why = control_refusal(full) or run_dir_refusal(full)
         if why:
             return why
         run = run_dir(full if os.path.isdir(full) else os.path.dirname(full)) or run_dir(here)
