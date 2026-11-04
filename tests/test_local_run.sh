@@ -110,6 +110,14 @@ $DA local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after the run" || n
 out=$($DA local run "$RUN" 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q 'has been run already' <<<"$out" && ok "a second run is refused" || no "second run: rc=$rc $out"
 out=$(FAKE_KEY=k2 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 0 ] && grep -q '^KEY=k2$' "$tr" && ok "--again runs it again and replaces the transcript" || no "again: rc=$rc $out"
 
+# the run's temporary directory is the registry's (as `local clean` reads it), never the run's own tmpdir file, which a member can write
+REGTMP=$(jq -r --arg r "$RUN" 'select(.run == $r) | .tmpdir' "$T/s/local-runs.jsonl" | tail -1)
+mv "$RUN/tmpdir" "$RUN/tmpdir.real"; printf '%s\n' "$T/forged-tmp" > "$RUN/tmpdir"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -n "$REGTMP" ] && grep -q "^TMP=$REGTMP\$" <<<"$out" && ! grep -q 'forged-tmp' <<<"$out"; } \
+  && ok "the run's temporary directory is the registry's: a forged RUN/tmpdir is not read" || no "forged tmpdir: rc=$rc $(grep -n 'TMP=' <<<"$out")"
+mv "$RUN/tmpdir.real" "$RUN/tmpdir"
+
 # --- the exit status maps to an outcome; a timeout is bounded ---------------------------------------------------------------------
 out=$(FAKE_MODE=exit3 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q '^OUTCOME=refused' <<<"$out" && ok "dispatch.exit maps status 3 to refused (exit 2)" || no "exit3: rc=$rc $out"
 out=$(FAKE_MODE=exit5 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q '^OUTCOME=failed' <<<"$out" && ok "any other status is failed (exit 1)" || no "exit5: rc=$rc $out"

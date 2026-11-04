@@ -595,6 +595,58 @@ def build_plan(archive, comps, projects, modes):
     return plan
 
 
+GATED_KEYS = ("extensions", "accept_no_barrier")   # under models: what an agent may run on, and a surface accepted with no read-only barrier
+
+
+def _gated_narrower(new, old):
+    """True when the imported value only keeps or drops entries of the stored one (none stored: an empty value only). An empty list or object
+    counts as absent. Same rule as gated_keys_changed in lib/project.sh."""
+    new = None if new in (None, [], {}) else new
+    old = None if old in (None, [], {}) else old
+    if new is None:
+        return True
+    if old is None:
+        return False
+    if isinstance(new, list):
+        return isinstance(old, list) and all(i in old for i in new)
+    if isinstance(new, dict):
+        return isinstance(old, dict) and all(k in old and old[k] == v for k, v in new.items())
+    return new == old
+
+
+def gate_answers(archive):
+    """The project answers in the archive may not add or change models.extensions or models.accept_no_barrier: those have verbs with a plan
+    token and an approval (provider enable|disable|accept), and an archive is untrusted data. Where the file would, the stored value stays (or
+    the key is left out when none is stored). Returns the paths changed and the keys, for a note."""
+    changed = []
+    for path in sorted(archive):
+        m = re.fullmatch(r"config/projects/([^/]+)\.json", path)
+        if not m:
+            continue
+        try:
+            doc = json.loads(archive[path][0])
+        except ValueError:
+            continue
+        models = doc.get("models") if isinstance(doc, dict) else None
+        if not isinstance(models, dict):
+            continue
+        stored = project_answers(m.group(1))
+        stored = stored.get("models") if isinstance(stored, dict) else None
+        stored = stored if isinstance(stored, dict) else {}
+        hit = []
+        for k in GATED_KEYS:
+            if k in models and not _gated_narrower(models[k], stored.get(k)):
+                if k in stored:
+                    models[k] = stored[k]
+                else:
+                    del models[k]
+                hit.append("models." + k)
+        if hit:
+            archive[path] = (jdump(doc), archive[path][1])
+            changed.append((path, hit))
+    return changed
+
+
 def memory_target(project, kind):
     return stores_of(project_answers(project)).get(kind) or ""
 
@@ -701,6 +753,8 @@ def cmd_import(args):
     bad = [k for k in archive if not valid_item(k)]
     if bad:
         die("the archive holds a name that is not valid for its folder (%r): refusing it" % bad[0][:80])
+    for path, keys in gate_answers(archive):
+        print("note: %s would add or change %s, which only qargi provider enable|disable|accept store (a plan token and an approval); the stored value stays, none is added" % (path, ", ".join(keys)), file=sys.stderr)
     out = tty()[1] or sys.stdout
     present = [c for c in ORDER if manifest["components"].get(c)]
     aprojects = manifest.get("projects") or []
@@ -772,7 +826,7 @@ def cmd_import(args):
     if "memories" in comps:
         print("Check the stores with: qargi memory lint STORE_ID")
     if "config" in comps:
-        print("The project answers were imported as they were: check paths and ids with: qargi project show NAME")
+        print("The project answers were imported as they were (apart from models.extensions and models.accept_no_barrier): check paths and ids with: qargi project show NAME")
     return 0
 
 

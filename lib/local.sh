@@ -7,6 +7,7 @@
 #   local.sh verify RUN_DIR
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
+#   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
 #   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
@@ -48,6 +49,15 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
       echo "remote unavailable"
     fi
   fi
+}
+
+# merged_tip REPO TIP -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
+# other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A word that is not one never reaches git, so an
+# option-like text cannot become an option of for-each-ref; the value is given in the --contains=VALUE form and the ref patterns after --.
+merged_tip() {
+  case $2 in ''|*[!0-9a-f]*) return 2;; esac
+  [ "${#2}" = 40 ] || [ "${#2}" = 64 ] || return 2
+  [ -n "$(git -C "$1" for-each-ref --contains="$2" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
 }
 
 # journaled REPO NAME OLD NEW -> 0 when the lead's ref journal ($DA_STATE/ref-journal.jsonl) explains the change of the local branch
@@ -337,16 +347,41 @@ WRAP
     # after the series is collected and verified: remove the run (clone, bare copy, output, wrapper) and its temporary directory.
     #   clean RUN [--discard]            one run; --discard drops it on purpose, whatever verify says and whatever it holds
     #   clean --applied --scratch DIR    every run directly under DIR whose work is recorded applied (RUN/applied) and merged
-    CLEAN_RUN='' DISCARD='' ALL='' SCR=''
+    #   clean --stale DAYS --scratch DIR [--yes]   the finished runs (RUN/verified or RUN/applied) older than DAYS: a plan, removed only with --yes
+    CLEAN_RUN='' DISCARD='' ALL='' SCR='' STALE='' YES=''
     while [ $# -gt 0 ]; do
       case $1 in
         --discard) DISCARD=1; shift;;
         --applied) ALL=1; shift;;
+        --stale) STALE=${2:-}; shift 2 || die "--stale needs a number of days";;
+        --yes) YES=1; shift;;
         --scratch) SCR=${2:-}; shift 2 || die "--scratch needs a directory";;
         -*) die "clean: unknown option $1";;
         *) [ -z "$CLEAN_RUN" ] || die "clean takes one RUN dir"; CLEAN_RUN=$1; shift;;
       esac
     done
+    if [ -n "$STALE" ]; then
+      [ -z "$ALL$CLEAN_RUN$DISCARD" ] || die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
+      case $STALE in ''|*[!0-9]*) die "clean --stale needs a whole number of days, got '$STALE'";; esac
+      [ -n "$SCR" ] || die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
+      [ -d "$SCR" ] || die "clean --stale: no such directory $SCR"
+      scr=$(readlink -f "$SCR"); nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
+      for d in "$scr"/qargi.??????; do
+        [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] || continue   # a directory prepare made, directly under DIR
+        [ -f "$d/verified" ] || [ -f "$d/applied" ] || continue                                      # a run still in progress is never stale
+        st=$(cat "$d/started" 2>/dev/null || true); case $st in ''|*[!0-9]*) st=$(stat -c %Y "$d/refs.before" 2>/dev/null || echo "$nowe");; esac
+        age=$(( (nowe - st) / 86400 )); [ "$age" -ge "$STALE" ] || continue
+        st=verified; [ ! -f "$d/applied" ] || st=applied
+        if [ -z "$YES" ]; then echo "would clean $d ($st, ${age}d old)"; plan_n=$((plan_n + 1)); continue; fi
+        if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        echo "$why"; done_n=$((done_n + 1))
+      done
+      if [ -z "$YES" ]; then echo "plan: $plan_n finished run(s) older than $STALE day(s) under $scr; nothing changed, add --yes to clean them"; exit 0; fi
+      echo "cleaned $done_n run(s), kept $kept_n"
+      [ "$bad_n" = 0 ] || exit 1   # a stale run that clean refused (never applied, not merged, refs changed) stays, named, with the reason
+      exit 0
+    fi
+    [ -z "$YES" ] || die "clean: --yes is for --stale"
     if [ -n "$ALL" ]; then
       [ -z "$CLEAN_RUN$DISCARD" ] || die "clean --applied takes no RUN dir and no --discard: it cleans only what is applied and merged"
       [ -d "$SCR" ] || die "clean --applied needs --scratch DIR, the directory the runs were prepared in"
@@ -362,7 +397,7 @@ WRAP
       [ "$bad_n" = 0 ] || exit 1   # an applied run that was refused (not merged, refs changed); a run still in progress is no failure
       exit 0
     fi
-    [ -z "$SCR" ] || die "clean: --scratch is for --applied"
+    [ -z "$SCR" ] || die "clean: --scratch is for --applied and --stale"
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
@@ -385,8 +420,10 @@ WRAP
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
         read -r _ab atip _ < "$RUN/applied"
         rp=$(cat "$RUN/repo.path" 2>/dev/null || true)
-        if [ -n "$rp" ] && [ -z "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then
-          die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+        if [ -n "$rp" ]; then
+          mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
+          [ "$mrc" != 2 ] || die "$RUN/applied does not hold a commit name as its second word, so whether the work is merged cannot be checked: look at it, or --discard drops the run on purpose"
+          [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
         fi
       fi
     fi
@@ -446,7 +483,7 @@ WRAP
       if [ -f "$d/applied" ]; then
         ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(cat "$d/repo.path" 2>/dev/null || true)
         if [ -z "$rp" ]; then mg='?'
-        elif [ -n "$(git -C "$rp" for-each-ref --contains "$atip" --format='%(refname)' refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]; then mg=yes; fi
+        else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
     done;;

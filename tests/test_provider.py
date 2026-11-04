@@ -1687,13 +1687,14 @@ class ShippedClaude(unittest.TestCase):
                 self.assertEqual({t: P.model_for(m, t) for t in P.TIERS}, {t: r["alias"] if use == "alias" else r["model"] for t, r in cat["tiers"].items()})
                 self.assertEqual((m["pattern"], m["effort"]), (cat["pattern"], cat["effort"]))
 
-    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_none(self):
+    def test_claude_code_has_the_notes_the_skills_point_at_and_claude_platform_the_two_directories(self):
         notes = P.definition("claude-code")["notes"]
         self.assertEqual(sorted(notes), ["commands", "exploration", "identity", "session-model", "skills-dir", "spawn"])
         self.assertIn("subagent_type", notes["spawn"])
         self.assertIn('{"skillOverrides": {"NAME": "off"}}', notes["skills-dir"])
         self.assertIn("Not verified", notes["identity"])                         # it says plainly what is not verified
-        self.assertNotIn("notes", P.definition("claude-platform"))
+        # the cloud runtime has no spawn notes; its two are the hosted directories lib/team.sh and lib/collect.sh ask for (provider notes --surface cloud)
+        self.assertEqual(P.definition("claude-platform")["notes"], {"clone-dir": "/workspace", "output-dir": "/mnt/session/outputs"})
 
     def test_claude_code_carries_the_layout_the_agent_names_and_the_launch_line(self):
         self.assertEqual(P.layout("claude-code", home="/h")["user_skills_dir"], "/h/.claude/skills")

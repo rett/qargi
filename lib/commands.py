@@ -619,11 +619,12 @@ COMMANDS = {
             "addenda": verb("Print the texts a runtime's definition adds to the member contract (a cloud agent's prompt, or the run's contract directory on the local surface)", [("NAME", "none"), ("SURFACE", "none")],
                             desc="resources.contract_addenda of the definition: plain text files in its own directory, printed in the order it lists them; nothing when it lists none. "
                                  "A file that is missing, is not text or leaves the directory is refused."),
-            "notes": verb("Print a note of the project's local runtime, or list the topics it has", [("TOPIC", "none", True)],
-                          [opt("--project", "the project whose local runtime is asked (default: the one in effect)", "PROJECT", "project")],
+            "notes": verb("Print a note of the project's runtime (local unless --surface cloud), or list the topics it has", [("TOPIC", "none", True)],
+                          [opt("--project", "the project whose runtime is asked (default: the one in effect)", "PROJECT", "project"),
+                           opt("--surface", "the surface whose runtime is asked (default local); the cloud runtime's notes say where a hosted session keeps its outputs and clones (output-dir, clone-dir)", "SURFACE", ("local", "cloud"))],
                           desc="The notes of a runtime's definition say how it does what a skill asks of it (how a lead starts a member, where it keeps its skills). "
                                "With a TOPIC the text is printed; without, the names of the topics, one per line. The definition is the runtime's composed with the project's "
-                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no local runtime, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
+                               "enabled extensions. A topic the runtime does not have, or a runtime with no notes, is exit 1, naming both and listing the topics there are; a project with no runtime on the surface, or a runtime that cannot be used as it stands (a library pack not sealed or changed since it was sealed, an unreadable definition), is exit 2 (a refusal; there is no default). Read-only."),
             "model": verb("Print the model a runtime maps a tier to on a surface", [("NAME", "none"), ("SURFACE", "none"), ("TIER", "none")]),
             "attest": verb("Record a capability you verified by hand or by a paid run (never runs or spends anything itself)", [("NAME", "none"), ("CAPABILITY", "none")],
                            [opt("--asked", "your words asking for this spend check", "WORDS"), opt("--did", "what was run, in your words", "TEXT"),
@@ -684,14 +685,19 @@ COMMANDS = {
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
-                           opt("--scratch", "with --applied: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
+                           opt("--stale", "list the finished runs (RUN/verified or RUN/applied exists) under --scratch that are at least DAYS days old, from the run's start; with --yes clean each of them by the rules below, and keep and name those clean refuses; a run still in progress is never listed", "DAYS"),
+                           opt("--yes", "with --stale: clean the runs it lists (without it nothing changes)"),
+                           opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
                                 "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
-                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard."),
-                          examples=["qargi local clean --applied --scratch /tmp/scratch"]),
+                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard. "
+                                "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
+                                "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
+                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only."),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
@@ -868,7 +874,9 @@ COMMANDS = {
                  "(also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes "
                  "nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as "
                  "untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory "
-                 "notes go to the stores named in the project's answers. It asks at a terminal; --dry-run shows the plan without one."),
+                 "notes go to the stores named in the project's answers. An archive's project answers never add or change models.extensions or "
+                 "models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, "
+                 "or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one."),
         "scripts": ["transfer.py"],
         "usage": [("FILE", "file")],
         "opts": [opt("--only", "the parts to import (default: ask)", "PARTS", ("config", "definitions", "memories", "state", "credentials")),
