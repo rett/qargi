@@ -110,6 +110,19 @@
       "link": {
         "user": "dir-symlink"
       }
+    },
+    "transcripts": {
+      "user_dir": "~/.claude/projects/{checkout_key}",
+      "checkout_key": "nonalnum-dash",
+      "ext": ".jsonl",
+      "window": 200000,
+      "usage": {
+        "select": {"/type": "assistant"},
+        "skip": {"/isSidechain": true},
+        "tokens": "/message/usage",
+        "fields": ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"],
+        "model": "/message/model"
+      }
     }
   },
   "agents": {
