@@ -2685,5 +2685,71 @@ class LibraryScripts(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+class ThirdReview(unittest.TestCase):
+    """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
+    (what `qargi local prepare` makes: clone, out, the record) with every protected location a member could aim at."""
+    def setUp(self):
+        self.t = os.path.realpath(tempfile.mkdtemp())
+        self.home, self.conf, self.state = (os.path.join(self.t, d) for d in ("home", "conf", "state"))
+        self.run_dir = os.path.join(self.t, "run")
+        self.clone, self.out = os.path.join(self.run_dir, "clone"), os.path.join(self.run_dir, "out")
+        for d in ("home/.claude/skills/x", "home/.claude/agents", "home/.claude/plugins/p", "conf/packs/skills/s", "conf/credentials", "state/features", "run/clone/sub", "run/clone/docs",
+                  "run/out", "run/contract", "run/home"):
+            os.makedirs(os.path.join(self.t, d))
+        for name, text in (("run/ability", "build\n"), ("run/refs.before", ""), ("run/class", "write\n"), ("run/repo.path", self.t + "\n"), ("run/tmpdir", self.t + "/tmp\n"),
+                           ("run/started", "1\n"), ("conf/credentials/marshal_ed25519", "key\n"), ("conf/credentials/other", "x\n"), ("state/ref-journal.jsonl", "{}\n"),
+                           ("state/features/proj-f.json", "{}\n")):
+            with open(os.path.join(self.t, name), "w") as f:
+                f.write(text)
+        self.key = os.path.join(self.conf, "credentials", "marshal_ed25519")
+        self.targets = {"skills": os.path.join(self.home, ".claude/skills/x/SKILL.md"), "agents": os.path.join(self.home, ".claude/agents/m.md"),
+                        "plugins": os.path.join(self.home, ".claude/plugins/p/f"), "packs": os.path.join(self.conf, "packs/x/SKILL.md"),
+                        "credentials": os.path.join(self.conf, "credentials/c"), "features": os.path.join(self.state, "features/f.json"),
+                        "ref-journal": os.path.join(self.state, "ref-journal.jsonl")}
+
+    def tearDown(self):
+        shutil.rmtree(self.t, ignore_errors=True)
+
+    def env(self):
+        e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
+        e.update({"HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+        return e
+
+    def call(self, tool, inp, cwd=None, cls=None):
+        return subprocess.run([BIN, "__guard"] + (["--class", cls] if cls else []), input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or os.path.join(self.clone, "sub")}),
+                              capture_output=True, text=True, env=self.env())
+
+    def table(self, cmds, cwd=None, cls=None):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:
+            return list(zip(cmds, ex.map(lambda c: self.call("Bash", {"command": c}, cwd, cls), cmds)))
+
+    def not_refused(self, cmds, cwd=None, cls=None):
+        return [(c, r.stderr.strip()[:80]) for c, r in self.table(cmds, cwd, cls) if r.returncode != 2]
+
+    def not_allowed(self, cmds, cwd=None, cls=None):
+        return [(c, r.stderr.strip()[:120]) for c, r in self.table(cmds, cwd, cls) if r.returncode != 0]
+
+    # --- finding 1: a redirection before the program, or with no program, is judged like any other write and read
+    BARE = (">T", "> T", "2>T", "2> T", "<>T", ">>T", "&>T", ">|T", "exec 3>T; echo payload >&3", "exec 3> T; echo payload >&3", "exec >T", "exec 1>>T", "exec 3<>T; echo hi >&3",
+            "exec {fd}>T; echo hi >&$fd", "{ >T; }", "( >T )", "true && >T", "if true; then >T; fi", "false || >T", "echo a | >T", "X_=1 >T", "> T echo payload", "2>T true")
+
+    def test_a_redirection_with_no_program_or_before_it_is_judged_like_a_write(self):
+        cmds = [form.replace("T", path) for path in self.targets.values() for form in self.BARE]
+        cmds += [">~/.claude/skills/x/SKILL.md", ">$HOME/.claude/skills/x", "exec 3>~/.claude/skills/x/SKILL.md; echo payload >&3"]
+        self.assertEqual(self.not_refused(cmds), [])
+        for c in (": > %s/note", "> %s/note", "exec 3>%s/note; echo hi >&3", "2>%s/note true"):
+            self.assertEqual(self.not_allowed([c % self.clone]), [], c)
+
+    KEYS = ("exec 3<K; cat <&3", "exec 3< K; cat <&3", "<K cat", "< K cat", "exec <K; cat", "exec < K", "{ <K cat; }", "( <K cat )", "true && <K cat", "0<K cat", "3<K cat <&3", "<K",
+            "< K", "if true; then <K cat; fi", "<K head -c 5", "exec 4<K", "A=1 <K cat")
+
+    def test_a_redirection_before_the_program_or_with_none_reads_the_key(self):
+        cmds = [form.replace("K", self.key) for form in self.KEYS] + [form.replace("K", "$QARGI_CONF/credentials/marshal_ed25519") for form in self.KEYS[:6]]
+        self.assertEqual(self.not_refused(cmds), [])
+        for c in ("exec 3<%s/credentials/other; cat <&3", "<%s/credentials/other cat", "ls %s/credentials/marshal_ed25519", "< %s/credentials/other cat"):
+            self.assertEqual(self.not_allowed([c % self.conf]), [], c)
+
+
 if __name__ == "__main__":
     unittest.main()

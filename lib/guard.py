@@ -1096,7 +1096,7 @@ def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
     is read with ~ and variables expanded, braces and globs expanded, symbolic links followed; `--opt=path`, `-Opath` and a
     `<path` redirection are read as their path too."""
-    cands = {word, word.lstrip("<"), word.split("=", 1)[-1]}
+    cands = {word, word.lstrip("<"), re.sub(r"^(?:\d+|&)?[<>]+[&|]?", "", word), word.split("=", 1)[-1]}     # 3<key, <key, <>key, <&key
     if word.startswith("-") and not word.startswith("--"):
         cands.add(word[2:])
     for c in cands:
@@ -1118,13 +1118,13 @@ def key_refusal_text(prog, word, tool=None):
 
 
 def key_read(toks, i, here):
-    """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program."""
-    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
-    if prog in KEY_METADATA:
-        return None
+    """The reason a Bash segment reads the lead's signing key, or None: any word of it that names the key, whatever the program, the words before the program
+    (`<key cat`, `exec 3<key`) and a segment with no program at all. ls, stat and test only look at a file: their own operands are not read, a redirection
+    in front of them is."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
     recursive = prog in KEY_RECURSIVE and (prog != "find" or any(t in FIND_ACTIONS for t in rest))
     recursive = recursive or prog in KEY_LINKERS or (prog == "cp" and any(LINK_FLAGS.match(t) or t in ("--symbolic-link", "--link") for t in rest))
-    for t in [toks[i]] + rest if any(d + os.sep + KEY_PREFIX in toks[i] for d in key_dirs()) else rest:    # a `;` in quoted code split it: its tail is a "program"
+    for t in toks[:i] if prog in KEY_METADATA else toks:
         named = key_named(t, here, recursive)
         if named:
             return key_refusal_text(prog, named)
@@ -1212,7 +1212,10 @@ def bash_skill_refusal(command, here, depth):
         why = lead_refusal(prog, rest, toks[:i + 1])
         if why:
             return why
-        if i >= len(toks):
+        if i >= len(toks):                               # redirections and nothing else (`>f`, `exec 3>f`, `<key`): still a write and a read
+            why = protected_write(toks, i, here) or key_read(toks, i, here)
+            if why:
+                return why
             continue
         if prog == "cd" and rest:
             here = resolve(here, rest[0])
@@ -1448,8 +1451,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
 
 
 def protected_write(toks, i, here):
-    """The reason a segment writes under a protected location, or None (the heuristic the docstring describes)."""
-    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
+    """The reason a segment writes under a protected location, or None (the heuristic the docstring describes). i is past the last word when the segment
+    is redirections alone."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
     args = [t for t in rest if not t.startswith("-") and not REDIR.match(t)]
     cands = list(write_targets(toks, i))
     if prog in SCRIPTS or (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and args and os.path.basename(args[0]) in SCRIPTS:
