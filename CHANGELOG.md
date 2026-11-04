@@ -68,6 +68,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recorded a signature that still holds (no signed file or signature changed), then `VERSION is ready for signing:
   qargi release sign VERSION` when the repository is at the tag with the files built, or what stands in the way. It stays
   silent about signing once GitHub has the release.
+- Release answers that fit a project's own layout, all optional: `release.version_file` (the file `release start` bumps, default `VERSION`;
+  `none` for a project with no version file, where the version is the changelog heading and the tag), `release.changelog.unreleased`
+  and `release.changelog.released` (heading templates with `{version}` and `{date}`, default `## [Unreleased]` and
+  `## [{version}] - {date}`; an unreleased heading that carries the version, such as `## {version} (unreleased)`, is renamed to the
+  released one), `release.man_pages` (the pages whose `.TH` date and version `release start` sets, default the `man/*.1` files),
+  `release.test_command` (what `release verify` runs, a command line or a list of words; default `test_command`) and `release.preflight` (a
+  command as a list of words, `{version}` replaced, run by `release start` and `release push` before they change anything; a non-zero
+  exit refuses and shows the tail of its output). `project validate`, `init` and `set` refuse a malformed one; `project attach` and
+  `adopt` read the changelog heading and the version file by them; `qargi project set` completes the keys.
+- `lib/changelog_section.sh VERSION FILE HEADING` finds the section by a released-heading template; `release publish` passes
+  `release.changelog.released`.
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.
@@ -105,6 +116,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi help guard` (and the GUARD section of the manual page) says that the registry of local runs is protected like the ref journal, that nobody copies, extracts or links into the run directory, that a `cd` is followed only when it surely happens (else both directories are judged), and that a check over 5 seconds is refused; the topic stays within its 330 words (the text on the guard's own provider verbs shortened to "the rest read"). The header of `lib/guard.py` describes the cuts of a line and where the shell is in each, the run and its record, and the time budget.
 - The word budget test (`tests/test_skill_budget.sh`) fails a ceiling in `tests/skill-budget.txt` that is above its value at the merge base with `origin/develop` unless its line carries a `# raised: reason` comment (skipped with a notice when there is no such base), and it counts the notes of each runtime definition (`lib/providers/NAME.json:notes`) as one more budgeted text.
 - `qargi team brief` and `qargi collect` no longer hard-code the hosted session's output and clone directories: they ask the notes (`output-dir`, `clone-dir`) of the project's cloud runtime. A brief for a project with no cloud runtime is refused (no runtime is assumed); `collect` finds the project from the session's instance and keeps only the base name of a listed file it cannot place.
+- `release finish` refuses a branch whose manual page has an empty `.TH` date or version, and, when `release.version_file` is `none`, a
+  changelog with no section for the version. `release start` checks that the page it wrote carries both.
 
 ### Fixed
 - `agent` verbs check the `agents.json` records of the project they are about (`--project`, else the project in effect) and not of every project: one hand-broken record no longer stops `agent for` in the others (`agent list` without `--project` still checks them all).
@@ -180,6 +193,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   manifest now carries a mode for each file (`0600`, or `0700` for an executable file of the pack library), the import verb restores it,
   and a file that differs only in that bit is a change in the plan. An archive whose manifest holds any other mode, or none (breaking: an
   archive made by an earlier qargi has none), is refused: export it again.
+- A release no longer leaves a manual page with an empty `.TH` date: `release start` always sets the date and the version of every page
+  (an empty date field is filled), and `release finish` refuses a page that lost them after the start.
 
 ### Removed
 - `qargi credential askpass FILE` (an internal verb nothing called) and the second, unreachable `version)` branch of `bin/qargi`.
@@ -206,6 +221,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A skill or tool pack with a file over 1 MB is refused by its review (`larger than 1000000 bytes`, as for a provider pack). The check skipped such a file unread and only the 2 MB total applied, so a 1-2 MB binary passed. The content hash of a skill pack also covers a link, a pipe, a socket, an empty directory and a file with a second name (`find -type f` saw none of them, so an approved pack could gain one with the hash unchanged); a pack without any of them hashes as before, so no approval is lost.
 - `qargi local prepare` refuses a `--repo-url` that carries a user name or a password (`https://user@host/...`): the URL is recorded and put in commands, and the substitution of the token in front of the host made `https://x-access-token@user@host`. The token goes in `--credential-file`.
 - `qargi project link` (memory) compares the real paths of the project's memory directory and of the memory root, so a link below the root that leads outside it is refused as outside (the paths were compared as written), and a project whose tiers resolve without a project tier is refused with a message instead of a `StopIteration` traceback.
+- `qargi project set` of `release.*`, `test_command` or `env.*` is refused to a member, as `models.*` is: the lead later runs those commands
+  (the preflight, `release verify`, the suite), so a member that set them would run its own command with the lead's rights.
 
 ## [0.2.0] - 2026-11-02
 

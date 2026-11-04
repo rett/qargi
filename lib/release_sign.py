@@ -8,6 +8,8 @@ Answers, under `release` in the project's answers file:
   release.sign.verify_command  optional argv list, run in the repository after signing (no shell)
   release.assets               files to attach to the GitHub release, relative to the repository
   release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
+  release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
+                               the layout of what a release updates and runs; lib/release_layout.py describes and checks them
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
 result of the signing and of verify_command. Nothing the person types (the passphrase) ever reaches this file or any argument of it.
@@ -22,9 +24,12 @@ result of the signing and of verify_command. Nothing the person types (the passp
 """
 import hashlib, json, os, re, sys, time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import release_layout   # the layout answers of a release (version_file, changelog, man_pages, test_command, preflight)
+
 NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:+-]{0,63}")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
-RELEASE_KEYS = ("sign", "assets", "notes_file")
+RELEASE_KEYS = ("sign", "assets", "notes_file") + release_layout.LAYOUT_KEYS
 SIGN_KEYS = ("key", "namespace", "files", "verify_command")
 
 
@@ -40,7 +45,7 @@ def problems(rel):
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file}"]
+        return ["release: an object like {sign, assets, notes_file, version_file, changelog, man_pages, test_command, preflight}"]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))
@@ -52,6 +57,7 @@ def problems(rel):
         n = rel["notes_file"]
         if not (isinstance(n, str) and rel_ok(n.replace("{version}", "0.0.0"))):
             out.append("release.notes_file: a file name relative to the repository, {version} standing for the version (no .., no #, not starting with - or /)")
+    out.extend(release_layout.problems(rel))
     if "sign" in rel:
         s = rel["sign"]
         if not isinstance(s, dict):

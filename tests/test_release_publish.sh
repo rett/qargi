@@ -81,6 +81,15 @@ grep -q "^note: gh is not installed" <<<"$out" && [ -n "$t2" ] && ok "the plan i
 QARGI_GH=$T/nogh $REL publish 0.1.0 --plan "$t2" --approved go >/dev/null 2>&1 && no "applied without gh" || ok "applying without gh refuses"
 mode unauth; out=$($REL publish 0.1.0 --plan "$t" --approved go 2>&1) && no "applied unauthenticated" || ok "applying with an unauthenticated gh refuses"
 
+# --- publish: the notes follow the answer release.changelog.released (a project that does not use Keep a Changelog headings)
+R3=$T/reltpl; git init -q -b master "$R3"
+printf '# Changes\n\n## v0.4.0 (2026-02-02)\n\n- the templated thing\n\n## v0.3.0 (2026-01-02)\n- older\n' > "$R3/CHANGELOG.md"
+git -C "$R3" add -A && git -C "$R3" commit -q -m one && git -C "$R3" tag -a 0.4.0 -m 0.4.0 && git -C "$R3" tag -a 0.3.0 -m 0.3.0 && git -C "$R3" branch develop
+jq -n --arg p "$R3" '{schema:1, project:"reltpl", methodology:"gitflow", repo:{url:"https://github.com/acme/reltpl", path:$p, long_lived:["master","develop"]}, test_command:"true", release:{changelog:{released:"## v{version} ({date})"}}}' > "$T/c/projects/reltpl.json"
+mode missing; out=$(QARGI_PROJECT=reltpl $REL publish 0.4.0 2>&1)
+grep -q -- "- the templated thing" <<<"$out" && ! grep -q -- "- older" <<<"$out" && ok "the notes are the section whose heading follows release.changelog.released" || no "templated notes: $out"
+out=$(QARGI_PROJECT=reltpl $REL publish 0.5.0 2>&1) && no "published a version with no tag" || ok "a version the templated changelog lacks is not published"
+
 # --- publish: assets in the same create call, a notes file, and the signature gate
 ROOT=$PWD; cd "$T" || exit 1   # the lead works outside any run directory (inside one, release sign is refused as a member's)
 RR=$(realpath "$R"); mkdir -p "$R/dist" "$T/fakebin"
