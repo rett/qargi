@@ -73,7 +73,7 @@ journaled() {
 compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
   local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
-  # refs/qargi/ is dropped on both sides, so a snapshot taken before this rule existed compares the same way
+  # refs/qargi/ is dropped on both sides
   if ! diff -u <(grep -v "$hd" "$ref" | drop_qargi_refs) <(grep -v "$hd" "$aft" | drop_qargi_refs); then bad=1; fi
   if [ -n "$strict" ]; then
     # strict: a local branch may differ only as far as the lead's ref journal explains it; nothing else (no fast-forward rule)

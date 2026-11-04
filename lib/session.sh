@@ -96,8 +96,8 @@ start_with_repo() { # name [credential-file] -> session id (the lead always star
 # (start-session, a pure builder); the system comes from qargi's own files, never from the task text.
 is_base_inst() { local r=${1#*-}; [ "$r" != "$1" ] && is_base "$r"; }
 
-# A base started without --role is the role-neutral standby session of the base, as before; --role makes it a session for a role.
-no_base_opts() { # name: a legacy instance has its role in its name
+# A base started without --role is the role-neutral standby session of the base; --role makes it a session for a role.
+no_base_opts() { # name: an instance of one role has its role in its name
   if is_base_inst "$1"; then
     [ -z "$BPROFILE$OPTIN" ] || die "--profile and --opt-in need --role ROLE: $1 is a base"
   else

@@ -24,7 +24,7 @@ skills/qargi-flow/marshal.md 435
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 292
-skills/qargi-packs/SKILL.md 753
+skills/qargi-packs/SKILL.md 749
 skills/qargi-packs/apply.md 639
 skills/qargi-packs/seed.md 250
 skills/qargi-project/SKILL.md 877
