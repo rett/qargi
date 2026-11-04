@@ -1,4 +1,5 @@
-# What the texts a member or a lead loads (skills/, roles/, agents/, contract/, packs/skills/) may still say about a vendor.
+# What the texts a member or a lead loads (skills/, roles/, agents/, contract/, packs/skills/) and what the tool writes into a repository
+# (provision/templates/*.md, methodologies/) may still say about a vendor.
 # tests/test_neutral.sh reads this file: FILE:COUNT, COUNT being the lines of FILE that match claude|anthropic|managed agents?|haiku|sonnet|opus|\bant\b|agent tool
 # (case-insensitive). A file with more, or one not listed, fails; so does an entry above the real count. The list can only shrink: when a line is
 # made neutral, lower or delete its entry. Sorted.
@@ -12,3 +13,8 @@ skills/qargi-providers/definition.md:1
 # The member template of the Claude member file (the adapter's template, the same lines as the render) and the file name CLAUDE.md that repositories use.
 agents/member.md:1
 contract/contract.md:1
+
+# The gitflow methodology scaffolds the CLAUDE.md file a repository keeps for its agents (the copy entry names the file) and ignores the local
+# files of a session of the runtime it was first written for in its gitignore. Neither is configurable yet.
+methodologies/gitflow/methodology.json:2
+methodologies/gitflow/scaffold/gitignore:3

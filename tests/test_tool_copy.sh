@@ -42,14 +42,23 @@ done
 [ -z "$missing" ] && ok "every top-level directory is in TOOL_DIRS or is one a copy does not need" || no "top-level directories in neither TOOL_DIRS (tests/hermetic.sh) nor NOT_COPIED here:$missing"
 for d in $TOOL_DIRS; do [ -e "$d" ] || no "TOOL_DIRS names $d, which the repository does not have"; done
 
-# 3. copy_tool
+# 3. install.sh --copy copies every directory a modified copy needs (TOOL_DIRS), whatever else it copies, and nothing the repository lacks
+inst=$(sed -n 's/^tool_dirs="\(.*\)"$/\1/p' install.sh)
+[ -n "$inst" ] || no "install.sh has no tool_dirs= line"
+lack=; for d in $TOOL_DIRS; do case " $inst " in *" $d "*) ;; *) lack="$lack $d";; esac; done
+[ -n "$inst" ] && [ -z "$lack" ] && ok "install.sh --copy copies every entry of TOOL_DIRS" || no "install.sh tool_dirs lacks:$lack"
+extra=; for d in $inst; do [ -e "$d" ] || extra="$extra $d(missing)"; case " $TOOL_DIRS $NOT_COPIED " in *" $d "*) ;; *) extra="$extra $d(unknown)";; esac; done
+[ -z "$extra" ] && ok "and every entry of its list exists and is in TOOL_DIRS or NOT_COPIED" || no "install.sh tool_dirs has:$extra"
+grep -nE 'cp -r "\$here/(bin|lib|provision)' install.sh >/dev/null && no "install.sh spells the directories out again" || ok "install.sh copies from the one list, not a second spelled one"
+
+# 4. copy_tool
 mkdir -p "$T/src/lib" "$T/src/contract"; echo a > "$T/src/lib/a"; echo b > "$T/src/contract/b"; echo 1 > "$T/src/VERSION"; echo x > "$T/src/other"
 copy_tool "$T/src" "$T/all"
 [ -f "$T/all/lib/a" ] && [ -f "$T/all/contract/b" ] && [ -f "$T/all/VERSION" ] && [ ! -e "$T/all/other" ] && [ ! -e "$T/all/bin" ] && ok "copy_tool copies the entries of TOOL_DIRS that exist and nothing else" || no "copy_tool: $(find "$T/all" | sort | tr '\n' ' ')"
 copy_tool "$T/src" "$T/some" lib VERSION
 [ -f "$T/some/lib/a" ] && [ -f "$T/some/VERSION" ] && [ ! -e "$T/some/contract" ] && ok "copy_tool with names copies only those" || no "copy_tool names: $(find "$T/some" | sort | tr '\n' ' ')"
 
-# 4. the Python tests read the same list
+# 5. the Python tests read the same list
 py=$(python3 -I -c 'import sys; sys.path.insert(0, "tests"); import hermetic; print(" ".join(hermetic.TOOL_DIRS))' 2>&1)
 [ "$py" = "$TOOL_DIRS" ] && ok "tests/hermetic.py has the list of tests/hermetic.sh" || no "hermetic.py: $py"
 exit $fail
