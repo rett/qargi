@@ -651,7 +651,7 @@ COMMANDS = {
         "opts": [ASKED],
     },
     "local": {
-        "summary": "Prepare, verify and clean a local run that has no way to push",
+        "summary": "Prepare, verify, list and clean a local run that has no way to push",
         "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
@@ -681,13 +681,21 @@ COMMANDS = {
                            desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
                                  "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
-            "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir")],
-                          [opt("--discard", "also clean a run whose output holds no manifest, or whose commits were never merged (dropped on purpose)")],
+            "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
+                          [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
+                           opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
+                           opt("--scratch", "with --applied: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
-                                "sandboxes in; clean removes it with the clone, the bare copy and the output. It refuses a run whose output has no "
-                                "manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
+                                "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
+                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
-                                "finished work is not deleted by mistake.")),
+                                "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
+                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard."),
+                          examples=["qargi local clean --applied --scratch /tmp/scratch"]),
+            "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
+                         [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
+                         desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
+                               "It is the list that qargi local clean --applied --scratch DIR acts on.")),
         },
     },
     "review": {
