@@ -150,7 +150,69 @@ git -C "$T/r3" update-ref -d refs/heads/moved; git -C "$T/r3" update-ref -d refs
 git -C "$T/r3" tag t-qargi "$HEAD3"
 [ "$(rc "$P5")" = 2 ] && ok "a new tag still fails" || no "tag accepted"
 git -C "$T/r3" tag -d t-qargi >/dev/null
-rm -rf "$C1" "$TM"
+# --discard drops a run whose refs changed (the evidence the plain clean keeps), says so, and still only touches what prepare made
+mkdir "$T/qargi.zzzzzz"; touch "$T/qargi.zzzzzz/keep"
+./bin/qargi local clean "$T/c" --discard >/dev/null 2>&1 && no "--discard cleaned a directory that is not a run" || ok "--discard still refuses a directory prepare did not make"
+./bin/qargi local clean "$T/qargi.zzzzzz" --discard >/dev/null 2>&1 && no "--discard cleaned a lookalike directory" || ok "and one that is named like a run but has no refs.before"
+[ -d "$T/c" ] && [ -f "$T/qargi.zzzzzz/keep" ] && ok "and removes nothing" || no "a refused --discard removed something"
+rm -rf "$T/qargi.zzzzzz"
+err=$(./bin/qargi local clean "$C1" --discard 2>&1 >/dev/null); rcd=$?
+[ $rcd = 0 ] && [ ! -e "$C1" ] && [ ! -e "$TM" ] && grep -q 'warning: the refs of the repository changed' <<<"$err" && grep -q 'branch moved' <<<"$err" \
+  && ok "--discard removes a run whose refs changed, with its temporary directory, and prints the verify outcome as a warning" || no "discard after changed refs (rc=$rcd): $err"
+# a recorded temporary directory outside /dev/shm and QARGI_RUN_TMP is not removed
+out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c6 --scratch "$T"); C6=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM6=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
+mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; printf '%s\n' "$T/elsewhere/qargi-run.abcdef" > "$C6/tmpdir"
+err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
+  && ok "a recorded TMP that is not under QARGI_RUN_TMP or /dev/shm is left alone, with a note" || no "foreign tmpdir: $err"
+rm -rf "$TM6" "$T/elsewhere"
+# list and clean --applied: the runs of one scratch directory
+git init -q -b main "$T/r6" && $LC -C "$T/r6" commit -q --allow-empty -m one
+mkdir -p "$T/ls" "$T/ls2"
+lrun() { # slug scratch -> the run directory, with one commit in its clone, a manifest and a passing verify
+  local o r g c
+  o=$(./bin/qargi local prepare --repo "$T/r6" --base main --slug "$1" --scratch "$2") || return 1
+  r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
+  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{}' > "$r/out/manifest.json"
+  ./bin/qargi local verify "$r" >/dev/null 2>&1; echo "$r"
+}
+applied() { # run branch -> a commit on top of main named for the run, recorded in RUN/applied; prints the sha
+  local sha; sha=$($LC -C "$T/r6" commit-tree -p main -m "applied $1" "$(git -C "$T/r6" rev-parse 'main^{tree}')")
+  printf '%s %s now\n' "$2" "$sha" > "$1/applied"; echo "$sha"
+}
+LA=$(lrun la "$T/ls"); LB=$(lrun lb "$T/ls"); LCC=$(lrun lc "$T/ls"); LD=$(lrun ld "$T/ls2")
+TMA=$(cat "$LA/tmpdir"); TMB=$(cat "$LB/tmpdir")
+SA=$(applied "$LA" agent/la); git -C "$T/r6" update-ref refs/heads/feature/la "$SA"
+SB=$(applied "$LB" agent/lb); git -C "$T/r6" update-ref refs/heads/agent/lb "$SB"
+SD=$(applied "$LD" agent/ld); git -C "$T/r6" update-ref refs/heads/feature/ld "$SD"
+before=$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)
+out=$(./bin/qargi local list --scratch "$T/ls"); rcl=$?
+[ $rcl = 0 ] && [ "$(head -1 <<<"$out" | awk '{print $1,$2,$3,$4,$5,$6}')" = "ROLE SLUG AGE APPLIED MERGED RUN" ] \
+  && [ "$(awk '$2=="la"{print $1,$4,$5,$6}' <<<"$out")" = "build yes yes $LA" ] && [ "$(awk '$2=="lb"{print $1,$4,$5}' <<<"$out")" = "build yes no" ] \
+  && [ "$(awk '$2=="lc"{print $1,$4,$5}' <<<"$out")" = "build no no" ] && ! grep -q "$LD" <<<"$out" && [ "$(wc -l <<<"$out")" = 4 ] \
+  && ok "list --scratch DIR: role, slug, age, applied and merged of each run in that directory only" || no "list: rc=$rcl $out"
+out=$(./bin/qargi local list); for sl in la lb lc ld; do awk -v s=$sl '$2==s{f=1} END{exit !f}' <<<"$out" || no "the registry list lacks $sl"; done
+awk '$2=="ld"{f=1} END{exit !f}' <<<"$out" && ok "list with no --scratch reads the registry (runs that still exist)" || no "registry list: $out"
+[ "$before" = "$(find "$T/ls" "$T/ls2" -type f -printf '%p %T@ %s\n' | sort | sha256sum)" ] && ok "and list changes nothing" || no "list changed a file"
+./bin/qargi local list --scratch "$T/nonexistent" >/dev/null 2>&1 && no "list accepted a missing directory" || ok "list refuses a directory that does not exist"
+for bad in "--applied" "--applied --scratch $T/ls $LA" "--applied --discard --scratch $T/ls" "--scratch $T/ls $LA" "--applied --scratch $T/nonexistent"; do
+  # shellcheck disable=SC2086
+  ./bin/qargi local clean $bad >/dev/null 2>&1 && no "clean $bad was accepted" || ok "clean $bad is refused"
+done
+[ -d "$LA" ] && [ -d "$LB" ] && [ -d "$LCC" ] && [ -d "$LD" ] && ok "and the refused calls removed nothing" || no "a refused call removed a run"
+mkdir "$T/ls/qargi.zzzzzz"; touch "$T/ls/qargi.zzzzzz/keep"; ln -s "$LD" "$T/ls/qargi.linkdd"
+out=$(./bin/qargi local clean --applied --scratch "$T/ls" 2>&1); rca=$?
+[ ! -e "$LA" ] && [ ! -e "$TMA" ] && grep -q "^cleaned $LA" <<<"$out" && ok "clean --applied removes a run whose work is applied and merged, with its temporary directory" || no "applied+merged run: $out"
+[ -d "$LB" ] && [ -d "$TMB" ] && [ $rca = 1 ] && grep -q "kept $LB: .*not merged into any branch" <<<"$out" && ok "an applied run that is not merged is kept, named, with the reason (exit 1)" || no "unmerged run (rc=$rca): $out"
+[ -d "$LCC" ] && grep -q "kept $LCC: its work is not recorded applied" <<<"$out" && ok "a run that was never applied is kept" || no "unapplied run: $out"
+[ -d "$LD" ] && [ -f "$T/ls/qargi.zzzzzz/keep" ] && [ -L "$T/ls/qargi.linkdd" ] && ok "nothing outside the directory's own run directories is touched (another scratch, a lookalike, a link)" || no "outside the scope: $out"
+git -C "$T/r6" update-ref refs/heads/feature/lb "$SB"
+out=$(./bin/qargi local clean --applied --scratch "$T/ls" 2>&1); rca=$?
+[ ! -e "$LB" ] && [ ! -e "$TMB" ] && [ -d "$LCC" ] && [ $rca = 0 ] && ok "once merged it is removed, and a run still in progress is no failure (exit 0)" || no "after merge (rc=$rca): $out"
+rm -f "$T/ls/qargi.linkdd"; rm -rf "$T/ls/qargi.zzzzzz"
+git -C "$T/r6" tag t-evidence "$SA"
+out=$(./bin/qargi local clean --applied --scratch "$T/ls2" 2>&1); rca=$?
+[ $rca = 1 ] && [ -d "$LD" ] && grep -q "kept $LD: .*refs of the repository changed" <<<"$out" && ok "an applied and merged run whose refs changed is kept as evidence" || no "changed refs (rc=$rca): $out"
+git -C "$T/r6" tag -d t-evidence >/dev/null
 # a Claude Code render of the project (packs apply --target claude-code): prepare warns about drift, never fails, never changes the block
 git init -q -b main "$T/r4" && $LC -C "$T/r4" commit -q --allow-empty -m one
 mkdir -p "$T/c/projects"
