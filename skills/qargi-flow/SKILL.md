@@ -10,7 +10,7 @@ The model: master holds tagged production releases, develop integrates; feature,
 `--no-ff`. qargi runs the commands in temporary worktrees: your checkout is never touched, a branch moves only after every
 merge succeeded, and a refusal changes nothing. Merging into develop or master, pushing and tagging need a plan token and the
 user's words: never invent an approval; print the plan, show it, apply exactly that (`qargi help approvals`). `qargi project adopt PROJECT` creates the missing long-lived branches locally and the missing methodology files on a branch to
-review (plan and token, never pushes); `qargi methodology show gitflow` prints the model.
+review; `qargi methodology show gitflow` prints the model.
 
 **Load `marshal.md`** (next to this file) when you claim, take over, or hand off work. The routine:
 
@@ -25,10 +25,10 @@ review (plan and token, never pushes); `qargi methodology show gitflow` prints t
 1. **Start a feature**: check the marshal, then `qargi feature start NAME --purpose "what it is about"`. A feature is a broad,
    related theme, not a task; unrelated work gets its own feature. `qargi feature list` shows every open feature, its purpose
    and any file two of them both change: if they overlap, put the work in one feature or expect to resolve a conflict.
-2. **Run tasks inside it** with `/qargi-task`: `--base feature/NAME`, as large as the feature allows, each with its own `--slug` and a `SCOPE` that does not overlap another task's. Tasks that touch
-   different paths run in parallel; the same file goes one after the other. A task runs targeted checks only. Dispatch with
+2. **Run tasks inside it** with `/qargi-task`: `--base feature/NAME`, each with its own `--slug` and a `SCOPE` that overlaps no other task's; tasks on different
+   paths run in parallel, the same file one after the other. A task runs targeted checks only. Dispatch with
    `qargi agent for ROLE [--profile P]` and spawn as `qargi provider notes spawn` says (bases and profiles: `/qargi-instances`).
-3. **Take each task in**: take it in with `/qargi-verify`.
+3. **Take each task in** with `/qargi-verify`.
 4. **When the feature is complete** (still yours? `qargi marshal check NAME`): `qargi feature sync NAME` (pulls in what other
    features landed; a conflict stops here, see below), `qargi feature verify NAME` (the one whole-suite run), the advisor
    sign-off, then `qargi feature finish NAME`. That is the only merge into
@@ -45,13 +45,13 @@ review (plan and token, never pushes); `qargi methodology show gitflow` prints t
    `release finish --hotfix` (merges into the open release branch instead of develop when one exists).
 
 `qargi feature status NAME` and `qargi release status VERSION` show where a branch stands and whether the whole-suite run is
-current. Any merge into a branch, or a change of the test command, makes an earlier run stale: say so and run it again rather
+current. Any merge into a branch, or a change of the test command, makes an earlier run stale: run it again rather
 than finishing on it.
 
 ## When a merge conflicts (exit 3)
 
 Nothing was changed. The message names a worktree under the state directory with the merge in progress and the conflicted files.
-Resolve there (yourself, or delegate it as a build task: the executor works in its own clone and returns the resolution),
+Resolve there (yourself, or as a build task whose executor returns the resolution),
 `git add`, `git commit`, then run the same command again with `--resolved`. It uses exactly your merge, refuses one that is
 not finished or no longer matches the branches, and a rerun without `--resolved` while a resolution waits is refused, not
 overwritten. A conflict over the version number when merging back is the one the model warns about: keep the release's version.
@@ -60,6 +60,8 @@ After a resolution the whole-suite run is stale again; sync, verify, finish.
 ## Rules
 
 - Never commit to master or develop by hand, never force-push, never delete a branch qargi did not create.
+- Keep the main checkout on the parking branch (`qargi feature park`). A `repo.detached` branch never merges with develop or a
+  feature. `qargi branch prune` clears merged branches.
 - Run the whole suite only at a checkpoint (feature complete, release verify); tasks and merges use targeted checks.
 - A tag, once pushed, is final. Say what will be tagged before the plan is applied.
 - Anything unexpected (a refusal you do not understand, a record that looks wrong): stop and tell the user.
