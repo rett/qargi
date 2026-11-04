@@ -1062,10 +1062,10 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "qargi local verify is the backstop of the guard, a hook on a local member's calls: a barrier, not a wall.",
+        "qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; "
-        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; "
+        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
