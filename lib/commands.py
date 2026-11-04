@@ -1024,7 +1024,8 @@ TOPICS = {
         "what the member returned is the backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, link and unlink; "
-        "every provider verb but the read ones (list, show, notes and the like); release publish; marshal claim, set, renew, release, take, "
+        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (check records results, adapter-run runs code; the other "
+        "provider verbs read); release publish; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run.",
         "It refuses writes in the pack library, the credentials directory, the install record, the runtime's skills, agents and plugin "

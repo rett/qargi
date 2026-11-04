@@ -61,7 +61,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
 Provider: `qargi provider accept` (it records that the owner accepts a provider surface with no read-only barrier, which lets a
 read-only role run there) is refused to a member, found like the skill verbs, and so is every other provider verb that changes the
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
-PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda and notes, stay allowed).
+PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
+check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
 Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
 verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
@@ -156,7 +157,7 @@ OWN_ONLY = ("linker.py", "render.py")                       # names too common t
 # against a mistake, not a wall against a member that works to get round it; the local verify of the patches is the backstop.
 MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                          # qargi memory verbs that change a memory tier
 MEMORY_READ = ("tiers", "check", "get", "lint")
-PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes")   # the provider verbs that only read; the rest, and any verb added later, change the definitions
+PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_MUTATING = ("claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable")
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
@@ -1294,6 +1295,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
+    if area == "provider" and verb == "check":
+        return "qargi provider check records what it verified of a library pack (and may run the pack's code) and is not available to an agent"
+    if area == "provider" and verb == "adapter-run":
+        return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
