@@ -224,6 +224,12 @@ records its starter as lead, `feature merge|sync|verify|finish` and `local prepa
 refuse while another live lead holds the feature, and `feature status|list` show the lead. See
 `qargi help marshal`.
 
+A restart gives the lead session a new id. `qargi marshal claim NAME --as-successor-of ID` (the `marshal handoff` note prints the line)
+continues as the lead without the owner's takeover when the old lease is stale and the old record's host, OS user and work tree are
+yours (the work tree is stored as a digest, not a path). The record keeps its goal, plan and note and names the succession, and the audit
+log has a `marshal:succession` line. `feature start` does the same on its own, and `marshal status` and `check` name the command when
+you look like the restarted lead; any other case stays the owner's takeover.
+
 Several machines or people on one project: `qargi marshal enable` (plan and token, then `--plan TOKEN --approved "<your words>"`)
 switches the project from the local records to the shared ones. Each record is then a commit on `refs/qargi/features/NAME` of the
 remote `origin` (ordinary branches and tags are never touched), a claim is a create-only push so two machines cannot both win, every
