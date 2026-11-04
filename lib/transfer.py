@@ -284,7 +284,7 @@ def gather_local(comp, projects):
             for f in sorted(fs):
                 full = os.path.join(dp, f)
                 if os.path.isfile(full) and not os.path.islink(full):
-                    out["config/packs/" + os.path.relpath(full, pk)] = (read(full), None)
+                    out["config/packs/" + os.path.relpath(full, pk)] = (read(full), None, bool(os.stat(full).st_mode & 0o100))
                 elif os.path.islink(full):
                     warn.append("%s is a symbolic link: left out of the archive" % full)
     elif comp == "definitions":
@@ -366,21 +366,27 @@ def is_encrypted(head):
 
 
 # --- export --------------------------------------------------------------------------------------------------------
+def is_exec(item):
+    """True when an item (data, project[, executable]) is a file whose owner may execute it: only the library's files carry the bit."""
+    return len(item) > 2 and bool(item[2])
+
+
 def build_archive(items, comps, projects):
     manifest = {"format": FORMAT, "qargi": version(), "created": now(), "projects": projects, "components": {}, "files": {}}
     for comp in comps:
         manifest["components"][comp] = sum(1 for k in items if k.startswith(COMPONENTS[comp][0] + "/"))
-    for path, (data, proj) in items.items():
-        manifest["files"][path] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": proj}
+    for path, item in items.items():
+        data, proj = item[0], item[1]
+        manifest["files"][path] = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "project": proj, "mode": "0700" if is_exec(item) else "0600"}
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        def add(name, data):
+        def add(name, data, mode=0o600):
             ti = tarfile.TarInfo(name)
-            ti.size, ti.mode, ti.mtime = len(data), 0o600, int(time.time())
+            ti.size, ti.mode, ti.mtime = len(data), mode, int(time.time())
             tf.addfile(ti, io.BytesIO(data))
         add("manifest.json", jdump(manifest))
         for path in sorted(items):
-            add(path, items[path][0])
+            add(path, items[path][0], 0o700 if is_exec(items[path]) else 0o600)
     return buf.getvalue(), manifest
 
 
@@ -535,7 +541,15 @@ def read_tar(raw):
     for p, data in files.items():
         if hashlib.sha256(data).hexdigest() != listed[p].get("sha256"):
             die("%s does not match its checksum: the archive is damaged or was changed" % p)
-    return {p: (files[p], listed[p].get("project")) for p in files}, manifest
+    out = {}
+    for p in files:
+        mode = listed[p].get("mode")
+        if mode is None:
+            die("%s has no mode in the manifest (an archive made by an older qargi): export it again" % p)
+        if not isinstance(mode, str) or not re.fullmatch(r"0[67]00", mode):
+            die("%s has a mode that is not valid (%r): refusing the archive" % (p, str(mode)[:20]))
+        out[p] = (files[p], listed[p].get("project"), mode == "0700" and p.startswith("config/packs/"))
+    return out, manifest
 
 
 def comp_of(path):
@@ -595,7 +609,7 @@ def build_plan(archive, comps, projects, modes):
                 plan.append((k, "append" if new else "same", comp))
             elif k not in local:
                 plan.append((k, "add", comp))
-            elif local[k][0] == mine[k][0]:
+            elif local[k][0] == mine[k][0] and is_exec(local[k]) == is_exec(mine[k]):
                 plan.append((k, "same", comp))
             else:
                 plan.append((k, "change" if modes[comp] != "merge" else "keep", comp))
@@ -735,7 +749,7 @@ def apply_plan(plan, archive, projects):
                 try: os.remove(full)
                 except OSError: pass
             else:
-                write_file(full, archive[path][0], 0o600)
+                write_file(full, archive[path][0], 0o700 if is_exec(archive[path]) and path.startswith("config/packs/") else 0o600)
         done[action] += 1
     return done, bdir
 
