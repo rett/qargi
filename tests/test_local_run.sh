@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-T=$(mktemp -d); fail=0
+T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT; fail=0
 export QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T TMPDIR=$T/tmp
 mkdir -p "$T/tmp" "$T/bin" "$T/c/projects"
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
