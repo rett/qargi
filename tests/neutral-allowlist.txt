@@ -188,19 +188,12 @@ lib/guard.py:hook = CLAUDE_HOOK
 lib/agent.sh:for Claude Code ~/\.claude/agents
 lib/agent.sh:guard\.CLAUDE_HOOK
 
-# lib/packs.sh and lib/packs_render.py: the render directory an earlier version wrote under state/claude, and the target name claude-code
+# lib/packs.sh and lib/packs_render.py: the target name claude-code
 lib/packs.sh:claude-code for Claude Code
-lib/packs.sh:state/claude/PROJECT
-lib/packs.sh:must be claude-code
 lib/packs.sh:packs-apply-claude-code
 lib/packs_render.py:`claude --add-dir DIR`
 lib/packs_render.py:Claude Code: \.claude/skills
-lib/packs_render.py:made under <state>/claude/<project>/
 lib/packs_render.py:make Claude Code load it
-lib/packs_render.py:<state>/claude/<project> to
-lib/packs_render.py:LEGACY = "claude"
-lib/packs_render.py:LEGACY_TARGET = "claude-code"
-lib/packs_render.py:under <state>/claude\. An action
 
 # lib/hook.sh and lib/supervise.py: the hook verbs of the runtime that has hooks (event names, the environment file)
 lib/hook.sh:Claude Code hooks

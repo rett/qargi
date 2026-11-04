@@ -28,7 +28,6 @@
 #   packs.sh packs apply --target T PROJECT [--plan TOKEN --approved "..."]   render for a local session of the project's runtime
 #   packs.sh packs check --target T PROJECT                                  drift of that render, then the skills a session would load (read only)
 #                      (T is the render target of the project's local runtime, session.render_target in lib/providers/NAME.json: claude-code for Claude Code)
-#   packs.sh packs migrate-render [--plan TOKEN --approved "..."]   move the renders an earlier version made under state/claude/PROJECT to state/render/PROJECT/RUNTIME
 #   packs.sh packs link|unlink PROJECT [--plan TOKEN --approved "..."]   make the checkout's project skills directory a symlink to that render, or undo it
 #                                                                       (the plan also lists the skills a session would load)
 #   packs.sh packs seed [--install] [--plan TOKEN --approved "..."]    add or update the baseline packs shipped in packs/
@@ -87,7 +86,7 @@ case $KIND in skill|tool|packs) ;; *) die "usage: packs.sh skill|tool|packs <ver
 # No caller nests them: discover.py already clears it, and provisioning only renders.
 case $KIND:$VERB in
   skill:new|skill:import|skill:seal|skill:remove|skill:link|skill:unlink|skill:enable|skill:disable|skill:accept|skill:unaccept|\
-  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink|packs:migrate-render) unset QARGI_NESTED;;
+  tool:new|tool:import|tool:seal|tool:remove|tool:link|tool:unlink|tool:enable|tool:disable|packs:apply|packs:seed|packs:link|packs:unlink) unset QARGI_NESTED;;
 esac
 need_token() { # expected-token; never empty, and never skipped
   [ -n "${1:-}" ] || die "internal error: no plan token to check; nothing was changed"
@@ -449,21 +448,6 @@ if [ "$KIND" = packs ]; then
     apply:*|check:*) rt_main "$VERB";;
   esac
   case $VERB in
-    migrate-render)
-      # The renders of earlier versions sit under state/claude/PROJECT; they live in state/render/PROJECT/RUNTIME now. The plan lists, for each
-      # project, where its render goes (the runtime is the project's local one, and its render target must be claude-code) and which
-      # checkout link is re-pointed with it (a symbolic link that qargi made, pointing at the old render, replaced in place); a directory
-      # that is not a render of a project of this host is left and said so. Nothing is deleted. Gated like packs apply: the token covers the plan.
-      PY=$(dirname "$(readlink -f "$0")")/packs_render.py
-      RN_W=$(mktemp -d); RN_LK=''; trap rn_cleanup EXIT
-      python3 -I "$PY" migrate plan "$RN_W/token" || exit 1
-      [ -s "$RN_W/token" ] || exit 0
-      tok=$(cat "$RN_W/token")
-      if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: --plan $tok --approved \"<the user's go-ahead>\")"; exit 0; fi
-      need_token "$tok"
-      audit_log packs-migrate-render "$tok"
-      python3 -I "$PY" migrate apply "$tok" || exit 1
-      exit 0;;
     render)
       PRJ=${ARGS[0]:-}; ROL=${ARGS[1]:-}; OUT=${ARGS[2]:-}; [ -n "$OUT" ] || die "render needs PROJECT ROLE OUTDIR"
       rm -rf "$OUT"; mkdir -p "$OUT/skills"; : > "$OUT/custom_skills.txt"; echo '[]' > "$OUT/mcp.json"
@@ -660,7 +644,7 @@ if [ "$KIND" = packs ]; then
       nv=$(ant beta:deployments retrieve --deployment-id "$did" </dev/null 2>/dev/null | jq .agent.version)
       json_update "$REG" '.[$n].agent.version_pinned = $v' --arg n "$INST" --argjson v "$nv"
       echo "applied; the deployment now pins agent v$nv";;
-    *) die "usage: packs.sh packs render|load|apply|link|unlink|check|seed|migrate-render ...";;
+    *) die "usage: packs.sh packs render|load|apply|link|unlink|check|seed ...";;
   esac
   exit 0
 fi

@@ -216,70 +216,20 @@ jq -e '.servers.remote.issues == {transport:"http",address:"https://mcp.example.
 out=$($FX packs check --target fk-render delta 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "and check reads the same composed definition and passes" || no "extension check (rc=$rc): $out"
 jq '.models = {provider: "nomcp"}' "$T/c/projects/delta.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/delta.json"
-# --- packs migrate-render: the renders an earlier version made under <state>/claude/PROJECT move to <state>/render/PROJECT/RUNTIME, gated
-# like apply (a plan and its token, then --plan and --approved), with the checkout link that points into them. Everything here is in the
-# test's own temporary state directory; the old layout is made by hand (a real render moved to where the earlier version wrote it).
-case $QARGI_STATE in "$T"/*) ok "the migration tests run in the test's own state directory, never the real one";; *) no "state is not temporary: $QARGI_STATE"; exit 1;; esac
-# the verbs that change a checkout or the state refuse inside a member run (a directory `qargi local prepare` made, at or above the working
-# directory), and this test may itself run in one: work from the temporary directory, with the commands by absolute path
+# --- the render directory of an earlier version (<state>/claude) is not handled any more: no migrate-render verb, and a leftover directory
+# there is neither read nor changed by apply and check. The render of the runtime (<state>/render/PROJECT/RUNTIME) applies and checks as before.
+case $QARGI_STATE in "$T"/*) ok "the tests run in the test's own state directory, never the real one";; *) no "state is not temporary: $QARGI_STATE"; exit 1;; esac
 cd "$T" || exit 1; DA=$ROOT/bin/qargi
-MR=$T/migrepo; git init -q -b main "$MR"; echo x > "$MR/README"
-proj mig1; jq --arg r "$MR" '.repo.path = $r' "$T/c/projects/mig1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/mig1.json"
-$DA skill link s-all --scope project --project mig1 >/dev/null
-mp() { "$FX" packs "$@"; }   # the copy of the tool that also knows fakert
-mtok=$(mp apply --target claude-code mig1 | tok_of); mp apply --target claude-code mig1 --plan "$mtok" --approved test >/dev/null
-ltok=$(mp link mig1 | tok_of); mp link mig1 --plan "$ltok" --approved test >/dev/null
-NEW=$T/s/render/mig1/claude-code; OLD=$T/s/claude/mig1
-[ -L "$MR/.claude/skills" ] && [ "$(readlink "$MR/.claude/skills")" = "$NEW/.claude/skills" ] || no "migration setup: the checkout is not linked to the render"
-cp -a "$NEW" "$T/mig-copy"                                        # a render to copy from
-# the earlier layout: the render under claude/, the link pointing into it; other things an earlier version left there
-mkdir -p "$T/s/claude"; mv "$NEW" "$OLD"; rmdir "$T/s/render/mig1" "$T/s/render"
-rm "$MR/.claude/skills"; ln -s "$OLD/.claude/skills" "$MR/.claude/skills"
-cp -a "$T/mig-copy" "$T/s/claude/mig2"                            # a render of a project that has no answers on this host
-proj mig3; jq '.models = {provider: "fakert"}' "$T/c/projects/mig3.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/mig3.json"
-cp -a "$T/mig-copy" "$T/s/claude/mig3"                            # a project whose local runtime has another render target
-mkdir "$T/s/claude/.mig1.new.abcd1234"; : > "$T/s/claude/.mig1.lock"; echo notes > "$T/s/claude/mig5"
-mig_sig() { (cd "$T" && { find s c ! -name audit.log -printf '%p %y %l\n' | sort; find s c -type f ! -name audit.log -exec sha256sum {} + | sort; readlink migrepo/.claude/skills; }) 2>/dev/null; }   # the audit line of a refused attempt is no change
-before=$(mig_sig); out=$(mp migrate-render 2>&1); mrc=$?; mtok=$(tok_of <<<"$out")
-[ "$mrc" = 0 ] && [ -n "$mtok" ] && grep -q "^  move     claude/mig1 -> render/mig1/claude-code\$" <<<"$out" && grep -q "^           and re-point $MR/.claude/skills to $NEW/.claude/skills\$" <<<"$out" \
-  && ok "the migration plan lists the render that moves, its new place and the checkout link that is re-pointed, with a token" || no "migration plan (rc=$mrc): $out"
-grep -q "^  left     claude/mig2: no stored answers for project mig2 on this host\$" <<<"$out" && grep -q "^  left     claude/mig3: the project's local runtime fakert has the render target fk-render, not claude-code\$" <<<"$out" \
-  && grep -q "^  left     claude/mig5: not a directory\$" <<<"$out" && grep -q "^  left     claude/.mig1.new.abcd1234: a staging directory or lock file of a run" <<<"$out" && grep -q "^  left     claude/.mig1.lock: " <<<"$out" \
-  && ok "a directory that is not the render of a project of this host, or of another render target, is left and the plan says why" || no "migration left lines: $out"
-[ "$before" = "$(mig_sig)" ] && ok "the plan changes nothing" || no "the plan changed something"
-out=$(mp migrate-render --approved test 2>&1); [ "$?" != 0 ] && [ "$before" = "$(mig_sig)" ] && ok "apply without the plan token is refused and changes nothing" || no "apply without a token: $out"
-out=$(mp migrate-render --plan 000000000000 --approved test 2>&1); [ "$?" != 0 ] && [ "$before" = "$(mig_sig)" ] && ok "apply with a wrong token is refused and changes nothing" || no "apply with a wrong token: $out"
-mkdir -p "$T/mrun"; : > "$T/mrun/ability"; : > "$T/mrun/refs.before"
-out=$(cd "$T/mrun" && mp migrate-render --plan "$mtok" --approved test 2>&1); [ "$?" != 0 ] && grep -q "member run" <<<"$out" && [ "$before" = "$(mig_sig)" ] && ok "a member run cannot move the renders" || no "member run: $out"
-mkdir -p "$T/s/render/mig1/claude-code"; out=$(mp migrate-render 2>&1)
-grep -q "^  left     claude/mig1: $T/s/render/mig1/claude-code exists already" <<<"$out" && ! grep -q "^  move     claude/mig1" <<<"$out" && ok "a render already in the new place is not overwritten; the plan leaves the old one and says so" || no "destination exists: $out"
-rmdir "$T/s/render/mig1/claude-code"
-out=$(mp migrate-render 2>&1); [ "$(tok_of <<<"$out")" = "$mtok" ] && ok "the token is a function of the plan" || no "token changed: $out"
-out=$(mp migrate-render --plan "$mtok" --approved test 2>&1); mrc=$?
-[ "$mrc" = 0 ] && grep -q "^moved $OLD -> $NEW\$" <<<"$out" && grep -q "^re-pointed $MR/.claude/skills -> $NEW/.claude/skills\$" <<<"$out" && [ ! -e "$OLD" ] && [ -f "$NEW/MANIFEST.json" ] && [ -f "$NEW/.claude/skills/s-all/SKILL.md" ] \
-  && ok "apply moves the render, with its files, to the new place" || no "migration apply (rc=$mrc): $out"
-[ -L "$MR/.claude/skills" ] && [ "$(readlink "$MR/.claude/skills")" = "$NEW/.claude/skills" ] && [ -f "$MR/.claude/skills/s-all/SKILL.md" ] && [ -z "$(find "$MR/.claude" -maxdepth 1 -name '*qargi-relink*')" ] \
-  && ok "the checkout's link points at the new render and resolves, and no temporary link is left" || no "link after the move: $(ls -la "$MR/.claude")"
-tail -1 "$T/s/audit.log" | jq -e '.verb=="packs-migrate-render"' >/dev/null && ok "the migration is audit-logged" || no "audit: $(tail -1 "$T/s/audit.log")"
-[ -d "$T/s/claude/mig2" ] && [ -d "$T/s/claude/mig3" ] && [ -e "$T/s/claude/mig5" ] && [ -d "$T/s/claude/.mig1.new.abcd1234" ] && [ -e "$T/s/claude/.mig1.lock" ] && ok "what was left stays where it was (nothing is deleted)" || no "left things changed"
-out=$(mp check --target claude-code mig1 2>&1); [ "$?" = 0 ] && grep -q "^ok   mig1: " <<<"$out" && ! grep -q "not linked" <<<"$out" && ok "check passes on the moved render and sees the checkout linked to it" || no "check after the move: $out"
-out=$(mp link mig1 2>&1); grep -q "^already linked" <<<"$out" && ok "packs link recognises the re-pointed link as its own" || no "link after the move: $out"
-out=$(mp migrate-render 2>&1); ! grep -q "^  move " <<<"$out" && grep -q "^nothing is moved\$" <<<"$out" && [ -z "$(tok_of <<<"$out")" ] && ok "a second plan has nothing to move and no token" || no "second plan: $out"
-rm -rf "$T/s/claude/mig2" "$T/s/claude/mig3" "$T/s/claude/mig5" "$T/s/claude/.mig1.new.abcd1234" "$T/s/claude/.mig1.lock"
-out=$(mp migrate-render 2>&1); grep -q "^nothing to migrate: no renders under $T/s/claude\$" <<<"$out" && ok "an empty old directory has nothing to migrate" || no "empty claude/: $out"
-# a checkout reached through a symbolic link is re-pointed; one whose .claude is itself a symbolic link is not (and the plan says so);
-# the last render out removes the old directory
-for n in mig4 mig6; do
-  proj $n; cp -a "$T/mig-copy" "$T/s/claude/$n"; mkdir -p "$T/mig-elsewhere-$n"
-done
-mkdir -p "$T/migreal/.claude"; ln -s "$T/migreal" "$T/migrepo4"; ln -s "$T/s/claude/mig4/.claude/skills" "$T/migreal/.claude/skills"
-mkdir -p "$T/migrepo6" "$T/migelse6"; ln -s "$T/migelse6" "$T/migrepo6/.claude"; ln -s "$T/s/claude/mig6/.claude/skills" "$T/migelse6/skills"
-for pr in "mig4 $T/migrepo4" "mig6 $T/migrepo6"; do set -- $pr; jq --arg r "$2" '.repo.path = $r' "$T/c/projects/$1.json" > "$T/p.tmp" && mv "$T/p.tmp" "$T/c/projects/$1.json"; done
-out=$(mp migrate-render 2>&1); t4=$(tok_of <<<"$out")
-grep -q "^  move     claude/mig4 -> render/mig4/claude-code\$" <<<"$out" && grep -q "^           and re-point $T/migrepo4/.claude/skills to $T/s/render/mig4/claude-code/.claude/skills\$" <<<"$out" \
-  && grep -q "^  move     claude/mig6 -> render/mig6/claude-code\$" <<<"$out" && ! grep -q "re-point $T/migrepo6" <<<"$out" && grep -q "^  note     $T/migrepo6/.claude/skills links to the old render but a directory above it is a symbolic link: it is not re-pointed" <<<"$out" \
-  && ok "the plan re-points a link in a checkout reached through a symbolic link, and not one with a symbolic link inside the checkout" || no "mig4/mig6 plan: $out"
-out=$(mp migrate-render --plan "$t4" --approved test 2>&1)
-[ -d "$T/s/render/mig4/claude-code" ] && [ -d "$T/s/render/mig6/claude-code" ] && [ ! -e "$T/s/claude" ] && grep -q "^removed the empty directory $T/s/claude\$" <<<"$out" && ok "the last render out removes the empty old directory" || no "last render: $out"
-[ "$(readlink "$T/migreal/.claude/skills")" = "$T/s/render/mig4/claude-code/.claude/skills" ] && [ "$(readlink "$T/migelse6/skills")" = "$T/s/claude/mig6/.claude/skills" ] && ok "the first link follows the render; the second is left for packs unlink and link" || no "links: $(readlink "$T/migreal/.claude/skills") $(readlink "$T/migelse6/skills")"
+out=$("$DA" packs migrate-render 2>&1); rc=$?
+{ [ "$rc" != 0 ] && grep -q 'usage: packs.sh packs' <<<"$out" && ! grep -q 'migrate-render' <<<"${out#*usage}" && ! grep -q 'plan token' <<<"$out"; } && ok "packs migrate-render is an unknown verb: it fails with the usage, which does not name it" || no "migrate-render (rc=$rc): $out"
+mkdir -p "$T/s/claude/old1/.claude/skills"; echo x > "$T/s/claude/old1/MANIFEST.json"
+proj fin1; "$DA" skill link s-all --scope project --project fin1 >/dev/null; D=$T/s/render/fin1/claude-code
+legacy_sig=$(find "$T/s/claude" -printf '%p %y\n' | sort)
+out=$(cd "$T" && "$FX" packs apply --target claude-code fin1 2>&1); atok=$(tok_of <<<"$out")
+[ -n "$atok" ] && ! grep -q 'claude/old1' <<<"$out" && ok "a render still plans with a leftover state/claude directory beside it, which the plan does not name" || no "plan with a leftover: $out"
+out=$("$FX" packs apply --target claude-code fin1 --plan "$atok" --approved test 2>&1); arc=$?
+[ "$arc" = 0 ] && [ -f "$D/MANIFEST.json" ] && [ -f "$D/.claude/skills/s-all/SKILL.md" ] && ok "and the render applies into state/render/PROJECT/RUNTIME" || no "apply (rc=$arc): $out"
+out=$("$FX" packs check --target claude-code fin1 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q "^ok   fin1: " <<<"$out" && ok "packs check --target claude-code still passes on that render" || no "check (rc=$rc): $out"
+[ "$legacy_sig" = "$(find "$T/s/claude" -printf '%p %y\n' | sort)" ] && ok "the leftover directory is untouched by apply and check" || no "the leftover directory changed"
 exit $fail
