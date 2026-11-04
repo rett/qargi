@@ -1081,8 +1081,8 @@ TOPICS = {
         "discover install; import; packs apply, seed, link and unlink; project set (models answers), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish; marshal claim, set, renew, release, take, "
-        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; memory init, "
+        "move, split, merge, copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). "

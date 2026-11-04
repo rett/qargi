@@ -89,6 +89,9 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
     allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
     member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
+    `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
+    and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
+    lead's too, and are refused with wording of their own;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -185,7 +188,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
-           "agent.sh", "team.sh")
+           "agent.sh", "team.sh", "branch.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2061,6 +2064,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["marshal"] + words
     if name == "feature.sh":
         words = ["feature"] + words
+    if name == "branch.sh":
+        words = ["branch"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
@@ -2093,6 +2098,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "branch":
+        return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
+                         "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
     if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
         return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
@@ -2122,6 +2130,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
+    if area == "feature" and verb == "park":
+        return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
+                         "report in your task output that the main checkout needs parking")
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))

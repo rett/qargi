@@ -911,6 +911,32 @@ class Marshal(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_park_and_branch_prune_are_the_leads_with_wording_of_their_own(self):
+        """feature park moves the main checkout onto the parking branch and branch prune deletes branches, worktrees and (with --remote) branches on origin:
+        neither writes the marshal, so neither is refused with the marshal's sentence."""
+        park = ["qargi feature park", "qargi feature park --project proj", "/opt/q/bin/qargi feature park", "bin/qargi feature park", "env FOO=1 qargi feature park",
+                "sudo qargi feature park", "bash -c 'qargi feature park'", "eval 'qargi feature park'", "echo $(qargi feature park)", "true && qargi feature park",
+                "ls; qargi feature park", "qargi 'feature' 'park'", "bash lib/feature.sh park", "lib/feature.sh park", "nohup qargi feature park"]
+        prune = ["qargi branch prune", "qargi branch prune --remote", "qargi branch prune --plan abc --approved go", "/opt/q/bin/qargi branch prune", "bin/qargi branch prune",
+                 "env FOO=1 qargi branch prune", "sudo qargi branch prune", "bash -c 'qargi branch prune'", "eval 'qargi branch prune'", "echo $(qargi branch prune)",
+                 "true && qargi branch prune", "ls; qargi branch prune", "qargi 'branch' 'prune'", "bash lib/branch.sh prune", "lib/branch.sh prune", "python3 -I lib/branch.sh prune",
+                 "nohup qargi branch prune --remote", "qargi branch", "v=prune; qargi branch $v", "qargi branch $v", "xargs qargi branch prune"]
+        for c in park + prune:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        for c in park:
+            if "park" in c and "$(" not in c:
+                self.assertIn("qargi feature park resets the parking branch", self.bash(c).stderr, c)
+        for c in ("qargi branch prune", "bash lib/branch.sh prune", "qargi branch prune --remote"):
+            self.assertIn("qargi branch prune deletes merged branches", self.bash(c).stderr, c)
+        for c in ("git branch -a", "git branch --merged develop", "echo qargi branch prune", "grep -n 'branch prune' lib/commands.py", "ls lib/branch.sh", "cat lib/branch.sh",
+                  "qargi feature list", "qargi feature status f", "qargi feature merge f agent/x", "git log --grep 'feature park'"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_switch_directory_is_protected_like_features(self):
         """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
         m = os.path.join(self.state, "marshal")
