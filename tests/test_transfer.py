@@ -384,6 +384,74 @@ class Import(Env):
         self.assertNotIn("alpha-build", r.stdout)
 
 
+class RoundTrip(Env):
+    """What export writes, import must accept: a library with a skill pack and a tool pack moves to a fresh home as it is."""
+
+    LIB = {
+        "packs/skills/example-skill/SKILL.md": "# example skill\n",
+        "packs/skills/example-skill/.pack.json": '{"name":"example-skill","kind":"skill"}',
+        "packs/skills/example-skill/scripts/run.sh": "#!/bin/sh\necho hi\n",
+        "packs/skills/example-skill/notes/deep/.hidden-note": "a dot file in a nested folder\n",
+        "packs/tools/example-tool.json": '{"name":"example-tool"}',
+        "packs/tools/example-tool.pack.json": '{"name":"example-tool","kind":"tool"}',
+        "packs/accepted.json": "{}",
+        "packs/accepted.json.lock": "",
+        "profiles/alpha.md": "profile text",
+    }
+
+    def setUp(self):
+        super().setUp()
+        for rel, text in self.LIB.items():
+            self.write(os.path.join(self.conf, rel), text)
+        self.write(os.path.join(self.t, "pw"), "pw-round-trip\n")
+
+    def tree(self, base, sub):
+        out = {}
+        for dp, _, fs in os.walk(os.path.join(base, sub)):
+            for f in fs:
+                full = os.path.join(dp, f)
+                out[os.path.relpath(full, base)] = rd(full)
+        return out
+
+    def round_trip(self, only):
+        arc = os.path.join(self.t, "rt-%s.gpg" % only.replace(",", "_"))
+        r = self.qargi(["export", "--only", only, "--project", "alpha", "--password-file", os.path.join(self.t, "pw"), "--out", arc])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for d in ("c2", "s2", "fake2"):
+            shutil.rmtree(os.path.join(self.t, d), ignore_errors=True)
+        t, conf, state, fake = self.fresh_target()
+        self.put_store(fake, "memstore_A", {})
+        self.put_store(fake, "memstore_B", {})
+        r = self.qargi(["import", arc, "--only", only, "--project", "alpha", "--mode", "overwrite", "--password-file", os.path.join(self.t, "pw")], answers=["y"], env=t)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        return conf, state, fake
+
+    def test_the_library_and_everything_else_survive_each_part_combination(self):
+        for only in ("config", "credentials", "config,credentials", "definitions", "memories", "state", "config,definitions,memories,state,credentials"):
+            conf, state, fake = self.round_trip(only)
+            parts = only.split(",")
+            if "config" in parts:
+                self.assertEqual(self.tree(conf, "packs"), self.tree(self.conf, "packs"), only)
+                self.assertTrue(os.path.exists(os.path.join(conf, "packs/skills/example-skill/.pack.json")), only)
+                self.assertEqual(rd(os.path.join(conf, "profiles/alpha.md")), "profile text", only)
+                self.assertEqual(sorted(jd(os.path.join(conf, "instances.json"))), ["alpha-build", "alpha-write"], only)
+            else:
+                self.assertFalse(os.path.exists(os.path.join(conf, "packs")), only)
+            self.assertEqual(self.tree(conf, "credentials") if "credentials" in parts else {}, self.tree(self.conf, "credentials") if "credentials" in parts else {}, only)
+            if "state" in parts:
+                self.assertEqual(rd(os.path.join(state, "audit.log")).splitlines()[:2], ['{"verb":"one"}', '{"verb":"two"}'], only)
+                self.assertEqual(sorted(jd(os.path.join(state, "sessions.json"))), ["sesn_1"], only)
+            if "definitions" in parts:
+                self.assertEqual(sorted(self.tree(state, "definitions")), ["definitions/alpha-build/agent.json", "definitions/alpha-build/deployment.json", "definitions/alpha-build/environment.json",
+                                                                           "definitions/alpha-write/agent.json", "definitions/alpha-write/deployment.json", "definitions/alpha-write/environment.json"], only)
+            if "memories" in parts:
+                self.assertEqual(self.store_notes_at(fake, "memstore_A"), self.store_notes("memstore_A"), only)
+
+    def store_notes_at(self, fake, store):
+        d = os.path.join(fake, "stores", store)
+        return {jd(os.path.join(d, f))["path"]: jd(os.path.join(d, f))["content"] for f in os.listdir(d)}
+
+
 class Hostile(Env):
     def archive(self, entries, manifest_files=None, fmt=1):
         buf = io.BytesIO()
@@ -416,6 +484,18 @@ class Hostile(Env):
         self.assertIn("refusing", r.stderr)
         r = self.dry(self.archive([("elsewhere/x", b"x")]))
         self.assertIn("outside the known folders", r.stderr)
+
+    def test_dot_names_in_the_library_pass_but_dot_segments_do_not(self):
+        r = self.dry(self.archive([("config/packs/skills/example-skill/.pack.json", b"{}")]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for name in ("config/packs/skills/example-skill/./.pack.json", "config/packs/skills/example-skill/../x", "config/packs//x", "config/packs/skills/x/.."):
+            r = self.dry(self.archive([(name, b"{}")]))
+            self.assertNotEqual(r.returncode, 0, name)
+            self.assertIn("refusing", r.stderr)
+        r = self.dry(self.archive([("config/packs", b"{}")]))
+        self.assertIn("not valid for its folder", r.stderr)
+        r = self.dry(self.archive([("config/other/x", b"{}")]))
+        self.assertIn("not valid for its folder", r.stderr)
 
     def test_a_changed_file_fails_its_checksum(self):
         p = self.archive([("config/profiles/a.md", b"one")], manifest_files={"config/profiles/a.md": {"sha256": "0" * 64, "size": 3, "project": "alpha"}})

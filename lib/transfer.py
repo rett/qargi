@@ -32,7 +32,10 @@ COMPONENTS = {
     "credentials": ("credentials", "token files (an archive that holds them must be encrypted)", False),
 }
 ORDER = list(COMPONENTS)
-SAFE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._@+=-]*$")
+# One name inside a folder of the archive. A leading dot is allowed (the library's .pack.json records and the lock files are
+# written that way), "." and ".." are not. valid_item() below is the one rule for a name: the reader applies it to what it
+# reads, and the export applies it to what it writes.
+SAFE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9_.][A-Za-z0-9._@+=-]*$")
 PROJECT = re.compile(r"^[a-z][a-z0-9]{0,23}$")
 SECRET_KEY = re.compile(r"token|secret|password|authorization|credential", re.I)
 MODES = ("merge", "overwrite", "replace")
@@ -546,7 +549,7 @@ def valid_item(path):
     if comp == "definitions": return len(parts) == 2 and parts[1].split(".")[0] in ("agent", "deployment", "environment")
     if comp == "state": return rest == "audit.log" or (len(parts) == 2 and parts[0] == "sessions" and parts[1].endswith(".json"))
     if comp == "credentials": return len(parts) == 1
-    if comp == "memories": return len(parts) >= 3 and parts[1] in ("memory", "reference") and bool(PROJECT.match(parts[0])) and all(parts)
+    if comp == "memories": return len(parts) >= 3 and parts[1] in ("memory", "reference") and bool(PROJECT.match(parts[0])) and safe_name(rest)
     return False
 
 
