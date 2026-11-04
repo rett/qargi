@@ -2,7 +2,7 @@
 
 Kind: workflow
 Applies to: any
-Sources: build-ability seed
+Sources: build role seed
 
 ## Contents
 

@@ -6,7 +6,7 @@ repository. This contract replaces the worker contract: each member
 follows its own.
 
 # Input (the first message)
-TEAM (name), TASK, and one entry per member: role (its ability), BASE, SCOPE, CLONE, OUT, OUT_PREFIX, DONE.
+TEAM (name), TASK, and one entry per member: role, BASE, SCOPE, CLONE, OUT, OUT_PREFIX, DONE.
 Also STANDARDS (store paths the review judges against), MAX_ROUNDS and PROFILE.
 
 # Procedure
