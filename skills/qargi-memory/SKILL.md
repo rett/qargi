@@ -1,7 +1,7 @@
 ---
 name: qargi-memory
-description: Run the lead's maintenance of a qargi project's memory - lint or check a store against the canon, plan and apply a canon migration, import a foreign store, seed a role's skeleton, promote a note to shared, audit cross-role writes, split, copy or merge stores, and set up or move notes between the memory tiers (repo, cloud, project, shared, system). Covers the recipes and reference stores. For the lead, never for a member.
-argument-hint: check|plan|apply|import|seed-role|promote|audit PROJECT ... | lint STORE_ID | split|merge|copy FROM TO | memory tiers|check|init|move|get
+description: Run the lead's maintenance of a qargi project's memory - lint or check a store against the canon, plan and apply a canon migration, seed a role's skeleton, promote a note to shared, audit cross-role writes, split, copy or merge stores, and set up or move notes between the memory tiers (repo, cloud, project, shared, system). Covers the recipes and reference stores. For the lead, never for a member.
+argument-hint: check|plan|apply|seed-role|promote|audit PROJECT ... | lint STORE_ID | split|merge|copy FROM TO | memory tiers|check|init|move|get
 ---
 
 # /qargi-memory
@@ -26,11 +26,11 @@ note format, indexes and hygiene, and exits 1 on any FAIL.
 | Verb | Command | Notes |
 |---|---|---|
 | check | `qargi canon check PROJECT [--kind K]` | Conformance and version report. |
-| plan | `qargi canon plan PROJECT [--kind K]` | Every step to set up an empty store at the current canon. A store at an older canon is `unknown`: plan nothing, bring it in by hand or `canon import`. Changes nothing. |
+| plan | `qargi canon plan PROJECT [--kind K]` | Every step to set up an empty store at the current canon. A store at an older canon is `unknown`: plan nothing, bring it in by hand. Changes nothing. |
 | apply | `qargi canon apply PROJECT [--kind K] --approved "..."` | Runs the plan: creates the missing files and updates the README's role list, the marker is written last, a re-run resumes. Show the plan first. |
 
 A store at the current canon is kept current (missing indexes, the marker's roles); a new canon version means a
-new migration (`canon/CANON.md` § Changing the canon). The other verbs (`seed-role`, `import`, `promote`, `audit`, and
+new migration (`canon/CANON.md` § Changing the canon). The other verbs (`seed-role`, `promote`, `audit`, and
 `qargi memory split|copy|merge`) and how a new project's stores are seeded: load `curate.md`.
 
 ## Memory tiers
