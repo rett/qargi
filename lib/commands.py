@@ -679,7 +679,8 @@ COMMANDS = {
                                   "findings and the fix, packs apply --target claude-code PROJECT. The run goes on, and stdout and the "
                                   "TASK-BLOCK PATHS block are unchanged.")),
             "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
-                           desc=("Exits 2 when refs changed (1 before). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
+                           desc=("Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
+                                 "from it (the repository and the credential come from the registry; a member can write the run directory). After a passing verify the run records RUN/verified, and later verify and clean compare with that: "
                                  "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
                                  "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
@@ -693,7 +694,7 @@ COMMANDS = {
                                 "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
-                                "A run cleaned with --applied needs a RUN/applied record and a repository path; --applied takes no RUN_DIR and no --discard. "
+                                "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
                                 "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
                                 "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only."),

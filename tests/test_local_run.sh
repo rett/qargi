@@ -91,6 +91,11 @@ out=$($DA local run "$RUN" --dry-run 2>"$T/err"); rc=$?
 want=$(jq -nc --arg c "$CLONE" --arg o "$OUT" '["fakellm","run","--model","fake-m-1","--clone",$c,"--out",$o,"--sandbox","read-only"]')
 [ "$rc" = 0 ] && [ "$(arg0 <<<"$out")" = "$want" ] && grep -q '^CLASS=read-only' <<<"$out" && ok "read-only: class_argv (the sandbox arguments) is in the argv" || no "ro argv: rc=$rc [$(arg0 <<<"$out")] want [$want] $(cat "$T/err")"
 
+# --- the project of a run is found from the lead's registry: a repo.path a member rewrote (to a repository of another project, so another runtime) is refused ---
+prep "$T/r" fg1; task; cp "$RUN/repo.path" "$T/repo.path.keep"; echo "$T/r2" > "$RUN/repo.path"
+out=$($DA local run "$RUN" --dry-run 2>&1); rc=$?
+[ "$rc" != 0 ] && grep -q "registry" <<<"$out" && ! grep -q '^COMMAND=' <<<"$out" && ok "run: a repo.path that differs from the registry's is refused, no runtime is looked up for it" || no "forged repo.path: rc=$rc $out"
+cp "$T/repo.path.keep" "$RUN/repo.path"; rm -f "$T/repo.path.keep"
 # --- a real run with the fake CLI --------------------------------------------------------------------------------------------------
 prep "$T/r" w2; task
 export OTHER_SECRET=leak GIT_AUTH_TOKEN=leak2
