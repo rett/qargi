@@ -193,7 +193,7 @@ case $verb in
       if g rev-parse -q --verify refs/remotes/origin/develop >/dev/null; then g merge-base --is-ancestor origin/develop develop || die "develop is behind or differs from origin/develop: reconcile them first"; fi
     fi
     detached_mix "$BR" develop
-    [ -n "$KEEP" ] || [ -z "$(wt_of "$BR")" ] || need_free_wt "$BR"   # a dirty worktree of the branch is found before the plan, not after the merge
+    [ -z "$(wt_of "$BR")" ] || need_free_wt "$BR"   # a dirty worktree of the branch is found before the plan, not after the merge
     # branches.delete_merged local+remote: the feature branch is deleted on origin too, when origin has it (asked live) and everything on
     # it is in the feature. The plan says so and its token covers the remote tip, so a branch that moved there is a new plan.
     rdel='' rnote=''
@@ -212,7 +212,7 @@ case $verb in
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi feature finish $NAME_ARG${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     need_free develop
-    if [ -n "$KEEP" ]; then need_free "$BR"; else need_free_wt "$BR"; fi
+    need_free_wt "$BR"
     hold_begin "$NAME_ARG"
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"

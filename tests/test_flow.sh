@@ -336,5 +336,39 @@ grep -q "worktree outside the root: $T/elsewhere (feature/w5): mkdir -p $WR/feat
 ! grep -q "\.claude/worktrees" <<<"$out" && ! grep -q "outside the root: $R7 " <<<"$out" && ok "but not the runtime's own worktrees nor the main checkout" || no "false flag: $out"
 $F status w5 2>&1 | grep -q "worktree outside the root: $T/elsewhere" && ok "feature status flags it too" || no "status flag"
 mkdir -p "$WR/feature" && git -C "$R7" worktree move "$T/elsewhere" "$WR/feature/w5" && out=$($F list 2>&1) && ! grep -q "outside the root" <<<"$out" && ok "after the move nothing is flagged" || no "after move: $out"
+# --- branch prune: a plan and a token for the merged agent/* and feature/* branches and their worktrees
+R8=$T/app8; O8=$T/origin8.git; B="$DA branch"; git init -q -b master "$R8"; git init -q --bare "$O8"
+echo 0.1.0 > "$R8/VERSION"; git -C "$R8" add -A && git -C "$R8" commit -q -m one && git -C "$R8" branch develop && git -C "$R8" remote add origin "$O8" && git -C "$R8" push -q origin master develop
+git -C "$R8" branch scratch develop; git -C "$R8" checkout -q --orphan docs; git -C "$R8" rm -q -rf .; echo d > "$R8/d.md"; git -C "$R8" add -A; git -C "$R8" commit -q -m docs; git -C "$R8" checkout -q -b parked develop
+jq -n --arg p "$R8" '{schema:1, project:"app8", methodology:"gitflow", repo:{url:"https://github.com/acme/app8", path:$p, long_lived:["master","develop","docs"], detached:["docs"]}, test_command:"true"}' > "$T/c/projects/app8.json"
+export QARGI_PROJECT=app8
+task8() { # name [base]: agent/NAME with one commit
+  git -C "$R8" branch "agent/$1" "${2:-develop}"; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R8" worktree add -q "$w" "agent/$1"
+  echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "task $1"; git -C "$R8" worktree remove --force "$w"
+}
+$F start f1 --worktree >/dev/null 2>&1; task8 ta; task8 tb; $F merge f1 agent/ta >/dev/null 2>&1; $F merge f1 agent/tb >/dev/null 2>&1; $F verify f1 >/dev/null 2>&1
+t=$($F finish f1 --keep | tok); $F finish f1 --keep --plan "$t" --approved go >/dev/null 2>&1
+task8 open; git -C "$R8" branch agent/fresh develop; $F start f2 >/dev/null 2>&1; $F start f3 >/dev/null 2>&1; task8 tc feature/f3; $F merge f3 agent/tc >/dev/null 2>&1
+mkdir -p "$R8/.claude/worktrees"; git -C "$R8" worktree add -q "$R8/.claude/worktrees/rt" agent/tb; git -C "$R8" checkout -q parked 2>/dev/null
+git -C "$R8" push -q origin feature/f1 agent/ta agent/open
+WT8=$T/s/worktrees/app8/feature/f1
+[ -d "$WT8" ] && ok "(setup) feature f1 is finished and kept, with its worktree; ta, tb are in it; tc is in the open f3" || no "setup: $(git -C "$R8" worktree list)"
+heads8=$(git -C "$R8" for-each-ref --format='%(refname)' refs/heads | sort | md5sum)
+out=$($B prune 2>&1); t=$(tok <<<"$out")
+grep -q "delete local feature/f1 (.*merged into develop); remove its worktree $WT8" <<<"$out" && grep -q "delete local agent/ta (.*merged into develop)" <<<"$out" && grep -q "delete local agent/tc (.*merged into feature/f3)" <<<"$out" && ok "the plan lists merged feature and agent branches and the worktree qargi made" || no "plan: $out"
+! grep -E "delete .*(agent/open|agent/fresh|feature/f2|feature/f3|scratch|docs|master|develop)( |\$)" <<<"$out" >/dev/null && ok "and not an unmerged branch, a branch at a tip, an open feature, the parking, detached or long-lived branches" || no "over-pruned: $out"
+grep -q "kept agent/tb: checked out in .*/.claude/worktrees/rt, which qargi did not make" <<<"$out" && ok "a branch held by a worktree qargi did not make is kept, with the reason" || no "kept: $out"
+[ "$(git -C "$R8" for-each-ref --format='%(refname)' refs/heads | sort | md5sum)" = "$heads8" ] && [ -d "$WT8" ] && ok "the plan changes nothing" || no "plan changed something"
+$B prune --plan 000000000000 --approved go >/dev/null 2>&1 && no "a wrong token was accepted" || ok "a wrong plan token is refused"
+$B prune --remote --plan "$t" --approved go >/dev/null 2>&1 && no "a token of the local plan applied the remote one" || ok "the token covers --remote"
+out=$($B prune --plan "$t" --approved "prune them" 2>&1); rc=$?
+[ $rc = 0 ] && ! git -C "$R8" rev-parse -q --verify refs/heads/feature/f1 >/dev/null && ! git -C "$R8" rev-parse -q --verify refs/heads/agent/ta >/dev/null && ! git -C "$R8" rev-parse -q --verify refs/heads/agent/tc >/dev/null && [ ! -e "$WT8" ] && ok "with the token it deletes the branches and removes the worktree" || no "apply rc=$rc: $out"
+for b in agent/open agent/fresh agent/tb feature/f2 feature/f3 scratch docs master develop; do git -C "$R8" rev-parse -q --verify "refs/heads/$b" >/dev/null || no "$b was deleted"; done; ok "every other branch is still there"
+[ -n "$(git -C "$O8" for-each-ref refs/heads/agent/ta)" ] && ok "without --remote origin is not touched" || no "origin changed"
+git -C "$R8" worktree remove --force "$R8/.claude/worktrees/rt"
+out=$($B prune --remote 2>&1); t=$(tok <<<"$out")
+grep -q "delete origin/feature/f1" <<<"$out" && grep -q "delete origin/agent/ta" <<<"$out" && ! grep -q "origin/agent/open" <<<"$out" && grep -q "delete local agent/tb" <<<"$out" && ok "--remote plans the merged branches on origin, not the unmerged one, and the local branch whose runtime worktree is gone" || no "remote plan: $out"
+out=$($B prune --remote --plan "$t" --approved "and origin" 2>&1); rc=$?
+[ $rc = 0 ] && [ -z "$(git -C "$O8" for-each-ref refs/heads/agent/ta refs/heads/feature/f1)" ] && [ -n "$(git -C "$O8" for-each-ref refs/heads/agent/open)" ] && [ -n "$(git -C "$O8" for-each-ref refs/heads/develop)" ] && ok "and deletes them there, leaving the unmerged branch and develop" || no "remote apply rc=$rc: $out"
 rm -rf "$T"
 exit $fail
