@@ -285,6 +285,8 @@ def gather_local(comp, projects):
                 full = os.path.join(dp, f)
                 if os.path.isfile(full) and not os.path.islink(full):
                     out["config/packs/" + os.path.relpath(full, pk)] = (read(full), None)
+                elif os.path.islink(full):
+                    warn.append("%s is a symbolic link: left out of the archive" % full)
     elif comp == "definitions":
         inst = jload(os.path.join(CONF, "instances.json"), {})
         for name, v in sorted(inst.items()):
@@ -314,7 +316,10 @@ def gather_local(comp, projects):
                     warn.append("could not read the %s store of %s (%s)" % (kind, p, store))
                     continue
                 for path, data in notes.items():
-                    if path == "\0id" or ".." in path.split("/"):
+                    if path == "\0id":
+                        continue
+                    if not safe_name(path.lstrip("/")):
+                        warn.append("the note %r of the %s store of %s has a name the reader would refuse: left out" % (path[:80], kind, p))
                         continue
                     out["memories/%s/%s/%s" % (p, kind, path.lstrip("/"))] = (data, p)
     elif comp == "state":
