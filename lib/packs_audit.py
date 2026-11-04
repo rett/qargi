@@ -23,9 +23,11 @@ This audit lists every skill with exactly one state:
   unmanaged   anything else
 
 Content is compared with strict_hash(), not with the shell's content_hash (the hash the library's approvals and the renders record,
-which sees regular files only and drops a .pack.json at any depth): strict_hash covers symbolic links (path and target), the
+which sees regular files only and drops the top-level .pack.json): strict_hash covers symbolic links (path and target), the
 executable bit of a file, empty directories and every .pack.json but the library pack's own record (the top-level one, skipped when
-the library pack is hashed). A skill that differs in any of those is not the library pack, and an acceptance covers exactly this
+the library pack is hashed). The rule is the same everywhere: the top-level .pack.json of a library pack is qargi's record and no part
+of the skill (import ignores one in its source and does not copy it); a .pack.json deeper in the tree is skill content that counts in every hash and
+fails the review. A skill that differs in any of those is not the library pack, and an acceptance covers exactly this
 content. The library's approval itself is still the shell's: lib.approved == lib.hash says the pack was not edited since it was approved.
 
 Called by packs.sh, which holds the facts only the shell knows (the library) in an inputs file:

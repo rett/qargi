@@ -286,4 +286,32 @@ jq '.models.provider = "fam"' "$T/c/projects/mp.json" > "$T/mp.tmp" && cp "$T/mp
 jq 'del(.models)' "$T/c/projects/mp.json" > "$T/mp.tmp" && cp "$T/mp.tmp" "$T/c/projects/mp.json"
 out=$($DA skill effective mp build); [ "$(grep -v '^skipped ' <<<"$out" | paste -sd, -)" = "m-any" ] && grep -q "^skipped skill m-fam: project mp names no provider to match against (it declares fam)" <<<"$out" && ok "a project with no provider gets only the packs for any, and the rest are noted" || no "no provider: $out"
 $DA packs render mp build "$T/om2" >/dev/null 2>&1; [ "$(paste -sd, "$T/om2/custom_skills.txt")" = "m-any" ] && ok "the render of a project with no provider holds only the packs for any" || no "render without provider"
+# --- a pack copied out of the library carries qargi's own record (a top-level .pack.json): import ignores it, does not copy it and says so
+proj cpj
+mkp cpy any; $DA skill link cpy --scope project --project cpj >/dev/null
+rm -rf "$T/src/cpy"; cp -r "$T/c/packs/skills/cpy" "$T/src/cpy"; [ -f "$T/src/cpy/.pack.json" ] || no "setup: the copy has no record"
+# under a new name
+out=$($DA skill import "$T/src/cpy" --name cpy2 --compatible any 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "^note: the source's top-level .pack.json is qargi's own record" <<<"$out" && grep -q "^plan token" <<<"$out"; } && ok "importing a pack copied out of the library says that its record is ignored" || no "copy import review (rc=$rc): $out"
+ctok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA skill import "$T/src/cpy" --name cpy2 --compatible any --plan "$ctok" --approved x >/dev/null 2>&1 && ok "and it is stored under the new name" || no "copy import under a new name"
+[ ! -e "$T/c/packs/skills/cpy2/refs/.pack.json" ] && [ "$(rec skill source cpy2)" = "\"$T/src/cpy\"" ] && [ "$(rec skill sha256 cpy2)" = "$(rec skill sha256 cpy)" ] && ok "the new pack has a record of its own (this source, the hash of the same content)" || no "cpy2 record: $(cat "$T/c/packs/skills/cpy2/.pack.json")"
+[ -z "$(find "$T/c/packs/skills/cpy2" -mindepth 2 -name .pack.json)" ] && ok "no .pack.json is copied below the top level" || no "nested record in cpy2"
+$DA skill link cpy2 --scope project --project cpj >/dev/null && $DA skill check cpj build 2>&1 | grep -q "^ok   skill:cpy2" && ok "the imported copy passes check (review and drift agree with the hash)" || no "cpy2 check: $($DA skill check cpj build 2>&1)"
+$DA packs render cpj build "$T/ocp" >/dev/null 2>&1 && [ -z "$(find "$T/ocp" -name .pack.json)" ] && ok "the render of both copies holds no .pack.json" || no "render of the copies"
+# under the same name, after the original is removed
+$DA skill unlink cpy --scope project --project cpj >/dev/null && $DA skill remove cpy >/dev/null
+out=$($DA skill import "$T/src/cpy" --compatible any 2>&1); ctok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+$DA skill import "$T/src/cpy" --compatible any --plan "$ctok" --approved x >/dev/null 2>&1 && [ "$(rec skill sha256 cpy)" = "$(rec skill sha256 cpy2)" ] && ok "a pack copied out of the library is imported again under the same name" || no "same-name re-import: $out"
+# a .pack.json below the top level is skill content that nothing reads as a record: a finding, in the review of an import and of a check
+mkdir -p "$T/src/cpy/refs"; echo '{}' > "$T/src/cpy/refs/.pack.json"
+rm -rf "$T/c/packs/skills/cpy3"
+out=$($DA skill import "$T/src/cpy" --name cpy3 --compatible any 2>&1); rc=$?
+{ [ $rc = 1 ] && grep -q "^FAIL: .pack.json is qargi's own record" <<<"$out" && grep -q "refs/.pack.json" <<<"$out" && ! grep -q '^plan token' <<<"$out" && [ ! -e "$T/c/packs/skills/cpy3" ]; } && ok "a nested .pack.json is a finding that refuses the import" || no "nested record import (rc=$rc): $out"
+$DA skill link cpy --scope project --project cpj >/dev/null
+mkdir -p "$T/c/packs/skills/cpy/refs"; echo '{}' > "$T/c/packs/skills/cpy/refs/.pack.json"
+$DA skill check cpj build 2>&1 | grep -q "FAIL skill:cpy: content changed since it was approved" && ok "a nested .pack.json added to an approved pack is drift (the content hash counts it)" || no "nested record drift: $($DA skill check cpj build 2>&1)"
+rm -rf "$T/c/packs/skills/cpy/refs"
+$DA skill check cpj build 2>&1 | grep -q "^ok   skill:cpy$" && ok "without it the pack is clean again" || no "cpy not clean: $($DA skill check cpj build 2>&1)"
+
 exit $fail
