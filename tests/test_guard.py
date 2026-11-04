@@ -71,6 +71,8 @@ class Review(unittest.TestCase):
                 ("Bash", {"command": "cp /etc/hostname src/"}), ("Bash", {"command": "touch src/x"}),
                 ("Bash", {"command": "git commit -am fix"}), ("Bash", {"command": "%s/git -C %s checkout -- ." % (self.run, c)}),
                 ("Bash", {"command": "cd %s && tee src/b < /dev/null" % c}), ("Bash", {"command": "git apply %s/fix.patch" % o}),
+                ("Bash", {"command": "git tag v1"}), ("Bash", {"command": "git tag -d v1"}), ("Bash", {"command": "git tag -a v1 -m x"}),
+                ("Bash", {"command": "git tag -l -f v1 HEAD~1"}), ("Bash", {"command": "git -C %s tag -s v2" % c}),
                 ("Write", {"file_path": os.path.join(self.t, "elsewhere.txt")})]
 
     def reads(self):
@@ -79,7 +81,9 @@ class Review(unittest.TestCase):
                 ("Bash", {"command": "git log --oneline && git diff HEAD~1"}), ("Bash", {"command": "make test > %s/test.log 2>&1" % o}),
                 ("Bash", {"command": "grep -rn x src 2>/dev/null"}), ("Bash", {"command": "go test ./... | tee %s/log.txt" % o}),
                 ("Bash", {"command": "cat src/a.go"}), ("Bash", {"command": "echo 'done; rm -rf src' && git log --format='%s; touch src/x' -3"}),
-                ("Bash", {"command": "cat <<'E' > %s/notes.txt\nrm -rf src\ngit commit -am x\nE" % o})]
+                ("Bash", {"command": "cat <<'E' > %s/notes.txt\nrm -rf src\ngit commit -am x\nE" % o}),
+                ("Bash", {"command": "git tag"}), ("Bash", {"command": "git tag -l 'v*'"}), ("Bash", {"command": "git tag --list"}), ("Bash", {"command": "git tag -n --list"}),
+                ("Bash", {"command": "git -C %s tag -l" % c}), ("Bash", {"command": "git for-each-ref --format='%(refname)' refs/tags"})]
 
     def test_review_refuses_every_change_to_the_clone(self):
         self.ability("review")
@@ -1493,7 +1497,7 @@ class ProviderHook(unittest.TestCase):
         for tool, args in (("patch_file", {"target": "src/a.go"}), ("run_shell", {"cmd": "echo x > src/a.go"}), ("create_file", {"target": os.path.join(self.t, "e")})):
             r = self.md(tool, args)
             self.assertEqual((r.returncode, r.stdout), (0, ""), tool)
-            self.assertIn("under the review ability", self.denied_md(self.md(tool, args, "--class", "read-only")))
+            self.assertIn("under the read-only class", self.denied_md(self.md(tool, args, "--class", "read-only")))
         self.assertEqual(self.md("create_file", {"target": os.path.join(self.out, "report.md")}, "--class", "read-only").stdout, "")
         os.makedirs(os.path.join(self.conf, "credentials"))
         key = os.path.join(self.conf, "credentials", "marshal_ed25519")
@@ -1548,7 +1552,7 @@ class ProviderHook(unittest.TestCase):
             self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), name)
         r = call("Write", {"file_path": os.path.join(self.t, "e")}, "--class", "read-only")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("under the review ability", r.stderr)
+        self.assertIn("under the read-only class", r.stderr)
 
     def test_a_provider_whose_hook_cannot_be_read_refuses_every_call(self):
         self.refused_before_judging(["--provider"], "--provider")
