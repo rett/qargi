@@ -223,9 +223,8 @@ lib/commands.py:The lead is this Claude Code session
 lib/commands.py:From Claude Code run them with
 lib/commands.py:"summary": "Claude Code hooks"
 lib/commands.py:"subagent-start": verb
-# lib/commands.py: the guard topic names the lead's session files and the ant profiles it protects
+# lib/commands.py: the guard topic names the ant profiles it protects
 lib/commands.py:the memory tiers, ~/\.config/anthropic
-lib/commands.py:lead's git configuration and session files \(~/\.gitconfig, ~/\.claude/settings\.json\)
 lib/commands.py:"subagent-stop": verb
 lib/commands.py:cannot message a local subagent
 lib/commands.py:your Claude Code settings\.json
