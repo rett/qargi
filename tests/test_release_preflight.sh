@@ -123,6 +123,22 @@ grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && 
 rel '{"test_command":"echo gate2"}'; out=$($REL status 0.2.0 2>&1)
 grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate2", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "the note shows on the release branch status too" || no "branch note: $out"
 
+# release start lists the features merged into develop since the previous tag: the --no-ff merges "Merge branch 'feature/...'", one per line with the short sha
+mergedev() { # BRANCH: a --no-ff merge of it into develop, with git's own message
+  git -C "$R" worktree add -q --detach "$T/wt" develop && git -C "$T/wt" merge -q --no-ff "$1" -m "Merge branch '$1' into develop" && git -C "$R" update-ref refs/heads/develop "$(git -C "$T/wt" rev-parse HEAD)"
+  git -C "$R" worktree remove --force "$T/wt"
+}
+mk feats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -q -m one; git -C "$R" branch -f develop
+git -C "$R" branch feature/old develop; onbranch feature/old "echo x > old.txt"; mergedev feature/old
+git -C "$R" tag 0.1.0 develop
+for n in feature/alpha feature/beta agent/task; do git -C "$R" branch "$n" develop; onbranch "$n" "echo x > $(basename "$n").txt"; mergedev "$n"; done
+$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+a=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/alpha'" develop); b=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/beta'" develop)
+grep -qx 'features merged into develop since 0.1.0 (2):' <<<"$out" && grep -qx "  $a feature/alpha" <<<"$out" && grep -qx "  $b feature/beta" <<<"$out" && ! grep -q "feature/old\|agent/task" <<<"$out" && ok "release start lists the features merged since the previous tag, one per line with the short sha, and not older features or task merges" || no "feature list: $out"
+mk nofeats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -q -m one; git -C "$R" branch -f develop; git -C "$R" tag 0.1.0 develop
+$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+grep -qx 'no feature was merged into develop since 0.1.0' <<<"$out" && ok "and says so when there is none" || no "no features: $out"
+
 # release.preflight: run by start and by push before anything changes; a non-zero exit refuses with the tail of its output
 printf '#!/usr/bin/env bash\necho "$1" >> "%s/pre.log"\nif [ -f "%s/pre.fail" ]; then echo "preflight boom"; exit 3; fi\n' "$T" "$T" > "$T/pre.sh"
 mk pre; printf "$CL" > "$R/CHANGELOG.md"; rel "$(jq -nc --arg s "$T/pre.sh" '{preflight:["bash",$s,"{version}"]}')"; seal

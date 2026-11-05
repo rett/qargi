@@ -2299,7 +2299,7 @@ release/<version> is cut from develop (a hotfix/<version> from master); its firs
 .BI "start " "VERSION"
 Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version.
 .br
-Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part.
+Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: the features merged into develop since the previous tag, the \-\-no\-ff merges whose message is "Merge branch 'feature/...'", one per line with the short sha.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

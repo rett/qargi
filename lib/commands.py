@@ -361,7 +361,8 @@ COMMANDS = {
                           desc=("Before anything changes it checks what a release must update and refuses, naming the file and the fix: a man page (man/*.1) needs a .TH line "
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
-                                "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part.")),
+                                "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
+                                "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it and when it ran, from the suite record. When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
