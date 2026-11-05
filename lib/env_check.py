@@ -364,11 +364,11 @@ def qargi_layer(project, answers, repo):
     else:
         bad = []
         for ln in members:
-            m = re.search(r"\(((?:STALE|DRIFT|MISSING)(?:, (?:STALE|DRIFT|MISSING))*)\)\s*$", ln)
+            m = re.search(r"\(((?:STALE|DRIFT|MISSING)(?:, (?:STALE|DRIFT|MISSING))*)(?:: [^)]*)?\)\s*$", ln)
             if m:
                 bad.append("%s %s" % (ln.split()[1], m.group(1).replace(", ", "+")))
         row("members", "%d current" % (len(members) - len(bad)) + (", " + "; ".join(bad) if bad else ""),
-            "members not current: " + "; ".join(bad) + " (qargi agent refresh NAME)" if bad else None)
+            "members not current: " + "; ".join(bad) + " (qargi agent refresh NAME --project %s)" % project if bad else None)
     target = packs_target(answers, project)
     if target is None:
         row("packs", "not checked: no local runtime with a render target")
