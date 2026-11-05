@@ -270,8 +270,8 @@ rn_inputs() { # project outfile
         '{kind:$k,name:$n,path:$p,sha256:$h,approved:$a,review_ok:$rv,exists:true,role:$r,compatible_providers:$c}' >> "$out.rows"
     else jq -nc --arg k "$k" --arg n "$n" --arg r "$r" '{kind:$k,name:$n,path:"",sha256:"",approved:"",review_ok:false,exists:false,role:$r,compatible_providers:null}' >> "$out.rows"; fi
   done <<<"$rows"
-  jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" --slurpfile sk "$out.skips" '
-    {project:$p, provider:$v, state:$s, home:$h, checkout:$c,
+  jq -s --arg p "$prj" --arg v "$PROV" --arg s "$DA_STATE" --arg h "$HOME" --arg c "$(jq -r '.repo.path // ""' "$DA_CONF/projects/$prj.json")" --argjson none "$(jq -c '.packs.none == true' "$DA_CONF/projects/$prj.json")" --slurpfile sk "$out.skips" '
+    {project:$p, provider:$v, state:$s, home:$h, checkout:$c, packs_none:$none,
      packs: (group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, path:.[0].path, sha256:.[0].sha256, approved:.[0].approved,
                                               review_ok:.[0].review_ok, exists:.[0].exists, compatible_providers:.[0].compatible_providers, roles:(map(.role)|unique)})),
      skipped: ($sk | group_by(.kind+":"+.name) | map({kind:.[0].kind, name:.[0].name, why:.[0].why, roles:(map(.role)|unique)}))}' "$out.rows" > "$out"
@@ -350,7 +350,7 @@ rn_main() { # verb: apply|check
     # read only: the section of the skills a session would load follows; only a drifted one adds to the exit status
     local rc=0
     prov_need "$prj" "list the skills a session would load" project_skills_dir
-    ! none_linked "$prj" || echo "no pack is linked to any role of $prj (qargi skill link NAME --scope project --project $prj)"
+    [ "$(jq -r '.packs.none == true' "$DA_CONF/projects/$prj.json")" = true ] || ! none_linked "$prj" || echo "no pack is linked to any role of $prj (qargi skill link NAME --scope project --project $prj)"
     python3 -I "$PY" check "$RN_W/in.json" || rc=1
     [ -n "$RENDER_ONLY" ] || au_report "$RN_W/in.json" "$RN_W" || rc=1
     exit $rc

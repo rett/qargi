@@ -323,6 +323,29 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_packs_to_a_member(self):
+        """packs.none opts a project out of the render check (packs check passes without a render), so a member that could set it would hide a
+        missing render: project set refuses packs and packs.*. Look-alikes stay open."""
+        for path in ("packs", "packs.none"):
+            for form in ("qargi project set p %s true", "sudo qargi project set p %s true", "cd src && qargi project set p %s true",
+                         "bash -c 'qargi project set p %s true'", "./lib/project.sh set p %s true"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s opts the project out of the packs render check" % path, r.stderr, c)
+        for c in ("qargi project set p packs_none true", "qargi project set p budget_cents 500", "qargi project show p", "qargi project validate p",
+                  "echo qargi project set p packs.none true"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_project_profile_check_is_open_to_a_member(self):
+        """qargi project profile check reads a profile and the repository's CLAUDE.md, AGENTS.md and Makefile and writes nothing: a member may run it."""
+        for c in ("qargi project profile check", "qargi project profile check p", "qargi project profile check p --profile ./profile.md",
+                  "sudo qargi project profile check p", "cd src && qargi project profile check p", "bash -c 'qargi project profile check p'",
+                  "./lib/project.sh profile check p", "bash lib/project.sh profile check --profile x.md"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
         the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a

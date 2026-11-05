@@ -340,7 +340,7 @@ The apply renders the union of the packs of all the project's roles into `~/.qar
 claude --add-dir DIR --mcp-config DIR/mcp.json --settings DIR/settings.json
 ```
 
-(the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing.
+(the `--mcp-config` and `--settings` parts appear only when the project has tools). `qargi packs check --target claude-code PROJECT` reports drift (a pack changed since you approved it, or the render no longer matches its manifest) and shadowing (a skill of the same name in `~/.claude/skills` or in the project's own `.claude/skills`, which would override or hide the rendered one). It only reads and changes nothing. A project that was never applied is not a failure: the check says `not applied` and how to apply it, and exits 0. The answer `packs.none: true` says the project uses no project packs; the check then passes with no render (and fails if a pack is linked to a role of the project). Either way the section of the skills a session would load, the unmanaged ones in `~/.claude/skills` included, is still printed.
 
 To load the render without typing the launch line, `qargi packs link PROJECT` makes the repository's `.claude/skills` a symbolic link to it (plan token and approval as for apply): any session opened in that checkout then loads the project's packs. A real `.claude/skills` is moved to `skills.qargi-backup` (nothing is deleted) and `qargi packs unlink PROJECT` puts it back; `packs link` lists which of its skills are new to the library first, and `qargi skill import` brings them in. `.claude` is not tracked, so a new worktree needs its own link. `qargi project link PROJECT [--resource skills,agents,memory]` does the same for the skills, the members and the memory in one plan and one token, each placed the way the runtime's definition says (a directory link, one link per entry, or a copy), and `project unlink` undoes it. `packs check` also lists every skill a session would load that qargi does not manage (`unmanaged`); `qargi skill accept PROJECT NAME` records one you want (for example a skill in `~/.claude/skills`) by name and content hash.
 
@@ -520,7 +520,11 @@ registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
 agents go in a profile under `~/.qargi/config/profiles/`, also
 outside the repository: nothing qargi related is added to a project's
-committed files. `--project` installs are hidden from git through the
+committed files. `qargi project profile check [NAME] [--profile FILE]` reads the
+profile and changes nothing: it exits 1 while the profile still carries the shipped
+example's title and "Copy to" line (`project validate` warns of the same), and warns
+of a gate command in its Gates section that the repository's `CLAUDE.md`,
+`AGENTS.md` and `Makefile` targets do not know. `--project` installs are hidden from git through the
 repository's local `.git/info/exclude`.
 
 Installing also adds the baseline packs that ship with qargi (`packs/`) to your pack library, without linking any of them (see Baseline packs).
