@@ -1,0 +1,22 @@
+{
+ "purpose": "Docs: verify skill uses OUT, changelog numbering guidance, write-role line",
+ "started": "2026-11-05T21:53:55Z",
+ "goal": "Docs: verify skill uses OUT, changelog numbering guidance, write-role line",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T21:53:55Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-05T21:53:55Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-05T21:53:55Z",
+ "feature": "docs",
+ "project": "qargi"
+}
