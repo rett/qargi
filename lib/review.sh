@@ -14,6 +14,15 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
+if [ "$verb" = check ]; then
+  # qargi review check OUT [--allow-empty]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
+  # lead's lease on the feature that run is based on is renewed first (no project is needed, none is loaded)
+  . "$(dirname "$0")/marshal.sh"
+  for a in "$@"; do
+    case $a in -*) ;; *) if o=$(readlink -f -- "$a" 2>/dev/null); then marshal_touch_run "$(dirname "$o")"; fi; break;; esac
+  done
+  exec python3 -I "$(dirname "$0")/review_check.py" "$@"
+fi
 RUN_ARG='' BRANCH='' PROJ='' SAVED=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -44,6 +53,7 @@ case $verb in
       SRC=$RUN
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
+    marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
     [ "$(run_class "$SRC")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"

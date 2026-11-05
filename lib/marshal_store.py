@@ -1501,6 +1501,31 @@ def warnings_for(ctx, d, rec_exists):
     return w
 
 
+def renew_own(ctx, name, rec):
+    """check --renew (the shell API's marshal_check, so every flow verb of the lead): the lead of NAME is this identity, so the command
+    that asks renews the lease, whether or not it lapsed meanwhile (a worker run lasts longer than the lease; nobody else holds the feature,
+    or the lead would be someone else). Only when a third of the lease has passed, so a burst of commands writes once. Never a refusal:
+    a lease that cannot be renewed (remote not reached, a lost race) is a warning. A member run renews nothing. -> the record as it is now."""
+    if rec.get("status") in ("finished", "abandoned") or refs_mod().in_member_run():
+        return rec
+    age = ctx.be.age(ctx, rec)
+    if age is not None and age * 3 < ctx.ttl * 60:
+        return rec
+
+    def fn(r):
+        ld = lead_of(r)
+        if not ld or ld["id"] != ctx.id or r.get("status") in ("finished", "abandoned"):
+            return None, r
+        r = fresh(ctx, name, r)
+        r["renewed_at"] = iso(ctx.t)
+        return r, r
+    try:
+        return update(ctx, name, fn) or rec
+    except Refuse as e:
+        print("qargi: warning: the lease of %s was not renewed (%s)" % (name, e), file=sys.stderr)
+        return rec
+
+
 def v_check(ctx, a):
     ctx.warn_anon()
     if a.name:
@@ -1515,6 +1540,8 @@ def v_check(ctx, a):
             st, _ = lease(ctx, rec)
             if st == "live":
                 raise Refuse(led_by_msg(ctx, a.name, rec))
+        elif ld and a.renew:
+            rec = renew_own(ctx, a.name, rec)
         d = describe(ctx, a.name, rec, {})
         for w in warnings_for(ctx, d, rec is not None):
             print("qargi: warning: " + w, file=sys.stderr)
@@ -1569,7 +1596,7 @@ def choose_backend(a):
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --renew, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
     p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
@@ -1586,6 +1613,7 @@ def main(argv):
     p.add_argument('--all', action="store_true"), p.add_argument('--brief', action="store_true"), p.add_argument('--json', action="store_true")
     p.add_argument('--history', action="store_true")
     p.add_argument('--lenient', action="store_true")
+    p.add_argument('--renew', action="store_true")
     p.add_argument('--no-fetch', dest="no_fetch", action="store_true")
     p.add_argument('--backend', choices=["local", "refs"])
     p.add_argument('--remote')

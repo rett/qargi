@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The lead's lease on a feature no longer lapses during a long worker run: every command of the current lead on the feature renews
+  it (`feature merge`, `sync`, `status`, `verify` and `finish`; `local prepare`, `verify` and `clean`; `review check` and `apply`),
+  once a third of the lease has passed and also when it lapsed meanwhile, as long as nobody else took the feature over. Another
+  identity is still refused while the lease is live, and `marshal check` itself stays a read.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added
