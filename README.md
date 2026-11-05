@@ -191,7 +191,10 @@ refusal changes nothing.
    merges into master, tags, merges back into develop and pushes. `release status` and `release
    verify` work as for features.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
-   `qargi release publish TAG` creates the release from the changelog section (plan and token).
+   `qargi release publish TAG` creates the release from the changelog section (plan and token). The files to attach can be built
+   from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
+   worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
+   `--asset-dir DIR` from it.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).

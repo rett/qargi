@@ -6,30 +6,32 @@ Answers, under `release` in the project's answers file:
   release.sign.namespace       the value of ssh-keygen -n
   release.sign.files           files to sign, relative to the repository (each gets a FILE.sig next to it)
   release.sign.verify_command  optional argv list, run in the repository after signing (no shell)
-  release.assets               files to attach to the GitHub release, relative to the repository
-  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
-  release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
-                               the layout of what a release updates and runs; lib/release_layout.py describes and checks them
+  release.assets               files to attach to the GitHub release: names or globs ({version} replaced) relative to the release asset worktree
+                               that the release assets verb made, else to the repository
+  release.assets_command       the command the release assets verb runs in a clean worktree of the tag to build the release files: a command line
+                               (run by bash -c) or a list of words ({version} replaced, no shell)
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
 result of the signing and of verify_command. Nothing the person types (the passphrase) ever reaches this file or any argument of it.
 
   release_sign.py problems AF                    print the problems of the `release` answers; exit 1 if there are any
   release_sign.py config AF [--need-sign]        the same, quiet on success; --need-sign also wants release.sign
-  release_sign.py lead-only                      exit 2 in a member run or when QARGI_NESTED is set
-  release_sign.py resolve REPO FILE...           print "sha256<TAB>absolute path<TAB>path in the repository" per file; exit 1 if one is no regular
-                                                 file inside the repository
+  release_sign.py lead-only [assets]             exit 2 in a member run or when QARGI_NESTED is set
+  release_sign.py assets --af AF --version V --base DIR [--root DIR]... [--asset F]... [--asset-dir D]...
+                                                 print "sha256<TAB>absolute path<TAB>path in its root" per file to attach: the release.assets of AF
+                                                 (globs expanded), every --asset and every regular file of every --asset-dir. A relative name is taken
+                                                 in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository)
   release_sign.py record --state F --repo R --af AF --project P --version V --commit C --sign-rc N --verify-rc N|none
   release_sign.py check --state F --repo R --af AF --commit C     print the verdict; exit 0 only when the record is ok and still true
 """
-import hashlib, json, os, re, sys, time
+import glob, hashlib, json, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import release_layout   # the layout answers of a release (version_file, changelog, man_pages, test_command, preflight)
 
 NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:+-]{0,63}")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
-RELEASE_KEYS = ("sign", "assets", "notes_file") + release_layout.LAYOUT_KEYS
+RELEASE_KEYS = ("sign", "assets", "notes_file", "assets_command") + release_layout.LAYOUT_KEYS
 SIGN_KEYS = ("key", "namespace", "files", "verify_command")
 
 
@@ -45,18 +47,19 @@ def problems(rel):
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file, version_file, changelog, man_pages, test_command, preflight}"]
+        return ["release: an object like {sign, assets, notes_file, assets_command, version_file, changelog, man_pages, test_command, preflight}"]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))
     if "assets" in rel:
         a = rel["assets"]
         if not (isinstance(a, list) and all(rel_ok(x) for x in a) and len(set(a)) == len(a)):
-            out.append("release.assets: a list of distinct file names relative to the repository (no .., no #, not starting with - or /)")
-    if "notes_file" in rel:
-        n = rel["notes_file"]
-        if not (isinstance(n, str) and rel_ok(n.replace("{version}", "0.0.0"))):
-            out.append("release.notes_file: a file name relative to the repository, {version} standing for the version (no .., no #, not starting with - or /)")
+            out.append("release.assets: a list of distinct file names or globs relative to the release asset worktree, else the repository ({version} stands for the version; no .., no #, not starting with - or /)")
+    if "assets_command" in rel:
+        c = rel["assets_command"]
+        if not ((isinstance(c, str) and c.strip() and not CTRL_RE.search(c))
+                or (isinstance(c, list) and c and all(isinstance(x, str) and x and "\x00" not in x for x in c))):
+            out.append("release.assets_command: the command that builds the release files, a command line or a list of words ({version} replaced in a list), run in a clean worktree of the tag (for example [\"make\", \"dist\"])")
     out.extend(release_layout.problems(rel))
     if "sign" in rel:
         s = rel["sign"]
@@ -108,6 +111,59 @@ def resolve(repo, name):
     if not os.path.isfile(full):
         raise ValueError("%s: not a file (build it first)" % name)
     return full, os.path.relpath(full, root)
+
+
+def resolve_in(roots, base, name):
+    """(absolute real path, name in its root) of a regular file named NAME (taken in BASE when relative) that lies inside one of ROOTS;
+    the root is the deepest one that holds it. ValueError says why not."""
+    if name == "" or CTRL_RE.search(name) or "#" in name:
+        raise ValueError("%s: not a usable file name" % name.encode("unicode_escape").decode())
+    full = os.path.realpath(os.path.join(base, name))
+    held = [r for r in roots if full.startswith(r + os.sep)]
+    if not held or "#" in full:
+        raise ValueError("%s: not inside the repository or one of its worktrees" % name)
+    if not os.path.isfile(full):
+        raise ValueError("%s: not a file (build it first)" % name)
+    return full, os.path.relpath(full, max(held, key=len))
+
+
+def asset_files(a, af, version):
+    """The files to attach, in order and without repeats: [(absolute path, name in its root)]. ValueError says which name cannot be used."""
+    base = os.path.realpath(a["--base"][0])
+    roots = sorted({base} | {os.path.realpath(r) for r in a.get("--root", [])})
+    out, seen = [], set()
+
+    def add(full, rel):
+        if full not in seen:
+            seen.add(full)
+            out.append((full, rel))
+    for pat in ((load_release(af) or {}).get("assets") or []):
+        pat = pat.replace("{version}", version)
+        if not glob.has_magic(pat):
+            add(*resolve_in(roots, base, pat))
+            continue
+        hits = sorted(glob.glob(os.path.join(glob.escape(base), pat), recursive=True))
+        files = [h for h in hits if os.path.isfile(h)]
+        if not files:
+            raise ValueError("release.assets %s: no file matches in %s (build the release files first)" % (pat, base))
+        for h in files:
+            add(*resolve_in(roots, base, os.path.relpath(h, base)))
+    for name in a.get("--asset", []):
+        add(*resolve_in(roots, base, name))
+    for d in a.get("--asset-dir", []):
+        if d == "" or CTRL_RE.search(d):
+            raise ValueError("%s: not a usable directory name" % d.encode("unicode_escape").decode())
+        full = os.path.realpath(os.path.join(base, d))
+        if not any(full == r or full.startswith(r + os.sep) for r in roots):
+            raise ValueError("%s: not inside the repository or one of its worktrees" % d)
+        if not os.path.isdir(full):
+            raise ValueError("%s: not a directory" % d)
+        files = [e for e in sorted(os.listdir(full)) if os.path.isfile(os.path.join(full, e))]
+        if not files:
+            raise ValueError("%s: no regular file in it" % d)
+        for e in files:
+            add(*resolve_in(roots, base, os.path.join(full, e)))
+    return out
 
 
 def sig_hash(full):
@@ -223,8 +279,29 @@ def main(argv):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import marshal_refs
         if os.environ.get("QARGI_NESTED") or marshal_refs.in_member_run():
-            print("qargi: release sign is not available in a member run or a nested call: the passphrase is typed by the person at their own terminal", file=sys.stderr)
+            if rest == ["assets"]:
+                print("qargi: release assets is not available in a member run or a nested call: it runs the project's release.assets_command", file=sys.stderr)
+            else:
+                print("qargi: release sign is not available in a member run or a nested call: the passphrase is typed by the person at their own terminal", file=sys.stderr)
             return 2
+        return 0
+    if cmd == "assets":
+        a, i = {}, 0
+        while i < len(rest):
+            if rest[i] in ("--af", "--version", "--base", "--root", "--asset", "--asset-dir") and i + 1 < len(rest):
+                a.setdefault(rest[i], []).append(rest[i + 1])
+                i += 2
+            else:
+                print("qargi: release_sign.py: unexpected argument %s" % rest[i], file=sys.stderr)
+                return 2
+        if not all(k in a for k in ("--af", "--version", "--base")):
+            return 2
+        try:
+            for full, rel in asset_files(a, a["--af"][0], a["--version"][0]):
+                print("%s\t%s\t%s" % (sha256(full), full, rel))
+        except ValueError as e:
+            print("qargi: %s" % e, file=sys.stderr)
+            return 1
         return 0
     if cmd == "resolve":
         if len(rest) < 2:

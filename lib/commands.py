@@ -444,6 +444,8 @@ COMMANDS = {
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
+                 "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
+                 "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
                  "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
@@ -475,9 +477,21 @@ COMMANDS = {
                                  "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
                                  "'next: qargi release site VERSION'.")),
+            "assets": verb("Build the release files of the tag VERSION in a clean worktree of it, with the project's release.assets_command", [("VERSION", "none")],
+                           [PROJECT_OPT, opt("--recreate", "remove the existing asset worktree of VERSION and build again from the tag")],
+                           desc=("Makes a clean detached worktree of the tag VERSION under the state directory (release-assets/PROJECT-VERSION), runs the answer release.assets_command in it "
+                                 "(a command line, run by bash -c, or a list of words with {version} replaced and no shell; QARGI_RELEASE_VERSION is set) and records the worktree, so the "
+                                 "repository's own checkout is never touched. It prints where the files are and the next command: qargi release sign VERSION when release.sign is set, "
+                                 "else qargi release publish VERSION. release sign and release publish then take the files from the worktree: release.sign.files, release.assets "
+                                 "and relative --asset or --asset-dir names are looked up there. Refused when release.assets_command is not set, when the tag is missing, when the "
+                                 "worktree exists already (--recreate removes it and builds again; its files may be signed) and in a member run or when QARGI_NESTED is set (exit 2). "
+                                 "A command that fails leaves the worktree for you to look at and records nothing. It changes no branch and needs no plan token: it runs the command "
+                                 "the lead put in the answers."),
+                           examples=["qargi release assets 0.2.2", "qargi release assets 0.2.2 --recreate"]),
             "sign": verb("Sign the release files from the tag with your own key, on your own terminal, and record that they verify", [("VERSION", "none")], [PROJECT_OPT],
                          desc=("Signing is optional and off by default: it applies only to a project whose answers hold release.sign (otherwise this exits 2 and nothing else changes). "
-                               "Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it): "
+                               "Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it), or after qargi release assets VERSION, "
+                               "which builds them in a worktree of the tag that sign then uses in place of the repository (the files are signed, verified and recorded there): "
                                "after finish, before publish. For each file of the answer release.sign.files it runs ssh-keygen -Y sign -f KEY -n NAMESPACE FILE attached to "
                                "your terminal (stdin, stdout and stderr are yours; nothing is captured and no input is logged), so you type the key's passphrase there and it "
                                "never passes through qargi, a log or an agent; no ssh agent is asked. Then it runs release.sign.verify_command (a list of words, no shell) in the "
@@ -487,12 +501,14 @@ COMMANDS = {
                                "release.sign.namespace, release.sign.files (relative to the repository) and optionally release.sign.verify_command.")),
             "publish": verb("Create the GitHub release of an existing tag, with its changelog section (or a notes file) as the notes and the assets attached", [("VERSION", "none")],
                             [PROJECT_OPT, PLAN, APPROVED,
-                             opt("--asset", "attach this file (relative to the repository, inside it) to the release; repeat for several, on top of the answer release.assets", "FILE"),
+                             opt("--asset", "attach this file to the release; repeat for several, on top of the answer release.assets. A relative name is taken in the release asset worktree (qargi release assets) when there is one, else in the repository; a full path must lie in a worktree of the repository", "FILE"),
+                             opt("--asset-dir", "attach every regular file of this directory (not its subdirectories), named like --asset; repeat for several", "DIR"),
                              opt("--notes-file", "take the notes from this file (relative to the repository) instead of the changelog section; the answer release.notes_file does the same", "FILE")],
                             desc=("For a tag that has no GitHub release, for example one pushed before the release workflow existed. The plan shows the tag, its commit, "
                                   "the notes (the VERSION section of CHANGELOG.md at the tag, found by release.changelog.released, or the notes file), the sha256 of every asset and the command: gh release create VERSION "
                                   "--verify-tag --title \"PROJECT VERSION\" --notes-file FILE ASSET... (gh is run through QARGI_GH, default gh, and must be logged in); the token covers "
-                                  "the notes and the assets. The assets are --asset and release.assets, regular files inside the repository, attached by the same call that creates the release. "
+                                  "the notes and the assets. The assets are --asset, the files of --asset-dir and release.assets (names or globs, {version} replaced; a glob that matches nothing refuses), regular files inside the asset worktree "
+                                  "of qargi release assets, the repository or another worktree of it (a symbolic link that leaves them is refused), attached by the same call that creates the release. "
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
                                   "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
                                   "Needs the plan token and an approval; a member run cannot publish.")),
