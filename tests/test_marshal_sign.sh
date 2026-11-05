@@ -39,7 +39,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 unset GIT_TERMINAL_PROMPT
@@ -50,54 +51,24 @@ mkdir -p "$T/m" "$T/shimbin"
 WORDS="the signed records are fine for this project"
 TTL=900
 
-# --- the shims: git logs push, fetch, pull, ls-remote and clone; ssh-keygen logs its argument list and hangs verifications while $T/sk.slow exists
-cat > "$T/shimbin/git" <<SHIM
-#!/usr/bin/env bash
-sub=''; i=0; skip=0
-for a in "\$@"; do
-  i=\$((i + 1))
-  if [ \$skip = 1 ]; then skip=0; continue; fi
-  case \$a in -C|-c) skip=1;; -*) ;; *) sub=\$a; break;; esac
-done
-case \$sub in
-  push|fetch|pull|ls-remote|clone) printf '%s\t%s\t%s\n' "\$sub" "\$PWD" "\${*:\$((i + 1))}" >> "$LOG";;
-esac
-exec "$REALGIT" "\$@"
-SHIM
-cat > "$T/shimbin/ssh-keygen" <<SHIM
-#!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$SKLOG"
-case "\$*" in *verify*|*find-principals*) [ -f "$T/sk.slow" ] && exec sleep 60;; esac
-exec "$REALSSHK" "\$@"
-SHIM
-chmod +x "$T/shimbin/git" "$T/shimbin/ssh-keygen"; export PATH=$T/shimbin:$PATH
+# --- the shims: git logs push, fetch, pull, ls-remote and clone; ssh-keygen logs its argument list and hangs the verifications whose scratch directory is listed in $T/sk.slow
+git_shim "$T/shimbin" "$LOG" "$REALGIT"; sshk_shim "$T/shimbin" "$SKLOG" "$REALSSHK" "$T/sk.slow"
+export PATH=$T/shimbin:$PATH
 nall() { wc -l < "$LOG"; }
 
 # --- the origin, seeded from a scratch repository, and the machines
-git init -q --bare "$ORIGIN"
-git init -q -b master "$T/seed"; echo 0.1.0 > "$T/seed/VERSION"
-git -C "$T/seed" add -A && git -C "$T/seed" commit -q -m one && git -C "$T/seed" branch develop
-git -C "$T/seed" remote add origin "$ORIGIN" && git -C "$T/seed" push -q origin master develop
-mk() { # NAME: a machine with its own home, conf, state and a clone of the origin
-  local d=$T/m/$1
-  mkdir -p "$d/home" "$d/c/projects" "$d/s"
-  git clone -q "$ORIGIN" "$d/app" && git -C "$d/app" branch develop origin/develop >/dev/null 2>&1
-  env HOME="$d/home" QARGI_CONF="$d/c" QARGI_STATE="$d/s" "$DA" project template app \
-    | jq --arg p "$d/app" '.repo.path = $p | .repo.url = "https://github.com/acme/app" | .methodology = "gitflow" | .test_command = "true"' > "$d/c/projects/app.json"
-}
+make_origin "$ORIGIN"
 # XE MACHINE [VAR=val...] ARGS...: qargi as that machine, output in $T/o and $T/e, the exit status returned
 XE() {
   local m=$1; shift; local -a ev=()
   while [[ ${1:-} =~ ^[A-Z_0-9]+= ]]; do ev+=("$1"); shift; done
   env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
 }
-out() { cat "$T/o" "$T/e"; }
 S() { echo "$T/m/$1/s"; }                  # the state directory of a machine
 KEY() { echo "$T/m/$1/c/credentials/marshal_ed25519"; }
 SIG() { echo "$(S "$1")/marshal/app.signers"; }
 EN() { echo "$(S "$1")/marshal/app.enabled"; }
 fb() { local n d; for n in "$@"; do for d in "$T"/m/*; do git -C "$d/app" branch "feature/$n" develop; done; done; }
-tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o"; }
 en() { local tk; XE "$1" marshal enable; tk=$(tokof); XE "$1" marshal enable --plan "$tk" --approved "$WORDS"; }
 OWN() { # MACHINE ARGS...: an owner verb of the marshal, the plan and then the apply with the token and the words; the apply's status (97: no token)
   local m=$1 tk; shift
@@ -231,9 +202,174 @@ strict_ignored() {
   else no "SPEC strict: $4 must be ignored with a warning naming $2 (json has pattern $3: $([[ $j == *"$3"* ]] && echo yes || echo no)): $(out)"; fi
 }
 
-mk a; mk b; mk ra; mk rs; mk ro; mk km
+# ============================================================ (16) the review-fix cases run in a world of their own, at the same time as the cases (1) to (15)
+# Their machines, features and origin are their own (a second scratch directory with its own origin, shims and logs), so nothing of one
+# run is seen by the other; the lines they print are shown at the end, where the cases were, and their status is added to the test's.
+s16() {
+# ============================================================ (16) fixes found by the adversarial review: the machines
+# wa and wb are strict machines with their own keys, wc is advisory with a key, wk advisory without one (it writes unsigned records);
+# every one of them trusts the three keys. Each case below is a scenario that was a hole before it was closed.
+make_machine wa
+fb f1 f2 f3 f4 f5 f6 f6t w1 w2 w3
+en wa || no "setup: enable of wa"
+for m in wb wc wk; do clone_machine wa "$m"; done   # wb, wc and wk are copies of the enabled wa
+kl() { OWN "$1" key init --principal "$1@ms" >/dev/null 2>&1; grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' "$T/o" | sed 's/^[[:space:]]*//'; }
+LWA=$(kl wa); LWB=$(kl wb); LWC=$(kl wc)
+for l in "$LWA" "$LWB" "$LWC"; do OWN wa signers add --line "$l" >/dev/null 2>&1; done; for m in wb wc wk; do cp "$(SIG wa)" "$(SIG "$m")"; done   # the same three lines everywhere
+mode wa strict; mode wb strict; mode wc advisory; mode wk advisory
+{ [ -f "$(KEY wa)" ] && [ -f "$(KEY wb)" ] && [ -f "$(KEY wc)" ] && [ "$(jq -r .integrity "$(EN wb)")" = strict ] && [ "$(jq -r .integrity "$(EN wc)")" = advisory ] && grep -qF "$LWC" "$(SIG wk)"; } \
+  && ok "review fixes: the fixture (wa, wb strict, wc, wk advisory, keys trusted everywhere) is in place" || no "setup of the review-fix machines"
+F=refs/qargi/features
+JUNK=''
+junk() { # REF JQFILTER: an unsigned commit on top of REF's head (no sig_v, no signer, the filter applied to the record); JUNK is its oid
+  local h blob trr; h=$(oref "$1")
+  blob=$(orec "$1" | jq -c "del(.sig_v, .signer) | $2" | OG hash-object -w --stdin); trr=$(printf '100644 blob %s\trecord.json\n' "$blob" | OG mktree)
+  JUNK=$(OG commit-tree -p "$h" -m junk "$trr") && OG update-ref "$1" "$JUNK"
+}
+markof() { jq -c --arg n "$2" '.[$n] // empty' "$(S "$1")/features/.accepted-app.json" 2>/dev/null; }     # MACHINE NAME: the high-water mark of a feature
+anc() { OG merge-base --is-ancestor "$1" "$2"; }                                                          # OLD NEW: OLD is NEW or one of its ancestors
+
+# ------------------------------------------------------------ (16a) strict: junk on top of newer valid records must not hide them
+XE wa marshal claim f1 --as alice --goal g1 >/dev/null 2>&1
+XE wb marshal status f1 >/dev/null 2>&1                                  # wb's mark is rev 1 and stays there while wa works
+XE wa marshal set f1 --as alice --goal g2 >/dev/null 2>&1; XE wa marshal set f1 --as alice --goal g3 --plan PLAN-LEGIT >/dev/null 2>&1
+LEG=$(oref $F/f1); junk $F/f1 '.goal = "junk" | .rev = 99'
+j=$(js wb f1)
+{ [[ $j == *'"goal":"g3"'* && $j == *'"plan":"PLAN-LEGIT"'* ]] && [ "$(markof wb f1)" = "[3,\"$LEG\"]" ]; } \
+  && ok "strict: unsigned junk on top of valid rev 2 and 3: a reader with the mark at rev 1 shows rev 3 and moves its mark to it" || no "SPEC strict fallback must find the newest valid signed record under the junk (json ${j:0:300}; mark $(markof wb f1))"
+XE wb marshal set f1 --as alice --goal from-b; rc=$?
+{ [ $rc = 0 ] && anc "$LEG" $F/f1 && [ "$(jsf $F/f1 .rev)" = 4 ] && [ "$(jsf $F/f1 .goal)" = from-b ] && [ "$(jsf $F/f1 .plan)" = PLAN-LEGIT ] && vok "$(oref $F/f1)" features "$(SIG wb)"; } \
+  && ok "strict: the write of the lagging machine builds on rev 3 (still in the chain, plan kept, signed, rev 4) and replaces the junk" || no "SPEC strict: a write must never drop a valid signed newer record (rc=$rc, origin rev $(jsf $F/f1 .rev), plan '$(jsf $F/f1 .plan)', rev 3 kept: $(anc "$LEG" $F/f1 && echo yes || echo NO)): $(out)"
+j=$(js wa f1); j2=$(js wb f1)
+{ [[ $j == *'"goal":"from-b"'* && $j == *'"rev":4'* ]] && [[ $j2 == *'"goal":"from-b"'* ]] && ! grep -q 'rollback detected' "$T/e"; } && ok "strict: both machines see the write on top of rev 3, no rollback" || no "SPEC wa/wb after the write: ${j:0:200} / ${j2:0:200}: $(cat "$T/e")"
+
+# ------------------------------------------------------------ (16b) advisory: an unsigned or INVALID head is built on, not replaced
+PWC=wc@ms
+XE wc marshal claim f2 --as alice --goal g2c >/dev/null 2>&1; C2=$(oref $F/f2)
+XE wk marshal set f2 --as alice --goal from-k >/dev/null 2>&1; K2=$(oref $F/f2)
+{ [ "$K2" != "$C2" ] && [ "$(jsf $F/f2 'has("sig_v")')" = false ] && [ "$(OG rev-parse "$K2^")" = "$C2" ]; } && ok "setup: the keyless advisory machine wk wrote an unsigned record on top of wc's signed one" || no "setup: wk's unsigned write on f2"
+XE wc marshal set f2 --as alice --plan P-wc; rc=$?
+{ [ $rc = 0 ] && anc "$K2" $F/f2 && [ "$(jsf $F/f2 .goal)" = from-k ] && [ "$(jsf $F/f2 .plan)" = P-wc ] && [ "$(jsf $F/f2 .signer)" = "$PWC" ] && vok "$(oref $F/f2)" features "$(SIG wc)"; } \
+  && ok "advisory: a write builds on wk's unsigned head (its goal is kept, the head is in the chain) and is signed" || no "SPEC advisory must build on the actual unsigned head, not on the mark (rc=$rc, goal '$(jsf $F/f2 .goal)', unsigned head kept: $(anc "$K2" $F/f2 && echo yes || echo NO)): $(cat "$T/e")"
+# the lease timer follows the head that was used: wk's unsigned renewals keep the lease of alice alive on wc
+XE wc QARGI_MARSHAL_MONO=0 marshal claim f3 --as alice >/dev/null 2>&1
+XE wk marshal renew f3 --as alice >/dev/null 2>&1
+XE wc QARGI_MARSHAL_MONO=800 marshal status f3 --as sam >/dev/null 2>&1
+XE wc QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f3 --as sam --approved "$WORDS"; rc=$?
+{ [ $rc != 0 ] && [ "$(jsf $F/f3 .lead.id)" = alice ]; } && ok "advisory: the lease timer counts the unsigned head the lead's other machine renewed (the takeover at ttl+1 s is refused)" || no "SPEC advisory: the timer must follow the head that is used, not the mark (rc=$rc, lead $(jsf $F/f3 .lead.id)): $(out)"
+# an INVALID head (changed after signing) is used in advisory too, and a write builds on it
+XE wc marshal claim f4 --as alice --goal g4 >/dev/null 2>&1
+tamper f4 '.goal = "tampered"'; K4=$(oref $F/f4)
+XE wc marshal set f4 --as alice --plan P4; rc=$?
+{ [ $rc = 0 ] && anc "$K4" $F/f4 && [ "$(jsf $F/f4 .goal)" = tampered ] && [ "$(jsf $F/f4 .plan)" = P4 ]; } \
+  && ok "advisory: an INVALID head is the base of a write as well (the head is in the chain)" || no "SPEC advisory must build on an INVALID head too (rc=$rc, goal '$(jsf $F/f4 .goal)'): $(cat "$T/e")"
+
+# ------------------------------------------------------------ (16c) a signed done/ ref does not clear the mark of a feature that is open again, and an old one cannot be replayed
+XE wa marshal claim f5 --as alice --goal life1 >/dev/null 2>&1; XE wa marshal finish f5 --as alice >/dev/null 2>&1
+D5=refs/qargi/done/f5; DONE1=$(oref $D5)
+XE wa marshal claim f5 --as alice --goal l2r1 >/dev/null 2>&1; G1=$(oref $F/f5)
+XE wa marshal set f5 --as alice --goal l2r2 >/dev/null 2>&1; XE wa marshal set f5 --as alice --goal l2r3 >/dev/null 2>&1; G3=$(oref $F/f5)
+XE wb marshal status f5 >/dev/null 2>&1
+{ [ "$DONE1" != none ] && [ "$(markof wb f5)" = "[3,\"$G3\"]" ]; } && ok "reuse of a name: with done/f5 of the first life still there, the mark of the second life (rev 3) is kept" || no "SPEC the mark of an open feature must stay when done/ exists (mark '$(markof wb f5)', done $DONE1)"
+OG update-ref $F/f5 "$G1"
+j=$(js wb f5); XE wb marshal status f5
+{ grep -q 'rollback detected' <(out) && [[ $j == *'"goal":"l2r3"'* ]]; } && ok "reuse of a name: a rewind to rev 1 of the second life is a rollback, the accepted rev 3 is kept" || no "SPEC a rewind next to an old done/ must be detected (json ${j:0:200}): $(cat "$T/e")"
+OG update-ref -d $F/f5                                                          # features/f5 deleted, the old done/f5 replayed
+XE wb marshal status f5; cp "$T/e" "$T/e.f5"
+{ [ "$(markof wb f5)" = "[3,\"$G3\"]" ] && grep -qi 'warn' "$T/e.f5" && grep -qF f5 "$T/e.f5"; } && ok "replay: the old signed done/f5 does not clear the mark of the second life and the vanished ref warns" || no "SPEC an old done must not drop the mark (mark '$(markof wb f5)'): $(cat "$T/e.f5")"
+OG update-ref $F/f5 "$G1"; XE wb marshal status f5
+grep -q 'rollback detected' <(out) && ok "replay: and the rewound rev 1 behind it is still a rollback" || no "SPEC replayed done + rewind must be detected: $(out)"
+OG update-ref $F/f5 "$G3"
+XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
+{ [ $rc = 0 ] && [ "$DONE2" != "$DONE1" ] && [ "$(jsf $D5 .features_oid)" = "$G3" ] && chain_ok $D5 "$(SIG wa)" >/dev/null; } && ok "finish: the signed done record carries the oid of the last features record in its signed payload (and verifies by the spec's payload)" || no "SPEC signed done carries the features oid (rc=$rc, features_oid '$(jsf $D5 .features_oid)', G3 $G3): $(chain_ok $D5 "$(SIG wa)"; cat "$T/ste" 2>/dev/null)"
+XE wb marshal status f5; rc=$?
+{ [ -z "$(markof wb f5)" ] && ! grep -qi 'warn' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
+
+# ------------------------------------------------------------ (16d) a record is what its signature covers, not the oid of the commit that carries it
+XE wa marshal claim f6 --as alice --goal g6 >/dev/null 2>&1; XE wb marshal status f6 >/dev/null 2>&1
+XE wa marshal set f6 --as alice --goal g6b >/dev/null 2>&1; R6=$(oref $F/f6)
+R6P=$(OG rev-parse "$R6^"); R6M=$(OG show -s --format=%B "$R6"); R6T=$(OG rev-parse "$R6^{tree}")
+R6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$R6P" -m "$R6M" "$R6T")      # the same tree, parent and message, another committer date
+{ [ "$R6B" != "$R6" ] && vok "$R6B" features "$(SIG wb)"; } && ok "setup: a re-committed head with another oid still carries a valid signature" || no "setup: the re-committed head does not verify: $(cat "$T/ste" 2>/dev/null)"
+OG update-ref $F/f6 "$R6B"
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the re-committed head (same rev, record and signed parent) is the same record, not a rollback" || no "SPEC the same signed record under another commit oid is not a rollback (json ${j:0:200}): $(cat "$T/e")"
+OG update-ref $F/f6 "$R6"
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the original commit of that record, seen after the re-committed one, is the same record too" || no "SPEC the original oid after a re-committed one is not a rollback (json ${j:0:200}): $(cat "$T/e")"
+XE wa marshal set f6 --as alice --goal g6c >/dev/null 2>&1
+j=$(js wb f6); XE wb marshal status f6
+{ [[ $j == *'"goal":"g6c"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the real chain after it is accepted, the descent check follows the chain by record identity" || no "SPEC the real chain must not be flagged as rollback after a re-committed head (json ${j:0:200}): $(cat "$T/e")"
+# a re-committed head does not renew the lease timer
+XE wa marshal claim f6t --as alice >/dev/null 2>&1; XE wa marshal renew f6t --as alice >/dev/null 2>&1; T6=$(oref $F/f6t)
+XE wb QARGI_MARSHAL_MONO=0 marshal status f6t --as sam >/dev/null 2>&1
+T6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$(OG rev-parse "$T6^")" -m "$(OG show -s --format=%B "$T6")" "$(OG rev-parse "$T6^{tree}")"); OG update-ref $F/f6t "$T6B"
+XE wb QARGI_MARSHAL_MONO=600 marshal status f6t --as sam >/dev/null 2>&1
+XE wb QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f6t --as sam --approved "$WORDS"; rc=$?
+{ [ $rc = 0 ] && [ "$(jsf $F/f6t .lead.id)" = sam ]; } && ok "identity: re-committing a head does not restart the lease timer (takeover at ttl+1 s from the first sight works)" || no "SPEC a re-committed head must not renew a lease (rc=$rc, lead $(jsf $F/f6t .lead.id)): $(out)"
+
+# ------------------------------------------------------------ (16e) resign signs what the owner was shown, never a stranger's record over an accepted one
+# Assumed interface (review fix): `marshal resign NAME` without options prints the lead and the goal of the record it would sign and a
+# plan token that covers them and the head; it applies with `--plan TOK --approved WORDS`, and is refused when this machine has an accepted
+# record of NAME with another lead. The apply is for the head the plan showed.
+PWA=wa@ms; PWB=wb@ms
+XE wa marshal claim w1 --as alice --goal w-legit >/dev/null 2>&1; XE wa marshal status w1 >/dev/null 2>&1
+junk $F/w1 '.lead.id = "mallory" | .goal = "evil"'; WJ=$JUNK
+OWN wa resign w1; r1=$?; cp "$T/e" "$T/e.w1"; cp "$T/o" "$T/o.w1"
+XE wa marshal resign w1 --approved "$WORDS"; r2=$?
+XE wa marshal resign w1 --plan 000000000000 --approved "$WORDS"; r3=$?
+{ [ $r1 != 0 ] && [ $r2 != 0 ] && [ $r3 != 0 ] && [ "$(oref $F/w1)" = "$WJ" ] && [ "$(jsf $F/w1 .lead.id)" = mallory ]; } \
+  && ok "resign: an unsigned head with another lead than the accepted record is refused (in the plan, with the token, and without it); nothing is signed" || no "SPEC resign must refuse a lead that is not the accepted lead (rc $r1 $r2 $r3, head signer '$(jsf $F/w1 .signer)', lead $(jsf $F/w1 .lead.id)): $(cat "$T/o.w1" "$T/e.w1")"
+grep -q 'mallory' "$T/o.w1" "$T/e.w1" && ok "resign: the refusal names the lead it found" || no "SPEC resign names the lead it refuses: $(cat "$T/o.w1" "$T/e.w1")"
+# a machine with no mark: the plan shows the lead and the goal, the token covers them, and the apply is for exactly that head
+XE wb marshal resign w1; tk1=$(tokof); cp "$T/o" "$T/o.w1b"
+{ [ -n "$tk1" ] && grep -q 'mallory' "$T/o.w1b" && grep -q 'evil' "$T/o.w1b" && [ "$(oref $F/w1)" = "$WJ" ]; } && ok "resign: with no mark the plan prints the lead (mallory) and the goal (evil) of the record and a token; nothing is signed yet" || no "SPEC resign plan prints lead and goal (token '$tk1'): $(cat "$T/o.w1b" "$T/e")"
+junk $F/w1 '.goal = "evil2"'; WJ2=$JUNK
+XE wb marshal resign w1; tk2=$(tokof)
+{ [ -n "$tk2" ] && [ "$tk1" != "$tk2" ]; } && ok "resign: the plan token changes when the head changes" || no "SPEC the token must cover the head (tokens '$tk1' '$tk2')"
+XE wb marshal resign w1 --plan "$tk1" --approved "$WORDS"; r1=$?
+{ [ $r1 != 0 ] && [ "$(oref $F/w1)" = "$WJ2" ]; } && ok "resign: the token of the earlier plan is refused for the changed head, nothing signed" || no "SPEC an old plan token must not sign a changed head (rc=$r1)"
+XE wb marshal resign w1 --plan "$tk2" --approved "$WORDS"; r1=$?
+{ [ $r1 = 0 ] && [ "$(OG rev-parse "$(oref $F/w1)^")" = "$WJ2" ] && [ "$(jsf $F/w1 .signer)" = "$PWB" ] && vok "$(oref $F/w1)" features "$(SIG wb)"; } && ok "resign: with the token of the plan that was shown the head is signed, rev+1 on top of it" || no "SPEC resign with the matching token (rc=$r1): $(cat "$T/e" "$T/o")"
+# the owner's own case still works: the unsigned head has the lead of the accepted record
+XE wa marshal claim w2 --as alice --goal w2g >/dev/null 2>&1; mode wa off; XE wa marshal set w2 --as alice --note unsignedwrite >/dev/null 2>&1; mode wa strict
+OWN wa resign w2; r1=$?
+{ [ $r1 = 0 ] && [ "$(jsf $F/w2 .signer)" = "$PWA" ]; } && ok "resign: an unsigned head with the lead of the accepted record is signed" || no "SPEC resign of the accepted lead's unsigned record (rc=$r1): $(out)"
+
+# ------------------------------------------------------------ (16f) disable drops the integrity setting: it is an approved step when integrity is on
+# Assumed interface (review fix): `marshal disable` on a machine whose integrity is advisory or strict prints a plan that names the integrity it
+# drops and a plan token, and applies with `--plan TOK --approved WORDS` (audited as marshal:disable with the words); with integrity off it is
+# as before (no token); `marshal enable` always says which integrity is in effect ("integrity off" when the switch has none); a member
+# run still exits 2.
+make_machine wd; make_machine we; en wd; en we
+mode wd advisory
+cp "$(EN wd)" "$T/en.wd.before"
+XE wd marshal disable; r0=$?; tkd=$(tokof); grep -qi advisory <(out) && pl=1 || pl=0
+XE wd marshal disable --approved "$WORDS"; r1=$?
+XE wd marshal disable --plan 000000000000 --approved "$WORDS"; r2=$?
+{ [ $r0 = 0 ] && [ -n "$tkd" ] && [ $pl = 1 ] && [ $r1 != 0 ] && [ $r2 != 0 ] && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "disable: with integrity advisory it prints a plan (naming the integrity) and a token, and is refused without the token, with a wrong one and without words; the switch is untouched" || no "SPEC disable with integrity on needs the plan token and the words (rc $r0 $r1 $r2, plan names the integrity: $pl, token '$tkd')"
+OWN wd disable; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$(EN wd)" ] && jq -e --arg w "$WORDS" 'select(.verb == "marshal:disable" and .approved == $w)' "$(S wd)/audit.log" >/dev/null 2>&1; } && ok "disable: with the token and the words it switches back to local records and audits marshal:disable with the words" || no "SPEC approved disable (rc=$rc): $(out); $(tail -2 "$(S wd)/audit.log" 2>&1)"
+XE wd marshal enable; tke=$(tokof); XE wd marshal enable --plan "$tke" --approved "$WORDS"
+{ grep -qi 'integrity off' "$T/o" && [ "$(jq -r '.integrity // "off"' "$(EN wd)")" = off ]; } && ok "enable after disable: says that integrity is off" || no "SPEC enable must say that integrity is off after a disable: $(out)"
+XE we marshal disable; rc=$?
+{ [ $rc = 0 ] && [ ! -e "$(EN we)" ]; } && ok "disable: with integrity off it still needs no token (as before)" || no "SPEC disable with integrity off is as before (rc=$rc): $(out)"
+mkdir -p "$T/run16/work"; echo build > "$T/run16/ability"; : > "$T/run16/refs.before"
+mode wd advisory; cp "$(EN wd)" "$T/en.wd.before"
+( cd "$T/run16/work" && XE wd marshal disable ); r1=$?; e1=$(cat "$T/e")
+( cd "$T/run16/work" && XE wd marshal disable --plan 000000000000 --approved w ); r2=$?
+{ [ $r1 = 2 ] && [ $r2 = 2 ] && grep -qi member <<<"$e1" && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "member: disable, even with a token and words, exits 2 and leaves the switch alone" || no "SPEC member run: disable (rc $r1 $r2): $e1"
+}
+W=$T/w16; mkdir -p "$W/m" "$W/shimbin"; cp "$T/sigtool.py" "$W/sigtool.py"
+( T=$W; ORIGIN=$T/origin.git; LOG=$T/shim.log; SKLOG=$T/sshk.log; : > "$LOG"; : > "$SKLOG"; : > "$T/ste"
+  git_shim "$T/shimbin" "$LOG" "$REALGIT"; sshk_shim "$T/shimbin" "$SKLOG" "$REALSSHK" "$T/sk.slow"; PATH=$T/shimbin:$PATH
+  make_origin "$ORIGIN"; fail=0; s16; echo "$fail" > "$T/fail" ) > "$T/s16.out" 2>&1 &
+S16PID=$!
+
+make_machine a; make_machine km
 fb off1 s1 s2 tmo tamlead tamrev tamstat cpsrc cpk2 cppx rp1 tmj tmj2 tmr tw3 st1 rsg1 del1 fin1 rot1 rot2 rv1 rv2 sl1
-for m in a b ra rs ro; do en "$m" || no "setup: enable of $m"; done
+en a || no "setup: enable of a"
+for m in b ra rs ro; do clone_machine a "$m"; done   # the others are copies of the enabled machine a (their own keys and signers come next)
 
 # ============================================================ (1) integrity is off by default; an unkeyed machine writes unsigned records
 jq -e '(.integrity // "off") == "off"' "$(EN a)" >/dev/null 2>&1 && ok "default: after enable the switch file has no integrity field or off" || no "SPEC integrity defaults to off: $(cat "$(EN a)" 2>&1)"
@@ -279,7 +415,7 @@ OWN a signers add --line "$LB"$'\n'"$LS"; rc=$?
 XE a marshal signers add --line "$LA" --approved "$WORDS"; rc=$?
 { [ $rc != 0 ] && { [ ! -e "$(SIG a)" ] || ! grep -q "$PA" "$(SIG a)"; }; } && ok "signers add: refused without the plan token" || no "SPEC signers add needs the plan token (rc=$rc)"
 trust() { local m=$1 l; shift; for l in "$@"; do OWN "$m" signers add --line "$l" >/dev/null 2>&1; done; }
-trust a "$LA" "$LB"; trust b "$LA" "$LB"; trust ra "$LA" "$LB"; trust rs "$LA" "$LB" "$LS"; trust ro "$LA" "$LB"
+trust a "$LA" "$LB"; for m in b ra ro rs; do cp "$(SIG a)" "$(SIG "$m")"; done; trust rs "$LS"   # the others trust the same lines (a's file)
 { grep -qF "$LA" "$(SIG a)" && grep -qF "$LB" "$(SIG a)"; } 2>/dev/null && ok "signers add: the lines are in \$STATE/marshal/app.signers" || no "SPEC signers file $(SIG a): $(cat "$(SIG a)" 2>&1)"
 XE a marshal signers list; grep -q "$PA" "$T/o" && grep -q "$PB" "$T/o" && ok "signers list: prints the trusted principals" || no "SPEC signers list: $(out)"
 # the signers file and the key are never in the repository
@@ -330,12 +466,11 @@ XE a marshal finish s1 --as alice; rc=$?
 
 # ============================================================ (6) ssh-keygen that hangs: bounded, cannot verify
 XE a marshal claim tmo --as alice >/dev/null 2>&1
-touch "$T/sk.slow"; t0=$(date +%s)
-timeout 100 env HOME="$T/m/rs/home" QARGI_CONF="$T/m/rs/c" QARGI_STATE="$T/m/rs/s" QARGI_REMOTE_TIMEOUT=2 "$DA" marshal status tmo >"$T/o" 2>"$T/e"; rc=$?
-el=$(( $(date +%s) - t0 )); rm -f "$T/sk.slow"
-if [ $rc != 124 ] && [ $el -lt 90 ] && cleanrun && ! grep -q '"id": *"alice"' "$T/o" && grep -qi warn <(out) && grep -q 'verify' "$SKLOG"; then
-  ok "hang: a verification that hangs ends in $el s; in strict the record is ignored with a warning, no crash"
-else no "SPEC ssh-keygen verification needs a timeout (rc=$rc after ${el}s, verify calls: $(grep -c verify "$SKLOG")): $(out)"; fi
+clone_machine rs rsh; mkdir -p "$T/m/rsh/tmp"; echo "$T/m/rsh/tmp" > "$T/sk.slow"
+( t0=$(date +%s)
+  timeout 100 env HOME="$T/m/rsh/home" QARGI_CONF="$T/m/rsh/c" QARGI_STATE="$T/m/rsh/s" TMPDIR="$T/m/rsh/tmp" QARGI_REMOTE_TIMEOUT=2 "$DA" marshal status tmo >"$T/hang.o" 2>"$T/hang.e"
+  echo $? > "$T/hang.rc"; echo $(( $(date +%s) - t0 )) > "$T/hang.el" ) &
+HANGPID=$!   # its verdict is judged before the member-run cases (14), when it has surely ended
 
 # ============================================================ (7) forged records: a positive control, then the rejections
 EVIL=$T/evilkey; "$REALSSHK" -q -t ed25519 -N '' -C evil -f "$EVIL" >/dev/null 2>&1
@@ -541,6 +676,12 @@ else no "SPEC rotation, renewal re-signs (rc $r1 $r2): $(orec refs/qargi/feature
 XE ra marshal status rot1; ra_out=$(out); j=$(js rs rot2); XE rs marshal status rot2
 { grep -qw signed <<<"$ra_out" && ! grep -q INVALID <<<"$ra_out" && [[ $j == *'"id":"alice"'* ]] && ! grep -qi warn "$T/e"; } && ok "rotation: after the renewal both readers show the records valid again" || no "SPEC rotation, valid again: $ra_out; $(out)"
 
+# ------------------------------------------------------------ (6) the verdict of the hang
+wait "$HANGPID"; rc=$(cat "$T/hang.rc" 2>/dev/null || echo none); el=$(cat "$T/hang.el" 2>/dev/null || echo 999)
+if [ "$rc" != 124 ] && [ "$el" -lt 90 ] && ! grep -q Traceback "$T/hang.e" "$T/hang.o" && ! grep -q '"id": *"alice"' "$T/hang.o" && grep -qi warn <(cat "$T/hang.o" "$T/hang.e") && grep -q 'verify' "$SKLOG"; then
+  ok "hang: a verification that hangs ends in $el s; in strict the record is ignored with a warning, no crash"
+else no "SPEC ssh-keygen verification needs a timeout (rc=$rc after ${el}s, verify calls: $(grep -c verify "$SKLOG")): $(cat "$T/hang.o" "$T/hang.e")"; fi
+
 # ============================================================ (14) member runs: key, signers, integrity and resign are refused
 mkdir -p "$T/run/work"; echo build > "$T/run/ability"; : > "$T/run/refs.before"
 cp "$(SIG a)" "$T/sig.a.before"; cp "$(EN a)" "$T/en.a.before"; cp "$(KEY a)" "$T/key.a.before"
@@ -571,158 +712,8 @@ grep -q -- '-Y' "$SKLOG" && ok "ssh-keygen shim log: qargi used ssh-keygen -Y (t
 grep -q -- '-Y sign' "$SKLOG" && grep -q -- '-Y verify' "$SKLOG" && ! grep -E -- '-Y sign.* -n [^q]|-Y verify.* -n [^q]' "$SKLOG" | grep -q . && ok "ssh-keygen shim log: the namespace is always qargi-marshal" || no "SPEC ssh-keygen was called with another namespace: $(grep -E -- '-n [^q]' "$SKLOG" | head -3)"
 [ "$(stat -c %a "$(KEY a)" 2>/dev/null)" = 600 ] && [ "$(stat -c %a "$(KEY b)" 2>/dev/null)" = 600 ] && ok "key: both key files are still mode 0600 after all the runs" || no "SPEC key mode 0600: $(stat -c %a "$(KEY a)" "$(KEY b)" 2>&1)"
 
-# ============================================================ (16) fixes found by the adversarial review: the machines
-# wa and wb are strict machines with their own keys, wc is advisory with a key, wk advisory without one (it writes unsigned records);
-# every one of them trusts the three keys. Each case below is a scenario that was a hole before it was closed.
-mk wa; mk wb; mk wc; mk wk
-fb f1 f2 f3 f4 f5 f6 f6t w1 w2 w3
-for m in wa wb wc wk; do en "$m" || no "setup: enable of $m"; done
-kl() { OWN "$1" key init --principal "$1@ms" >/dev/null 2>&1; grep -m1 'namespaces="qargi-marshal" ssh-ed25519 ' "$T/o" | sed 's/^[[:space:]]*//'; }
-LWA=$(kl wa); LWB=$(kl wb); LWC=$(kl wc)
-for m in wa wb wc wk; do for l in "$LWA" "$LWB" "$LWC"; do OWN "$m" signers add --line "$l" >/dev/null 2>&1; done; done
-mode wa strict; mode wb strict; mode wc advisory; mode wk advisory
-{ [ -f "$(KEY wa)" ] && [ -f "$(KEY wb)" ] && [ -f "$(KEY wc)" ] && [ "$(jq -r .integrity "$(EN wb)")" = strict ] && [ "$(jq -r .integrity "$(EN wc)")" = advisory ] && grep -qF "$LWC" "$(SIG wk)"; } \
-  && ok "review fixes: the fixture (wa, wb strict, wc, wk advisory, keys trusted everywhere) is in place" || no "setup of the review-fix machines"
-F=refs/qargi/features
-JUNK=''
-junk() { # REF JQFILTER: an unsigned commit on top of REF's head (no sig_v, no signer, the filter applied to the record); JUNK is its oid
-  local h blob trr; h=$(oref "$1")
-  blob=$(orec "$1" | jq -c "del(.sig_v, .signer) | $2" | OG hash-object -w --stdin); trr=$(printf '100644 blob %s\trecord.json\n' "$blob" | OG mktree)
-  JUNK=$(OG commit-tree -p "$h" -m junk "$trr") && OG update-ref "$1" "$JUNK"
-}
-markof() { jq -c --arg n "$2" '.[$n] // empty' "$(S "$1")/features/.accepted-app.json" 2>/dev/null; }     # MACHINE NAME: the high-water mark of a feature
-anc() { OG merge-base --is-ancestor "$1" "$2"; }                                                          # OLD NEW: OLD is NEW or one of its ancestors
-
-# ------------------------------------------------------------ (16a) strict: junk on top of newer valid records must not hide them
-XE wa marshal claim f1 --as alice --goal g1 >/dev/null 2>&1
-XE wb marshal status f1 >/dev/null 2>&1                                  # wb's mark is rev 1 and stays there while wa works
-XE wa marshal set f1 --as alice --goal g2 >/dev/null 2>&1; XE wa marshal set f1 --as alice --goal g3 --plan PLAN-LEGIT >/dev/null 2>&1
-LEG=$(oref $F/f1); junk $F/f1 '.goal = "junk" | .rev = 99'
-j=$(js wb f1)
-{ [[ $j == *'"goal":"g3"'* && $j == *'"plan":"PLAN-LEGIT"'* ]] && [ "$(markof wb f1)" = "[3,\"$LEG\"]" ]; } \
-  && ok "strict: unsigned junk on top of valid rev 2 and 3: a reader with the mark at rev 1 shows rev 3 and moves its mark to it" || no "SPEC strict fallback must find the newest valid signed record under the junk (json ${j:0:300}; mark $(markof wb f1))"
-XE wb marshal set f1 --as alice --goal from-b; rc=$?
-{ [ $rc = 0 ] && anc "$LEG" $F/f1 && [ "$(jsf $F/f1 .rev)" = 4 ] && [ "$(jsf $F/f1 .goal)" = from-b ] && [ "$(jsf $F/f1 .plan)" = PLAN-LEGIT ] && vok "$(oref $F/f1)" features "$(SIG wb)"; } \
-  && ok "strict: the write of the lagging machine builds on rev 3 (still in the chain, plan kept, signed, rev 4) and replaces the junk" || no "SPEC strict: a write must never drop a valid signed newer record (rc=$rc, origin rev $(jsf $F/f1 .rev), plan '$(jsf $F/f1 .plan)', rev 3 kept: $(anc "$LEG" $F/f1 && echo yes || echo NO)): $(out)"
-j=$(js wa f1); j2=$(js wb f1)
-{ [[ $j == *'"goal":"from-b"'* && $j == *'"rev":4'* ]] && [[ $j2 == *'"goal":"from-b"'* ]] && ! grep -q 'rollback detected' "$T/e"; } && ok "strict: both machines see the write on top of rev 3, no rollback" || no "SPEC wa/wb after the write: ${j:0:200} / ${j2:0:200}: $(cat "$T/e")"
-
-# ------------------------------------------------------------ (16b) advisory: an unsigned or INVALID head is built on, not replaced
-PWC=wc@ms
-XE wc marshal claim f2 --as alice --goal g2c >/dev/null 2>&1; C2=$(oref $F/f2)
-XE wk marshal set f2 --as alice --goal from-k >/dev/null 2>&1; K2=$(oref $F/f2)
-{ [ "$K2" != "$C2" ] && [ "$(jsf $F/f2 'has("sig_v")')" = false ] && [ "$(OG rev-parse "$K2^")" = "$C2" ]; } && ok "setup: the keyless advisory machine wk wrote an unsigned record on top of wc's signed one" || no "setup: wk's unsigned write on f2"
-XE wc marshal set f2 --as alice --plan P-wc; rc=$?
-{ [ $rc = 0 ] && anc "$K2" $F/f2 && [ "$(jsf $F/f2 .goal)" = from-k ] && [ "$(jsf $F/f2 .plan)" = P-wc ] && [ "$(jsf $F/f2 .signer)" = "$PWC" ] && vok "$(oref $F/f2)" features "$(SIG wc)"; } \
-  && ok "advisory: a write builds on wk's unsigned head (its goal is kept, the head is in the chain) and is signed" || no "SPEC advisory must build on the actual unsigned head, not on the mark (rc=$rc, goal '$(jsf $F/f2 .goal)', unsigned head kept: $(anc "$K2" $F/f2 && echo yes || echo NO)): $(cat "$T/e")"
-# the lease timer follows the head that was used: wk's unsigned renewals keep the lease of alice alive on wc
-XE wc QARGI_MARSHAL_MONO=0 marshal claim f3 --as alice >/dev/null 2>&1
-XE wk marshal renew f3 --as alice >/dev/null 2>&1
-XE wc QARGI_MARSHAL_MONO=800 marshal status f3 --as sam >/dev/null 2>&1
-XE wc QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f3 --as sam --approved "$WORDS"; rc=$?
-{ [ $rc != 0 ] && [ "$(jsf $F/f3 .lead.id)" = alice ]; } && ok "advisory: the lease timer counts the unsigned head the lead's other machine renewed (the takeover at ttl+1 s is refused)" || no "SPEC advisory: the timer must follow the head that is used, not the mark (rc=$rc, lead $(jsf $F/f3 .lead.id)): $(out)"
-# an INVALID head (changed after signing) is used in advisory too, and a write builds on it
-XE wc marshal claim f4 --as alice --goal g4 >/dev/null 2>&1
-tamper f4 '.goal = "tampered"'; K4=$(oref $F/f4)
-XE wc marshal set f4 --as alice --plan P4; rc=$?
-{ [ $rc = 0 ] && anc "$K4" $F/f4 && [ "$(jsf $F/f4 .goal)" = tampered ] && [ "$(jsf $F/f4 .plan)" = P4 ]; } \
-  && ok "advisory: an INVALID head is the base of a write as well (the head is in the chain)" || no "SPEC advisory must build on an INVALID head too (rc=$rc, goal '$(jsf $F/f4 .goal)'): $(cat "$T/e")"
-
-# ------------------------------------------------------------ (16c) a signed done/ ref does not clear the mark of a feature that is open again, and an old one cannot be replayed
-XE wa marshal claim f5 --as alice --goal life1 >/dev/null 2>&1; XE wa marshal finish f5 --as alice >/dev/null 2>&1
-D5=refs/qargi/done/f5; DONE1=$(oref $D5)
-XE wa marshal claim f5 --as alice --goal l2r1 >/dev/null 2>&1; G1=$(oref $F/f5)
-XE wa marshal set f5 --as alice --goal l2r2 >/dev/null 2>&1; XE wa marshal set f5 --as alice --goal l2r3 >/dev/null 2>&1; G3=$(oref $F/f5)
-XE wb marshal status f5 >/dev/null 2>&1
-{ [ "$DONE1" != none ] && [ "$(markof wb f5)" = "[3,\"$G3\"]" ]; } && ok "reuse of a name: with done/f5 of the first life still there, the mark of the second life (rev 3) is kept" || no "SPEC the mark of an open feature must stay when done/ exists (mark '$(markof wb f5)', done $DONE1)"
-OG update-ref $F/f5 "$G1"
-j=$(js wb f5); XE wb marshal status f5
-{ grep -q 'rollback detected' <(out) && [[ $j == *'"goal":"l2r3"'* ]]; } && ok "reuse of a name: a rewind to rev 1 of the second life is a rollback, the accepted rev 3 is kept" || no "SPEC a rewind next to an old done/ must be detected (json ${j:0:200}): $(cat "$T/e")"
-OG update-ref -d $F/f5                                                          # features/f5 deleted, the old done/f5 replayed
-XE wb marshal status f5; cp "$T/e" "$T/e.f5"
-{ [ "$(markof wb f5)" = "[3,\"$G3\"]" ] && grep -qi 'warn' "$T/e.f5" && grep -qF f5 "$T/e.f5"; } && ok "replay: the old signed done/f5 does not clear the mark of the second life and the vanished ref warns" || no "SPEC an old done must not drop the mark (mark '$(markof wb f5)'): $(cat "$T/e.f5")"
-OG update-ref $F/f5 "$G1"; XE wb marshal status f5
-grep -q 'rollback detected' <(out) && ok "replay: and the rewound rev 1 behind it is still a rollback" || no "SPEC replayed done + rewind must be detected: $(out)"
-OG update-ref $F/f5 "$G3"
-XE wa marshal finish f5 --as alice; rc=$?; DONE2=$(oref $D5)
-{ [ $rc = 0 ] && [ "$DONE2" != "$DONE1" ] && [ "$(jsf $D5 .features_oid)" = "$G3" ] && chain_ok $D5 "$(SIG wa)" >/dev/null; } && ok "finish: the signed done record carries the oid of the last features record in its signed payload (and verifies by the spec's payload)" || no "SPEC signed done carries the features oid (rc=$rc, features_oid '$(jsf $D5 .features_oid)', G3 $G3): $(chain_ok $D5 "$(SIG wa)"; cat "$T/ste" 2>/dev/null)"
-XE wb marshal status f5; rc=$?
-{ [ -z "$(markof wb f5)" ] && ! grep -qi 'warn' "$T/e"; } && ok "finish: the legitimate done record (its features oid is the accepted oid) clears the mark, without a warning" || no "SPEC the matching done clears the mark (mark '$(markof wb f5)'): $(cat "$T/e")"
-
-# ------------------------------------------------------------ (16d) a record is what its signature covers, not the oid of the commit that carries it
-XE wa marshal claim f6 --as alice --goal g6 >/dev/null 2>&1; XE wb marshal status f6 >/dev/null 2>&1
-XE wa marshal set f6 --as alice --goal g6b >/dev/null 2>&1; R6=$(oref $F/f6)
-R6P=$(OG rev-parse "$R6^"); R6M=$(OG show -s --format=%B "$R6"); R6T=$(OG rev-parse "$R6^{tree}")
-R6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$R6P" -m "$R6M" "$R6T")      # the same tree, parent and message, another committer date
-{ [ "$R6B" != "$R6" ] && vok "$R6B" features "$(SIG wb)"; } && ok "setup: a re-committed head with another oid still carries a valid signature" || no "setup: the re-committed head does not verify: $(cat "$T/ste" 2>/dev/null)"
-OG update-ref $F/f6 "$R6B"
-j=$(js wb f6); XE wb marshal status f6
-{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the re-committed head (same rev, record and signed parent) is the same record, not a rollback" || no "SPEC the same signed record under another commit oid is not a rollback (json ${j:0:200}): $(cat "$T/e")"
-OG update-ref $F/f6 "$R6"
-j=$(js wb f6); XE wb marshal status f6
-{ [[ $j == *'"goal":"g6b"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the original commit of that record, seen after the re-committed one, is the same record too" || no "SPEC the original oid after a re-committed one is not a rollback (json ${j:0:200}): $(cat "$T/e")"
-XE wa marshal set f6 --as alice --goal g6c >/dev/null 2>&1
-j=$(js wb f6); XE wb marshal status f6
-{ [[ $j == *'"goal":"g6c"'* ]] && ! grep -q 'rollback detected' <(out); } && ok "identity: the real chain after it is accepted, the descent check follows the chain by record identity" || no "SPEC the real chain must not be flagged as rollback after a re-committed head (json ${j:0:200}): $(cat "$T/e")"
-# a re-committed head does not renew the lease timer
-XE wa marshal claim f6t --as alice >/dev/null 2>&1; XE wa marshal renew f6t --as alice >/dev/null 2>&1; T6=$(oref $F/f6t)
-XE wb QARGI_MARSHAL_MONO=0 marshal status f6t --as sam >/dev/null 2>&1
-T6B=$(GIT_COMMITTER_DATE="2001-01-01T00:00:00Z" OG commit-tree -p "$(OG rev-parse "$T6^")" -m "$(OG show -s --format=%B "$T6")" "$(OG rev-parse "$T6^{tree}")"); OG update-ref $F/f6t "$T6B"
-XE wb QARGI_MARSHAL_MONO=600 marshal status f6t --as sam >/dev/null 2>&1
-XE wb QARGI_MARSHAL_MONO=$((TTL + 1)) marshal takeover f6t --as sam --approved "$WORDS"; rc=$?
-{ [ $rc = 0 ] && [ "$(jsf $F/f6t .lead.id)" = sam ]; } && ok "identity: re-committing a head does not restart the lease timer (takeover at ttl+1 s from the first sight works)" || no "SPEC a re-committed head must not renew a lease (rc=$rc, lead $(jsf $F/f6t .lead.id)): $(out)"
-
-# ------------------------------------------------------------ (16e) resign signs what the owner was shown, never a stranger's record over an accepted one
-# Assumed interface (review fix): `marshal resign NAME` without options prints the lead and the goal of the record it would sign and a
-# plan token that covers them and the head; it applies with `--plan TOK --approved WORDS`, and is refused when this machine has an accepted
-# record of NAME with another lead. The apply is for the head the plan showed.
-PWA=wa@ms; PWB=wb@ms
-XE wa marshal claim w1 --as alice --goal w-legit >/dev/null 2>&1; XE wa marshal status w1 >/dev/null 2>&1
-junk $F/w1 '.lead.id = "mallory" | .goal = "evil"'; WJ=$JUNK
-OWN wa resign w1; r1=$?; cp "$T/e" "$T/e.w1"; cp "$T/o" "$T/o.w1"
-XE wa marshal resign w1 --approved "$WORDS"; r2=$?
-XE wa marshal resign w1 --plan 000000000000 --approved "$WORDS"; r3=$?
-{ [ $r1 != 0 ] && [ $r2 != 0 ] && [ $r3 != 0 ] && [ "$(oref $F/w1)" = "$WJ" ] && [ "$(jsf $F/w1 .lead.id)" = mallory ]; } \
-  && ok "resign: an unsigned head with another lead than the accepted record is refused (in the plan, with the token, and without it); nothing is signed" || no "SPEC resign must refuse a lead that is not the accepted lead (rc $r1 $r2 $r3, head signer '$(jsf $F/w1 .signer)', lead $(jsf $F/w1 .lead.id)): $(cat "$T/o.w1" "$T/e.w1")"
-grep -q 'mallory' "$T/o.w1" "$T/e.w1" && ok "resign: the refusal names the lead it found" || no "SPEC resign names the lead it refuses: $(cat "$T/o.w1" "$T/e.w1")"
-# a machine with no mark: the plan shows the lead and the goal, the token covers them, and the apply is for exactly that head
-XE wb marshal resign w1; tk1=$(tokof); cp "$T/o" "$T/o.w1b"
-{ [ -n "$tk1" ] && grep -q 'mallory' "$T/o.w1b" && grep -q 'evil' "$T/o.w1b" && [ "$(oref $F/w1)" = "$WJ" ]; } && ok "resign: with no mark the plan prints the lead (mallory) and the goal (evil) of the record and a token; nothing is signed yet" || no "SPEC resign plan prints lead and goal (token '$tk1'): $(cat "$T/o.w1b" "$T/e")"
-junk $F/w1 '.goal = "evil2"'; WJ2=$JUNK
-XE wb marshal resign w1; tk2=$(tokof)
-{ [ -n "$tk2" ] && [ "$tk1" != "$tk2" ]; } && ok "resign: the plan token changes when the head changes" || no "SPEC the token must cover the head (tokens '$tk1' '$tk2')"
-XE wb marshal resign w1 --plan "$tk1" --approved "$WORDS"; r1=$?
-{ [ $r1 != 0 ] && [ "$(oref $F/w1)" = "$WJ2" ]; } && ok "resign: the token of the earlier plan is refused for the changed head, nothing signed" || no "SPEC an old plan token must not sign a changed head (rc=$r1)"
-XE wb marshal resign w1 --plan "$tk2" --approved "$WORDS"; r1=$?
-{ [ $r1 = 0 ] && [ "$(OG rev-parse "$(oref $F/w1)^")" = "$WJ2" ] && [ "$(jsf $F/w1 .signer)" = "$PWB" ] && vok "$(oref $F/w1)" features "$(SIG wb)"; } && ok "resign: with the token of the plan that was shown the head is signed, rev+1 on top of it" || no "SPEC resign with the matching token (rc=$r1): $(cat "$T/e" "$T/o")"
-# the owner's own case still works: the unsigned head has the lead of the accepted record
-XE wa marshal claim w2 --as alice --goal w2g >/dev/null 2>&1; mode wa off; XE wa marshal set w2 --as alice --note unsignedwrite >/dev/null 2>&1; mode wa strict
-OWN wa resign w2; r1=$?
-{ [ $r1 = 0 ] && [ "$(jsf $F/w2 .signer)" = "$PWA" ]; } && ok "resign: an unsigned head with the lead of the accepted record is signed" || no "SPEC resign of the accepted lead's unsigned record (rc=$r1): $(out)"
-
-# ------------------------------------------------------------ (16f) disable drops the integrity setting: it is an approved step when integrity is on
-# Assumed interface (review fix): `marshal disable` on a machine whose integrity is advisory or strict prints a plan that names the integrity it
-# drops and a plan token, and applies with `--plan TOK --approved WORDS` (audited as marshal:disable with the words); with integrity off it is
-# as before (no token); `marshal enable` always says which integrity is in effect ("integrity off" when the switch has none); a member
-# run still exits 2.
-mk wd; mk we; en wd; en we
-mode wd advisory
-cp "$(EN wd)" "$T/en.wd.before"
-XE wd marshal disable; r0=$?; tkd=$(tokof); grep -qi advisory <(out) && pl=1 || pl=0
-XE wd marshal disable --approved "$WORDS"; r1=$?
-XE wd marshal disable --plan 000000000000 --approved "$WORDS"; r2=$?
-{ [ $r0 = 0 ] && [ -n "$tkd" ] && [ $pl = 1 ] && [ $r1 != 0 ] && [ $r2 != 0 ] && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "disable: with integrity advisory it prints a plan (naming the integrity) and a token, and is refused without the token, with a wrong one and without words; the switch is untouched" || no "SPEC disable with integrity on needs the plan token and the words (rc $r0 $r1 $r2, plan names the integrity: $pl, token '$tkd')"
-OWN wd disable; rc=$?
-{ [ $rc = 0 ] && [ ! -e "$(EN wd)" ] && jq -e --arg w "$WORDS" 'select(.verb == "marshal:disable" and .approved == $w)' "$(S wd)/audit.log" >/dev/null 2>&1; } && ok "disable: with the token and the words it switches back to local records and audits marshal:disable with the words" || no "SPEC approved disable (rc=$rc): $(out); $(tail -2 "$(S wd)/audit.log" 2>&1)"
-XE wd marshal enable; tke=$(tokof); XE wd marshal enable --plan "$tke" --approved "$WORDS"
-{ grep -qi 'integrity off' "$T/o" && [ "$(jq -r '.integrity // "off"' "$(EN wd)")" = off ]; } && ok "enable after disable: says that integrity is off" || no "SPEC enable must say that integrity is off after a disable: $(out)"
-XE we marshal disable; rc=$?
-{ [ $rc = 0 ] && [ ! -e "$(EN we)" ]; } && ok "disable: with integrity off it still needs no token (as before)" || no "SPEC disable with integrity off is as before (rc=$rc): $(out)"
-mkdir -p "$T/run16/work"; echo build > "$T/run16/ability"; : > "$T/run16/refs.before"
-mode wd advisory; cp "$(EN wd)" "$T/en.wd.before"
-( cd "$T/run16/work" && XE wd marshal disable ); r1=$?; e1=$(cat "$T/e")
-( cd "$T/run16/work" && XE wd marshal disable --plan 000000000000 --approved w ); r2=$?
-{ [ $r1 = 2 ] && [ $r2 = 2 ] && grep -qi member <<<"$e1" && cmp -s "$(EN wd)" "$T/en.wd.before"; } && ok "member: disable, even with a token and words, exits 2 and leaves the switch alone" || no "SPEC member run: disable (rc $r1 $r2): $e1"
+# ============================================================ (16) the review fixes: the result of the world they ran in
+wait "$S16PID"; cat "$T/s16.out"; [ "$(cat "$T/w16/fail" 2>/dev/null)" = 0 ] || { [ -e "$T/w16/fail" ] || echo "FAIL the review-fix cases (16) did not finish"; fail=1; }
 
 echo
 [ $fail = 0 ] && echo "marshal signing: all ok" || echo "marshal signing: FAILURES"
