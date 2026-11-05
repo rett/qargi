@@ -37,7 +37,22 @@ directory is listed and the reverse, and each pack passes the library's review.
 
 ## Tests
 
-`tests/run.sh` runs everything, and its list of tests and the linter is the inventory. It needs no API access and no private data.
+`tests/run.sh` runs everything and needs no API access and no private data. `tests/suite.txt` is the inventory: one step per
+line with its tier (`fast` or `full`), whether it may run beside others, its timeout, its time budget in seconds and,
+optionally, the globs of the files it covers. A new `tests/test_*` file gets a line there, and the runner fails when a test
+file is not listed or a listed file does not exist. The budget is the time the step takes on the reference machine; a step
+that takes more than 1.5 times its budget is reported, and a budget only shrinks (a step that grew is split).
+
+    bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
+    bash tests/run.sh --tier fast      the fast tier: every area, about a minute
+    bash tests/run.sh --only PATTERN   the steps whose command matches PATTERN (extended regular expression)
+    bash tests/run.sh --shard 2/4      the second of four parts, balanced by the budgets (for CI)
+    bash tests/run.sh --shuffle SEED --repeat 3   random order and repeats, to find a test that fails now and then
+
+Each step runs in a session of its own with a fresh `HOME`, no standard input and only its output open, and fails when it
+exceeds its timeout or leaves a process running. A step prints one block when it ends, so the output is in completion order and
+never interleaved; the end of the output has the failed steps, the slowest ten and `total: Ns (passed|FAILED)`, and
+`--enforce-budgets` makes a step over budget fail. The linter step runs shellcheck through `xargs`, all CPUs at once.
 
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 
