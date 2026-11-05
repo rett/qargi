@@ -1,0 +1,22 @@
+{
+ "purpose": "Release assets: release assets verb, asset-dir, release.assets globs, release.after_steps, release site _site fix",
+ "started": "2026-11-05T21:53:42Z",
+ "goal": "Release assets: release assets verb, asset-dir, release.assets globs, release.after_steps, release site _site fix",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T21:53:42Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-05T21:53:42Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-05T21:53:42Z",
+ "feature": "assets",
+ "project": "qargi"
+}
