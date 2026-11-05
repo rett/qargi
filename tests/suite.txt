@@ -66,6 +66,7 @@ full | par | 300 | 25 | bash tests/test_install.sh
 full | par | 408 | 68 | bash tests/test_project.sh | lib/project.sh
 fast | par | 300 | 4 | bash tests/test_project_profile.sh | lib/project_profile.py
 full | par | 564 | 94 | bash tests/test_local.sh | lib/local.sh
+full | par | 300 | 20 | bash tests/test_local_concurrency.sh | lib/local.sh lib/lib.sh
 full | par | 342 | 57 | bash tests/test_local_run.sh | lib/local*.sh lib/local*.py
 fast | par | 300 | 3 | bash tests/test_cred.sh | lib/cred.sh
 full | par | 480 | 80 | bash tests/test_packs.sh | lib/packs.sh
