@@ -58,7 +58,9 @@ git -C "$R" branch agent/merged feature/f1
 git -C "$R" branch agent/unmerged feature/f1; commit_on agent/unmerged u.txt
 git -C "$R" branch agent/stray feature/f1; commit_on agent/stray s.txt
 git -C "$R" branch agent/ancient develop
-printf '%s\n' '{"run":"/nowhere/qargi.unmerg","slug":"unmerged","base":"feature/f1","ability":"build","started":"2026-01-01T00:00:00Z"}' > "$S/local-runs.jsonl"
+printf '%s\n' '{"run":"/nowhere/qargi.unmerg","slug":"unmerged","base":"feature/f1","ability":"build","started":"2026-01-01T00:00:00Z"}' \
+  '{"run":"/nowhere/qargi.merged","slug":"merged","base":"feature/f1","ability":"build","started":"2026-01-01T00:00:00Z","verified":"2026-01-01T01:00:00Z","cleaned":"2026-01-01T02:00:00Z"}' \
+  '{"run":"/nowhere/qargi.ver","slug":"ver","base":"feature/f1","ability":"review","started":"2026-01-01T00:00:00Z","verified":"2026-01-01T01:00:00Z"}' > "$S/local-runs.jsonl"
 
 # --- the plain note
 H f1; rc=$?
@@ -87,7 +89,12 @@ grep -q "agent/ancient" "$T/o" && no "SPEC merged list: an agent branch develop 
 ! grep -q "^    agent/stray" "$T/o" && [ "$(grep -c "agent/stray" "$T/o")" = 1 ] && grep -q "^unattributed agent branches .*agent/stray" "$T/o" && ok "feature: a branch with no known base is not under the feature but once on the unattributed line" || no "SPEC unattributed: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 H; grep -q "^    agent/stray" "$T/o" && no "SPEC unattributed repeats under a feature: $(grep -n stray "$T/o")" || { [ "$(grep -c "agent/stray" "$T/o")" = 1 ] && ok "handoff of every feature: the unattributed branch is said once" || no "SPEC unattributed once: $(grep -n stray "$T/o")"; }
 H f1 --json; jq -e '.features[0].agent_unmerged == [["agent/unmerged", 1]] and .features[0].agent_merged == ["agent/merged"] and [.agent_unattributed[].branch] == ["agent/stray"]' "$T/o" >/dev/null 2>&1 && ok "--json: agent_merged, agent_unmerged per feature and agent_unattributed once" || no "SPEC json attribution: $(cat "$T/o")"
+jq -e '[.features[0].tasks[] | select(.slug == "merged") | .state] == ["cleaned"] and ([.features[0].tasks[] | select(.slug == "ver") | .verified] == [true])' "$T/o" >/dev/null 2>&1 && ok "--json: each task run has its state (cleaned, verified)" || no "SPEC json tasks: $(jq -c '.features[0].tasks' "$T/o")"
 H f1
+# task runs tell the truth: the registry's marks (a passing local verify, local clean) decide what a run reads, also after its directory is gone
+grep -q "^  task run: unmerged (build, 2026-01-01T00:00:00Z), not verified, directory gone$" "$T/o" && ok "feature: a task run with no passing verify reads not verified" || no "SPEC task not verified: $(grep -n 'task run' "$T/o")"
+grep -q "^  task run: ver (review, 2026-01-01T00:00:00Z), verified" "$T/o" && ok "feature: the registry's verified mark reads verified" || no "SPEC task verified: $(grep -n 'task run' "$T/o")"
+! grep -q "^  task run: merged " "$T/o" && grep -q "^  task runs cleaned: merged$" "$T/o" && ok "feature: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC task cleaned: $(grep -n 'task run' "$T/o")"
 grep -q "^    [0-9a-f]\{7\} feature/f1 b.txt" "$T/o" && grep -q "^    [0-9a-f]\{7\} feature/f1 a.txt" "$T/o" && ok "feature: the commits ahead are listed" || no "SPEC commits ahead: $(sed -n '/== features/,/== marshal/p' "$T/o")"
 grep -q "lead: alice" "$T/o" && grep -q "LIVE" "$T/o" && grep -q "status: active" "$T/o" && ok "record: lead, lease and status" || no "SPEC record: lead/lease/status: $(sed -n '/== marshal/,/== packs/p' "$T/o")"
 grep -q "^- Approvals and plan tokens do not carry over" "$T/o" && grep -q "^- A plan token is single-use" "$T/o" && grep -q "^- Owner-only verbs stay owner-only" "$T/o" \

@@ -299,7 +299,8 @@ WRAP
     chmod 755 "$RUN/git"
     jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" \
       '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}
-       + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; cat >> "$DA_STATE/local-runs.jsonl" )
+       + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' \
+      | ( flock 9; umask 077; cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"   # the lock reg_mark rewrites the file under
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
@@ -347,6 +348,7 @@ WRAP
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
     elif [ "$crc" = 0 ]; then
+      reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
       if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
       else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi
     else
@@ -472,7 +474,9 @@ WRAP
     fi
     if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
+    rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
     rm -rf --one-file-system -- "$RUN"
+    reg_mark "$rrun" cleaned "$(now)"   # the line stays, marked: a cleaned run is no open task of its feature
     echo "cleaned $RUN${rt:+ and $rt}";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
