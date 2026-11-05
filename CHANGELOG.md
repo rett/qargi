@@ -13,6 +13,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The `gitflow-member` and `keep-a-changelog` packs tell a member to add an unnumbered bullet (or the next free number, said in its
   report) instead of numbering a changelog item itself, so parallel tasks do not conflict on the same number; the lead renumbers at
   merge with `qargi changelog renumber` (a member may only run it with `--check`), which `/qargi-verify` now names.
+- The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
+  reports the disagreement.
 
 ## [0.2.2] - 2026-11-05
 

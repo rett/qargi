@@ -8,6 +8,8 @@
 - Accuracy is the first rule: never invent commands, flags, output or behaviour.
   Trace every command to the project's documentation, manual or code; quote sample
   output only where the sources show it; leave out what you cannot verify.
+- Documentation follows the code: when the brief and the code disagree, follow the code
+  and report the disagreement.
 - You own the operational documentation on the documentation branch. What ships
   with the code (manual page, help, completion, `docs/` pages) belongs to the build
   role: report a finding instead of changing it.
