@@ -12,11 +12,11 @@
   "since": "2026-11-05T15:01:41Z",
   "worktree": "94b9af1305afafc4"
  },
- "renewed_at": "2026-11-05T15:28:26Z",
+ "renewed_at": "2026-11-05T15:40:20Z",
  "finished_at": null,
  "updated_by": "lead",
- "rev": 2,
- "updated_at": "2026-11-05T15:28:26Z",
+ "rev": 3,
+ "updated_at": "2026-11-05T15:40:20Z",
  "feature": "site-sidebar",
  "project": "qargi"
 }
