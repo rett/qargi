@@ -259,6 +259,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the summary lists the failed steps and the slowest ten before the `total:` line. The linter runs through `xargs -P`.
   The runner fails when a `tests/test_*` file is not in the manifest or a listed file does not exist; `tests/test_gitflow_detached.sh`,
   which no list ran, is now listed. `tests/test_runner.sh` tests the runner.
+- `tests/run.sh` gives every step a `TMPDIR` of its own under the runner's directory, and compares the set of directories at the top
+  level of the suite's `TMPDIR` before and after each step: a step that removed one it did not make, or left a new one, is named
+  with the directories in its block (`WARN directories outside its own changed: removed ..., left ...`) and in a summary section.
+  It is a warning, never a failure: with `TMPDIR` unset that place is `/tmp`, which every process on the host shares.
 - Every command starts faster: what `bin/qargi` does before a verb runs (the dev-run banner, the arguments filled in from the
   current directory, the project's cloud binding) is one python process, `lib/help.py preamble`, instead of three, and the model
   list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
