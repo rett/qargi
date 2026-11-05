@@ -232,7 +232,8 @@ step_exec() {   # step_exec PGIDFILE TIMEOUT COMMAND...
   local pf=$1 t=$2 f n
   shift 2
   echo $$ > "$pf"
-  for f in /proc/self/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-"; done 2>/dev/null
+  # no redirection on the loop itself: bash keeps the original standard error on a high descriptor while the loop runs, and this loop closes it
+  for f in /proc/self/fd/*; do n=${f##*/}; if [ "$n" -gt 2 ] 2>/dev/null; then eval "exec $n>&-"; fi; done
   exec timeout -k 5 "$t" "$@"
 }
 # the linter, in batches of twenty files through xargs, $SC_JOBS at a time, one log per batch: the output of a failed batch is
