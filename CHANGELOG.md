@@ -250,6 +250,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
+- `tests/run.sh` reads its steps from the manifest `tests/suite.txt` (tier, parallel-safe or serial, timeout, time budget, optional
+  `covers` globs) and runs them `-j N` at a time (default: the CPUs, at most the cgroup quota; `-j 1` is the former serial run).
+  `--tier fast` runs a fast tier of about a minute that covers every area, `--only PATTERN` selects steps, `--shard i/K` deals
+  them to K parts by recorded duration or budget, `--shuffle SEED` and `--repeat N` look for a test that fails now and then, and
+  `--enforce-budgets` fails a step over 1.5 times its budget (otherwise a warning). Each step has its own session, `HOME`, no
+  standard input and a timeout, and fails when it leaves a process running; its output is printed as one block when it ends,
+  and the summary lists the failed steps and the slowest ten before the `total:` line. The linter runs through `xargs -P`.
+  The runner fails when a `tests/test_*` file is not in the manifest or a listed file does not exist; `tests/test_gitflow_detached.sh`,
+  which no list ran, is now listed. `tests/test_runner.sh` tests the runner.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
