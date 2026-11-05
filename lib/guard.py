@@ -100,6 +100,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     backend): decided like the other protected roots, reading stays allowed;
   - a write under the marshal/ directory of the state, where `marshal enable` keeps the per-project `.enabled` switch of the
     shared-refs backend: found and decided like features/, reading stays allowed;
+  - a write under the runs/ directory of the state, where `qargi local verify` saves a copy of each passed run (OUT, the snapshots, the
+    record) that `qargi review apply --from-saved` applies: decided like features/, reading stays allowed;
   - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
     feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
     like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
@@ -1663,6 +1665,7 @@ def _protected_roots():
     roots.update(feature_roots(P, home))
     roots.update(switch_roots(P, home))
     roots.update(lead_state_roots(P, home))
+    roots.update(saved_runs_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     roots.update(lead_roots(home) | lead_files(home))
@@ -1721,6 +1724,12 @@ def lead_state_roots(P=None, home=None):
     """The handoff/ and busy/ directories of the state: when the lead's last handoff note was written, and the whole-suite runs in progress. `qargi lead
     compact-check` reads both to say whether a compact is safe, so a member must not write them."""
     return state_sub("handoff", P, home) | state_sub("busy", P, home)
+
+
+def saved_runs_roots(P=None, home=None):
+    """The runs/ directory of the state: the copies `qargi local verify` saves of a passed run (its OUT, its snapshots, its record), which
+    `qargi review apply --from-saved` applies after the run directory is lost. A member must not plant or change one."""
+    return state_sub("runs", P, home)
 
 
 def switch_roots(P=None, home=None):
@@ -1790,6 +1799,9 @@ def refusal_text(what, dest, root):
     if root in lead_state_roots():
         return MarshalReason("%s on %s would change %s, where the lead's handoff note and whole-suite runs are recorded (qargi lead compact-check reads them); %s"
                              % (what, dest, root, MARSHAL_NOTE))
+    if root in saved_runs_roots():
+        return OwnReason("%s on %s would change %s, the lead's saved copies of passed local runs (review apply --from-saved applies them); "
+                         "a member writes only its own OUT" % (what, dest, root))
     if root in switch_roots() and name.endswith(".signers"):
         return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
                              % (what, dest, root, MARSHAL_NOTE))

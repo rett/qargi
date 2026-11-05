@@ -18,6 +18,7 @@ re-read afterwards. The stage lines of `feature finish`, the last `feature merge
 from 40%. `/compact` and a restart are the owner's commands: ask, never run them. Hand off to a fresh session after a skill, agent or
 settings change a running session cannot reload, or when the owner asks.
 Open runs need no clean before the next `qargi feature finish`: verify and clean accept qargi's own moves.
+A reboot loses runs on a tmpfs: apply the verified ones first, or later `qargi review apply --from-saved ID`.
 
 ## The procedure
 

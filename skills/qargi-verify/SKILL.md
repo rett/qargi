@@ -31,7 +31,7 @@ On approval, for each run in turn, with an open feature: `qargi feature merge NA
 
 ## 4. Clean up, after the merge
 
-Only when the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest. `qargi local list --scratch DIR` shows which runs are applied and merged; `qargi local clean --applied --scratch DIR` removes those and keeps the rest. Then `qargi branch prune`. No need to clean each run before the next `qargi feature finish`: verify and clean accept qargi's own moves. Never delete files in /dev/shm by pattern; only a run's own TMP is yours. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason code on a rejection or when rework was needed; `qargi mark --help` lists codes), then `qargi close SID`.
+Only when the merge is confirmed, `qargi local clean RUN_DIR` removes the run. It refuses an unmerged run (`--discard` drops it on purpose), changed refs, and a run with no collected manifest. `qargi local list --scratch DIR` shows which runs are applied and merged; `qargi local clean --applied --scratch DIR` removes those and keeps the rest. Then `qargi branch prune`. No need to clean each run before the next `qargi feature finish`: verify and clean accept qargi's own moves. Before a reboot, apply verified runs or rely on their saved copy (`qargi review apply --from-saved ID`). Never delete files in /dev/shm by pattern; only a run's own TMP is yours. Cloud: `qargi mark SID applied|rejected [--why CODE]` (ask the user for the reason code on a rejection or when rework was needed; `qargi mark --help` lists codes), then `qargi close SID`.
 
 ## Never
 
