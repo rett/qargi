@@ -1,4 +1,4 @@
-/* qargi documentation: one stylesheet, system fonts, no scripts. Light and dark follow the reader's
+/* qargi documentation: one stylesheet, system fonts, no inline styles. Light and dark follow the reader's
    system setting (prefers-color-scheme). Text contrast is at least 4.5:1 in both. */
 :root {
   color-scheme: light dark;
@@ -35,6 +35,7 @@ body {
   overflow-wrap: break-word;
 }
 .wrap { max-width: 52rem; margin: 0 auto; padding: 0 1rem; }
+.wrap.wide { max-width: 76rem; }
 a { color: var(--link); text-underline-offset: 0.15em; }
 a:hover { text-decoration-thickness: 2px; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
@@ -45,7 +46,7 @@ a:hover { text-decoration-thickness: 2px; }
 .skip:focus { top: 0.5rem; }
 
 .site-header { border-bottom: 1px solid var(--border); background: var(--head-bg); }
-.site-header .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; padding-top: 0.75rem; padding-bottom: 0.75rem; }
+.site-header .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; padding-top: 0.6rem; padding-bottom: 0.6rem; }
 .brand { font-weight: 700; font-size: 1.15rem; color: var(--fg); text-decoration: none; }
 .stamp { color: var(--muted); font-size: 0.875rem; }
 .site-header nav { flex: 1 1 100%; }
@@ -54,7 +55,36 @@ a:hover { text-decoration-thickness: 2px; }
 .site-header nav a:hover { text-decoration: underline; }
 .site-header nav a[aria-current="page"] { font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; }
 
-main { padding-top: 1.25rem; padding-bottom: 3rem; }
+.layout { display: grid; grid-template-columns: 16rem minmax(0, 1fr); max-width: 76rem; margin: 0 auto; }
+.layout.solo { display: block; max-width: 52rem; }
+.content { min-width: 0; max-width: 52rem; padding: 1.25rem 1.5rem 3rem; }
+.layout:not(.solo) .content { border-left: 1px solid var(--border); }
+.layout.solo .content { padding: 1.25rem 1rem 3rem; }
+
+.menu-toggle, .menu-button { display: none; }
+.sidebar { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; overscroll-behavior: contain; padding: 1rem 0.5rem 2rem 1rem; font-size: 0.95rem; }
+.sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar li + li { margin-top: 0; }
+.sidebar details { margin: 0; }
+.sidebar summary { cursor: pointer; padding: 0.3rem 0; font-weight: 600; }
+.side-section { margin-bottom: 0.5rem; }
+.side-section > summary { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.8rem; color: var(--muted); }
+.side-section > ul { padding-left: 0.25rem; }
+.side-group { margin: 0; }
+.side-group > summary { font-weight: 400; }
+.side-group > ul { padding-left: 0.9rem; border-left: 1px solid var(--border); margin-left: 0.3rem; }
+.sidebar a { display: block; padding: 0.2rem 0.4rem; color: var(--fg); text-decoration: none; border-left: 3px solid transparent; border-radius: 2px; overflow-wrap: anywhere; }
+.sidebar a:hover { background: var(--code-bg); text-decoration: underline; }
+.sidebar a[aria-current="page"] { font-weight: 700; border-left-color: var(--link); background: var(--code-bg); }
+.search { margin-bottom: 1rem; }
+.search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.search-input { width: 100%; font: inherit; padding: 0.4rem 0.5rem; color: var(--fg); background: var(--bg); border: 1px solid var(--muted); border-radius: 6px; }
+.search-status { margin: 0.25rem 0 0; min-height: 1.4rem; font-size: 0.85rem; color: var(--muted); }
+.search-results { margin: 0.25rem 0 0; }
+.search-result a { padding: 0.3rem 0.4rem; }
+.search-result.active a { background: var(--code-bg); outline: 2px solid var(--focus); outline-offset: -2px; }
+.search-where { display: block; padding: 0 0.4rem 0.2rem 0.65rem; font-size: 0.8rem; color: var(--muted); }
+.sidebar.searching nav { display: none; }
 .crumbs ol { list-style: none; margin: 0 0 1rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.25rem; font-size: 0.9rem; color: var(--muted); }
 .crumbs li + li::before { content: "/"; margin-right: 0.25rem; }
 h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 1rem; }
@@ -98,9 +128,20 @@ td:first-child code { white-space: nowrap; }
   h2 { font-size: 1.3rem; }
   .site-header ul { flex-direction: column; gap: 0; }
   .site-header nav a { padding: 0.4rem 0; }
+  .layout { display: block; }
+  .content { padding: 1rem 1rem 2rem; border-left: 0; }
+  .layout:not(.solo) .content { border-left: 0; }
+  .menu-toggle { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  .menu-button { display: inline-block; margin-left: auto; padding: 0.3rem 0.8rem; border: 1px solid var(--muted); border-radius: 6px; color: var(--fg); background: var(--bg); cursor: pointer; }
+  .menu-toggle:focus-visible ~ .site-header .menu-button { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .menu-toggle:checked ~ .site-header .menu-button { background: var(--code-bg); font-weight: 700; }
+  .sidebar { display: none; position: static; max-height: none; border-bottom: 1px solid var(--border); padding: 0.75rem 1rem 1rem; }
+  .menu-toggle:checked ~ .layout .sidebar { display: block; }
+  .sidebar a { padding: 0.4rem; }
 }
 @media print {
-  .site-header, .skip, .anchor, .toc { display: none; }
+  .site-header, .skip, .anchor, .toc, .sidebar, .menu-toggle, .menu-button { display: none; }
+  .layout { display: block; }
   body { background: #fff; color: #000; }
   a { color: inherit; }
 }
