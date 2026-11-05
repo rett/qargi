@@ -33,11 +33,11 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish and verify; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home directory is not. It refuses git push, git remote changes, git \-c alias.*, gh, ssh, scp, sftp and rsync to a host.
 .PP
-A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text on the command line. Commit with git commit \-F FILE. A cd it cannot read refuses relative writes.
+A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text on the command line, unless every command is echo, printf, cat, tee, grep or git commit and its kin (then text is data). Commit with git commit \-F FILE. A cd it cannot read refuses relative writes.
 .PP
 The read\-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through a name the guard cannot read. Nobody copies, extracts or links into the run directory.
 .PP
@@ -1771,7 +1771,7 @@ A feature branch is cut from develop and can be as broad as a theme. The lead me
 .BI "start " "NAME"
 Cut feature/NAME from develop.
 .br
-Refuses a name origin already has (asked live with git ls\-remote), so another person's branch is not shadowed; fetch it instead.
+Refuses a name origin already has (asked live with git ls\-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached).
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1782,13 +1782,30 @@ the project, instead of the one inferred from here.
 .BI "\-\-purpose " "TEXT"
 what the feature is about; related work only goes into one feature.
 .RE
+.RS
+.TP
+.B \-\-worktree
+also make the feature's worktree at <worktrees.root>/feature/NAME and print its path.
+.RE
 .RE
 .RS
 .TP
 .B list
 List the open features: purpose, distance from develop, and the files two features both change.
 .br
-Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another.
+Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that fixes it; the main checkout, the worktrees inside it (the agent runtime makes its own there) and qargi's temporary worktrees are not flagged.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RE
+.RS
+.TP
+.B park
+Put the project's main checkout on its parking branch, reset to develop.
+.br
+qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout \-B BRANCH develop in the main checkout, creating the branch when missing. Refused when the working tree is not clean, or when the parking branch has commits develop lacks (they are listed; re\-implement them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved develop, a clean main checkout on the parking branch with no commits of its own is fast\-forwarded to develop, and one status line says why it was not. The parking branch is never pushed or merged.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1814,10 +1831,22 @@ use the merge you resolved and committed in the conflict worktree.
 .TP
 .BI "merge " "NAME BRANCH"
 Merge a verified task branch into feature/NAME with \-\-no\-ff.
+.br
+NAME may be a detached long\-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, and the merge, local only, prints a plan and token like a merge into develop (\-\-plan, \-\-approved). A detached branch never meets develop, master, release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. For a feature, \-\-plan and \-\-approved are not used.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
 the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RS
 .TP
@@ -1830,7 +1859,7 @@ use the merge you resolved and committed in the conflict worktree.
 .BI "status " "NAME"
 Show the feature: commits ahead of develop and whether the whole suite passed at its head.
 .br
-It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. Flags worktrees outside the worktree root like list.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1852,7 +1881,7 @@ the project, instead of the one inferred from here.
 .BI "finish " "NAME"
 Merge the feature into develop with \-\-no\-ff and delete it.
 .br
-Needs a passing whole\-suite run at the feature's head. Pushes develop if the repository has an origin. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
+Needs a passing whole\-suite run at the feature's head. Pushes develop if the repository has an origin. With the answer branches.delete_merged local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows it and its token covers origin's tip. The answer branches.push_features (never, when\-shared, always; default never) decides whether feature start, merge and sync push the feature branch: when\-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the worktree root is detached and removed after the merge, when the branch is deleted. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2428,6 +2457,36 @@ take the notes from this file (relative to the repository) instead of the change
 .RE
 .RE
 .TP
+.B qargi branch
+Branch housekeeping: delete the merged agent and feature branches and their worktrees.
+.PP
+Prune prints the merged agent/* and feature/* branches of the project (and with \-\-remote the same branches on origin, asked live) and the worktrees qargi made for them, with a token; with \-\-plan and \-\-approved it deletes them. A branch is merged when it was merged with \-\-no\-ff into develop, or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of develop or of a feature was never merged and is kept. It never deletes master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, or a branch checked out in a worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with the reason. A remote branch is deleted as a lease on the tip the plan showed.
+.RS
+.TP
+.B prune
+List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-remote
+also the merged agent/* and feature/* branches on origin.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
 .B qargi start
 Start a standby cloud session for an instance.
 .PP
@@ -2901,23 +2960,6 @@ the project, instead of the one inferred from here.
 .TP
 .BI "\-\-branch " "BRANCH"
 the branch to create (default agent/<slug> of the run).
-.RE
-.RE
-.RS
-.TP
-.B prune
-List, or with \-\-yes delete, the agent/* branches already merged into develop or a feature.
-.br
-A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch \-d makes, against that target rather than the checked\-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; no other branch is touched. Prints each branch it lists or deleted.
-.RS
-.TP
-.BI "\-\-project " "PROJECT"
-the project, instead of the one inferred from here.
-.RE
-.RS
-.TP
-.B \-\-yes
-delete them (without it nothing changes).
 .RE
 .RE
 .TP

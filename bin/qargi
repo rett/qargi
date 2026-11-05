@@ -50,7 +50,7 @@ case $area in
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
-  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply|prune) exec "$lib/review.sh" "$@";; *) usage;; esac;;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply) exec "$lib/review.sh" "$@";; *) usage;; esac;;
   skill|tool) exec "$lib/packs.sh" "$area" "$@";;
   packs) exec "$lib/packs.sh" packs "$@";;
   credential) exec "$lib/cred.sh" "$@";;
@@ -60,6 +60,7 @@ case $area in
   feature) exec "$lib/feature.sh" "$@";;
   marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;
+  branch) exec "$lib/branch.sh" "$@";;
   methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
