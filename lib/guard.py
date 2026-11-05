@@ -136,8 +136,8 @@ refused, and a member writes a message to a file with its file tool and commits 
 a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, cat, tee, grep or git commit|log|status|diff|show|add
 (they print, write or search the text and run nothing from it; not printf, whose -v assigns a variable), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
 `git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
-function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, or a quote or heredoc never closed keeps
-the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
+function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or a heredoc
+delimiter that starts with # keeps the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
 blanked. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
 location (or names the signing key) is refused as a path (separator_path_refusal). A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
@@ -677,21 +677,23 @@ def mask_data(command):
     anything, and a heredoc body is the input of such a command: the separators in the quoted strings become blanks and the heredoc bodies are cut out
     (the delimiter line stays), and nothing else changes, so a redirection or a path in the line is still judged. Any other command in the line (a shell,
     make, find, a script, a function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc that
-    is never closed: the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
+    is never closed, a heredoc delimiter that starts with # (bash reads it as a comment): the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
     word that holds a < or > (`>"a;b"`, `&>"a;b"`, `&>>"a;b"`, `x>"a;b"`, `{fd}>"a;b"`) or in the word after one (`> "a;b"`), and the command is returned
     as it is when a quoted string with a separator is among the words of tee (the files it writes). Used for the verbs that change a skill or the
     marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
     if not QUOTED.search(command) or MASK_BAIL.search(command):
         return command
     n, pos, count = len(command), 0, 0
-    words, cur, spans, pending = [], "", [], []
+    words, cur, spans, pending = [], [], [], []                 # cur: the pieces of the word being read, joined when it ends (one long word stays linear)
+    redir = False                                               # the word being read holds a < or >
     quotes = []                                                 # (start, end) of the quoted strings that hold a separator
 
     def end_word():
-        nonlocal cur
+        nonlocal redir
         if cur:
-            words.append(cur)
-            cur = ""
+            words.append("".join(cur))
+            cur.clear()
+        redir = False
 
     while pos < n:
         count += 1
@@ -703,13 +705,13 @@ def mask_data(command):
             j = command.find(t, end)
             if j < 0:
                 return command                              # never closed
-            target = "<" in cur or ">" in cur or (not cur and bool(words) and bool(REDIRECT_END.search(words[-1])))   # a file a redirection names
+            target = redir or (not cur and bool(words) and bool(REDIRECT_END.search(words[-1])))   # a file a redirection names
             if MASK_SEPARATORS.search(command, end, j):
                 if words and words[0] == "tee":
                     return command                          # a file tee writes: the plain split reads it, and separator_path_refusal the name
                 if not target:
                     quotes.append((end, j))
-            cur += "\x01"
+            cur.append("\x01")
             end = j + 1
         elif t == "<<<":
             end_word()
@@ -717,8 +719,8 @@ def mask_data(command):
         elif t in ("<<", "<<-"):
             end_word()
             m = HEREDOC_WORD.match(command, end)
-            if not m:
-                return command
+            if not m or (m.group(3) or "").startswith("#"):
+                return command                              # no delimiter, or one bash reads as a comment (`cat <<#E`)
             pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
             end = m.end()
         elif t == "(" or t == ")":
@@ -726,11 +728,11 @@ def mask_data(command):
         elif t == "#":
             if not cur:
                 return command                              # a comment
-            cur += t
+            cur.append(t)
         elif t == "&" and (command[pos - 1:pos] in ("<", ">") or command[end:end + 1] == ">"):
-            cur += t                                        # 2>&1, <&3, &>file: a redirection, not a separator
+            cur.append(t)                                   # 2>&1, <&3, &>file: a redirection, not a separator
         elif t == "|" and command[pos - 1:pos] == ">":
-            cur += t                                        # >| file
+            cur.append(t)                                   # >| file
         elif t in (";", "|", "&", "\n"):
             end_word()
             if words and not inert_command(words):
@@ -758,7 +760,8 @@ def mask_data(command):
         elif t in (" ", "\t"):
             end_word()
         else:
-            cur += t
+            cur.append(t)
+            redir = redir or "<" in t or ">" in t
         pos = end
     end_word()
     if pending or (words and not inert_command(words)):

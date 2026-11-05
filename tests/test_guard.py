@@ -2246,6 +2246,9 @@ class TextIsData(unittest.TestCase):
         "alias z='x; qargi upgrade'\nz",
         "f() { echo 'x; qargi upgrade'; }; f",
         "for i in 1; do echo 'x; qargi upgrade'; done",
+        "cat <<#E\nqargi upgrade\n#E",
+        "cat << #E\nqargi upgrade\n#E",
+        "cat > n.txt <<#E 'a;b'\nqargi upgrade\n#E",
     )
 
     def verdicts(self, cmds):
@@ -2306,7 +2309,8 @@ class TextIsData(unittest.TestCase):
         for name, c in (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
                         ("many heredocs", "".join("cat <<'E%d'\nqargi upgrade\nE%d\n" % (i, i) for i in range(3000))),
                         ("a big heredoc", "cat <<'E'\n" + "qargi upgrade\n" * 15000 + "E"), ("many quotes", "echo " + "'a;b' " * 30000),
-                        ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000)):
+                        ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000),
+                        ("one long word", "echo " + "a';'" * 50000 + "; qargi upgrade")):
             t0 = time.perf_counter()
             r = self.bash(c)
             took = time.perf_counter() - t0
