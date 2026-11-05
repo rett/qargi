@@ -1,0 +1,22 @@
+{
+ "purpose": "The docs site gets a left sidebar (sections, current page, mobile menu) and a client-side search over a generated index, in the generator and its tests",
+ "started": "2026-11-05T15:01:41Z",
+ "goal": "The docs site gets a left sidebar (sections, current page, mobile menu) and a client-side search over a generated index, in the generator and its tests",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "lead",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T15:01:41Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-05T15:01:41Z",
+ "finished_at": null,
+ "updated_by": "lead",
+ "rev": 1,
+ "updated_at": "2026-11-05T15:01:41Z",
+ "feature": "site-sidebar",
+ "project": "qargi"
+}
