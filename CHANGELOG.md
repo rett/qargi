@@ -7,6 +7,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `tests/run.sh --changed-from REF` (or `--changed-files FILE`, one path per line) adds to the fast tier the steps whose `covers`
+  globs match a file changed since REF (`git diff REF...HEAD`) and those whose command names a changed file; a step with no `covers`
+  is not added by its globs. `--plan` prints the selection and the shard plan and runs nothing, and a sharded run ends with a
+  `shard i/K: planned Ns, the steps took Ns together` line.
+- `tests/durations.txt` holds the recorded duration of every step, from a whole run, for `--shard i/K --durations
+  tests/durations.txt`: the four parts of the suite plan within 1.3 times of each other (CONTRIBUTING, Tests, says how to
+  regenerate it). `tests/test_ci.py` checks the CI workflow and the shard balance.
+- The methodology parameter `ci_timeout_minutes` (default 30; a positive whole number, a parameter may carry a `pattern`) sets the
+  `timeout-minutes` of the CI job the gitflow scaffold writes, so a project sets it from its own suite budgets.
+- `qargi release status` shows, in the suite record's verdict, how long the run took and the mode its command names (`-j N`,
+  `shard I/K`): `pass at this head (command: C; ran AT; took 412s; -j 8)`. `release verify` and `feature verify` record both; a
+  record made before shows the command and the time only.
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
@@ -250,6 +262,39 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
+- The CI workflow `.github/workflows/test.yml` (no scheduled run): a pull request into a branch other than master runs the fast
+  tier and the steps its changed files cover, or the whole suite when it carries the label `full-suite`; a push to develop, a pull
+  request into master (the release pull request) and a manual run run the whole suite in four shards, balanced by
+  `tests/durations.txt`, and a last job, `result`, is red when any shard failed. A pull request replaces its own earlier run, a push
+  to develop is never cancelled. Each job has a time limit computed from the manifest's budgets (35 minutes; the former 30 minutes for
+  the whole suite in one job was less than the budgets add up to, and the job was cancelled), the packages jq and shellcheck come
+  from a cache keyed by their list (`.github/actions/tools`), and every action is pinned to a full commit SHA.
+- `tests/run.sh` reads its steps from the manifest `tests/suite.txt` (tier, parallel-safe or serial, timeout, time budget, optional
+  `covers` globs) and runs them `-j N` at a time (default: the CPUs, at most the cgroup quota; `-j 1` is the former serial run).
+  `--tier fast` runs a fast tier of about a minute that covers every area, `--only PATTERN` selects steps, `--shard i/K` deals
+  them to K parts by recorded duration or budget, `--shuffle SEED` and `--repeat N` look for a test that fails now and then, and
+  `--enforce-budgets` fails a step over 1.5 times its budget (otherwise a warning). Each step has its own session, `HOME`, no
+  standard input and a timeout, and fails when it leaves a process running; its output is printed as one block when it ends,
+  and the summary lists the failed steps and the slowest ten before the `total:` line. The linter runs through `xargs -P`.
+  The runner fails when a `tests/test_*` file is not in the manifest or a listed file does not exist; `tests/test_gitflow_detached.sh`,
+  which no list ran, is now listed. `tests/test_runner.sh` tests the runner.
+- `tests/run.sh` gives every step a `TMPDIR` of its own under the runner's directory, and compares the set of directories at the top
+  level of the suite's `TMPDIR` before and after each step: a step that removed one it did not make, or left a new one, is named
+  with the directories in its block (`WARN directories outside its own changed: removed ..., left ...`) and in a summary section.
+  It is a warning, never a failure: with `TMPDIR` unset that place is `/tmp`, which every process on the host shares.
+- Every command starts faster: what `bin/qargi` does before a verb runs (the dev-run banner, the arguments filled in from the
+  current directory, the project's cloud binding) is one python process, `lib/help.py preamble`, instead of three, and the model
+  list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
+  takes about half the time it did. `tests/test_startup.py` keeps the count at one process and the time under the shrink-only
+  ceiling of `tests/startup-budget.txt`.
+- The tests are hermetic and safe to run concurrently with each other and with another whole suite: `tests/hermetic.sh` and
+  `tests/hermetic.py` build one environment (fresh HOME, TMPDIR, config and state under one directory, UTC, C.UTF-8, umask 022, git
+  without the host's configuration, no bytecode, no colour), and a lint (`tests/hermetic_lint.py`, run by `tests/test_hermetic.sh`)
+  fails on a test that does not source it, names a literal `/tmp`, `/dev/shm` or `/run` path, kills by pattern, waits with a bare
+  `sleep`, removes a directory it did not make, binds a fixed port, keeps a lock outside its directory or compares a wall-clock
+  difference with a constant.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
@@ -391,6 +436,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
 - `marshal status`, `marshal handoff` and `feature status` list an unmerged agent branch only under the feature its run was
   prepared against (`local prepare --base feature/NAME`, the base the registry of local runs records), not under every feature;
   the agent branches of no open feature are said once, on one `unattributed agent branches` line. The handoff note lists only the

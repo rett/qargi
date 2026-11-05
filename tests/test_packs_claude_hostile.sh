@@ -18,7 +18,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
-ROOT=$(mktemp -d -p "${TMPDIR:-/tmp}")
+ROOT=$(mktemp -d)
 trap 'chmod -R u+rwX "$ROOT" 2>/dev/null; rm -rf "$ROOT" "$HERMETIC"' EXIT
 DA=./bin/qargi
 REALPY=$(command -v python3)
@@ -524,7 +524,7 @@ g_concurrent_interleaved() {
   pA=$!; waitfor "$T/w/hA.at" || { echo "FAIL harness: A never reached the swap"; exit 1; }
   $DA skill unlink sa --scope project --project alpha >/dev/null; $DA skill link sb --scope project --project alpha >/dev/null
   ( PATH=$T/w/bin:$PATH HOLD=$T/w/hB apply --plan "$tokB" --approved test > "$T/w/B.out" 2>&1; echo $? > "$T/w/B.rc" ) &
-  pB=$!; : > "$T/w/hB.go"; sleep 0.3
+  pB=$!; : > "$T/w/hB.go"; sleep 0.3   # hermetic: allow sleep (a negative check: B had time to finish if the lock did not hold it)
   need "B waits for A's lock: it has printed nothing and not finished while A holds the swap" '[ ! -s "$T/w/B.out" ] && [ ! -e "$T/w/B.rc" ]'
   need "the lock file exists while A holds it" '[ -e "$T/s/render/.alpha.lock" ]'
   : > "$T/w/hA.go"; wait "$pA"; wait "$pB"

@@ -222,6 +222,19 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
   (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
 }
 run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
+# suite_mode COMMAND -> how a suite command runs its steps, from its words: "-j N" and/or "shard I/K" ("" when it names neither)
+suite_mode() {
+  local mode=''
+  if [[ $1 =~ (^|[[:space:]])-j[[:space:]]*([0-9]+)([[:space:]]|$) ]]; then mode="-j ${BASH_REMATCH[2]}"; fi
+  if [[ $1 =~ --shard[[:space:]]+([0-9]+/[0-9]+)([[:space:]]|$) ]]; then mode="${mode:+$mode, }shard ${BASH_REMATCH[1]}"; fi
+  printf '%s' "$mode"
+}
+# record_suite BRANCH SHA RESULT SECONDS: the record of the last whole-suite run of BRANCH (the head, the verdict, when, the command, how
+# long it took and the mode the command names), which `release status` shows
+record_suite() {
+  jq -nc --arg s "$2" --arg r "$3" --arg t "$(now)" --arg c "$TESTCMD" --argjson d "$4" --arg m "$(suite_mode "$TESTCMD")" \
+    '{sha:$s, result:$r, at:$t, command:$c, seconds:$d, mode:$m}' > "$(rec "$1")"
+}
 wcommit() { git -C "$WT" commit -q "$@" || die "the commit failed (is a git user.name and user.email set?)"; }
 
 

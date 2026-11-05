@@ -105,6 +105,7 @@ run $F verify $V1; rc=$?
 r1=$(j $V1 .renewed_at)
 [ $rc = 0 ] && ok "verify: the suite passes" || no "verify rc=$rc $(out)"
 [ "$r0" != "$r1" ] && [ "$r1" != null ] && ok "verify: renewed_at advanced while the 3 s suite ran" || no "SPEC verify renews: renewed_at stayed $r0"
+# hermetic: allow pgrep (the pattern holds $V1, unique to this process)
 pgrep -f "feature verify $V1" >/dev/null && no "SPEC verify: a renewer of the run is still alive: $(pgrep -af "feature verify $V1")" || ok "verify: no renewer of the run remains"
 run $F status $V1
 grep -q "full suite: pass at this head" "$T/o" && ok "verify: the verified record exists (status reports it)" || no "verify record: $(out)"
@@ -115,6 +116,7 @@ run $F verify $V2; rc=$?
 r1=$(j $V2 .renewed_at)
 [ $rc = 1 ] && ok "verify: a failing suite fails the verb" || no "verify failing rc=$rc"
 [ "$r0" != "$r1" ] && ok "verify: the lease was renewed during a suite that failed" || no "SPEC verify (failing) renews: renewed_at stayed $r0"
+# hermetic: allow pgrep (the pattern holds $V2, unique to this process)
 pgrep -f "feature verify $V2" >/dev/null && no "SPEC verify: a renewer remains after a failing suite: $(pgrep -af "feature verify $V2")" || ok "verify: a failing suite stops the renewer"
 # refused: another LIVE lead holds the feature, the suite does not run
 mkfeat v3 alice; commit_on feature/v3 v3.txt

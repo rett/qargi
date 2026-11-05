@@ -37,7 +37,52 @@ directory is listed and the reverse, and each pack passes the library's review.
 
 ## Tests
 
-`tests/run.sh` runs everything, and its list of tests and the linter is the inventory. It needs no API access and no private data.
+`tests/run.sh` runs everything and needs no API access and no private data. `tests/suite.txt` is the inventory: one step per
+line with its tier (`fast` or `full`), whether it may run beside others, its timeout, its time budget in seconds and,
+optionally, the globs of the files it covers. A new `tests/test_*` file gets a line there, and the runner fails when a test
+file is not listed or a listed file does not exist. The budget is the time the step takes on the reference machine; a step
+that takes more than 1.5 times its budget is reported, and a budget only shrinks (a step that grew is split).
+
+    bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
+    bash tests/run.sh --tier fast      the fast tier: every area, about a minute
+    bash tests/run.sh --only PATTERN   the steps whose command matches PATTERN (extended regular expression)
+    bash tests/run.sh --shard 2/4 --durations tests/durations.txt   the second of four parts, balanced by the recorded durations (CI)
+    bash tests/run.sh --tier fast --changed-from origin/develop     the fast tier plus the steps that cover the files changed since develop
+    bash tests/run.sh --shard 2/4 --plan   print the plan of the four parts and the steps of the second, run nothing
+    bash tests/run.sh --shuffle SEED --repeat 3   random order and repeats, to find a test that fails now and then
+
+Tiers: `fast` is a quick run that has every area in it (about a minute); `full` steps run only in the whole run. `-j N` sets how many
+steps run at once (default: the CPUs); the verdict is the same at every `-j`, and `-j 1` is the serial run. A step marked `serial` runs
+alone after the others. A shard is one of K parts of the selected steps, dealt longest first to the least loaded part by the recorded
+duration of a step (`--durations FILE`) or else its budget.
+
+Adding a step: put the test in `tests/`, add a line to `tests/suite.txt` with its tier (`fast` only for a step of a few seconds
+that covers an area the other fast steps do not), `par` unless it cannot run beside others, a timeout (several times the budget),
+its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`; a budget
+only shrinks, so a step that grew is split) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
+steps whose `covers` match the files it changed (or whose command names a changed file), so a `full` step without `covers` is
+checked only in the whole run.
+
+CI (`.github/workflows/test.yml`) runs the fast tier and the covered steps on a pull request into a branch other than master (the
+label `full-suite` on the pull request runs the whole suite), and the whole suite in four shards on a push to develop, on a pull
+request into master and on a manual run; there is no scheduled run. The time limit of a job is computed from the budgets, as the
+comment in the workflow shows, and `tests/test_ci.py` fails when the limit falls below that, so budgets that grow past it show in
+the same pull request.
+
+`tests/durations.txt` has one line per step, `seconds command`, from a whole run; the CI shards are balanced by it, and
+`tests/test_ci.py` fails when the four parts plan more than 1.3 times apart. Regenerate it when steps were added or their time
+changed much, from a whole run on a machine with eight CPUs, and commit it:
+
+    T=$(mktemp -d); mkdir $T/h; HOME=$T/h TMPDIR=$T bash tests/run.sh -j 8 --save-durations tests/durations.txt
+
+A sharded run ends with `shard i/K: planned Ns, the steps took Ns together`, which shows how far the file is from the runs.
+
+Each step runs in a session of its own with a fresh `HOME`, no standard input and only its output open, and fails when it
+exceeds its timeout or leaves a process running. A step prints one block when it ends, so the output is in completion order and
+never interleaved; the end of the output has the failed steps, the slowest ten and `total: Ns (passed|FAILED)`, and
+`--enforce-budgets` makes a step over budget fail. The linter step runs shellcheck through `xargs`, all CPUs at once.
+
+A test is safe to run next to other tests and next to another whole suite: it sources `tests/hermetic.sh` (a python test imports `hermetic`), which gives it a fresh HOME, TMPDIR, config and state, a fixed locale, time zone and umask, and git without the host's configuration, and it works only under `mktemp` directories, starts nothing it does not stop by pid (`spawn_bg`, `kill_bg`), waits for a condition with a deadline and not with a bare `sleep`, and binds port 0. `tests/test_hermetic.sh` runs `tests/hermetic_lint.py` over the tests and fails on a file that breaks one of these rules; a justified case carries `hermetic: allow RULE (reason)` on its line.
 
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 

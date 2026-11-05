@@ -1,0 +1,5 @@
+# Startup ceilings of the dispatcher (tests/test_startup.py): `COMMAND MAX_MS`, the median wall time of 20 runs of `qargi COMMAND`
+# in a hermetic home, in milliseconds. Generous (about twice the median the test measures on the development host), so a loaded
+# machine does not fail it; shrink-only: lower a ceiling when startup gets faster, and a ceiling above its value at the merge base
+# with origin/develop needs `# raised: reason` on its line.
+role list 350

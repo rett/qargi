@@ -35,6 +35,8 @@
 #      tests/test_skill_budget.sh --report  the same, and every text with its count, ceiling and slack (nothing is changed)
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 fail=0
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 report=0
@@ -90,7 +92,7 @@ raised_without_reason() {
     [[ ${nm[$p]:-} =~ ^[[:space:]]*raised:[[:space:]]*[^[:space:]] ]] || echo "$p: ${oc[$p]} -> ${nc[$p]}"
   done | LC_ALL=C sort
 }
-RT=$(mktemp -d); trap 'rm -rf "$RT"' EXIT
+RT=$(mktemp -d); trap 'rm -rf "$RT" "$HERMETIC"' EXIT
 # shellcheck disable=SC2034
 declare -A ceil=() cmt=()   # cmt is filled through a name reference
 bad=0

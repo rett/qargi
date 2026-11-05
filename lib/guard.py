@@ -264,6 +264,7 @@ BUDGET = 5.0                                                 # seconds of checki
 MAX_BRACE = 256                                              # words one brace expression may stand for; more is refused, not cut (the words past the cut would be unchecked)
 MAX_BRACE_WORK = 20000                                       # brace words, in all, that one call may expand
 _DEADLINE = [None]
+_CLOCK = [time.monotonic]                                   # the clock the budget is counted on (judge sets the deadline, tick reads it); a test injects one it advances itself
 
 
 class TooSlow(Exception):
@@ -283,7 +284,7 @@ class TooBroad(TooSlow):
 
 
 def tick():
-    if _DEADLINE[0] is not None and time.monotonic() > _DEADLINE[0]:
+    if _DEADLINE[0] is not None and _CLOCK[0]() > _DEADLINE[0]:
         raise TooSlow()
 
 
@@ -3064,7 +3065,7 @@ def judge(call):
         return ("qargi guard: a command of more than %d characters cannot be checked in the time the hook has, so it is not available to an agent. "
                 "Write the text to a file with the Write tool, or run it in parts." % MAX_COMMAND)
     clear_caches()
-    _DEADLINE[0] = time.monotonic() + BUDGET
+    _DEADLINE[0] = _CLOCK[0]() + BUDGET
     try:
         _OUT[0] = out_dir(call)
         return decide_call(call)

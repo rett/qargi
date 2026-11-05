@@ -446,10 +446,11 @@ def packet(c, role, cap=PACKET_CAP):
     if w:
         tail.append(w)
     lines.append("Always-load (role %s):" % role)
-    room = cap - len("\n".join(lines + tail)) - 2
+    more = "... (more rows: see the indexes)"
+    room = cap - len("\n".join(lines + tail)) - 2 - len(more) - 1       # the line that says rows were left out must fit under the cap too
     for a in always:
         if room - len(a) - 1 < 0:
-            lines.append("... (more rows: see the indexes)")
+            lines.append(more)
             break
         lines.append(a)
         room -= len(a) + 1
