@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-05
+
 ### Added
 - `tests/run.sh --changed-from REF` (or `--changed-files FILE`, one path per line) adds to the fast tier the steps whose `covers`
   globs match a file changed since REF (`git diff REF...HEAD`) and those whose command names a changed file; a step with no `covers`
