@@ -1,0 +1,22 @@
+{
+ "purpose": "Runs: ref journal for bridge branches and the lead's own pushes, local close for runs applied by git am, empty OUT check, finish refuses while a run is open, compact guard ignores closed runs",
+ "started": "2026-11-05T21:53:25Z",
+ "goal": "Runs: ref journal for bridge branches and the lead's own pushes, local close for runs applied by git am, empty OUT check, finish refuses while a run is open, compact guard ignores closed runs",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T21:53:25Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-05T21:53:25Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-05T21:53:25Z",
+ "feature": "runs",
+ "project": "qargi"
+}
