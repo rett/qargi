@@ -10,6 +10,9 @@ Answers, under `release` in the project's answers file:
                                that the release assets verb made, else to the repository
   release.assets_command       the command the release assets verb runs in a clean worktree of the tag to build the release files: a command line
                                (run by bash -c) or a list of words ({version} replaced, no shell)
+  release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
+  release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
+                               the layout of what a release updates and runs; lib/release_layout.py describes and checks them
 
 The record is $STATE/release/PROJECT-VERSION.sign.json: the tag's commit, the sha256 of every signed file and of its signature, and the
 result of the signing and of verify_command. Nothing the person types (the passphrase) ever reaches this file or any argument of it.
@@ -21,6 +24,8 @@ result of the signing and of verify_command. Nothing the person types (the passp
                                                  print "sha256<TAB>absolute path<TAB>path in its root" per file to attach: the release.assets of AF
                                                  (globs expanded), every --asset and every regular file of every --asset-dir. A relative name is taken
                                                  in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository)
+  release_sign.py resolve REPO FILE...           print "sha256<TAB>absolute path<TAB>path in the repository" per file; exit 1 if one is no regular
+                                                 file inside the repository
   release_sign.py record --state F --repo R --af AF --project P --version V --commit C --sign-rc N --verify-rc N|none
   release_sign.py check --state F --repo R --af AF --commit C     print the verdict; exit 0 only when the record is ok and still true
 """
@@ -60,6 +65,10 @@ def problems(rel):
         if not ((isinstance(c, str) and c.strip() and not CTRL_RE.search(c))
                 or (isinstance(c, list) and c and all(isinstance(x, str) and x and "\x00" not in x for x in c))):
             out.append("release.assets_command: the command that builds the release files, a command line or a list of words ({version} replaced in a list), run in a clean worktree of the tag (for example [\"make\", \"dist\"])")
+    if "notes_file" in rel:
+        n = rel["notes_file"]
+        if not (isinstance(n, str) and rel_ok(n.replace("{version}", "0.0.0"))):
+            out.append("release.notes_file: a file name relative to the repository, {version} standing for the version (no .., no #, not starting with - or /)")
     out.extend(release_layout.problems(rel))
     if "sign" in rel:
         s = rel["sign"]
