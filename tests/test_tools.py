@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(ROOT, "lib"))
 import tools as T  # noqa: E402
 
 FAKE_GO = os.path.join(ROOT, "tests", "fixtures", "fake-go.sh")
+SYSTEM_PATH = "/usr/bin:/bin"                    # where the system tools the fake go runs are looked up; never a place to look for a go
 GO = {"kind": "go", "name": "github.com/acme/lint/cmd/acme-lint", "version": "v1.2.0"}
 BIN = {"kind": "binary", "name": "acme-fmt", "version": "2.0.1", "url": "https://downloads.example.test/acme-fmt-2.0.1", "sha256": "0" * 64}
 SUB = {"kind": "submodule", "name": "acme-test", "path": "vendor/acme-test"}
@@ -73,7 +74,7 @@ class Status(unittest.TestCase):
         os.chmod(os.path.join(self.bin, "go"), 0o755)
         self.gobin = os.path.join(self.t, "gobin")
         self.saved = dict(os.environ)
-        os.environ.update(HOME=self.t, PATH=self.bin + os.pathsep + "/usr/bin:/bin", GOBIN=self.gobin)
+        os.environ.update(HOME=self.t, PATH=self.bin + os.pathsep + SYSTEM_PATH, GOBIN=self.gobin)
 
     def tearDown(self):
         os.environ.clear()
@@ -104,11 +105,31 @@ class Status(unittest.TestCase):
         state, text = T.status(t)
         self.assertEqual(state, "wrong")
         self.assertIn("is not a go build of github.com/acme/lint/cmd/acme-lint", text)
-        os.environ["PATH"] = "/usr/bin:/bin"                                 # no go: the version cannot be read
-        os.environ["GOBIN"] = self.gobin
+
+    def reduced_path(self, with_go):
+        """A PATH of the tool's own directory and one fresh directory that holds only what the fake go runs (links to the system's tools)
+        and, with_go, the fake go. Nothing of the host is on it, so whether the host has a go (a CI runner does) cannot change a result."""
+        d = os.path.join(self.t, "reduced-go" if with_go else "reduced-nogo")
+        os.makedirs(d)
+        for name in ("sh", "dirname", "basename", "mkdir", "chmod"):
+            os.symlink(shutil.which(name, path=SYSTEM_PATH), os.path.join(d, name))
+        if with_go:
+            shutil.copy(FAKE_GO, os.path.join(d, "go"))
+            os.chmod(os.path.join(d, "go"), 0o755)
+        return self.gobin + os.pathsep + d
+
+    def test_the_version_of_an_installed_tool_is_read_with_go_and_only_noted_without(self):
+        t = dict(GO, roles=["build"])
+        self.go_install("github.com/acme/lint/cmd/acme-lint@v1.2.0")
+        os.environ["PATH"] = self.reduced_path(True)                        # go is there: the version is read
         state, text = T.status(t)
-        self.assertEqual(state, "note")
+        self.assertEqual(state, "ok", text)
+        self.assertEqual(T.status(dict(t, version="v1.3.0"))[0], "wrong")
+        os.environ["PATH"] = self.reduced_path(False)                       # go is not: the tool is found, its version cannot be read
+        state, text = T.status(t)
+        self.assertEqual(state, "note", text)
         self.assertIn("go is not on PATH", text)
+        self.assertEqual(T.status(dict(t, version="v1.3.0"))[0], "note")
 
     def test_a_binary_is_the_file_its_sha256_names(self):
         d = os.path.join(self.t, ".local", "bin")
