@@ -115,13 +115,21 @@ rel '{"test_command":["sh","-c","exit 1"]}'; $REL verify 0.2.0 >/dev/null 2>&1 &
 # command gets a line of its own, so the pass is not read as the release gate
 mk stat; seal
 out=$($REL status 0.2.0 2>&1)
-grep -Eq '^no release/0.2.0 yet. develop is at [0-9a-f]+, full suite: pass at this head \(command: true; ran [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z\)$' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "status names the command and the time of the suite record, and says nothing more when release.test_command is not set" || no "status verdict: $out"
+grep -Eq '^no release/0.2.0 yet. develop is at [0-9a-f]+, full suite: pass at this head \(command: true; ran [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z; took [0-9]+s\)$' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "status names the command, the time and the duration of the suite record, and says nothing more when release.test_command is not set" || no "status verdict: $out"
 rel '{"test_command":"echo gate"}'; out=$($REL status 0.2.0 2>&1)
 grep -q 'full suite: pass at this head (command: true; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "a release.test_command that differs from the recorded command is named on its own line" || no "status note: $out"
 $REL verify 0.2.0 >/dev/null 2>&1; $REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
 grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "after the release's own verify the branch status shows that command and no note" || no "branch status: $out"
 rel '{"test_command":"echo gate2"}'; out=$($REL status 0.2.0 2>&1)
 grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate2", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "the note shows on the release branch status too" || no "branch note: $out"
+# the record keeps how long the run took and the mode its command names (-j N, shard I/K); an older record without them still shows
+rel '{"test_command":"echo gate -j 8 --shard 2/4"}'; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
+grep -Eq '^full suite: pass at this head \(command: echo gate -j 8 --shard 2/4; ran [0-9T:Z-]+; took [0-9]+s; -j 8, shard 2/4\)$' <<<"$out" && ok "status shows the duration and the mode (-j N, shard I/K) of the suite record" || no "status mode: $out"
+rel '{"test_command":"echo gate -j8"}'; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
+grep -Eq '^full suite: pass at this head \(command: echo gate -j8; ran [0-9T:Z-]+; took [0-9]+s; -j 8\)$' <<<"$out" && ok "-jN is read as -j N" || no "status -jN: $out"
+jq -c 'del(.seconds, .mode)' "$T/s/releases/stat-release_0.2.0.json" > "$T/rec.json" && cp "$T/rec.json" "$T/s/releases/stat-release_0.2.0.json"
+out=$($REL status 0.2.0 2>&1)
+grep -Eq '^full suite: pass at this head \(command: echo gate -j8; ran [0-9T:Z-]+\)$' <<<"$out" && ok "a record without a duration and a mode shows the command and the time only" || no "status old record: $out"
 
 # release start lists the features merged into develop since the previous tag: the --no-ff merges "Merge branch 'feature/...'", one per line with the short sha
 mergedev() { # BRANCH: a --no-ff merge of it into develop, with git's own message

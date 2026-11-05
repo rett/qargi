@@ -207,9 +207,10 @@ case $verb in
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
+    t0=$SECONDS
     if run_suite; then res=pass; else res=fail; fi
     busy_end; hold_end
-    jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$BR")"
+    record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$BR")"; [ "$res" = pass ];;
   finish)
     marshal_gate "$NAME_ARG"
