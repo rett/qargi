@@ -2,12 +2,16 @@
 # Runs the tests and the linter listed in tests/suite.txt. No API access, no private data.
 #
 #   bash tests/run.sh [-j N] [--tier fast|all] [--only PATTERN] [--shard i/K] [--shuffle SEED] [--repeat N] [--enforce-budgets]
-#                     [--durations FILE] [--save-durations FILE] [--manifest FILE]
+#                     [--changed-from REF | --changed-files FILE] [--plan] [--durations FILE] [--save-durations FILE] [--manifest FILE]
 #
-#   -j N              run N steps at a time (default: the number of CPUs, at most the cgroup CPU quota when there is one;
+#   -j N             run N steps at a time (default: the number of CPUs, at most the cgroup CPU quota when there is one;
 #                     -j 1 runs the steps one after the other in the manifest's order)
 #   --tier T          fast: the steps marked fast (about a minute); all: every step (default)
 #   --only PAT        only the steps whose command matches the extended regular expression PAT
+#   --changed-from REF   with --tier fast: also the steps whose `covers` globs match a file changed since REF (git diff REF...HEAD),
+#                     and those whose command names a changed file; a step with no `covers` is not added by its globs
+#   --changed-files FILE  the same with the changed paths read from FILE, one per line
+#   --plan            print the selection (with the shard plan under --shard) and exit without running anything
 #   --shard i/K       the i-th of K parts (1 <= i <= K) of the selected steps. The steps are dealt longest first, each to the
 #                     least loaded part, by their recorded duration (--durations) or else their budget; the plan of all K parts
 #                     is printed, and the inventory check runs in every part
@@ -43,7 +47,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 usage_die() {
   echo "tests/run.sh: $*" >&2
-  echo "usage: bash tests/run.sh [-j N] [--tier fast|all] [--only PATTERN] [--shard i/K] [--shuffle SEED] [--repeat N] [--enforce-budgets] [--durations FILE] [--save-durations FILE] [--manifest FILE]" >&2
+  echo "usage: bash tests/run.sh [-j N] [--tier fast|all] [--only PATTERN] [--shard i/K] [--shuffle SEED] [--repeat N] [--enforce-budgets] [--changed-from REF | --changed-files FILE] [--plan] [--durations FILE] [--save-durations FILE] [--manifest FILE]" >&2
   exit 2
 }
 need_val() { [ "$2" -ge 2 ] || usage_die "$1 needs a value"; }
@@ -56,7 +60,7 @@ if [ -r /sys/fs/cgroup/cpu.max ]; then
     [ "$_c" -ge "$cpus" ] || cpus=$_c
   fi
 fi
-jobs=$cpus; tier=all; only=; shard=; manifest=tests/suite.txt; shuffle=; repeat=1; enforce=0; durfile=; savefile=
+jobs=$cpus; tier=all; only=; shard=; manifest=tests/suite.txt; shuffle=; repeat=1; enforce=0; durfile=; savefile=; changed_from=; changed_files=; plan_only=0
 while [ $# -gt 0 ]; do
   case $1 in
     -j) need_val "$1" $#; jobs=$2; shift 2;;
@@ -67,6 +71,9 @@ while [ $# -gt 0 ]; do
     --shuffle) need_val "$1" $#; shuffle=$2; shift 2;;
     --repeat) need_val "$1" $#; repeat=$2; shift 2;;
     --enforce-budgets) enforce=1; shift;;
+    --changed-from) need_val "$1" $#; changed_from=$2; shift 2;;
+    --changed-files) need_val "$1" $#; changed_files=$2; shift 2;;
+    --plan) plan_only=1; shift;;
     --durations) need_val "$1" $#; durfile=$2; shift 2;;
     --save-durations) need_val "$1" $#; savefile=$2; shift 2;;
     --manifest) need_val "$1" $#; manifest=$2; shift 2;;
@@ -87,6 +94,8 @@ if [ -n "$shard" ]; then
 fi
 [ -f "$manifest" ] || usage_die "no manifest: $manifest"
 [ -z "$durfile" ] || [ -f "$durfile" ] || usage_die "no durations file: $durfile"
+[ -z "$changed_from" ] || [ -z "$changed_files" ] || usage_die "--changed-from and --changed-files exclude each other"
+[ -z "$changed_files" ] || [ -f "$changed_files" ] || usage_die "no file of changed paths: $changed_files"
 
 # ---- the manifest
 s_tier=(); s_mode=(); s_tmo=(); s_bud=(); s_cmd=(); s_cov=(); bad=()
@@ -137,10 +146,38 @@ weight() { local c=${s_cmd[$1]}; echo "${rec[$c]:-${s_bud[$1]}}"; }
 # the steps given, longest first, ties in manifest order
 by_weight() { local i; for i in "$@"; do printf '%s %s\n' "$((100000 - $(weight "$i")))" "$i"; done | sort -n -k1,1 -k2,2n | awk '{print $2}'; }
 
+# ---- the changed files: a step outside the tier is selected when one of its `covers` globs matches a changed file, or its command
+# names one (a changed test runs). Without --changed-from / --changed-files nothing is changed and this selects nothing.
+changed=()
+load_changed() {
+  if [ -n "$changed_from" ]; then
+    git rev-parse -q --verify "$changed_from^{commit}" >/dev/null || usage_die "--changed-from: no such revision: $changed_from"
+    mapfile -t changed < <(git diff --name-only "$changed_from...HEAD" 2>/dev/null)
+  elif [ -n "$changed_files" ]; then
+    mapfile -t changed < "$changed_files"
+  fi
+}
+changed_covers() {   # changed_covers STEP: 0 when a changed file matches a covers glob of the step or is a word of its command
+  local f g w
+  local -a gs ws
+  [ ${#changed[@]} -gt 0 ] || return 1
+  read -ra gs <<<"${s_cov[$1]}"; read -ra ws <<<"${s_cmd[$1]}"
+  for f in "${changed[@]}"; do
+    [ -n "$f" ] || continue
+    for w in "${ws[@]}"; do [ "$w" = "$f" ] && return 0; done
+    for g in "${gs[@]}"; do
+      # shellcheck disable=SC2254  # the glob of the manifest is a pattern on purpose
+      case $f in $g) return 0;; esac
+    done
+  done
+  return 1
+}
+load_changed
+
 # ---- the selection
 sel=()
 for ((i = 0; i < total_steps; i++)); do
-  [ "$tier" = all ] || [ "${s_tier[i]}" = fast ] || continue
+  [ "$tier" = all ] || [ "${s_tier[i]}" = fast ] || changed_covers "$i" || continue
   if [ -n "$only" ]; then grep -Eq -- "$only" <<<"${s_cmd[i]}" || continue; fi
   sel+=("$i")
 done
@@ -159,6 +196,13 @@ if [ "$shard_k" -gt 1 ]; then
   sel=("${mine[@]+"${mine[@]}"}")
   plan="shard plan (planned seconds):"
   for ((i = 0; i < shard_k; i++)); do plan+=" $((i + 1))/$shard_k=${load[i]}s(${cnt[i]} steps)"; done
+fi
+
+if [ "$plan_only" = 1 ]; then   # the selection and the plan, nothing run
+  [ -z "$plan" ] || echo "$plan"
+  for i in "${sel[@]+"${sel[@]}"}"; do printf '%s %s\n' "$(weight "$i")" "${s_cmd[i]}"; done
+  [ ${#bad[@]} -eq 0 ] || { printf '%s\n' "${bad[@]}"; exit 1; }
+  exit 0
 fi
 
 # the work list: the parallel steps (longest first, or shuffled), each repeated, then the serial ones
@@ -311,7 +355,7 @@ for ((k = npool; k < ${#it_step[@]}; k++)); do run_one "$k"; report "$k"; done
 
 # ---- the summary
 read -r l1 l5 l15 _ < /proc/loadavg 2>/dev/null || { l1='?'; l5='?'; l15='?'; }
-echo "== summary: ${#sel[@]} of $total_steps steps; -j $jobs (nproc $(nproc 2>/dev/null || echo ?), load $l1 $l5 $l15), tier $tier, only ${only:-none}, shard ${shard:-none}, shuffle seed ${shuffle:-none}, repeat $repeat"
+echo "== summary: ${#sel[@]} of $total_steps steps$([ ${#changed[@]} -eq 0 ] || echo ", ${#changed[@]} changed files"); -j $jobs (nproc $(nproc 2>/dev/null || echo ?), load $l1 $l5 $l15), tier $tier, only ${only:-none}, shard ${shard:-none}, shuffle seed ${shuffle:-none}, repeat $repeat"
 if [ ${#failed[@]} -gt 0 ]; then echo "failed steps (${#failed[@]}):"; printf '  %s\n' "${failed[@]}"; else echo "failed steps: none"; fi
 if [ ${#times[@]} -gt 0 ]; then
   echo "slowest:"
@@ -320,6 +364,10 @@ fi
 if [ ${#slow[@]} -gt 0 ]; then echo "over 1.5x their budget$([ "$enforce" = 1 ] || echo ' (warning)'):"; printf '  %s\n' "${slow[@]}"; fi
 if [ ${#dirs[@]} -gt 0 ]; then echo "directories outside a step's own changed (warning; the top level of $SUITE_TMP):"; printf '  %s\n' "${dirs[@]}"; fi
 [ -z "$KEEP" ] || echo "logs of the failed steps: $KEEP"
+if [ "$shard_k" -gt 1 ]; then   # planned against actual for this part (the seconds of its steps added up)
+  actual=0; for sec in "${done_sec[@]+"${done_sec[@]}"}"; do actual=$((actual + sec)); done
+  echo "shard $shard_i/$shard_k: planned ${load[shard_i - 1]}s, the steps took ${actual}s together"
+fi
 if [ -n "$savefile" ]; then
   for ((k = 0; k < ${#done_cmd[@]}; k++)); do echo "${done_sec[k]} ${done_cmd[k]}"; done > "$savefile"
 fi
