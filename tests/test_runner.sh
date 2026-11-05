@@ -19,7 +19,7 @@ grep -q '^total: [0-9]*s (passed)$' <<<"$out" && ok "and the last line is the to
 # a scratch copy: tests/run.sh with steps of its own
 S=$T/s; mkdir -p "$S/tests"; cp tests/run.sh "$S/tests/run.sh"
 for n in a1 a2 a3 a4 a5 a6; do printf '#!/bin/sh\necho "ok   step %s"\n' "$n" > "$S/tests/test_$n.sh"; done
-printf '#!/bin/sh\necho "FAIL boom"\nexit 1\n' > "$S/tests/test_bad.sh"
+printf '#!/bin/sh\necho "FAIL boom"\necho "kept on stderr" >&2\nexit 1\n' > "$S/tests/test_bad.sh"
 base() {
   cat <<'EOF'
 # scratch manifest
@@ -38,6 +38,7 @@ steps() { grep -E '^== ' <<<"$1" | grep -v '^== summary' | sed 's/^== //'; }
 
 out=$(R -j 1); rc=$?
 [ "$rc" = 1 ] && grep -q '^FAILED: sh tests/test_bad.sh$' <<<"$out" && grep -q '^total: [0-9]*s (FAILED)$' <<<"$out" && ok "a failing step: FAILED line, total line FAILED, exit 1" || no "failing: rc=$rc $out"
+grep -q '^kept on stderr$' <<<"$out" && grep -q '^exit status 1, [1-9][0-9]* bytes of output$' <<<"$out" && ok "a failing step's block carries what it wrote to standard error, and its exit status" || no "stderr: $out"
 grep -q '^FAIL boom$' <<<"$out" && grep -q '^   ([0-9]*s)$' <<<"$out" && ok "its FAIL line and its seconds are in its block" || no "block: $out"
 [ "$(steps "$out" | tr '\n' ' ')" = "sh tests/test_a1.sh sh tests/test_a2.sh sh tests/test_a3.sh sh tests/test_a4.sh sh tests/test_a5.sh sh tests/test_bad.sh sh tests/test_a6.sh " ] \
   && ok "-j 1 runs the steps in the manifest's order (the serial step last)" || no "order: $(steps "$out" | tr '\n' ' ')"

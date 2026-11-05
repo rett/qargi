@@ -569,6 +569,7 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"
     audit_log "release:site" "$PROJ $VER $SITE_BR ${new:0:12}"
     echo "built the site of $VER on $SITE_BR at ${new:0:7}; nothing was pushed"
+    echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
   *) die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;

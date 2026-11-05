@@ -6,6 +6,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi release site` now ends with a reminder to preview the built site locally before pushing it, naming the site branch's build
+  script and a local web server for the output.
+- The generated documentation site has a left sidebar in place of the top navigation list, and a search box. The sidebar is on
+  every page but `404.html` (which keeps a simple header and absolute links) and lists Guides (the hand pages, in `site.json`
+  order), Reference (each command group folds its commands) and Releases; the page you are on has `aria-current="page"` and its
+  section is open, the others closed. On a screen up to 48rem wide the sidebar sits behind a Menu button that needs no script.
+  The build writes `assets/search-index.json` (one entry per page and per section, plain text, bounded to 256 KiB, its size
+  printed as a note; the forbidden words of `site.json` are checked in the text of the generated pages) and `assets/search.js`
+  (one small file: no libraries, no `eval`, no inline code), which adds a search box at the top of the sidebar, ranks title matches
+  first, answers to the arrow keys, Enter and Escape, announces the number of results, and finds the index next to itself, so it
+  works under any base path. Without script the box is not there and nothing else changes. `check-output` also requires the
+  sidebar with exactly one current page, the script and the index (valid, bounded, an entry for every page, every entry pointing
+  at a page or heading) and refuses an inline script.
+
+### Fixed
+- `tests/run.sh` printed nothing for a failed step that wrote to standard error (every failed Python test): the loop that closes a step's
+  stray descriptors also closed the saved copy of its standard error, which stayed pointed at /dev/null. The block now carries the
+  step's own output, and an `exit status N, M bytes of output` line.
+
 ## [0.2.1] - 2026-11-05
 
 ### Added
