@@ -593,6 +593,9 @@ class Check(Fixtures):
         self.assertIn("members", {x["part"] for x in j["qargi"]})
         self.assertTrue(any(x["part"] == "members" and x["text"].startswith("1 current") for x in j["qargi"]), j)
         self.assertFalse(any(m.startswith("skills") for m in j["missing"]), j["missing"])      # nothing is rendered yet: nothing to link
+        packs = [x["text"] for x in j["qargi"] if x["part"] == "packs"]
+        self.assertEqual(packs, ["not applied (qargi packs apply --target claude-code acme)"], j)   # never applied: not "no drift", and not a missing item
+        self.assertFalse(any(m.startswith("packs") for m in j["missing"]), j["missing"])
         os.makedirs(os.path.join(self.t, "state", "render", "acme", "claude-code", ".claude", "skills"))
         j = json.loads(self.check(d, "--json")[1])
         self.assertIn("skills are not linked in this checkout", j["missing"])
