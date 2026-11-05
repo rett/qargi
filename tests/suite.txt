@@ -86,6 +86,7 @@ fast | par | 300 | 3 | python3 tests/test_marshal_sign_unit.py | lib/marshal*.sh
 full | par | 300 | 15 | bash tests/test_marshal_forget.sh | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 8 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 43 | bash tests/test_journal.sh
+full | par | 300 | 21 | bash tests/test_runs_close.sh | lib/local.sh lib/ref.sh lib/feature.sh lib/review.sh lib/lead_usage.py
 fast | par | 300 | 12 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 12 | bash tests/test_team.sh | lib/team.sh
 fast | par | 300 | 4 | bash tests/test_leadcred.sh

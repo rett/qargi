@@ -21,6 +21,7 @@
 370 bash tests/test_marshal_sign.sh
 43 python3 tests/test_env_apply.py
 49 bash tests/test_journal.sh
+21 bash tests/test_runs_close.sh
 18 bash tests/test_valued_opts.sh
 41 bash tests/test_agent_cloud.sh
 39 python3 tests/test_provider_adapter.py

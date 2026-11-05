@@ -1267,13 +1267,13 @@ class Marshal(HookCase):
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",
                 "bin/qargi ref record", "env FOO=1 qargi ref record", "sudo qargi ref record", "bash -c 'qargi ref record'", "eval 'qargi ref record'",
                 "echo $(qargi ref record)", "true && qargi ref record", "ls; qargi ref record", "qargi 'ref' 'record'", "bash lib/ref.sh record --rewrite agent/x a b --why w",
-                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record"]
+                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record", "qargi ref note feature/x", "bash lib/ref.sh note origin/x"]
         for c in cmds:
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("qargi guard:", res.stderr, c)
         for c in ("qargi ref record --rewrite agent/x a b --why w", "bash lib/ref.sh record"):
-            self.assertIn("qargi ref record moves a branch of the lead's repository", self.bash(c).stderr, c)
+            self.assertIn("qargi ref record writes the lead's ref journal", self.bash(c).stderr, c)
         for c in ("echo qargi ref record", "grep -n 'ref record' lib/commands.py", "cat lib/ref.sh", "git log --grep 'ref record'"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
@@ -3972,7 +3972,7 @@ class FifthReview(HookCase):
 
     # --- G12: the lead's runs and agents
     def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
-        verbs = ["local clean RUN", "local clean RUN --discard", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
         bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
                                                     "timeout 5 qargi %s")]
         bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]
