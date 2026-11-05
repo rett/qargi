@@ -52,6 +52,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports the disagreement.
 - The `docs-site-member` pack tells a member that no line may start with a less-than sign (keep a code span that holds a placeholder on one line, or put the
   placeholder after other text) and to run the render check, not only the Markdown checks, before reporting.
+- A wrapped code span in `CONTRIBUTING.md` no longer starts a line with a less-than sign.
 
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
