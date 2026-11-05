@@ -250,6 +250,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi review prune [--yes]` and the `--yes` option of `review` (breaking: use `qargi branch prune`, which shows a plan and a token, also clears merged `feature/*` branches and the worktrees qargi made, and checks that a branch was merged with `--no-ff`, where `review prune` deleted any `agent/*` branch that was an ancestor of develop or a feature).
 
 ### Security
+- The member guard reads the program a shell takes from its standard input: `echo "qargi upgrade" | bash`, `bash <<< "qargi upgrade"`, `sh -s <<< ...`,
+  `. /dev/stdin <<< ...`, `echo ... | source /dev/stdin`, `echo ... | xargs -0 sh -c`, `printf '%s' ... | bash` and `echo ... > f; sh f` ran the verb unseen since 0.2.0.
+  The text the line shows (a here-string, an echo or printf piped in or written to the file the shell runs) is now read as `sh -c` text is, and a program it cannot see
+  (`cat file | bash`, `curl ... | sh`, `bash < file`, a process substitution, a file `cp` writes in the same command) is refused: write the script with the file tool
+  and run `bash FILE`.
 - The member guard no longer reads a line with `printf` in it as text only: `printf -v NAME` assigns a variable, so `printf -v x 'b[%s(true; qargi upgrade)]' $; printf -v 'a[x]' %s 1`
   ran the verb from an array subscript and `printf -v PATH %s .:$PATH` made a later `cat` or `git` run a file the line wrote, and both were let through as data.
   A word with a `)` and no `(` ends the command when the guard reads a qargi verb (`qargi upgrade)]` is `qargi upgrade`), and `printf -v QARGI_NESTED`, `read`
