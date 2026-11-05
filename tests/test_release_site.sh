@@ -43,7 +43,8 @@ printf '# Changelog\n\n## [Unreleased]\n\n### Added\n- a second thing\n\n## [0.5
 git -C "$R" commit -q -am two
 git -C "$R" checkout -q --orphan gh-pages && git -C "$R" rm -rq --cached . && git -C "$R" clean -fdxq
 mkdir -p "$R/site"; cp -r "$ROOT/tests/fixtures/site/pages" "$ROOT/tests/fixtures/site/static" "$ROOT/tests/fixtures/site/site.json" "$R/site/"
-echo "hand pages and site configuration; _site/ is built by qargi release site" > "$R/README.md"
+echo "hand pages and site configuration" > "$R/README.md"
+mkdir -p "$R/_site/old"; echo "a build an earlier qargi committed" > "$R/_site/index.html"; echo old > "$R/_site/old/page.html"   # what the site branch carried before the fix
 git -C "$R" add -A && git -C "$R" commit -q -m "Site: the hand pages"
 git -C "$R" checkout -q -f -b scratch develop
 P0=$(git -C "$R" rev-parse gh-pages)
@@ -100,13 +101,11 @@ $REL site 0.6.0 --plan "$t" --approved "yes, commit the site" > "$T/o" 2>&1; rc=
 P1=$(git -C "$R" rev-parse gh-pages)
 [ $rc = 0 ] && [ "$P1" != "$P0" ] && [ "$(git -C "$R" rev-parse "$P1^")" = "$P0" ] && ok "applied: one commit on gh-pages" || no "apply: rc=$rc $(cat "$T/o")"
 [ "$(git -C "$R" log -1 --format=%s gh-pages)" = "Site: built from release 0.6.0" ] && ok "the commit says which release it built" || no "subject: $(git -C "$R" log -1 --format=%s gh-pages)"
-git -C "$R" cat-file -e gh-pages:_site/index.html && git -C "$R" cat-file -e gh-pages:_site/reference/index.html && git -C "$R" cat-file -e gh-pages:_site/sitemap.xml \
-  && git -C "$R" cat-file -e gh-pages:_site/first-project/index.html && ok "the built site is in _site/ on gh-pages" || no "built files: $(git -C "$R" ls-tree -r --name-only gh-pages | head)"
+[ -z "$(git -C "$R" ls-tree -r --name-only gh-pages | grep '^_site/' || true)" ] && git -C "$R" cat-file -e "$P0:_site/index.html" \
+  && ok "the built site is not committed: no _site/ on gh-pages, and the one the branch carried is removed" || no "_site/ on gh-pages: $(git -C "$R" ls-tree -r --name-only gh-pages | grep '^_site/')"
+[ "$(git -C "$R" diff --name-only "$P1^" "$P1" | grep -v '^_site/')" = "site/site.json" ] && ok "the commit changes site/site.json (and removes _site/) and nothing else" || no "files of the commit: $(git -C "$R" diff --name-only "$P1^" "$P1")"
 [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .release)" = 0.6.0 ] && [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .url)" = "https://docs.example.org/qargi/" ] \
   && ok "site.json records release 0.6.0 and keeps its other answers" || no "site.json: $(git -C "$R" show gh-pages:site/site.json)"
-git -C "$R" show gh-pages:_site/releases/index.html | grep -q "a second thing" && ok "the releases page is built from the tag's changelog" || no "releases page"
-git -C "$R" cat-file -e gh-pages:_site/assets/search.js && git -C "$R" show gh-pages:_site/assets/search-index.json | jq -e '.entries | map(select(.p == "releases/")) | length == 1' >/dev/null \
-  && git -C "$R" show gh-pages:_site/releases/index.html | grep -q 'id="sidebar"' && ok "the built site has the sidebar, the search script and its index" || no "sidebar and search files"
 grep -q "^push it with: git -C .* push origin gh-pages" "$T/o" && no "a push command without an origin" || { grep -q "nothing was pushed" "$T/o" && grep -q "no origin remote" "$T/o" && ok "nothing is pushed; without origin it says so" || no "apply output: $(cat "$T/o")"; }
 [ "$(git -C "$R" branch --show-current)" = scratch ] && [ -z "$(git -C "$R" status --porcelain)" ] && [ ! -e "$R/_site" ] && [ "$(wts)" = 1 ] \
   && ok "the main checkout is untouched and no worktree is left" || no "main checkout: $(git -C "$R" status --porcelain) $(git -C "$R" worktree list)"

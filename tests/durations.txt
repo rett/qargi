@@ -45,6 +45,8 @@
 24 bash tests/test_marshal_flow.sh
 19 bash tests/test_release_publish.sh
 20 bash tests/test_release_site.sh
+12 bash tests/test_release_assets.sh
+7 bash tests/test_release_after_steps.sh
 29 python3 tests/test_home.py
 17 bash tests/test_review.sh
 19 bash tests/test_tier_hook.sh
