@@ -194,6 +194,45 @@ out=$($DA local verify "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "zz2 (the parking branch)" <<<"$out" && ok "the parking branch is the one the answers name (repo.parking_branch)" || no "answers parking: rc=$rc $out"
 jq 'del(.repo.parking_branch)' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
 
+# --- qargi ref record --rewrite: the lead rewrites an agent branch to a commit with the same tree, and verify accepts it as a rewrite
+REF="$DA ref record --rewrite"
+task agent/rw rw.txt one; o=$(sha agent/rw)
+same() { git -C "$A" commit-tree -p "$1~1" -m "${2:-reworded}" "$1^{tree}"; }   # the same tree, another message
+R=$(fresh r-rewrite); RL=$(mkrun r-rewrite2); $DA local verify "$RL" >/dev/null 2>&1
+nw=$(same "$o"); n=$(jn)
+out=$($REF agent/rw "$o" "$nw" --why "reworded the message" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(sha agent/rw)" = "$nw" ] && jq -e --arg o "$o" --arg n "$nw" 'select(.verb == "ref:rewrite" and .ref == "refs/heads/agent/rw" and .old == $o and .new == $n and .why == "reworded the message")' "$J" >/dev/null; } \
+  && ok "ref record --rewrite moves the agent branch and journals the move with the reason" || no "rewrite: rc=$rc $out"
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "agent/rw moved by a rewrite (qargi ref record --rewrite: reworded the message)" <<<"$out" && ok "verify accepts the rewrite and names it as one" || no "verify after rewrite: rc=$rc $out"
+out=$($DA local verify "$RL" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "agent/rw moved by a rewrite" <<<"$out" && ok "after a passing verify too (it is not a fast-forward)" || no "verify after rewrite (lenient): rc=$rc $out"
+n=$(jn); cur=$(sha agent/rw)
+dt=$(git -C "$A" commit-tree -p "$cur~1" -m "other content" "$(git -C "$A" rev-parse 'develop^{tree}')")
+out=$($REF agent/rw "$cur" "$dt" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "trees of OLD .* differ" <<<"$out" && [ "$(sha agent/rw)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a NEW with another tree is refused: nothing moves, nothing is journaled" || no "other tree: rc=$rc $out"
+out=$($REF agent/rw "$o" "$(same "$cur" again)" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not at OLD" <<<"$out" && [ "$(sha agent/rw)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a REF that is not at OLD is refused" || no "not at OLD: rc=$rc $out"
+dv=$(sha develop)
+out=$($REF develop "$dv" "$(same "$dv")" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "only an agent/\* branch" <<<"$out" && [ "$(sha develop)" = "$dv" ] && ok "a branch that is not agent/* is refused" || no "develop rewrite: rc=$rc $out"
+for bad in "agent/rw $cur $(same "$cur")" "--why x" "agent/rw $cur --why x"; do
+  # shellcheck disable=SC2086
+  out=$($REF $bad 2>&1); rc=$?
+  [ $rc = 2 ] && [ "$(jn)" = "$n" ] && ok "ref record --rewrite $bad is a usage error" || no "usage $bad: rc=$rc $out"
+done
+out=$($DA ref record agent/rw "$cur" "$(same "$cur")" --why x 2>&1); [ $? = 2 ] && grep -q "needs --rewrite" <<<"$out" && ok "ref record without --rewrite is a usage error" || no "no --rewrite: $out"
+R=$(fresh r-rewrite3); git -C "$A" branch -f agent/rw "$(same "$cur" "by hand")"
+refused "$R" "a same-tree rewrite of an agent branch made by hand (not recorded)"
+git -C "$A" branch -f agent/rw "$cur"
+# clean follows the applied tip of a run through a recorded rewrite
+$F start rwf >/dev/null 2>&1
+RW=$(seriesrun rwc rwc.go feature/rwf); $DA review apply "$RW" >/dev/null 2>&1 || no "(setup) apply rwc"
+at=$(sha agent/rwc); at2=$(same "$at" "names: change rwc, reworded")
+$REF agent/rwc "$at" "$at2" --why "reworded" >/dev/null 2>&1 && $F merge rwf agent/rwc >/dev/null 2>&1 || no "(setup) rewrite and merge rwc"
+out=$($DA local clean "$RW" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RW" ] && ok "clean counts a run as merged when the commit its applied tip was rewritten to is merged" || no "clean after rewrite: rc=$rc $out"
+
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1
 g() { # tool, json input -> exit status of the guard run in the clone, as a member would

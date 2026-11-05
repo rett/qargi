@@ -93,7 +93,8 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
     `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
     and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
-    lead's too, and are refused with wording of their own;
+    lead's too, and are refused with wording of their own; so is `qargi ref` (record --rewrite moves an agent branch and journals it; any verb, also
+    through lib/ref.sh);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -201,7 +202,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "ref.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2270,6 +2271,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "branch.sh":
         words = ["branch"] + words
+    if name == "ref.sh":
+        words = ["ref"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
@@ -2304,6 +2307,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "ref":
+        return OwnReason("qargi ref %s moves a branch of the lead's repository and writes the lead's ref journal, which local verify trusts, and is the lead's to run; "
+                         "report in your task output a branch you think should be rewritten" % (verb or "(no verb)"))
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
