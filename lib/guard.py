@@ -118,7 +118,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     with the key), refused with their own reason; and a write to the allowed signers ($QARGI_STATE/marshal/<project>.signers, under
     the marshal/ root above) or to the acceptance marks ($QARGI_STATE/features/.accepted-<project>.json, under features/), which the
     refusal names;
-  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
+  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, printf -v, read or mapfile, unset or env -u in a command.
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
@@ -2186,14 +2186,17 @@ def separator_path_refusal(command, here):
 
 
 def names_lead(t):
-    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
+    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, -uQARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
     lhs, _, rhs = t.partition("=")
-    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD")
+    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD") or t == "-uQARGI_LEAD"
 
 
-def lead_refusal(prog, rest, pre):
-    """The reason a segment sets or unsets QARGI_LEAD, or None. pre: the words up to and with the program (VAR=x, env -u NAME)."""
-    if any(names_lead(t) for t in pre) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
+def lead_refusal(toks, i):
+    """The reason a segment (its words toks, the program at i) sets or unsets QARGI_LEAD, or None. The names it sets are env_names()'s, as for QARGI_NESTED
+    (VAR=x in front, export|declare|... NAME, printf -v NAME and -vNAME, read|mapfile NAME); names_lead() adds the words that unset it (unset NAME, env -u
+    NAME) and the operands of the builtins."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
+    if "QARGI_LEAD" in env_names(toks, i) or any(names_lead(t) for t in toks[:i + 1]) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
         return MarshalReason("setting or unsetting QARGI_LEAD changes who the lead is and is not available to an agent; " + MARSHAL_NOTE)
     return None
 
@@ -2213,7 +2216,7 @@ def bash_skill_refusal(command, here, depth):
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-        why = lead_refusal(prog, rest, toks[:i + 1])
+        why = lead_refusal(toks, i)
         if why:
             return why
         if "QARGI_NESTED" in env_names(toks, i):             # export|declare|typeset|readonly|local NAME, printf -v NAME, read NAME
