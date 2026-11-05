@@ -328,7 +328,7 @@ class Skills(unittest.TestCase):
         the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a
         dotted path, in every form the models answers are refused in. Look-alikes (test_commands, releases.x) stay open."""
         for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
-                     "test_command", "env", "env.PATH", "env.acme.x"):
+                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
                          "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
@@ -340,6 +340,7 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
+                  "qargi project set p upstreams.x y",
                   "qargi project show p", "echo qargi project set p release.preflight x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
@@ -989,6 +990,32 @@ class Marshal(unittest.TestCase):
             self.assertIn("qargi branch prune deletes merged branches", self.bash(c).stderr, c)
         for c in ("git branch -a", "git branch --merged develop", "echo qargi branch prune", "grep -n 'branch prune' lib/commands.py", "ls lib/branch.sh", "cat lib/branch.sh",
                   "qargi feature list", "qargi feature status f", "qargi feature merge f agent/x", "git log --grep 'feature park'"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
+    def test_upstream_status_and_sync_are_the_leads_and_review_stays_allowed(self):
+        """upstream status fetches into the lead's repository (its remote-tracking refs are in the snapshot local verify compares) and upstream
+        sync fast-forwards the branch that carries the upstream line and journals it: both are the lead's, however they are run, and so is a
+        verb held in a variable (it could be either). review reads the last fetch and stays allowed."""
+        cmds = []
+        for v in ("status", "sync", "sync --plan abc --approved go"):
+            cmds += ["qargi upstream %s" % v, "qargi upstream %s --project proj" % v, "/opt/q/bin/qargi upstream %s" % v, "bin/qargi upstream %s" % v,
+                     "env FOO=1 qargi upstream %s" % v, "sudo qargi upstream %s" % v, "bash -c 'qargi upstream %s'" % v, "eval 'qargi upstream %s'" % v,
+                     "echo $(qargi upstream %s)" % v, "true && qargi upstream %s" % v, "ls; qargi upstream %s" % v, "bash lib/upstream.sh %s" % v,
+                     "lib/upstream.sh %s" % v, "nohup qargi upstream %s" % v]
+        cmds += ["qargi 'upstream' 'sync'", "v=sync; qargi upstream $v", "qargi upstream $v", "qargi upstream ${V:-review}", "qargi upstream frobnicate", "qargi upstream SYNC",
+                 "xargs qargi upstream sync"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        self.assertIn("qargi upstream status fetches into the lead's repository", self.bash("qargi upstream status").stderr)
+        self.assertIn("qargi upstream sync fast-forwards the branch that carries the upstream line", self.bash("bash lib/upstream.sh sync").stderr)
+        for c in ("qargi upstream review", "qargi upstream review --limit 5 --project proj", "/opt/q/bin/qargi upstream review", "bash lib/upstream.sh review",
+                  "qargi upstream", "echo qargi upstream sync", "git log --grep 'upstream sync'", "grep -n 'upstream status' lib/commands.py", "cat lib/upstream.sh",
+                  "git fetch upstream", "git fetch origin main"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
