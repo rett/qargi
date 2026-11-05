@@ -21,7 +21,9 @@
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
-#                                           after the checks pass: merge, tag, back-merge, delete the branch, push
+#                                           after the checks pass: merge, tag, back-merge, delete the branch, push. Then it prints the steps of the answer
+#                                           release.after_steps ({version} replaced) as "after the release: STEP" lines, never runs them, and records
+#                                           them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for `status` (after_steps_show prints them).
 #
 #   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
 #                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
@@ -174,6 +176,18 @@ asset_wt() {
 }
 # sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
 sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
+# after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
+# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_show prints the recorded ones again as the same lines.
+AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
+after_steps_record() {
+  local st=()
+  mapfile -t st < <(python3 -I "$RS" after-steps "$af" "$VER" 2>/dev/null)
+  [ "${#st[@]}" -gt 0 ] || return 0
+  mkdir -p "$DA_STATE/release"
+  printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
+  printf 'after the release: %s\n' "${st[@]}"
+}
+after_steps_show() { [ -f "$AFTERREC" ] && jq -r '.steps[] | "after the release: " + .' "$AFTERREC" 2>/dev/null; return 0; }
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
 sign_status() {
@@ -450,6 +464,7 @@ case $verb in
       echo "no origin remote: nothing was pushed"
     fi
     lead_advice
+    after_steps_record
     after_release;;
   assets)
     python3 -I "$RS" lead-only assets || exit $?

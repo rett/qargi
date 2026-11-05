@@ -10,6 +10,8 @@ Answers, under `release` in the project's answers file:
                                that the release assets verb made, else to the repository
   release.assets_command       the command the release assets verb runs in a clean worktree of the tag to build the release files: a command line
                                (run by bash -c) or a list of words ({version} replaced, no shell)
+  release.after_steps          a list of commands or reminders, {version} replaced, that the release finish verb prints as "after the release:" lines
+                               and records for the release status verb; qargi never runs them
   release.notes_file           a file with the release notes, relative to the repository; {version} is replaced
   release.version_file, release.changelog.unreleased|released, release.man_pages, release.test_command, release.preflight
                                the layout of what a release updates and runs; lib/release_layout.py describes and checks them
@@ -24,6 +26,7 @@ result of the signing and of verify_command. Nothing the person types (the passp
                                                  print "sha256<TAB>absolute path<TAB>path in its root" per file to attach: the release.assets of AF
                                                  (globs expanded), every --asset and every regular file of every --asset-dir. A relative name is taken
                                                  in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository)
+  release_sign.py after-steps AF VERSION         print the steps of release.after_steps, {version} replaced, one per line
   release_sign.py resolve REPO FILE...           print "sha256<TAB>absolute path<TAB>path in the repository" per file; exit 1 if one is no regular
                                                  file inside the repository
   release_sign.py record --state F --repo R --af AF --project P --version V --commit C --sign-rc N --verify-rc N|none
@@ -36,7 +39,7 @@ import release_layout   # the layout answers of a release (version_file, changel
 
 NS_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:+-]{0,63}")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
-RELEASE_KEYS = ("sign", "assets", "notes_file", "assets_command") + release_layout.LAYOUT_KEYS
+RELEASE_KEYS = ("sign", "assets", "notes_file", "assets_command", "after_steps") + release_layout.LAYOUT_KEYS
 SIGN_KEYS = ("key", "namespace", "files", "verify_command")
 
 
@@ -52,7 +55,7 @@ def problems(rel):
     if rel is None:
         return out
     if not isinstance(rel, dict):
-        return ["release: an object like {sign, assets, notes_file, assets_command, version_file, changelog, man_pages, test_command, preflight}"]
+        return ["release: an object like {sign, assets, notes_file, assets_command, after_steps, version_file, changelog, man_pages, test_command, preflight}"]
     for k in rel:
         if k not in RELEASE_KEYS:
             out.append("release.%s: unknown key (%s)" % (k, ", ".join(RELEASE_KEYS)))
@@ -65,6 +68,10 @@ def problems(rel):
         if not ((isinstance(c, str) and c.strip() and not CTRL_RE.search(c))
                 or (isinstance(c, list) and c and all(isinstance(x, str) and x and "\x00" not in x for x in c))):
             out.append("release.assets_command: the command that builds the release files, a command line or a list of words ({version} replaced in a list), run in a clean worktree of the tag (for example [\"make\", \"dist\"])")
+    if "after_steps" in rel:
+        a = rel["after_steps"]
+        if not (isinstance(a, list) and all(isinstance(x, str) and x.strip() and len(x) <= 500 and not CTRL_RE.search(x) for x in a)):
+            out.append("release.after_steps: a list of one-line strings (a command or a reminder, {version} replaced), printed by release finish and never run")
     if "notes_file" in rel:
         n = rel["notes_file"]
         if not (isinstance(n, str) and rel_ok(n.replace("{version}", "0.0.0"))):
@@ -293,6 +300,12 @@ def main(argv):
             else:
                 print("qargi: release sign is not available in a member run or a nested call: the passphrase is typed by the person at their own terminal", file=sys.stderr)
             return 2
+        return 0
+    if cmd == "after-steps":
+        if len(rest) != 2:
+            return 2
+        for step in ((load_release(rest[0]) or {}).get("after_steps") or []):
+            print(step.replace("{version}", rest[1]))
         return 0
     if cmd == "assets":
         a, i = {}, 0

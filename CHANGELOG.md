@@ -14,6 +14,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `release publish --asset-dir DIR` attaches every regular file of a directory; `--asset` also takes a full path inside any
   worktree of the repository; the answer `release.assets` may list globs (and `{version}`), taken in the asset worktree when
   there is one, else in the repository. A glob that matches nothing and a symbolic link that leaves the worktrees refuse.
+- The project answer `release.after_steps`: a list of commands or reminders (`{version}` replaced) that `qargi release finish`
+  prints as `after the release: STEP` lines and records under the state (`release/PROJECT-VERSION.after.json`) so `release status`
+  can show them. qargi never runs them.
 
 ### Fixed
 - `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.

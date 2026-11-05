@@ -446,6 +446,7 @@ COMMANDS = {
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
                  "The release files are the project's too: release.assets_command (the command that builds them, a command line or a list of words with {version} replaced), which "
                  "release assets runs in a clean worktree of the tag, and release.assets (files or globs to attach, {version} replaced), taken in that worktree by release publish. "
+                 "release.after_steps is a list of commands or reminders ({version} replaced) that release finish prints as 'after the release:' lines; qargi never runs them. "
                  "A member may not set them: the lead runs them. "
                  "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
                  "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
@@ -475,6 +476,8 @@ COMMANDS = {
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
                                  "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
+                                 "When the answer release.after_steps lists steps (commands or reminders, {version} replaced), it prints each as an 'after the release: STEP' line, never runs them, and "
+                                 "records them under the state's release directory (PROJECT-VERSION.after.json) for release status. "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
                                  "'next: qargi release site VERSION'.")),
             "assets": verb("Build the release files of the tag VERSION in a clean worktree of it, with the project's release.assets_command", [("VERSION", "none")],
