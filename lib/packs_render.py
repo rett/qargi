@@ -634,6 +634,17 @@ def cmd_check(inp):
     state, live, base = roots(inp)
     findings = []
     mpath = os.path.join(live, "MANIFEST.json")
+    if not os.path.lexists(live):
+        # no render at all is a state of its own, not a broken render: the project was never applied, or it says it uses no project packs
+        if inp.get("packs_none"):
+            if inp["packs"]:
+                print("FAIL packs.none is true, but %d packs reach a role of %s (%s); unlink them or set packs.none false"
+                      % (len(inp["packs"]), inp["project"], ", ".join("%s:%s" % (p["kind"], p["name"]) for p in inp["packs"])))
+                sys.exit(1)
+            print("ok   %s: packs.none is true, the project uses no project packs (nothing to render)" % inp["project"])
+        else:
+            print("not applied: %s has no render yet (qargi packs apply --target %s %s)" % (inp["project"], inp["target"]["target"], inp["project"]))
+        return
     if not os.path.isfile(mpath):
         print("FAIL manifest missing: %s (run: qargi packs apply --target %s %s)" % (mpath, inp["target"]["target"], inp["project"]))
         sys.exit(1)

@@ -269,6 +269,10 @@ if anb is not None:
             for k in ("by", "reason"):
                 need(isinstance(rec[k], str) and rec[k].strip(), "%s.%s: a non-empty string" % (p, k))
             need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
+pk_ = c.get("packs")
+if pk_ is not None:
+    need(isinstance(pk_, dict) and set(pk_) <= {"none"} and isinstance(pk_.get("none", False), bool),
+         "packs: an object like {none: true} (none: the project uses no project packs, so packs check passes without a render)")
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
 if "env" in c:
     import env as _env   # lib/env.py: the keys of the environment overrides and what each takes
@@ -680,7 +684,7 @@ PY
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
     case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
-    jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a

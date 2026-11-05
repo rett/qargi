@@ -135,8 +135,8 @@ COMMANDS = {
                                 "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
-                        examples=["qargi project set acme roles.write.effort high"]),
+                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. packs.none true says the project uses no project packs: qargi packs check passes with no render (see qargi help packs). A member's guard refuses packs.*.",
+                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it (a WARN line for each pack linked to a role that is not in the pack library)", [("FILE", "file")]),
@@ -553,7 +553,9 @@ COMMANDS = {
                           desc=("Needs --target claude-code. Writes nothing and exits 1 on any finding: library drift (a pack changed or failed review since it "
                                 "was rendered), rendered tampering (a file differs from the manifest, or an extra or missing file), enablement drift (a pack "
                                 "enabled or disabled, or its roles changed, since the render), shadowing of a rendered skill by ~/.claude/skills or by the "
-                                "checkout's .claude/skills, and a missing manifest (nothing rendered yet). It also reports a rendered file that differs from "
+                                "checkout's .claude/skills, and a render directory that has no manifest (a broken render). A project with no render at all is not a failure: "
+                                "the check prints a not applied line with the command that applies it and exits 0. The answer packs.none: true says the project uses no project packs; "
+                                "the check then passes with no render, and fails if a pack is linked to a role of the project. It also reports a rendered file that differs from "
                                 "the library copy (even when the manifest was edited with it), a changed file mode, a group- or world-writable "
                                 "render, a malformed manifest, and a manifest that names another project or whose role scoping is not advisory.\n"
                                 "It ends with a section, skills a session would load, that gives every skill a session opened in the checkout would load one state: "
@@ -1185,7 +1187,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; memory init, "

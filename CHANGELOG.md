@@ -306,6 +306,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- `packs check --target T PROJECT` no longer reports `manifest missing` for a project that was never applied, which looked like a
+  broken render. It prints `not applied: ... (qargi packs apply ...)` and exits 0, and a render directory without its manifest still
+  fails. The answer `packs.none: true` (`qargi project set P packs.none true`; `project set` of `packs` is refused to a member) says the
+  project uses no project packs: the check passes with no render, and fails when a pack is linked to a role of the project. The
+  section of the skills a session would load, the unmanaged ones in `~/.claude/skills` included, is printed in every case.
+- `qargi project set P PATH false` stored the string `false`; it stores the JSON value, like `true` and numbers.
 - `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
   hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
 - The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.
