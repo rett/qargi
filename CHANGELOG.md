@@ -431,6 +431,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `packs: not applied (qargi packs apply --target T PROJECT)`, a note and not a missing item.
 - `qargi env check` counted a `STALE`, `DRIFT` or `MISSING` member as current when the path of its file made the `agent list` line
   longer than 160 characters: the line was cut before its state was read.
+- `install.sh --project DIR --uninstall` (and `--user --uninstall`) left an empty `~/.qargi/config` behind. The install records the
+  config directory and the parents it had to create, and the uninstall removes them once nothing else is left in them.
 
 ### Security
 - A member's `qargi project set` of `roles.ROLE.tools` (or of a whole role, or of `roles`) is refused, as `env.*`, `release.*` and

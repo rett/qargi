@@ -26,7 +26,8 @@
 #
 # Every path an install writes (links, copied files and the directories it had to create) is recorded in an install manifest
 # next to install.json (<live config>/install.manifest for --user, project-N.manifest for --project DIR). --uninstall removes
-# exactly what the manifest lists and nothing else: a file you added inside a copied skill is kept, and so is ~/.qargi. An
+# exactly what the manifest lists and nothing else: a file you added inside a copied skill is kept, and so is ~/.qargi (the live config
+# directory and its parents go only when the install made them and they are empty once the manifest is removed). An
 # install without a manifest (made by an older install.sh) cannot be told apart from your own files, so --uninstall says so and
 # removes only the fixed paths this script writes, and only with --force.
 #
@@ -111,6 +112,7 @@ fi
 # ---- the install manifest: one line per path an install wrote, "KIND<TAB>PATH"
 #   L a link we made         C a file or directory we copied (the root of a copy)
 #   f a file inside a copy   d a directory inside a copy      P a parent directory we had to create
+#   c the live config directory, or a parent of it, that an install had to create: --uninstall removes it once it is empty
 rec() { printf '%s\t%s\n' "$1" "$2" >> "$mf"; }
 rec_contents() {   # rec_contents DIR: what a copy put inside DIR
   local x
@@ -154,6 +156,7 @@ remove_recorded() {
 }
 
 if [ -n "$uninstall" ]; then
+  created=''; [ ! -f "$mf" ] || created=$(awk -F'\t' '$1 == "c" {print $2}' "$mf" | LC_ALL=C sort -r)   # the deepest first
   if [ -f "$mf" ]; then
     remove_recorded "$mf" say
     rm -f "$mf"
@@ -180,6 +183,11 @@ if [ -n "$uninstall" ]; then
     mv "$exclude_file.tmp" "$exclude_file"
   fi
   [ "$mode" != user ] || [ ! -f "$liveconf/install.json" ] || { rm -f "$liveconf/install.json"; echo "removed $liveconf/install.json"; }
+  # the config directory the install made, once nothing is left in it (another install's manifest, answers or packs keep it)
+  while IFS= read -r d; do
+    [ -n "$d" ] && [ -d "$d" ] && [ ! -L "$d" ] || continue
+    if rmdir "$d" 2>/dev/null; then echo "removed $d"; fi
+  done <<<"$created"
   exit 0
 fi
 
@@ -191,9 +199,14 @@ for p in "${paths[@]}"; do
 done
 
 # a reinstall starts from a clean slate: what the earlier install wrote is removed first (a copy install made over a link install leaves nothing behind)
+# the live config directory and the parents of it this install makes are recorded (c), and so are those an earlier install made and recorded
+cmade=''; d=$liveconf
+while [ ! -d "$d" ] && [ "$d" != / ] && [ "$d" != . ]; do cmade="$cmade$d"$'\n'; d=$(dirname "$d"); done
 mkdir -p "$liveconf"; chmod 700 "$liveconf"
+[ ! -f "$mf" ] || cmade="$cmade$(awk -F'\t' '$1 == "c" {print $2}' "$mf")"
 if [ -f "$mf" ]; then remove_recorded "$mf" quiet; fi
 : > "$mf"; chmod 600 "$mf"
+while IFS= read -r d; do [ -z "$d" ] || rec c "$d"; done < <(printf '%s\n' "$cmade" | LC_ALL=C sort -u)
 
 if [ -n "$copy" ] && [ "$mode" = user ]; then
   rm -rf "$data"; mk "$(dirname "$data")"; mkdir "$data"; rec C "$data"
