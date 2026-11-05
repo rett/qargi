@@ -24,8 +24,8 @@ repository has a remote and releases (a VERSION file or a numbered changelog hea
 
 Part 2, the qargi layer, for a stored project and read from the facts qargi already keeps, changing nothing: the checkout's skills, agents
 and memory are linked; the project's members are current (STALE, DRIFT and MISSING are missing items); the packs render has no drift
-(qargi packs check); the memory tiers pass qargi memory check. A part that cannot be checked here (no provider set, no render target)
-is a note, not a missing item.
+(qargi packs check; a project never applied reads `not applied`, a note); the memory tiers pass qargi memory check. A part that cannot be
+checked here (no provider set, no render target) is a note, not a missing item.
 
 The verdict is one line: `ENV OK`, or `ENV INCOMPLETE: N missing (...)`. Exit status 0, 1 (incomplete) or 2 (usage, no such project, no
 repository). For a stored project the result is recorded under "check" in state/env/PROJECT.json (mode 600): HEAD, time, verdict, exit status, the
@@ -399,7 +399,9 @@ def qargi_layer(project, answers, repo):
     else:
         rc, lines = sub(["packs", "check", '--target', target, project])
         findings = [ln for ln in lines if not ln.startswith(("skills a session would load", "note:")) and re.match(r"^(?:drift|finding|problem|FAIL|missing|shadow|tamper|warning)", ln, re.I)] or lines
-        if rc == 0:
+        if rc == 0 and any(ln.startswith("not applied") for ln in lines):   # no render yet: packs check passes, and there is nothing to have drifted
+            row("packs", "not applied (qargi packs apply --target %s %s)" % (target, project))
+        elif rc == 0:
             row("packs", "no drift")
         else:
             row("packs", "drift (qargi packs check --target %s %s): %s" % (target, project, findings[0] if findings else "exit %s" % rc),
