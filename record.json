@@ -1,0 +1,22 @@
+{
+ "purpose": "",
+ "started": "2026-11-05T09:57:32Z",
+ "goal": "",
+ "plan": "",
+ "note": "",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T09:57:32Z",
+  "worktree": "94b9af1305afafc4"
+ },
+ "renewed_at": "2026-11-05T09:57:32Z",
+ "finished_at": null,
+ "updated_by": "rett@arc",
+ "rev": 1,
+ "updated_at": "2026-11-05T09:57:32Z",
+ "feature": "suite-speed",
+ "project": "qargi"
+}
