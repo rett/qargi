@@ -4,9 +4,20 @@
 # first `ant` and `claude` on PATH are stubs that fail, so a test that did not bring its own fake cannot reach
 # the real tools. A test overrides any of this after sourcing (most set their own QARGI_CONF, QARGI_STATE, HOME
 # and a fake ant). The temporary directory is removed when the test exits.
+# A test stops when mktemp fails (exit status 1, or 143 when the call is inside $(...)): the directory it makes its files in is gone
+# (TMPDIR removed under it, as logind does to /dev/shm when the user's last session ends and RemoveIPC is on). Without the stop,
+# T=$(mktemp -d) and w=$(mktemp -d "$T/w.XXXXXX") come back empty and the test goes on in /, in $HOME or in the checkout it runs from.
 for _v in $(compgen -e); do case $_v in ANTHROPIC_*|QARGI_*) unset "$_v";; esac; done
 unset _v
-HERMETIC=$(mktemp -d)
+mktemp() {
+  command mktemp "$@" && return 0
+  printf 'hermetic test: mktemp %s failed (TMPDIR=%s): the test stops before it works outside its temporary directory\n' "$*" "${TMPDIR:-unset}" >&2
+  kill -TERM "$$"; exit 1
+}
+if [ -n "${TMPDIR:-}" ] && { [ ! -d "$TMPDIR" ] || [ ! -w "$TMPDIR" ]; }; then
+  printf 'hermetic test: TMPDIR=%s is not a writable directory: the test does not run\n' "$TMPDIR" >&2; exit 1
+fi
+HERMETIC=$(command mktemp -d) || { echo "hermetic test: cannot make a temporary directory" >&2; exit 1; }
 mkdir -p "$HERMETIC/home" "$HERMETIC/bin"
 for _t in ant claude; do
   printf '#!/bin/sh\necho "hermetic test: the real %s is not available; put a fake first on PATH" >&2\nexit 127\n' "$_t" > "$HERMETIC/bin/$_t"

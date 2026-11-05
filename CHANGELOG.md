@@ -461,6 +461,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   brace expression is expanded whole or the call is refused (more than 256 words for one word or 20000 for the command).
 - The guard's refusals to a read-only member say the report goes to `OUT` (they said `RUN_DIR`), and the refusal of a skill change
   says to propose it in the report.
+- `qargi env check` printed `packs: no drift` for a project whose packs were never applied, since `packs check` passes then; it prints
+  `packs: not applied (qargi packs apply --target T PROJECT)`, a note and not a missing item.
+- `qargi env check` counted a `STALE`, `DRIFT` or `MISSING` member as current when the path of its file made the `agent list` line
+  longer than 160 characters: the line was cut before its state was read.
+- `install.sh --project DIR --uninstall` (and `--user --uninstall`) left an empty `~/.qargi/config` behind. The install records the
+  config directory and the parents it had to create, and the uninstall removes them once nothing else is left in them.
 
 ### Security
 - A member's `qargi project set` of `roles.ROLE.tools` (or of a whole role, or of `roles`) is refused, as `env.*`, `release.*` and
@@ -533,8 +539,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local prepare` refuses a `--repo-url` that carries a user name or a password; the token goes in `--credential-file`.
 - `qargi project link` (memory) compares real paths, so a link below the memory root that leads outside it is refused, and a project
   whose tiers resolve without a project tier is refused with a message, not a traceback.
-- `qargi project set` of `release.*`, `test_command` or `env.*` is refused to a member, as `models.*` is: the lead later runs those
-  commands, so a member that set them would run its own command with the lead's rights.
+- `qargi project set` of `release.*`, `test_command`, `env.*` or `site.*` is refused to a member, as `models.*` is: the lead later runs
+  those commands, or builds and commits the documentation site from `site.*` (`qargi release site`), so a member that set them would
+  run its own command with the lead's rights.
 - The member guard refuses `git config` that writes a key which makes git run a program, read another configuration file or give a command or a remote
   another name, as it refused the one-shot `git -c` form: `git config core.fsmonitor ...`, `git config alias.x '!...'`, `git config include.path ...`,
   `git config core.hooksPath ...` and `git config alias.p push` (then `git p` pushed) were allowed since 0.2.0. Both forms share one list (core.fsmonitor, hooksPath,
@@ -549,6 +556,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The text the line shows (a here-string, an echo or printf piped in or written to the file the shell runs) is now read as `sh -c` text is, and a program it cannot see
   (`cat file | bash`, `curl ... | sh`, `bash < file`, a process substitution, a file `cp` writes in the same command) is refused: write the script with the file tool
   and run `bash FILE`.
+- The member guard finds the lead identity `QARGI_LEAD` among the names a command sets the way it finds `QARGI_NESTED`: `printf -vQARGI_LEAD x` (the name
+  glued to `-v`), `mapfile` and `readarray` into it, and `env -uQARGI_LEAD` were not refused.
 
 ## [0.2.0] - 2026-11-02
 

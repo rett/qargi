@@ -363,10 +363,11 @@ class Skills(unittest.TestCase):
 
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
-        the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a
-        dotted path, in every form the models answers are refused in. Look-alikes (test_commands, releases.x) stay open."""
+        the suite), and qargi release site builds and commits the site the site answers (site.*) name, so a member that could set them would run
+        its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
+        in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
         for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
-                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote"):
+                     "test_command", "env", "env.PATH", "env.acme.x", "upstream", "upstream.overlay_check", "upstream.remote", "site", "site.enabled", "site.branch", "site.config"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
                          "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
@@ -374,12 +375,13 @@ class Skills(unittest.TestCase):
                 r = self.bash(c)
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi project set of %s changes a command or an environment the lead later runs" % path, r.stderr, c)
-        for c in ("qargi project set p $K v", "qargi project set p release.$K v", "qargi project set p `echo test_command` v", "qargi project set p $(echo release.preflight) v"):
+        for c in ("qargi project set p $K v", "qargi project set p release.$K v", "qargi project set p `echo test_command` v", "qargi project set p $(echo release.preflight) v",
+                  "qargi project set p site.$K v"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
-                  "qargi project set p upstreams.x y",
-                  "qargi project show p", "echo qargi project set p release.preflight x"):
+                  "qargi project set p upstreams.x y", "qargi project set p sites.x y", "qargi project set p website x",
+                  "qargi project show p", "echo qargi project set p release.preflight x", "echo qargi project set p site.enabled true"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -1209,6 +1211,16 @@ class Marshal(unittest.TestCase):
                       "bash -c 'export QARGI_LEAD=me'", "sh -c 'QARGI_LEAD=me qargi marshal status'", "eval 'QARGI_LEAD=me ls'", "echo $(QARGI_LEAD=me ls)",
                       "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
                       "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
+
+    def test_the_lead_identity_is_found_as_env_names_finds_a_name(self):
+        """lead_refusal reads the names a segment sets through env_names(), as the QARGI_NESTED check does: printf -v with the name glued to the option,
+        read, mapfile and readarray into it are refused too, and env -u glued to the name unsets it."""
+        self.refused(["printf -vQARGI_LEAD x", "printf -v QARGI_LEAD x", "printf -vQARGI_LEAD '%s' me; qargi marshal status", "read QARGI_LEAD <<< me",
+                      "read -r QARGI_LEAD < f", "mapfile QARGI_LEAD < f", "readarray -t QARGI_LEAD < f", "env -uQARGI_LEAD qargi marshal status",
+                      "bash -c 'printf -vQARGI_LEAD x'"])
+        for c in ("printf -vQARGI_LEADER x", "printf -vX y", "env -uQARGI_LEAD_X ls"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
 
     def test_other_variables_are_not_the_lead(self):
         for c in ("export QARGI_LEADER=me", "QARGI_LEAD_X=1 ls", "export MY_QARGI_LEAD=1", "unset QARGI_STATE_X", "echo QARGI_LEAD=1"):

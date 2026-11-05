@@ -530,7 +530,8 @@ files (the whole tool is copied to `~/.local/share/qargi` for `--user`),
 `--uninstall` to remove. The install records every path it wrote (links, copied
 files, the directories it had to create) in `install.manifest` beside
 `install.json`, and `--uninstall` removes exactly those, copies included, and
-nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`.
+nothing else: a file of yours inside a copied skill is kept, and so is `~/.qargi`,
+unless the install made its `config` directory and nothing else is left in it.
 An install made before the manifest existed cannot be told from your own files;
 `--uninstall` says so and removes only the fixed paths it writes, and only with
 `--force`. An existing real directory is never replaced without `--force`. The
