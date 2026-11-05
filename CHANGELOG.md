@@ -252,6 +252,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 - `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
   and not in a minute.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
@@ -393,6 +395,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
 - `marshal status`, `marshal handoff` and `feature status` list an unmerged agent branch only under the feature its run was
   prepared against (`local prepare --base feature/NAME`, the base the registry of local runs records), not under every feature;
   the agent branches of no open feature are said once, on one `unattributed agent branches` line. The handoff note lists only the
