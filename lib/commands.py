@@ -279,7 +279,10 @@ COMMANDS = {
                                 "feature start continues the same way on its own, and status and check name the command when you look like the restarted lead."),
                           examples=["qargi marshal claim lead-context --as-successor-of 3f2a9c1e"]),
             "status": verb("Show one feature, or every open one with --all: lead, status, goal, plan, note, tasks, branches, worktrees, overlap", [("[NAME]", "none")],
-                           [PROJECT_OPT, AS_OPT, opt("--all", "every open feature of the project"), opt("--history", "with --all, also the finished and abandoned ones, after the open ones"), opt("--brief", "one line per feature"), opt("--json", "machine-readable"), opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")]),
+                           [PROJECT_OPT, AS_OPT, opt("--all", "every open feature of the project"), opt("--history", "with --all, also the finished and abandoned ones, after the open ones"), opt("--brief", "one line per feature"), opt("--json", "machine-readable"), opt("--no-fetch", "read the cache of the shared refs only, do not fetch (the session hook uses it)")],
+                           desc=("The tasks of a feature are the local runs prepared against it (local prepare --base feature/NAME, as the registry of local runs records), and an unmerged "
+                                 "agent branch is listed under that feature only. The agent branches of no open feature (no run recorded, or a base that is no feature branch) that are "
+                                 "merged into neither develop nor a feature are said once, after the features, on an `unattributed agent branches` line (not in --brief).")),
             "set": verb("Update the goal, plan, note or status of a feature you lead", [("NAME", "none")],
                         [PROJECT_OPT, AS_OPT, opt("--goal", "the goal", "TEXT"), opt("--plan", "the plan, free text or a checklist", "TEXT"), opt("--note", "a note for the next reader", "TEXT"),
                          opt("--status", "planned, active, blocked or verifying", "STATE", ("planned", "active", "blocked", "verifying"))]),
@@ -316,7 +319,8 @@ COMMANDS = {
                             [PROJECT_OPT, AS_OPT, opt("--write", "write the note to this new file (mode 600) instead of printing it", "FILE", "file"), opt("--json", "print the same facts as one JSON object")],
                             desc=("Read only: it needs no lease and changes no record, ref or audit line. Nothing is fetched: shared records are read from the cache this host holds, with a note, and a shared marshal that is off or unreachable falls back to the local records. "
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
-                                  "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
+                                  "Per feature it has the tip, whether the whole-suite run applies to it, the agent branches merged into it since it was cut from develop, the unmerged ones prepared against it (as the registry of local runs records) "
+                                  "and the commits ahead of develop; with NAME only that feature, otherwise every open one; the agent branches of no open feature are said once, after the features. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
                                   "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "For a feature this identity leads it names the claim --as-successor-of command a restarted session runs. --write also records when the note was written (what qargi lead compact-check compares with the last merge), and a line says whether a compact is safe now (see qargi help lead). "
