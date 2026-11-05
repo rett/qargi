@@ -376,7 +376,8 @@ class Rich(Env):
 
     def test_project_answers_and_their_values(self):
         keys = H.complete(["project", "set", "alpha", ""])
-        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge"):
+        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge",
+                  "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
         self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))

@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import marshal_refs as MR  # noqa: E402  (in_member_run)
 import methodology as M  # noqa: E402
 import provider as PV  # noqa: E402
+import release_layout as RLAY  # noqa: E402  (the headings and the version file of the release flow)
 
 
 def git(d, *args):
@@ -139,10 +140,15 @@ def language(d):
     return ""
 
 
-def version_info(d):
-    if exists(d, "VERSION"):
-        v = read(d, "VERSION").strip().splitlines()
-        return {"file": "VERSION", "value": v[0] if v else ""}
+def version_info(d, version_file=None):
+    """The file that holds the version and its value. version_file is the answer release.version_file: a project that names one is read there, and
+    `none` says there is no such file (the version then comes from the changelog heading and the tag, so no file is looked for)."""
+    if version_file == "none":
+        return {}
+    vf = version_file or "VERSION"
+    if exists(d, vf):
+        v = read(d, vf).strip().splitlines()
+        return {"file": vf, "value": v[0] if v else ""}
     pj = read(d, "package.json")
     if pj:
         try:
@@ -165,11 +171,18 @@ def tag_pattern(tags):
     return {"count": len(tags), "pattern": "v<semver>" if sem[0].startswith("v") else "<semver>"}
 
 
-def changelog_info(d):
+def changelog_info(d, unreleased=None):
+    """The changelog file and whether it has the heading of the changes to come: '## [Unreleased]' (also without the brackets) unless the
+    project's answer release.changelog.unreleased names another heading. The key is called keepachangelog: with the default it is that format."""
+    unreleased = unreleased or RLAY.DEFAULT_UNRELEASED
     for f in ("CHANGELOG.md", "CHANGELOG", "HISTORY.md", "NEWS.md"):
         if exists(d, f):
             t = read(d, f)
-            return {"file": f, "keepachangelog": bool(re.search(r"(?mi)^## \[?unreleased\]?", t))}
+            if unreleased == RLAY.DEFAULT_UNRELEASED:
+                has = re.search(r"(?mi)^## \[?unreleased\]?", t)
+            else:
+                has = RLAY.find_unreleased(t, unreleased)
+            return {"file": f, "keepachangelog": bool(has)}
     return {}
 
 
@@ -214,7 +227,9 @@ def _agreed(models):
     return next(iter(models)) if len(models) == 1 else None
 
 
-def detect(d, name=None, methodology="gitflow", provider=None):
+def detect(d, name=None, methodology="gitflow", provider=None, release=None):
+    """release: the `release` answers of the project when it has any (its version file and changelog headings are looked for, not the defaults)."""
+    release = release if isinstance(release, dict) else {}
     d = os.path.realpath(d)
     top = git(d, "rev-parse", "--show-toplevel")
     if not top:
@@ -234,7 +249,8 @@ def detect(d, name=None, methodology="gitflow", provider=None):
     found = {
         "ref": ref and git(dpath, "rev-parse", "--abbrev-ref", ref) or ref, "ref_why": ref_why,
         "path": dpath, "remote": remote, "current_branch": head, "branches": branches, "long_lived": long_lived,
-        "tags": tag_pattern(tags), "version": version_info(d), "changelog": changelog_info(d),
+        "tags": tag_pattern(tags), "version": version_info(d, release.get("version_file")),
+        "changelog": changelog_info(d, RLAY.templates(release)[0]),
         "test_command": cmd, "test_command_from": why, "language": language(d), "ci_workflows": ci,
         "files": {f: exists(d, f) for f in ("README.md", "CONTRIBUTING.md", "CLAUDE.md", "AGENTS.md", "LICENSE", ".gitignore")},
         "dirty": bool(git(dpath, "status", "--porcelain")),
@@ -287,7 +303,10 @@ def detect(d, name=None, methodology="gitflow", provider=None):
         if b not in branches and not (b == "master" and "main" in branches):
             gaps.append({"kind": "branch", "what": b, "why": "the methodology keeps a long-lived %s branch" % b})
     if found["changelog"] and not found["changelog"]["keepachangelog"]:
-        gaps.append({"kind": "format", "what": found["changelog"]["file"], "why": "no '## [Unreleased]' heading: not in the Keep a Changelog format"})
+        unrel = RLAY.templates(release)[0]
+        why = ("no '## [Unreleased]' heading: not in the Keep a Changelog format" if unrel == RLAY.DEFAULT_UNRELEASED
+               else "no '%s' heading (release.changelog.unreleased): the release flow cannot find the changes to come" % unrel)
+        gaps.append({"kind": "format", "what": found["changelog"]["file"], "why": why})
     if tags and not found["tags"]["pattern"]:
         gaps.append({"kind": "tags", "what": "tags", "why": "the existing tags are not semantic versions"})
     if not ci:
@@ -346,7 +365,7 @@ def adopt_plan(project, answers_file, methodology=None):
     methodology = methodology or answers.get("methodology") or "gitflow"
     where, md, m = M.load(methodology)
     long_lived = (m.get("branches") or {}).get("long_lived", [])
-    det = detect(d, project, methodology)
+    det = detect(d, project, methodology, release=answers.get("release"))
     found = det["found"]
     base_name, base_sha = default_branch_tip(d)
     heads = git(d, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads").splitlines()
@@ -378,6 +397,8 @@ def adopt_plan(project, answers_file, methodology=None):
             why = "a file is in the way of its directory"
         elif dest.lower() in lower:
             why = "a path that differs only in letter case exists"
+        elif dest == versioning.get("file") and (answers.get("release") or {}).get("version_file") == "none":
+            why = "release.version_file is none: the project keeps no version file"
         elif dest == versioning.get("file") and found["version"]:
             why = "the version is kept in %s" % found["version"]["file"]
         elif dest == versioning.get("changelog") and found["changelog"]:

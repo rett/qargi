@@ -41,7 +41,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer (the other answers stay open). A project verb the guard cannot read is
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command and of env.* (the commands and environment the lead later runs; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
@@ -77,8 +77,9 @@ read-only role run there) is refused to a member, found like the skill verbs, an
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
 PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
-Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
-verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
+Release: `qargi release publish` (it creates the GitHub release of a tag) and `qargi release sign` (it signs the release files with the
+lead's key) are refused to a member, found like the skill verbs, also as a verb held in a variable and through lib/release.sh and
+lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -168,6 +169,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
+EXECUTED_ANSWERS = ("release", "test_command", "env")      # the answers the lead later runs or passes to a process: a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
@@ -184,7 +186,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
            "agent.sh", "team.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
@@ -2063,6 +2065,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "release.sh":
         words = ["release"] + words
+    if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
+        words = ["release", "sign"]
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
@@ -2112,6 +2116,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         path = words[3]
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
+        if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
+            return "qargi project set of %s changes a command or an environment the lead later runs (the release answers, test_command, env) and is not available to an agent: propose the value in your report" % path
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "provider" and verb == "check":
@@ -2120,6 +2126,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    if area == "release" and any(w == "sign" for w in words[1:4]):
+        return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb not in FEATURE_OPEN:

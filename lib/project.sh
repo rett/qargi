@@ -279,6 +279,8 @@ if lp:
                         bad.append("lead.push.credential_file must not be the read-only repo.credential_file: the repository mount keeps a token that cannot write")
 if "lead" in (r if isinstance(r, dict) else {}):
     bad.append("roles.lead: the lead is defined by teams, not by a role")
+import release_sign   # the signing, assets and notes answers of a release (lib/release_sign.py)
+bad.extend(release_sign.problems(c.get("release")))
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
 EOF

@@ -318,8 +318,29 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("a path the guard cannot read", r.stderr, c)
-        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p test_command 'echo models.extensions'",
+        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p repo.path /srv/acme", "qargi project set p memory.memory_store acme-notes",
                   "qargi project show p", "qargi project validate p", "echo qargi project set p models.extensions x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_project_set_of_executed_answers_to_a_member(self):
+        """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
+        the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a
+        dotted path, in every form the models answers are refused in. Look-alikes (test_commands, releases.x) stay open."""
+        for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
+                     "test_command", "env", "env.PATH", "env.acme.x"):
+            for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
+                         "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
+                         "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes a command or an environment the lead later runs" % path, r.stderr, c)
+        for c in ("qargi project set p $K v", "qargi project set p release.$K v", "qargi project set p `echo test_command` v", "qargi project set p $(echo release.preflight) v"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+        for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
+                  "qargi project show p", "echo qargi project set p release.preflight x"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
@@ -348,12 +369,13 @@ class Skills(unittest.TestCase):
                   "qargi $(echo project) set demo models.extensions x", "qargi project $(echo set) demo models.extensions x", "qargi project $V demo models.extensions x",
                   "bash -c 'qargi project set demo $(echo models.extensions) x'", "sh -c \"qargi pro''ject set demo \\$(echo models.extensions) x\"",
                   "xargs sh -c 'qargi project set \"$@\"' _ < args", "eval qargi project set demo '$(echo models.extensions)' x", "qargi project link $(echo p)",
-                  "qargi project $(echo link) p", "QARGI_GATED_STORE=1 qargi project set demo models.extensions '[\"x\"]'"):
+                  "qargi project $(echo link) p", "QARGI_GATED_STORE=1 qargi project set demo models.extensions '[\"x\"]'",
+                  "qargi project set demo release.preflight '[\"x\"]'", "qargi project set demo test_command 'x'", "qargi project set demo env.PATH x"):
             r = guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr, c)
-        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p test_command 'ls *.py'",
-                  "qargi project set p test_command 'echo $HOME'", "qargi project show $P", "qargi project list | xargs echo", "echo qargi project set p models.extensions x",
+        for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p repo.path 'ls *.py'",
+                  "qargi project set p memory.memory_store 'echo $HOME'", "qargi project show $P", "qargi project list | xargs echo", "echo qargi project set p models.extensions x",
                   "grep -n 'project set' README.md", "bash -c 'qargi project show p'"):
             r = guard(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
@@ -422,6 +444,19 @@ class Skills(unittest.TestCase):
             self.assertIn("qargi release publish creates a GitHub release and is not available to an agent", r.stderr)
         for c in ("qargi release status 0.2.0", "qargi release verify 0.2.0 --project p", "qargi release push 0.2.0", "bash lib/release.sh status 0.2.0",
                   "echo qargi release publish", "grep -n 'release publish' lib/commands.py", "qargi help release publish"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_refuses_release_sign_to_a_member(self):
+        """release sign signs the release files with the lead's key (the passphrase is the person's); the verb, the script run directly and
+        the signature record's script are refused with their own reason. The other release verbs stay as they were."""
+        for form in ("qargi release sign 0.2.0", "qargi release sign 0.2.0 --project p", "/opt/q/bin/qargi release sign 0.2.0", "sudo qargi release sign 0.2.0",
+                     "bash -c 'qargi release sign 0.2.0'", "cd src && qargi release sign 0.2.0", "qargi release --project p sign 0.2.0",
+                     "bash lib/release.sh sign 0.2.0", "python3 lib/release_sign.py record --state x", "python3 lib/release_sign.py lead-only"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi release sign signs the release files with the lead's key", r.stderr)
+        for c in ("qargi release status 0.2.0", "echo qargi release sign", "grep -n 'release sign' lib/commands.py", "qargi help release sign"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
