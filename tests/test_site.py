@@ -141,6 +141,48 @@ class Converter(unittest.TestCase):
             self.assertEqual(cm.exception.line, line, "%r: %s" % (text, cm.exception))
             self.assertIn(frag, cm.exception.msg, repr(text))
 
+    def test_a_line_that_starts_with_a_tag_is_found_outside_fences(self):
+        text = "\n".join([
+            "a wrapped `qargi x",             # 1
+            "<name>` call",                   # 2 found
+            "> a quote `y",                   # 3
+            "> <other>` and",                 # 4 found
+            "- a bullet `z",                  # 5
+            "  <third>` and",                 # 6 found
+            "1. </close>",                    # 7 found
+            "  - > <deep",                    # 8 found
+            "<!-- a comment -->",             # 9 allowed
+            "<a href=\"x\">link</a>",           # 10 allowed
+            "<kbd>Ctrl</kbd> and <br>",       # 11 allowed
+            "<details><summary>s</summary>",  # 12 allowed
+            "```bash",                        # 13
+            "<name> in a fence",              # 14 not found
+            "- <name> in a fence",            # 15 not found
+            "```",                            # 16
+            "text <name> inside a line",      # 17 not at the start
+            "<div>raw</div>",                 # 18 found
+            "<!doctype html>",                # 19 found
+            "</ x",                           # 20 found
+        ])
+        got = MD.html_starts(text)
+        self.assertEqual([ln for ln, _ in got], [2, 4, 6, 7, 8, 18, 19, 20])
+        self.assertIn('starts with "<name"', got[0][1])
+        self.assertIn("raw HTML block", got[0][1])
+        self.assertIn("keep a code span that holds a placeholder on one line, or put the placeholder after other text", got[0][1])
+        self.assertEqual([ln for ln, _ in MD.html_starts(text, first_line=10)][:2], [11, 13])
+        self.assertEqual([ln for ln, _ in MD.html_starts("<a>x\n<b>y", allow=())], [1, 2])
+        self.assertEqual(MD.html_starts("no tag here\n- a < b\n"), [])
+
+    def test_the_converter_refuses_such_a_line_in_a_paragraph_a_list_and_a_quote(self):
+        for text, line in [("## A\n\nwrapped `x\n<name>` text\n", 4),
+                           ("## A\n\n- an item `x\n  <name>` text\n", 4),
+                           ("## A\n\n> a quote `x\n> <name>` text\n", 4),
+                           ("## A\n\n- <name> first\n", 3)]:
+            with self.assertRaises(MD.MdError, msg=repr(text)) as cm:
+                self.conv(text)
+            self.assertEqual(cm.exception.line, line, text)
+            self.assertIn("so that no wrapped line begins with <", cm.exception.msg)
+
     def test_first_line_offsets_the_numbers(self):
         with self.assertRaises(MD.MdError) as cm:
             self.conv("## A\n\n<b>\n", first_line=10)
@@ -303,7 +345,7 @@ class Check(unittest.TestCase):
     def test_bad_pages_are_reported_with_line_numbers(self):
         rc, out, err = run("check", "--release", RELEASE, "--source", ROOT, *pg(BAD))
         self.assertEqual(rc, 1, out + err)
-        want = ["unsupported.md:7: raw HTML is not supported",
+        want = ["unsupported.md:7: this line starts with \"<div\": a Kramdown (Jekyll) page reads it as the start of a raw HTML block",
                 "broken.md:20: contains the forbidden word 'hunter2'",
                 "broken.md:11: qargi project has no verb 'frobnicate'",
                 "broken.md:12: qargi agent add has no option --no-such-option",
@@ -315,6 +357,32 @@ class Check(unittest.TestCase):
             self.assertIn("error: " + w, out)
         self.assertNotIn("broken.md:10", out)      # the valid command on line 10 is not reported
         self.assertIn("8 error(s)", out)
+
+    def pages_with(self, body):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        pages = os.path.join(t, "pages")
+        os.makedirs(pages)
+        spit(os.path.join(pages, "a.md"), "---\ntitle: A page\ndescription: d\n---\n" + body)
+        return pages
+
+    def test_a_line_that_starts_with_a_tag_is_refused_with_its_file_line_and_fix(self):
+        body = "## One\n\nA wrapped `qargi project\n<name>` call.\n\n> quote `x\n> <y>`\n\n- item `z\n  <w>`\n\n```bash\n<ok>\n```\n"
+        rc, out, _ = run("check", "--release", RELEASE, "--source", ROOT, *pg(self.pages_with(body)), "--url", "https://docs.example.org/")
+        self.assertEqual(rc, 1, out)
+        for ln in (8, 11, 14):
+            self.assertRegex(out, r"error: a\.md:%d: this line starts with \"<\w+\".*put the placeholder after other text" % ln)
+        self.assertEqual(out.count("this line starts with"), 3)
+        self.assertNotIn("a.md:18", out)                       # inside the fence
+
+    def test_a_line_that_starts_with_a_tag_in_the_changelog_is_refused(self):
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        src = source_copy(os.path.join(t, "src"), changelog=lambda x: x.replace("### Added\n", "### Added\n- A wrapped `qargi x\n  <name>` call.\n", 1))
+        rc, out, _ = run("check", "--release", RELEASE, "--source", src, *pg(PAGES), "--allow-unreleased")
+        self.assertEqual(rc, 1, out)
+        self.assertRegex(out, r"error: CHANGELOG\.md:\d+: this line starts with \"<name\"")
+        self.assertIn("so that no wrapped line begins with <", out)
 
     def test_build_refuses_what_check_refuses(self):
         t = tempfile.mkdtemp()

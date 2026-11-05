@@ -14,6 +14,10 @@ description) converted by lib/site_md.py. `check` validates the hand pages again
 assets/search-index.json for the search box); `check-output` validates a built tree; `diff` lists what
 changed in the command line between two sources and which hand pages still name what is gone.
 
+A hand page, and the changelog, are refused when a line outside a code fence starts (also behind > and list markers) with an HTML-like
+tag: a Kramdown (Jekyll) page reads it as a raw HTML block and shows the rest of the page as plain text, and every other check stays green.
+Keep a code span that holds a placeholder on one line, or put the placeholder after other text.
+
 Trust: reading the command line IMPORTS lib/commands.py of --source (and --source-old/--source-new for `diff`), which runs
 that source's code. Give only a source you trust. The import happens in a boxed child (python -I -S -B, an empty working
 folder, a minimal environment, limits on cpu time, memory, output size and time), which limits the damage but is not a sandbox.
@@ -379,7 +383,10 @@ class Source:
         cl = os.path.join(path, "CHANGELOG.md")
         self.sections = []      # (version, date or None, first_line, text)
         if os.path.isfile(cl):
-            self._split(read_text(cl, 8 * 1024 * 1024))
+            text = read_text(cl, 8 * 1024 * 1024)
+            for ln, msg in MD.html_starts(text):       # the file is also shown as it is, by other renderers
+                rep.err("CHANGELOG.md:%d" % ln, msg)
+            self._split(text)
         self.release_date = None
         for v, d, _, _ in self.sections:
             if v == release:
@@ -605,6 +612,11 @@ def gather_hand(pages_dir, rep):
         body = "\n".join(text.split("\n")[used:])
         if not body.strip():
             rep.err(rel, "the page has no text")
+            continue
+        starts = MD.html_starts(body, used + 1, allow=())
+        for ln, msg in starts:
+            rep.err("%s:%d" % (rel, ln), msg)
+        if starts:
             continue
         try:
             doc = MD.convert(body, start_level=2, first_line=used + 1, ids=set(PAGE_IDS))

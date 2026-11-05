@@ -101,6 +101,13 @@ def parse_front_matter(text, allowed=None):
 
 
 _FENCE = re.compile(r"^```(.*)$")
+# a body line that starts (after block quote and list markers) with an HTML-like tag: a Kramdown (Jekyll) page reads it as a raw
+# HTML block and shows the rest of the page as plain text
+_LINE_PREFIX = re.compile(r"^(?:[> \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?)+")
+_HTML_START = re.compile(r"^<(?:/?([A-Za-z][A-Za-z0-9-]*)|(!--)|[/!])")
+INLINE_TAGS = ("a", "br", "code", "kbd", "details", "summary", "sup", "sub")
+HTML_START_FIX = ("keep a code span that holds a placeholder on one line, or put the placeholder after other text, "
+                  "so that no wrapped line begins with <")
 _HEADING = re.compile(r"^(#{1,6})([ ]+(.*?))?([ ]+#+)?[ ]*$")
 _HR = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})[ ]*$")
 _SETEXT = re.compile(r"^(?:=+|-+)[ ]*$")
@@ -109,6 +116,26 @@ _ORDERED = re.compile(r"^(\d{1,9})([.)])([ ]+)(.*)$")
 _TABLE_SEP = re.compile(r"^\|(?:[ ]*:?-+:?[ ]*\|)+[ ]*$")
 _SCHEMES = ("https://", "http://", "mailto:")
 _PUNCT = "\\`*_{}[]()#+-.!|<>~&\"'/:,;=?@$%^"
+
+
+def html_starts(text, first_line=1, allow=INLINE_TAGS):
+    """[(line, message)] for each line outside a fence that starts with an HTML-like tag (`<` and a letter, / or !), also behind
+    block quote and list markers, except the inline tags in `allow` and comments."""
+    found = []
+    fence = False
+    for k, ln in enumerate(text.split("\n")):
+        rest = ln[_LINE_PREFIX.match(ln).end():]
+        if rest.startswith(("```", "~~~")):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        m = _HTML_START.match(rest)
+        if not m or m.group(2) or (m.group(1) or "").lower() in allow:
+            continue
+        found.append((first_line + k, "this line starts with \"%s\": a Kramdown (Jekyll) page reads it as the start of a raw HTML block and "
+                                      "shows everything after it as plain text; %s" % (rest[:m.end()], HTML_START_FIX)))
+    return found
 
 
 class _Converter:
@@ -297,7 +324,7 @@ class _Converter:
                 i = self._list(lines, i, depth, in_quote, out)
                 continue
             if t.startswith("<") and not self.literal:
-                raise MdError(ln, "raw HTML is not supported")
+                raise MdError(ln, "raw HTML is not supported; " + HTML_START_FIX)
             if re.match(r"^\[[^\]]+\]:[ ]", t):
                 raise MdError(ln, "reference link definitions are not supported; write [text](url)")
             i = self._paragraph(lines, i, out, depth > 0)
@@ -365,7 +392,7 @@ class _Converter:
                 if self._is_block_start(t):
                     raise MdError(ln, "put a blank line before this list, table, quote or rule")
                 if t.startswith("<") and not self.literal:
-                    raise MdError(ln, "raw HTML is not supported")
+                    raise MdError(ln, "raw HTML is not supported; " + HTML_START_FIX)
             if t.startswith(" "):
                 raise MdError(ln, "unexpected indentation (lazy continuation is not supported)")
             parts.append(t.rstrip())

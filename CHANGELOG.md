@@ -15,6 +15,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `closed_by`), the files are kept, and the run is no longer open: `lead compact-check` and the compaction advice stop counting it as applied and not merged,
   `feature finish` is not blocked by it, `marshal status` and the handoff note list it as closed, `local list` shows `closed`, and `local clean` removes it
   without asking for an applied tip. `review apply` refuses a closed run.
+- `lib/site.py check` and `build` refuse a line of a hand page, or of `CHANGELOG.md`, outside a code fence that starts (also behind `>` and list
+  markers) with an HTML-like tag, with the file, the line and the fix. A Kramdown (Jekyll) page reads such a line, for example a hard-wrapped code span
+  whose placeholder lands at the start of a line, as a raw HTML block and shows everything after it as plain text, while every other check stays green.
+  The site's own converter already refused raw HTML in a hand page, so its output cannot show the defect; its message now names the fix too.
 
 ### Changed
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
