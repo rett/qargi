@@ -184,7 +184,8 @@ refusal changes nothing.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
-   current.
+   current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
+   failed one ends with the failing tests and the path of the log.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
@@ -224,7 +225,9 @@ Two answers decide what the flow does with a feature branch on origin. `branches
 under `always`, or under `when-shared` when origin already has it. Setting it is the standing approval for those pushes; develop,
 master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
-shows the deletion and its token covers origin's tip.
+shows the deletion and its token covers origin's tip. `branches.push_develop` is `true` (the default) or `false`: `feature finish`
+pushes develop to origin, when the repository has one, unless it is `false`. The first line of the finish plan says which ("will
+push develop to origin", or "local only, will not push" and why), and the token covers it.
 
 ### Pruning merged branches
 
