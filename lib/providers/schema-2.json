@@ -51,6 +51,7 @@
             "mcp": {"$ref": "#/$defs/res_mcp"},
             "settings": {"$ref": "#/$defs/res_settings"},
             "memory": {"$ref": "#/$defs/res_memory"},
+            "transcripts": {"$ref": "#/$defs/res_transcripts"},
             "contract_addenda": {
               "description": "Text files in the definition's own directory that are added to the member contract of a cloud agent's prompt, in this order (a cloud runtime's rules about its own surface). Each is a relative file name inside the directory, plain text (UTF-8, no control, format, private-use or unassigned characters), at most 16384 bytes; `provider check` fails on one that is missing or is not. Not available to an extension.",
               "type": "array",
@@ -116,7 +117,7 @@
           "additionalProperties": false,
           "properties": {
             "capabilities": {"type": "array", "items": {"type": "string"}, "description": "capabilities the runtime must have verified (yes or partial) without this extension"},
-            "resources": {"type": "array", "items": {"enum": ["skills", "agents", "instructions", "mcp", "settings", "memory"]}, "description": "resources the runtime must have"},
+            "resources": {"type": "array", "items": {"enum": ["skills", "agents", "instructions", "mcp", "settings", "memory", "transcripts"]}, "description": "resources the runtime must have"},
             "qargi": {"type": "string", "pattern": "^>=[0-9]+(\\.[0-9]+){0,2}$", "description": "the least qargi version, like >=0.2.0"}
           }
         },
@@ -302,6 +303,28 @@
           }
         },
         "allow_pointer": {"type": ["string", "null"]}
+      }
+    },
+    "res_transcripts": {
+      "description": "where the runtime keeps the transcripts of its sessions (a file of JSON lines per session, named for the session id, in user_dir; {checkout_key} as for memory) and how to read the context in use from one. usage names JSON pointers into one line: select and skip are maps from a pointer to the value that picks a line (select) or drops it (skip); tokens points at the object holding the counts, fields lists the counts that add up to the context in use, model points at the model id. window is the context window in tokens.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "user_dir": {"type": ["string", "null"]},
+        "checkout_key": {"enum": ["nonalnum-dash", "sha256-16", "none", null]},
+        "ext": {"type": "string", "pattern": "^\\.[a-z0-9]{1,8}$"},
+        "window": {"type": ["integer", "null"]},
+        "usage": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "select": {"type": "object"},
+            "skip": {"type": "object"},
+            "tokens": {"type": "string"},
+            "fields": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+            "model": {"type": "string"}
+          }
+        }
       }
     },
     "res_memory": {

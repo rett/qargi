@@ -251,7 +251,7 @@ class Env(unittest.TestCase):
 class Complete(Env):
     def test_commands_verbs_and_values(self):
         self.assertIn("lead", H.complete([""]))
-        self.assertEqual(H.complete(["lead", ""]), ["grant", "status", "revoke"])
+        self.assertEqual(H.complete(["lead", ""]), ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha"])   # only projects that define teams
         self.assertEqual(H.complete(["team", "brief", "alpha", ""]), ["code-docs"])
         self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-build", "alpha-write"])
@@ -283,7 +283,7 @@ class Shells(Env):
 
     def test_described_output(self):
         out = H.complete_described(["lead", ""])
-        self.assertEqual([c for c, _ in out], ["grant", "status", "revoke"])
+        self.assertEqual([c for c, _ in out], ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertTrue(all(d for _, d in out))
         r = subprocess.run([BIN, "__complete", "--described", "lead", ""], capture_output=True, text=True)
         self.assertIn("grant\tGuided", r.stdout)
