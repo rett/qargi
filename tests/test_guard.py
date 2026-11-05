@@ -1032,6 +1032,23 @@ class Marshal(unittest.TestCase):
         os.makedirs(os.path.join(self.t, "elsewhere/marshal"))
         self.assertEqual(self.call("Write", {"file_path": os.path.join(self.t, "elsewhere/marshal/x.enabled")}).returncode, 0)
 
+    def test_the_saved_runs_are_protected_and_readable(self):
+        """$STATE/runs/<id> is the copy local verify saves of a passed run, which review apply --from-saved applies: a member must not plant or change one."""
+        p = os.path.join(self.state, "runs", "qargi.abcdef")
+        os.makedirs(os.path.join(p, "out", "patches"))
+        open(os.path.join(p, "refs.before"), "w").close()
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
+            for cls in ((), ("--class", "read-only")):
+                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p + "/out/patches/0001-x.patch"}, "cwd": self.clone}),
+                                     capture_output=True, text=True, env=self.env())
+                self.assertEqual(res.returncode, 2, (tool, cls, res.stderr))
+                self.assertIn("saved copies of passed local runs", res.stderr)
+        self.refused(["echo x > %s/refs.before" % p, "rm -rf %s" % p, "cp -r /tmp %s/out" % p, "echo 1 > $QARGI_STATE/runs/qargi.zzzzzz/applied",
+                      "mkdir -p %s/runs/qargi.planted" % self.state])
+        for c in ("cat %s/refs.before" % p, "ls %s/out" % p):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
         """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write
         them. The verbs lead usage and lead compact-check only read, so a member may run them; claiming by succession writes the marshal."""

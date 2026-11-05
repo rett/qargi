@@ -184,6 +184,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`git rev-parse OLD^{tree}` must equal NEW's) while REF is at OLD, and the move is journaled with the reason, so `local verify`
   and `local clean` of a run prepared before it accept it and name it as a rewrite, and `local clean` and `local list` count the
   run's applied tip as merged when the commit it was rewritten to is. Refused to a member.
+- Local runs survive a reboot. `local prepare` warns on stderr when `--scratch` is on a tmpfs (a reboot loses the run; use a
+  directory on disk). A passing `local verify` copies OUT, a run bundle beside it and the run's snapshots to
+  `<state>/runs/<run id>/`; `qargi review apply --from-saved ID` applies from that copy with the same checks as a normal apply
+  (review check, `local verify --saved ID`, the registry's repository, slug and base, applied once), and the guard keeps a member
+  out of `<state>/runs/`. `local list` and `qargi report` show a run whose directory is gone as `directory gone`, with its saved
+  copy; `local clean RUN --discard` drops the registry entry (and the saved copy) of such a run, and `clean RUN` does once its
+  saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
 - Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local
@@ -316,6 +323,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- `local clean --stale DAYS --scratch DIR` reported 0 runs when the run directories were gone (a reboot that emptied a tmpfs): it
+  now plans and, with `--yes`, drops the records of such runs older than DAYS, keeping the one whose saved copy holds work that was
+  never applied; a scratch directory that is gone itself is still read from the registry (`local list --scratch` too).
 - `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
   hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
 - The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.

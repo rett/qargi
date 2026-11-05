@@ -142,4 +142,32 @@ out=$($DA review prune --yes 2>&1); rc=$?
 [ $rc != 0 ] && [ "$(heads)" = "$h1" ] && ok "and --yes deletes nothing" || no "review prune --yes: rc=$rc $out"
 out=$($DA review apply --yes "$T/nosuchrun" 2>&1); rc=$?
 [ $rc != 0 ] && grep -q "unknown option --yes" <<<"$out" && ok "review apply has no --yes" || no "review apply --yes: rc=$rc $out"
+# --- review apply --from-saved ID: the copy a passing verify saved, for a run whose directory is gone (a reboot that emptied a tmpfs)
+RS=$(newrun saved1); IS=$(basename "$RS"); SS=$T/s/runs/$IS
+$DA local verify "$RS" >/dev/null 2>&1 && [ -d "$SS/out/patches" ] || no "(setup) verify saved no copy of $RS"
+out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "still exists" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved1 >/dev/null && ok "--from-saved is refused while the run directory exists (apply that)" || no "from-saved, dir there: rc=$rc $out"
+rm -rf "$RS"
+for bad in "--from-saved" "--from-saved ../x" "--from-saved $IS $RS"; do
+  # shellcheck disable=SC2086
+  out=$($DA review apply $bad 2>&1); rc=$?; [ $rc = 2 ] && ok "review apply $bad is a usage error" || no "usage '$bad': rc=$rc $out"
+done
+out=$($DA review apply --from-saved qargi.nosuch 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no saved copy" <<<"$out" && ok "an id with no saved copy is refused" || no "no copy: rc=$rc $out"
+out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/saved1")" = 2 ] && grep -q "applied 2 patch(es)" <<<"$out" && read -r ab at _ < "$SS/applied" \
+  && [ "$ab" = agent/saved1 ] && [ "$at" = "$(git -C "$A" rev-parse agent/saved1)" ] && grep -q "^local refs/heads/agent/saved1 " "$SS/refs.before"; } \
+  && ok "--from-saved applies the saved series on agent/<slug> at the run's base and records it in the saved copy" || no "from-saved apply: rc=$rc $out"
+out=$($DA review apply --from-saved "$IS" --branch agent/again 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "applied already" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/again >/dev/null && ok "and refuses to apply it twice" || no "from-saved twice: rc=$rc $out"
+RS2=$(newrun saved2); IS2=$(basename "$RS2"); $DA local verify "$RS2" >/dev/null 2>&1; rm -rf "$RS2"
+git -C "$A" tag hand-made-during-run develop
+out=$($DA review apply --from-saved "$IS2" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "REFS CHANGED" <<<"$out" && grep -q "hand-made-during-run" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved2 >/dev/null \
+  && ok "--from-saved runs local verify on the saved snapshot: refs changed since refuses" || no "from-saved, refs changed: rc=$rc $out"
+git -C "$A" tag -d hand-made-during-run >/dev/null
+RS3=$(newrun saved3); IS3=$(basename "$RS3"); $DA local verify "$RS3" >/dev/null 2>&1; rm -rf "$RS3"; sed -i 's/^ a$/ zzz/' "$T/s/runs/$IS3"/out/patches/0002-*.patch
+rm -f "$T/s/runs/$IS3/out/manifest.json"
+out=$($DA review apply --from-saved "$IS3" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "review check refuses" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved3 >/dev/null && ok "--from-saved runs review check on the saved OUT" || no "from-saved, check: rc=$rc $out"
 exit $fail

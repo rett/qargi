@@ -4,11 +4,12 @@
 # compares every ref of the real repository (and of its remote) before and after.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
-#   local.sh verify RUN_DIR
+#   local.sh verify RUN_DIR | --saved ID     (--saved: the lead's copy of a passed run whose directory is gone, $QARGI_STATE/runs/ID)
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
-#   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged
+#   local.sh list [--scratch DIR]        read-only: each run (under DIR, else the registry's) with role, slug, age, applied and merged; a run whose
+#                                        directory is gone (and that clean did not remove) says "directory gone", and names its saved copy
 #   local.sh run RUN_DIR [--task FILE] [--model TIER|ID] [--effort LEVEL] [--timeout SECONDS] [--again] [--dry-run]
 #                                        start the member of a prepared run as a command line, for a runtime whose dispatch.mode is "command"
 #                                        (lib/local_run.py says how); a runtime that dispatches in the lead's session is refused
@@ -26,6 +27,8 @@
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
 # (files a member can write) differ is refused, as is a directory the registry does not name. `clean` removes the temporary directory that this line names
 # for the run, not the one the run's own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
+# A --scratch on a tmpfs (stat -f) is warned about on stderr: a reboot empties it and the run is lost. A passing verify copies OUT, a run bundle and
+# the snapshots to $QARGI_STATE/runs/<run id>/ (save_run), so `review apply --from-saved ID` can still apply the work after a reboot; clean removes the copy.
 # After the TASK-BLOCK PATHS lines it prints TASK-BLOCK MEMORY (tiercontext.py packet: the tier summary, the always rows of the
 # indexes and the no-write rule; the repo tier is the clone's committed copy) when the repository belongs to a stored project.
 . "$(dirname "$0")/lib.sh"
@@ -93,6 +96,45 @@ journal_steps() {
     | map(if .verb == "ref:rewrite" then "a rewrite (qargi ref record --rewrite: " + ((.why // "") | tostring) + ")" else "qargi " + ((.verb // "?") | tostring | sub(":"; " ")) end)
     | reduce .[] as $v ([]; if index([$v]) then . else . + [$v] end) | join(", ")' "$f" 2>/dev/null) && [ -n "$out" ] || return 1
   printf '%s\n' "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177'   # the reason is the lead's text: no control or escape byte reaches the terminal
+}
+
+# save_run RUN -> a copy of what a passed run returned, in the lead's state: $DA_STATE/runs/<run id>/ holds out/ (the run's OUT, links copied as links,
+# never followed), run.bundle (when the run directory has one beside OUT), the snapshots and records verify and apply read (refs.before, verified,
+# started, ability, class, profile, applied) and record.json (the registry's line). Made in a temporary directory and renamed into place; a failure is a
+# warning, never a failure of verify.
+save_run() {
+  local run id d tmp f rr
+  run=$(readlink -f -- "$1") || return 0; id=${run##*/}; d=$DA_STATE/runs/$id
+  case $id in qargi.??????) ;; *) return 0;; esac   # a directory prepare made: never an empty or a dotted name, whatever the caller wrote
+  { mkdir -p "$DA_STATE/runs" && tmp=$(mktemp -d "$DA_STATE/runs/.save.XXXXXX"); } || { echo "qargi: warning: could not save a copy of $run in $DA_STATE/runs" >&2; return 0; }
+  if cp -R --no-dereference --preserve=mode,timestamps -- "$run/out" "$tmp/out" 2>/dev/null; then
+    [ ! -f "$run/run.bundle" ] || [ -L "$run/run.bundle" ] || cp -- "$run/run.bundle" "$tmp/run.bundle"
+    for f in refs.before verified started ability class profile applied; do [ ! -f "$run/$f" ] || [ -L "$run/$f" ] || cp -- "$run/$f" "$tmp/$f"; done
+    rr=$(readlink -m -- "$run"); printf '%s\n' "${LRUNS[$rr]:-}" > "$tmp/record.json"
+    if [ ! -L "$d" ] && rm -rf --one-file-system -- "$d" && mv -T -- "$tmp" "$d"; then echo "saved a copy of the run's output in $d (qargi review apply --from-saved $id applies it if the run directory is lost)"; return 0; fi
+  fi
+  rm -rf --one-file-system -- "$tmp"
+  echo "qargi: warning: could not save a copy of $run in $d" >&2
+}
+# saved_of RUN -> the lead's saved copy of RUN ($DA_STATE/runs/<run id>), when there is one (a directory, not a link)
+saved_of() { local d=$DA_STATE/runs/${1##*/}; case ${1##*/} in qargi.??????) ;; *) return 0;; esac; [ -d "$d" ] && [ ! -L "$d" ] && echo "$d"; return 0; }
+# gone_runs SCR -> the runs of the registry (reg_load first) directly under SCR (a real path; every run of the registry when empty) whose directory is
+# gone and that clean did not remove: a reboot emptied a tmpfs, or the directory was removed by hand
+gone_runs() {
+  local d
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    [ -z "$1" ] || [ "${d%/*}" = "$1" ] || continue
+    case ${d##*/} in qargi.??????) ;; *) continue;; esac
+    [ ! -e "$d" ] && [ ! -L "$d" ] && [ -z "$(reg_get "$d" cleaned)" ] && printf '%s\n' "$d"
+  done
+  return 0
+}
+# scratch_of DIR -> the real path of a --scratch DIR; a directory that is gone is still one when the registry names runs under it (a reboot removed it)
+scratch_of() {
+  local s
+  if [ -d "$1" ]; then readlink -f -- "$1"; return 0; fi
+  s=$(readlink -m -- "$1"); [ -n "$(gone_runs "$s")" ] || return 1
+  echo "$s"
 }
 
 # parking_of REPO -> the parking branch of the stored project of REPO (answers repo.parking_branch), else scratch
@@ -187,11 +229,12 @@ compare() {
   return $bad
 }
 
-# check RUN -> 0 and records RUN/verified when the refs are as the rule allows (RUN/refs.accepted names the changes it accepted); 2 otherwise;
-# 3 when the registry does not vouch for RUN
+# check RUN [DIR] -> 0 and records DIR/verified when the refs are as the rule allows (DIR/refs.accepted names the changes it accepted); 2 otherwise;
+# 3 when the registry does not vouch for RUN. DIR holds the snapshots: the run directory, or the lead's saved copy of the run (verify --saved).
 check_run() {
-  local run=$1 dir=$1 ref strict=1
-  run_record "$run" || return 3   # the repository and the credential come from the lead's registry, never from the run directory
+  local run=$1 dir=${2:-$1} ref strict=1
+  if [ "$dir" = "$run" ]; then run_record "$run" || return 3   # the repository and the credential come from the lead's registry, never from the run directory
+  else reg_record "$run" || return 3; fi
   ref=$dir/refs.before
   # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; with none, no change is journaled
   JSTART=$(cat "$dir/started" 2>/dev/null || true); [[ $JSTART =~ ^[0-9]{1,12}$ ]] || JSTART=''
@@ -292,6 +335,10 @@ case $verb in
     valid_slug "$SLUG" || die "--slug: lower-case letters, digits and '-'"
     [ -n "$BASE" ] && [ -d "$SCR" ] || usage_die "prepare needs --base BRANCH and --scratch DIR"
     SCR=$(readlink -f -- "$SCR")   # an absolute run directory: the registry and every later verb name it from any working directory
+    # a tmpfs (a ramfs) is emptied by a reboot: the clone, the commits and the output of a run there are lost
+    case $(stat -f -c %T -- "$SCR" 2>/dev/null) in
+      tmpfs|ramfs) echo "qargi: warning: --scratch $SCR is on a tmpfs: a reboot loses the run (its clone, commits and output). Prefer a directory on disk, for example ~/.cache/qargi-runs; a passing verify saves a copy of the output in $DA_STATE/runs" >&2;;
+    esac
     # a profile is resolved (by the one resolver, `agent for`) before anything is made: a refusal leaves no run directory
     MEMBER='' MODEL='' EFFORT=''
     if [ -n "$PROFILE" ]; then
@@ -372,7 +419,7 @@ WRAP
     chmod 755 "$RUN/git"
     jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" \
       '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}
-       + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; cat >> "$DA_STATE/local-runs.jsonl" )
+       + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
     echo "RUN=$RUN"
@@ -410,25 +457,37 @@ WRAP
       fi
     fi;;
   verify)
-    RUN=${1:-}; [ -f "$RUN/refs.before" ] || usage_die "verify needs a RUN dir made by prepare"
+    SAVED=''
+    if [ "${1:-}" = --saved ]; then
+      # the lead's saved copy of a passed run whose directory is gone: its snapshots are compared (against its last passing verify) as the run's own would be
+      need_val "$1" $#; SAVED=${2:-}; [ $# = 2 ] || usage_die "verify --saved takes one ID"
+      case $SAVED in qargi.??????) ;; *) usage_die "verify --saved takes the id of a run: the name of its directory, qargi.XXXXXX";; esac
+      SRC=$DA_STATE/runs/$SAVED
+      [ -d "$SRC" ] && [ ! -L "$SRC" ] && [ -f "$SRC/refs.before" ] || die "no saved copy of $SAVED in $DA_STATE/runs (local verify saves one when a run passes)"
+      reg_load; RUN=$(reg_id "$SAVED") || { echo "qargi: the lead's registry names no run $SAVED (or more than one)" >&2; exit 3; }
+    else
+      RUN=${1:-}; [ -f "$RUN/refs.before" ] || usage_die "verify needs a RUN dir made by prepare"
+      SRC=$RUN
+    fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
-      echo "qargi: $RUN is a read-only run ($(cat "$RUN/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $RUN/out/report.md, and do not apply or accept the patches." >&2
+    if [ "$(run_class "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+      echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
-    reg_load; crc=0; check_run "$RUN" || crc=$?
+    reg_load; crc=0; check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
     elif [ "$crc" = 0 ]; then
-      if [ -s "$RUN/refs.accepted" ]; then
+      if [ -s "$SRC/refs.accepted" ]; then
         echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"
-        sed 's/^/  /' "$RUN/refs.accepted"
+        sed 's/^/  /' "$SRC/refs.accepted"
       else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
+      [ -n "$SAVED" ] || save_run "$RUN"   # what the run returned outlives its directory (a reboot that empties a tmpfs)
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
-      cat "$RUN/refs.diff" >&2
-      if [ -s "$RUN/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$RUN/refs.accepted" >&2; fi
-      [ ! -f "$RUN/verified" ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
+      cat "$SRC/refs.diff" >&2
+      if [ -s "$SRC/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$SRC/refs.accepted" >&2; fi
+      [ ! -f "$SRC/verified" ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
         || echo "(after a passing verify the lead's fast-forwards and new branches are accepted too; nothing else that the lead's ref journal does not name)" >&2
       exit 2
     fi;;
@@ -453,8 +512,8 @@ WRAP
       [ -z "$ALL$CLEAN_RUN$DISCARD" ] || usage_die "clean --stale takes no RUN dir, no --applied and no --discard: it cleans only finished runs, and each by the rules of clean"
       case $STALE in ''|*[!0-9]*) usage_die "clean --stale needs a whole number of days, got '$STALE'";; esac
       [ -n "$SCR" ] || usage_die "clean --stale needs --scratch DIR, the directory the runs were prepared in"
-      [ -d "$SCR" ] || die "clean --stale: no such directory $SCR"
-      scr=$(readlink -f "$SCR"); nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0; reg_load
+      reg_load; scr=$(scratch_of "$SCR") || die "clean --stale: no such directory $SCR"
+      nowe=$(date +%s); plan_n=0; done_n=0; kept_n=0; bad_n=0
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
         [ -f "$d/verified" ] || [ -f "$d/applied" ] || continue                                      # a run still in progress is never stale
@@ -466,6 +525,23 @@ WRAP
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done
+      # the runs whose directory is gone: their record (and a saved copy whose work is applied and merged, or none) is dropped; a saved copy whose work
+      # was never applied is kept and named, since it is the only place that work is left
+      while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        st=$(reg_get "$d" started); ste=$(date -d "$st" +%s 2>/dev/null) || ste=''
+        [[ $ste =~ ^[0-9]{1,12}$ ]] || { echo "skipped $d: directory gone, and no start time recorded, so its age is unknown"; continue; }
+        age=$(( (nowe - ste) / 86400 )); [ "$age" -ge "$STALE" ] || continue
+        sv=$(saved_of "$d")
+        if [ -z "$YES" ]; then echo "would drop the record of $d (directory gone${sv:+, saved copy $sv}, ${age}d old)"; plan_n=$((plan_n + 1)); continue; fi
+        if [ -n "$sv" ] && [ ! -f "$sv/applied" ]; then
+          echo "kept $d: directory gone, and its saved copy $sv holds work that was never applied: qargi review apply --from-saved ${d##*/}, or qargi local clean $d --discard"
+          kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue
+        fi
+        cargs=("$d"); [ -n "$sv" ] || cargs+=(--discard)   # nothing of it is left but the record
+        if ! why=$("$0" clean "${cargs[@]}" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        echo "$why"; done_n=$((done_n + 1))
+      done < <(gone_runs "$scr")
       if [ -z "$YES" ]; then echo "plan: $plan_n finished run(s) older than $STALE day(s) under $scr; nothing changed, add --yes to clean them"; exit 0; fi
       echo "cleaned $done_n run(s), kept $kept_n"
       [ "$bad_n" = 0 ] || exit 1   # a stale run that clean refused (never applied, not merged, refs changed) stays, named, with the reason
@@ -491,6 +567,25 @@ WRAP
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
+    if [ -n "$RUN" ] && [ ! -e "$RUN" ] && [ ! -L "$RUN" ]; then
+      # the run directory is gone (a reboot that emptied a tmpfs, or removed by hand): only the registry's record and the saved copy are left
+      case ${RUN##*/} in qargi.??????) ;; *) usage_die "clean needs a RUN dir made by prepare";; esac
+      reg_has "$RUN" || usage_die "clean needs a RUN dir made by prepare ($RUN is gone and the lead's registry does not name it)"
+      [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
+      sv=$(saved_of "$RUN")
+      if [ -z "$DISCARD" ]; then
+        [ -n "$sv" ] || die "$RUN is gone (directory gone) and nothing of it was saved: qargi local clean $RUN --discard drops its record"
+        [ -f "$sv/applied" ] || die "$RUN is gone (directory gone), and its saved copy $sv holds work that was never applied: qargi review apply --from-saved ${RUN##*/}, then qargi feature merge (--discard drops the record and the copy on purpose)"
+        read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$RUN" repo)
+        [ -n "$rp" ] || die "$RUN is gone and was made from a repository URL, so whether its work is merged cannot be checked: --discard drops it on purpose"
+        mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?
+        [ "$mrc" = 0 ] || die "$RUN's work (${atip:0:12}) is not merged into any branch yet: qargi feature merge NAME $_ab, then clean (--discard drops it on purpose)"
+      fi
+      [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"
+      reg_edit "$RUN" drop || die "could not drop the record of $RUN from $DA_STATE/local-runs.jsonl"
+      echo "dropped the record of $RUN (directory gone)${sv:+ and its saved copy $sv}"
+      exit 0
+    fi
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
@@ -550,21 +645,25 @@ WRAP
     if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
     rm -rf --one-file-system -- "$RUN"
+    sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
+    reg_edit "$RUN" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   list)
-    # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
+    # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
+    # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
     SCR=''
     while [ $# -gt 0 ]; do
       case $1 in --scratch) need_val "$1" $#; SCR=${2:-}; shift 2;; *) usage_die "list: unknown option $1";; esac
     done
-    runs=(); reg_load
+    runs=(); reg_load; scr=''
     if [ -n "$SCR" ]; then
-      [ -d "$SCR" ] || die "list: no such directory $SCR"
-      for d in "$(readlink -f "$SCR")"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" && runs+=("$d"); done
+      scr=$(scratch_of "$SCR") || die "list: no such directory $SCR"
+      for d in "$scr"/qargi.??????; do [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" && runs+=("$d"); done
     else
       for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do [ -d "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && runs+=("$d"); done
     fi
+    mapfile -t gone < <(gone_runs "$scr")
     printf '%-10s %-18s %-10s %-6s %-8s %s\n' ROLE SLUG AGE APPLIED MERGED RUN
     nowe=$(date +%s)
     plain() { LC_ALL=C tr -d '\000-\037\177'; }   # the files of a run are a member's to write: no control or escape byte reaches the terminal
@@ -582,6 +681,22 @@ WRAP
         else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
+    done
+    for d in ${gone[@]+"${gone[@]}"}; do
+      [ -n "$d" ] || continue
+      sl=$(reg_get "$d" slug); ste=$(date -d "$(reg_get "$d" started)" +%s 2>/dev/null) || ste=''
+      if [[ $ste =~ ^[0-9]{1,12}$ ]]; then
+        age=$((nowe - ste))
+        if [ "$age" -ge 86400 ]; then ag="$((age / 86400))d"; elif [ "$age" -ge 3600 ]; then ag="$((age / 3600))h"; else ag="$((age / 60))m"; fi
+      else ag='?'; fi
+      sv=$(saved_of "$d"); ap=no; mg=no
+      if [ -n "$sv" ] && [ -f "$sv/applied" ]; then
+        ap=yes; read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$d" repo)
+        if [ -z "$rp" ]; then mg='?'
+        else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
+      fi
+      printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
+        "$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)"
     done;;
   run)
     # the project of the run is the stored one that has its repository; its local runtime says how to start the member (lib/local_run.py)

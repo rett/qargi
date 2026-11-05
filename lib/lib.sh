@@ -94,6 +94,11 @@ run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare wr
 #   reg_load            fills LRUNS (real path of each run directory the registry names -> its last line) and LRUNS_ORDER (those paths, first seen first)
 #   reg_has DIR         0 when the registry names the directory DIR (compared by real path)
 #   reg_get DIR FIELD   the text of FIELD in the registry's line for DIR (empty when absent or not a string)
+#   reg_record DIR      run_record from the registry alone, for a run whose directory is gone (its saved copy: local verify --saved)
+#   reg_id ID           the run directory of the registry whose name is ID (qargi.XXXXXX), when exactly one has it
+#   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
+# A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
+# taken as written, resolved as far as it exists (readlink -m).
 declare -gA LRUNS=()   # -g: lib.sh is sourced from inside a function by some callers
 LRUNS_ORDER=()
 reg_load() {
@@ -103,17 +108,46 @@ reg_load() {
   # @tsv doubles every backslash and leaves no other escape in a compact line; undo that one
   while IFS=$'\t' read -r r line; do
     r=${r//\\\\/\\}; line=${line//\\\\/\\}
-    rr=$(readlink -f -- "$r" 2>/dev/null) || continue
+    rr=$(readlink -m -- "$r" 2>/dev/null) || continue
     [ -n "$rr" ] || continue
     [ -n "${LRUNS[$rr]+x}" ] || LRUNS_ORDER+=("$rr")
     LRUNS[$rr]=$line
   done < <(jq -r 'select(type == "object" and (.run | type) == "string") | [.run, tojson] | @tsv' "$f" 2>/dev/null)
 }
-reg_has() { local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
+reg_has() { local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 1; [ -n "${LRUNS[$rr]+x}" ]; }
 reg_get() {
-  local rr; rr=$(readlink -f -- "$1" 2>/dev/null) || return 0
+  local rr; rr=$(readlink -m -- "$1" 2>/dev/null) || return 0
   [ -n "${LRUNS[$rr]+x}" ] || return 0
   jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$rr]}" 2>/dev/null || true
+}
+reg_record() {
+  RUN_REPO='' RUN_URL='' RUN_CRED=''
+  reg_has "$1" || { echo "qargi: $1 is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
+  RUN_REPO=$(reg_get "$1" repo); RUN_URL=$(reg_get "$1" url); RUN_CRED=$(reg_get "$1" cred)
+  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $1 (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
+}
+reg_id() {
+  local d hit='' n=0
+  case $1 in qargi.??????) ;; *) return 1;; esac
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do [ "${d##*/}" != "$1" ] || { hit=$d; n=$((n + 1)); }; done
+  [ "$n" = 1 ] && printf '%s\n' "$hit"
+}
+reg_edit() {
+  local f=$DA_STATE/local-runs.jsonl rr tmp
+  [ -f "$f" ] || return 0
+  rr=$(readlink -m -- "$1" 2>/dev/null) || return 1
+  ( umask 077; flock 9 || exit 1
+    tmp=$(mktemp "$f.tmp.XXXXXX") || exit 1
+    # a line is the run's when its run, resolved as far as it exists, is the same path; any other line, a malformed one too, is kept as it is
+    while IFS= read -r line || [ -n "$line" ]; do
+      r=$(jq -r 'if type == "object" and (.run | type) == "string" then .run else empty end' <<<"$line" 2>/dev/null) || r=''
+      if [ -n "$r" ] && [ "$(readlink -m -- "$r" 2>/dev/null)" = "$rr" ]; then
+        [ "$2" = drop ] && continue
+        line=$(jq -c --arg t "$(now)" '.cleaned = $t' <<<"$line")
+      fi
+      printf '%s\n' "$line"
+    done < "$f" > "$tmp" && chmod 600 "$tmp" && mv -f -- "$tmp" "$f" || { rm -f "$tmp"; exit 1; }
+  ) 9> "$f.lock"
 }
 # run_record RUN -> 0 and sets RUN_REPO, RUN_URL and RUN_CRED from the registry (reg_load first); 1 with the reason on stderr when the registry does not
 # name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
@@ -122,10 +156,7 @@ reg_get() {
 # any file the lead can read as a token to a host of its choice.
 run_record() {
   local run=$1 name want got
-  RUN_REPO='' RUN_URL='' RUN_CRED=''
-  reg_has "$run" || { echo "qargi: $run is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is trusted" >&2; return 1; }
-  RUN_REPO=$(reg_get "$run" repo); RUN_URL=$(reg_get "$run" url); RUN_CRED=$(reg_get "$run" cred)
-  [ -n "$RUN_REPO" ] || [ -n "$RUN_URL" ] || { echo "qargi: the lead's registry names no repository for $run (a run prepared by an earlier version): it cannot be verified" >&2; return 1; }
+  reg_record "$run" || return 1
   for name in repo.path repo.url cred.path; do
     case $name in repo.path) want=$RUN_REPO;; repo.url) want=$RUN_URL;; *) want=$RUN_CRED;; esac
     if [ -z "$want" ]; then

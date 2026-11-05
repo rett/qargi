@@ -176,7 +176,9 @@ refusal changes nothing.
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the
-   parking branch fast-forwarded to develop), so a run need not be cleaned before the next `feature finish`. `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
+   parking branch fast-forwarded to develop), so a run need not be cleaned before the next `feature finish`. Keep `--scratch` on
+   disk (prepare warns about a tmpfs, which a reboot empties); a passing verify also saves the run's output in `<state>/runs/`, and
+   `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
    `qargi local clean --stale DAYS --scratch DIR` lists the finished runs older than DAYS days, and `--yes` cleans them (a run whose work is not applied and merged is kept).
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
