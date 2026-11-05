@@ -77,11 +77,11 @@ journal_steps() {
   out=$(jq -sre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
     def mine: if $side == "remote" then .remote == "origin" and (($r != "" and .repo == $r) or ($u != "" and .url == $u))
               else (has("remote") | not) and $r != "" and .repo == $r end;
-    [ .[] | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine) ] as $e
-    | reduce range(0; ($e | length) + 1) as $i ({seen: [$o], used: []};
-        .seen as $seen | [ $e[] | select(.old as $x | $seen | index($x)) ] as $u | {seen: ($seen + ($u | map(.new)) | unique), used: $u})
-    | select($w != $o and (.seen | index($w)) != null)
-    | .used | sort_by(.epoch // 0)
+    [ .[] | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine and (.old | type) == "string" and (.new | type) == "string") ] as $e
+    | reduce range(0; ($e | length) + 1) as $i ({($o): -1};
+        reduce range(0; $e | length) as $j (.; if has($e[$j].old) and (has($e[$j].new) | not) then .[$e[$j].new] = $j else . end))
+    | select($w != $o and has($w)) | . as $p
+    | [ $w | recurse(if . != $o then $e[$p[.]].old else empty end) | select(. != $o) | $e[$p[.]] ] | reverse
     | map(if .verb == "ref:rewrite" then "a rewrite (qargi ref record --rewrite: " + ((.why // "") | tostring) + ")" else "qargi " + ((.verb // "?") | tostring | sub(":"; " ")) end)
     | reduce .[] as $v ([]; if index([$v]) then . else . + [$v] end) | join(", ")' "$f" 2>/dev/null) && [ -n "$out" ] || return 1
   printf '%s\n' "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177'   # the reason is the lead's text: no control or escape byte reaches the terminal
