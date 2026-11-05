@@ -75,7 +75,7 @@ out=$(R -j 1 --only 'a1|a6' --repeat 3)
 
 # the processes of a step
 printf '#!/bin/sh\nsleep 3211\n' > "$S/tests/test_hang.sh"
-printf '#!/bin/sh\nsleep 3217 </dev/null >/dev/null 2>&1 &\nexit 0\n' > "$S/tests/test_leak.sh"
+printf '#!/bin/sh\nsleep 3217 </dev/null >/dev/null 2>&1 &\necho $! > "%s/leak.pid"\nexit 0\n' "$S" > "$S/tests/test_leak.sh"
 printf '#!/bin/sh\nsleep 3\necho slow done\n' > "$S/tests/test_slow.sh"
 printf '#!/bin/sh\nread -r x; echo "stdin: [$x]"\nls /proc/self/fd | tr "\\n" " "; echo\n' > "$S/tests/test_env.sh"
 for n in a1 a2 a3 a4 a5 a6 bad hang leak slow env; do
@@ -87,15 +87,14 @@ grep -q '^TIMEOUT: sh tests/test_hang.sh was stopped after 2s$' <<<"$out" && gre
 [ "$took" -le 12 ] && ok "and it was stopped on time (${took}s of a 30 s sleep)" || no "timeout took ${took}s"
 grep -q '^stdin: \[\]$' <<<"$out" && ok "a step has no standard input" || no "stdin: $out"
 grep -qE '^[0-9 ]*$' <<<"$(grep -A1 '^stdin' <<<"$out" | tail -1)" && [ "$(grep -A1 '^stdin' <<<"$out" | tail -1 | wc -w)" -le 4 ] && ok "and no open file but 0, 1, 2 (and the one ls reads with)" || no "fds: $(grep -A1 '^stdin' <<<"$out")"
-rm -rf "$(sed -n 's/^logs of the failed steps: //p' <<<"$out")"
 out=$(R -j 2 --only 'leak'); if grep -q '^LEFT RUNNING after sh tests/test_leak.sh' <<<"$out" && grep -q 'sleep 3217' <<<"$out" && grep -q '^FAILED: sh tests/test_leak.sh$' <<<"$out"; then ok "a process left running by a step that passed fails it, and is killed"; else no "leak: $out"; fi
-sleep 0.5; pgrep -f 'sleep 3217' >/dev/null 2>&1 && no "the leaked sleep is still running" || ok "the leaked process is gone"
-rm -rf "$(sed -n 's/^logs of the failed steps: //p' <<<"$out")"
+lp=$(cat "$S/leak.pid" 2>/dev/null); gone=no
+for _ in $(seq 50); do { [ -n "$lp" ] && kill -0 "$lp" 2>/dev/null; } || { gone=yes; break; }; sleep 0.1; done   # hermetic: allow sleep (poll)
+[ -n "$lp" ] && [ "$gone" = yes ] && ok "the leaked process is gone" || no "the leaked sleep (pid ${lp:-unknown}) is still running"
 
 # budgets
 out=$(R -j 2 --only slow); grep -q 'WARN over budget: [0-9]*s, budget 1s' <<<"$out" && grep -q 'over 1.5x their budget (warning)' <<<"$out" && ! grep -q '^FAILED' <<<"$out" && grep -q '(passed)$' <<<"$out" && ok "over 1.5x its budget: a warning, the run passes" || no "budget warn: $out"
 out=$(R -j 2 --only slow --enforce-budgets); rc=$?; [ "$rc" = 1 ] && grep -q '^OVER BUDGET: ' <<<"$out" && grep -q '^FAILED: sh tests/test_slow.sh$' <<<"$out" && ok "--enforce-budgets fails it" || no "enforce: rc=$rc $out"
-rm -rf "$(sed -n 's/^logs of the failed steps: //p' <<<"$out")"
 
 # the inventory
 printf 'full | par | 60 | 1 | sh tests/test_a1.sh\n' > "$S/tests/suite.txt"

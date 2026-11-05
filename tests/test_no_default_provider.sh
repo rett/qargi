@@ -72,8 +72,8 @@ msg() { echo "qargi: project $1 has no provider: set one with qargi project set 
 refuses() { # name rc output project: exit 2 with the shared message and no word claude
   if [ "$2" = 2 ] && [ "$3" = "$(msg "$4")" ]; then ok "$1"; else no "$1 (rc=$2: $3)"; fi
 }
-noclaude() { # name output: the output does not name claude (CLAUDE.md, a file of the methodology, is not the provider)
-  if sed 's/CLAUDE\.md//g' <<<"$2" | grep -qi claude; then no "$1 names claude: $2"; else ok "$1"; fi
+noclaude() { # name output: the output does not name claude (CLAUDE.md, a file of the methodology, is not the provider; nor is a word of the temporary directory's path)
+  if sed 's/CLAUDE\.md//g' <<<"${2//"$T"/}" | grep -qi claude; then no "$1 names claude: $2"; else ok "$1"; fi
 }
 
 # --- the helper and the python side

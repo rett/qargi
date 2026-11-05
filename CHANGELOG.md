@@ -264,6 +264,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
   takes about half the time it did. `tests/test_startup.py` keeps the count at one process and the time under the shrink-only
   ceiling of `tests/startup-budget.txt`.
+- The tests are hermetic and safe to run concurrently with each other and with another whole suite: `tests/hermetic.sh` and
+  `tests/hermetic.py` build one environment (fresh HOME, TMPDIR, config and state under one directory, UTC, C.UTF-8, umask 022, git
+  without the host's configuration, no bytecode, no colour), and a lint (`tests/hermetic_lint.py`, run by `tests/test_hermetic.sh`)
+  fails on a test that does not source it, names a literal `/tmp`, `/dev/shm` or `/run` path, kills by pattern, waits with a bare
+  `sleep`, removes a directory it did not make, binds a fixed port, keeps a lock outside its directory or compares a wall-clock
+  difference with a constant.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
@@ -405,6 +417,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
 - `marshal status`, `marshal handoff` and `feature status` list an unmerged agent branch only under the feature its run was
   prepared against (`local prepare --base feature/NAME`, the base the registry of local runs records), not under every feature;
   the agent branches of no open feature are said once, on one `unattributed agent branches` line. The handoff note lists only the

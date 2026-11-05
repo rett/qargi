@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """qargi __guard: the PreToolUse hook that keeps a local agent's Bash from publishing."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
+# hermetic: allow-file tmp,lock (the commands and paths the guard judges are text; the fixtures make their own directories)
+# hermetic: allow-file clock (the time-budget tests of the guard: their wall-clock bounds become deadline hooks, then this goes)
 import importlib.util, io, json, os, re, shutil, subprocess, sys, tarfile, tempfile, time, unittest
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")

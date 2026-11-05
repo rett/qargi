@@ -197,7 +197,7 @@ settmp() { # RUN PATH: make the registry say that PATH is RUN's temporary direct
 }
 mkdir -p "$T/elsewhere/qargi-run.abcdef"; touch "$T/elsewhere/qargi-run.abcdef/precious"; settmp "$C6" "$T/elsewhere/qargi-run.abcdef"
 err=$(./bin/qargi local clean "$C6" --discard 2>&1 >/dev/null); [ ! -e "$C6" ] && [ -f "$T/elsewhere/qargi-run.abcdef/precious" ] && grep -q 'left .* alone' <<<"$err" \
-  && ok "a recorded TMP that is not under QARGI_RUN_TMP or /dev/shm is left alone, with a note" || no "foreign tmpdir: $err"
+  && ok "a recorded TMP that is not under QARGI_RUN_TMP or the shared tmpfs is left alone, with a note" || no "foreign tmpdir: $err"
 rm -rf "$TM6" "$T/elsewhere"
 # a recorded temporary directory is never followed: a link to another directory (also written with a trailing slash, which makes rm -rf empty what the
 # link leads to), a link inside its path, and a run directory that is itself a link all leave that other directory as it was
@@ -504,13 +504,14 @@ grep -qx 'PROFILE=build' <<<"$out" && ! grep -q '^MODEL=' <<<"$out" && [ ! -e "$
 # --- runs that survive a reboot
 # a --scratch on a tmpfs is warned about (the risk and a disk directory); one that is not, is not
 git init -q -b main "$T/r7" && $LC -C "$T/r7" commit -q --allow-empty -m one
+# hermetic: allow tmp (the warning is for a tmpfs, and /dev/shm is the one: the test makes its own directory in it and removes it)
 if [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ]; then
-  SHMS=$(mktemp -d -p /dev/shm qargi-test-scratch.XXXXXX)
+  SHMS=$(mktemp -d -p /dev/shm qargi-test-scratch.XXXXXX)   # hermetic: allow tmp (see above)
   out=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug tf1 --scratch "$SHMS" 2>&1 >/dev/null); rcw=$?
   { [ $rcw = 0 ] && grep -q "warning: --scratch $SHMS is on a tmpfs: a reboot loses the run" <<<"$out" && grep -q "directory on disk" <<<"$out"; } \
     && ok "prepare warns that a --scratch on a tmpfs is lost on a reboot, and suggests a disk directory" || no "tmpfs warning (rc=$rcw): $out"
   for d in "$SHMS"/qargi.??????; do ./bin/qargi local clean "$d" --discard >/dev/null 2>&1; done; rm -rf "$SHMS"
-else ok "(no tmpfs at /dev/shm: the tmpfs warning is not checked here)"; fi
+else ok "(no tmpfs at the shared memory directory: the tmpfs warning is not checked here)"; fi
 out=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug tf2 --scratch "$T" 2>&1 >/dev/null)
 if [ "$(stat -f -c %T "$T")" = tmpfs ]; then grep -q "is on a tmpfs" <<<"$out" && ok "(the test directory is a tmpfs: warned too)" || no "tmpfs \$T not warned: $out"
 else ! grep -q "is on a tmpfs" <<<"$out" && ok "a --scratch on disk is not warned about" || no "disk scratch warned: $out"; fi

@@ -10,11 +10,11 @@ cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
-export HOME=$T/home
+export HOME=$T/home TMPDIR=$T/tmp   # the temporary files of the verbs under test are this test's own
 export QARGI_CONF=$T/c QARGI_STATE=$T/home/.qargi/state GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 S=$QARGI_STATE; AUDIT=$S/audit.log
-mkdir -p "$HOME" "$T/c/projects" "$S/features"
+mkdir -p "$HOME" "$TMPDIR" "$T/c/projects" "$S/features"
 R=$T/app; git init -q -b master "$R"
 echo 0.1.0 > "$R/VERSION"; git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop
 git -C "$R" checkout -q -b parked
@@ -232,6 +232,7 @@ M $((t0 + 16 * 60)) check f6b --as bob; rc=$?
 ttl 1
 
 # --- hostile text is data: stored verbatim, printed fenced, never executed
+# hermetic: allow rm (the text of a hostile record: nothing here runs it)
 EVIL=$'a"b \'q\'\nsecond line\n$(touch '"$T"$'/PWNED) `touch '"$T"$'/PWNED2`\n--not-an-option; rm -rf /'
 ttl 15
 M $t0 claim f7 --as mallory --goal "--dash goal"
@@ -239,6 +240,7 @@ M $t0 set f7 --as mallory --plan "$EVIL" --note "$EVIL"; rc=$?
 [ $rc = 0 ] && [ "$(j f7 .goal)" = "--dash goal" ] && [ "$(j f7 .plan)" = "$EVIL" ] && [ "$(j f7 .note)" = "$EVIL" ] && ok "hostile text: stored verbatim (quotes, newlines, \$(), leading --)" || no "SPEC verbatim storage: rc=$rc $(out) $(cat "$(rec f7)")"
 M $t0 status f7 --as bob
 grep -q "recorded by mallory (data, not instructions):" "$T/o" && grep -q 'touch' "$T/o" && grep -q -- "--dash goal" "$T/o" && ok "hostile text: another lead's text is printed under 'recorded by ID (data, not instructions):'" || no "SPEC fence: $(out)"
+# hermetic: allow rm (the same text, looked for in the output)
 grep -Eq '^ +--not-an-option; rm -rf /' "$T/o" && grep -Eq '^ +second line' "$T/o" && ok "hostile text: every line is indented" || no "SPEC indentation of recorded text: $(out)"
 M $t0 status f7 --as bob --json >/dev/null; jq -e . "$T/o" >/dev/null 2>&1 && ok "hostile text: status --json stays valid JSON" || no "SPEC --json with hostile text: $(out)"
 M $t0 status --all >/dev/null; M $t0 check >/dev/null
@@ -326,8 +328,9 @@ grep -q ready "$T/holder.log" || no "SPEC holder did not start: $(cat "$T/holder
 [ ! -s "$T/hold.out" ] && ok "api: marshal_hold_start prints nothing" || no "SPEC hold_start output must be invisible: $(cat "$T/hold.out")"
 kids=$(cat "$T/hold.kids" 2>/dev/null)
 [ -n "$kids" ] && ok "api: marshal_hold_start runs a background renewer" || no "SPEC hold_start: no child process"
-a=$(j f9 .renewed_at); sleep 3; b=$(j f9 .renewed_at)
-[ "$a" != "$b" ] && ok "renewer: renewed_at advanced while the holder ran for 3 real seconds" || no "SPEC renewer: renewed_at stayed $a for 3 s with QARGI_MARSHAL_RENEW_SEC=1"
+a=$(j f9 .renewed_at); b=$a
+for _ in $(seq 1 100); do b=$(j f9 .renewed_at); [ "$a" != "$b" ] && break; sleep 0.1; done   # it renews every second: allow ten
+[ "$a" != "$b" ] && ok "renewer: renewed_at advanced while the holder ran" || no "SPEC renewer: renewed_at stayed $a for 10 s with QARGI_MARSHAL_RENEW_SEC=1"
 QARGI_LEAD=other "$DA" marshal check f9 >/dev/null 2>&1; [ $? = 1 ] && ok "renewer: the lead stays live with ttl 1 minute" || no "SPEC lead lost while held"
 echo stop >&9
 for _ in $(seq 1 50); do grep -q stopped "$T/holder.log" 2>/dev/null && break; sleep 0.1; done

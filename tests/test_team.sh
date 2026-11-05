@@ -146,7 +146,7 @@ printf '# Team workflow\nHandoffs go through you.\n' > "$FAKE/ref/~roles~lead~wo
 out=$(cd "$T/repo" && $DA hook session-start 2>&1)
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext | contains("alpha memory") and contains("Handoffs go through you")' >/dev/null 2>&1 \
   && ok "inside a project's repository the hook loads the lead's README, indexes and always-notes" || no "hook: $out"
-[ -z "$(cd /tmp && $DA hook session-start 2>&1)" ] && ok "outside a project the hook prints nothing" || no "hook outside"
+[ -z "$(cd "$T" && $DA hook session-start 2>&1)" ] && ok "outside a project the hook prints nothing" || no "hook outside"
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext | length < 6000' >/dev/null && ok "the hook output is small" || no "hook size"
 
 # --- the push grant
