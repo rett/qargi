@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "qargi",
   "release": "0.2.0",
-  "url": "https://rett.github.io/qargi/",
+  "url": "https://qargi.rettware.com/",
   "repo": "https://github.com/rett/qargi",
   "pages": ["index", "install", "first-project", "lead-loop", "dispatch-and-verify", "safety", "about"],
   "forbidden": ["/home/", "/Users/", "/dev/shm", "/mnt/", "192.168.", "10.0.0.", "localhost", "BEGIN PRIVATE KEY", "sk-ant-", "ghp_", "github_pat_", "password:", "secret:"]
