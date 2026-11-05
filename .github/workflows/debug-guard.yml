@@ -14,4 +14,4 @@ jobs:
       - run: sudo apt-get update -qq; sudo apt-get install -y -qq jq shellcheck >/dev/null
       - run: |
           git config --global user.name ci; git config --global user.email ci@example.invalid
-          python3 -X faulthandler tests/test_guard.py -v > /tmp/g.out 2>&1; echo "rc=$?"; wc -c /tmp/g.out; tail -40 /tmp/g.out
+          python3 -X faulthandler tests/test_guard.py -v > /tmp/g.out 2>&1 || echo "rc=$?"; wc -c /tmp/g.out; tail -40 /tmp/g.out
