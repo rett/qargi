@@ -69,6 +69,21 @@ remote_report() {
       else echo "  origin $b: remote ${RTIP:0:7}, local ${l:0:7} (differ; the remote tip is not fetched yet)"; fi;;
   esac
 }
+# changelog_check REF -> with the answer release.changelog.numbered true: 0 when CHANGELOG.md at REF has no duplicate item number under the
+# unreleased heading, 1 when it has (the report is printed, see lib/changelog_numbers.py). 0 without the answer, without a CHANGELOG.md at REF
+# or without the heading: nothing to check.
+changelog_check() {
+  local tmp out rc=0
+  jq -e '(.release? // {}).changelog.numbered == true' "$af" >/dev/null 2>&1 || return 0
+  g cat-file -e "$1:CHANGELOG.md" 2>/dev/null || return 0
+  tmp=$(mktemp -d "$DA_STATE/.changelog.XXXXXX") || return 0
+  g show "$1:CHANGELOG.md" > "$tmp/CHANGELOG.md" 2>/dev/null
+  out=$(python3 -I "$(dirname "${BASH_SOURCE[0]}")/changelog_numbers.py" renumber "$tmp/CHANGELOG.md" "$af" --check 2>/dev/null) || rc=$?
+  rm -rf "$tmp"
+  [ "$rc" = 1 ] || return 0
+  printf '%s\n' "$out"
+  return 1
+}
 
 WT=''
 cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; }; }

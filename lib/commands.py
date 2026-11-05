@@ -75,7 +75,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -234,7 +234,9 @@ COMMANDS = {
                                "them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved "
                                "develop, a clean main checkout on the parking branch with no commits of its own is fast-forwarded to develop, and one status line says why it was not. "
                                "The parking branch is never pushed or merged.")),
-            "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT]),
+            "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT],
+                         desc=("With the answer release.changelog.numbered true it then checks the changelog for duplicate item numbers and warns (exit status unchanged); "
+                               "feature finish refuses them. See qargi changelog.")),
             "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, PLAN, APPROVED, RESOLVED_OPT],
                           desc=("NAME may be a detached long-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, "
                                 "and the merge, local only, prints a plan and token like a merge into develop (--plan, --approved). A detached branch never meets develop, master, "
@@ -246,7 +248,7 @@ COMMANDS = {
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Needs a passing whole-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides "
-                                 "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. Pushes develop if the repository has an origin. With the answer branches.delete_merged "
+                                 "changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged "
                                  "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
                                  "it and its token covers origin's tip. The answer branches.push_features (never, when-shared, always; default never) decides whether feature start, "
                                  "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the "
@@ -340,6 +342,24 @@ COMMANDS = {
             "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
                           [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin"), PLAN, APPROVED],
                           examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
+        },
+    },
+    "changelog": {
+        "summary": "Numbered changelog items: find duplicate numbers and renumber them",
+        "desc": ("For a project whose changelog numbers its items, which it says with the answer release.changelog.numbered: true (off by default). "
+                 "Under the unreleased heading (release.changelog.unreleased, default '## [Unreleased]'), an item is a line that starts with a number, a dot and a space "
+                 "('12. text') or with '- ', the number, a dot and a space ('- 12. text'); the lines up to the next item belong to it. "
+                 "Two branches that each added an item 5 leave two items numbered 5 once merged. feature sync and feature finish run the check when the answer is true: "
+                 "sync warns, finish refuses (exit 1, nothing changed) until the numbers are renumbered, committed and the suite has run again."),
+        "scripts": ["changelog.sh"],
+        "verbs": {
+            "renumber": verb("Find the duplicate item numbers under the unreleased heading and renumber them in file order", [],
+                             [PROJECT_OPT, opt("--check", "only report: write nothing, exit 1 when a number is duplicated")],
+                             desc=("Works on the CHANGELOG.md of the work tree around the current directory, which must belong to the project (the feature's worktree, not the main checkout "
+                                   "while it rests on the parking branch). Only when a number is duplicated, the items are numbered again, consecutively in file order from the number of the "
+                                   "first one, and every '(item N)' cross-reference inside the section follows the item it means: with a duplicated N, the nearest item numbered N at or "
+                                   "before the reference, else the nearest after it. The file is rewritten and not committed. Without --check it is the lead's: a member run may only use --check."),
+                             examples=["qargi changelog renumber --check", "qargi changelog renumber"]),
         },
     },
     "release": {
@@ -1191,7 +1211,7 @@ TOPICS = {
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
-        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; memory init, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "

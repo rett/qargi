@@ -180,6 +180,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `packs/skills/`, `provision/templates/*.md` and `methodologies/` beyond the counts in `tests/vendor-words-allowlist.txt`, which can
   only shrink. `tests/test_tool_copy.sh` keeps `install.sh --copy`'s `tool_dirs`, the tests' `TOOL_DIRS` (one `copy_tool` helper in
   `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
+- Numbered changelog items, opt-in with the answer `release.changelog.numbered: true`. Under the unreleased heading
+  (`release.changelog.unreleased`, default `## [Unreleased]`) an item is a line that starts `N. ` or `- N. `; the lines up to the
+  next item belong to it. `qargi changelog renumber [--project P] [--check]` finds duplicate item numbers (two branches that each
+  added an item 5), numbers the items again in file order from the first one's number and rewrites the `(item N)` cross-references
+  (with a duplicated N, to the nearest item numbered N at or before the reference, else the nearest after it). It works on the
+  `CHANGELOG.md` of the work tree around the current directory and leaves the change uncommitted; `--check` only reports and exits 1
+  on a duplicate. `feature sync` warns about duplicates after the merge, and `feature finish` refuses (exit 1, nothing changed)
+  until they are renumbered, committed and verified. A member may run only `--check`; `renumber` without it is refused by the guard.
 
 ### Changed
 - Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local

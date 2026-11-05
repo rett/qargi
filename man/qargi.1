@@ -33,7 +33,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home directory is not. It refuses git push, git remote changes, git \-c alias.*, gh, ssh, scp, sftp and rsync to a host.
 .PP
@@ -1816,6 +1816,8 @@ the project, instead of the one inferred from here.
 .TP
 .BI "sync " "NAME"
 Merge develop into the feature (after another feature landed, before this one's checkpoint).
+.br
+With the answer release.changelog.numbered true it then checks the changelog for duplicate item numbers and warns (exit status unchanged); feature finish refuses them. See qargi changelog.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -1881,7 +1883,7 @@ the project, instead of the one inferred from here.
 .BI "finish " "NAME"
 Merge the feature into develop with \-\-no\-ff and delete it.
 .br
-Needs a passing whole\-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides changed the same files since their merge base, the message lists them and says to run qargi feature sync first. Pushes develop if the repository has an origin. With the answer branches.delete_merged local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows it and its token covers origin's tip. The answer branches.push_features (never, when\-shared, always; default never) decides whether feature start, merge and sync push the feature branch: when\-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the worktree root is detached and removed after the merge, when the branch is deleted. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
+Needs a passing whole\-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows it and its token covers origin's tip. The answer branches.push_features (never, when\-shared, always; default never) decides whether feature start, merge and sync push the feature branch: when\-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the worktree root is detached and removed after the merge, when the branch is deleted. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2491,6 +2493,28 @@ the plan token printed by the same command without \-\-approved.
 .TP
 .BI "\-\-approved " "WORDS"
 your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
+.B qargi changelog
+Numbered changelog items: find duplicate numbers and renumber them.
+.PP
+For a project whose changelog numbers its items, which it says with the answer release.changelog.numbered: true (off by default). Under the unreleased heading (release.changelog.unreleased, default '## [Unreleased]'), an item is a line that starts with a number, a dot and a space ('12. text') or with '\- ', the number, a dot and a space ('\- 12. text'); the lines up to the next item belong to it. Two branches that each added an item 5 leave two items numbered 5 once merged. feature sync and feature finish run the check when the answer is true: sync warns, finish refuses (exit 1, nothing changed) until the numbers are renumbered, committed and the suite has run again.
+.RS
+.TP
+.B renumber
+Find the duplicate item numbers under the unreleased heading and renumber them in file order.
+.br
+Works on the CHANGELOG.md of the work tree around the current directory, which must belong to the project (the feature's worktree, not the main checkout while it rests on the parking branch). Only when a number is duplicated, the items are numbered again, consecutively in file order from the number of the first one, and every '(item N)' cross\-reference inside the section follows the item it means: with a duplicated N, the nearest item numbered N at or before the reference, else the nearest after it. The file is rewritten and not committed. Without \-\-check it is the lead's: a member run may only use \-\-check.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.B \-\-check
+only report: write nothing, exit 1 when a number is duplicated.
 .RE
 .RE
 .TP
