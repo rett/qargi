@@ -18,10 +18,16 @@
 #                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
 #                                           with release.sign set and no release yet it says "awaiting signature" until `sign` recorded
 #                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
+#                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
+#                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
+#                                           release.sign.files, and the project's release.after_steps (an optional list of words; not tracked).
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
-#   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
-#   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
-#                                           after the checks pass: merge, tag, back-merge, delete the branch, push
+#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
+#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
+#   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
+#                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
+#                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded)
 #
 #   release.sh sign VERSION                 sign the files of the answer release.sign.files (ssh-keygen -Y sign -f KEY -n NAMESPACE FILE, one by one),
 #                                           run release.sign.verify_command and record the result under STATE/release/. Only from the tag, because the
@@ -63,20 +69,25 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT=''; ASSETS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET=''; ASSETS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
+    --push) FIXPUSH=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
 [ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
+[ "$verb" = fix ] || [ -z "$FIXPUSH" ] || die "--push belongs to release fix"
+[ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || die "--ignore-checks belongs to release finish"
+[ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
+[ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|fix|push|finish|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -100,7 +111,7 @@ trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
   local out rc=0
-  GHWHY=''
+  GHWHY='' GHS_FOR=$1
   command -v "$GH" >/dev/null 2>&1 || { GHS=nogh; return 0; }
   out=$("$GH" -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
   if [ "$rc" = 0 ]; then GHS=found
@@ -230,6 +241,123 @@ run_preflight() {
   [ "$rc" = 0 ] || die "release.preflight failed (exit $rc): ${pre[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"nothing was changed"
 }
 
+# --- the pull request and its CI checks (read-only calls through $GH)
+# pr_checks BRANCH -> PRC_STATE (pass|failing|pending|nopr|nochecks|noauth|nogh|unchecked), PRC_LINES ("name: pass|fail|pending|skipped" per check),
+# the counts PRC_PASS, PRC_FAIL, PRC_PEND and PRC_WHY. `pr checks` prints one tab-separated line per check (name, state, elapsed, url) when it is
+# not on a terminal, and exits 0 when all passed, 8 while some are pending, 1 otherwise. Never fails.
+pr_checks() {
+  local out rc=0 line name state st
+  PRC_STATE='' PRC_LINES='' PRC_WHY='' PRC_PASS=0 PRC_FAIL=0 PRC_PEND=0
+  command -v "$GH" >/dev/null 2>&1 || { PRC_STATE=nogh; return 0; }
+  out=$("$GH" -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
+  while IFS= read -r line; do
+    [[ $line == *$'\t'* ]] || continue
+    IFS=$'\t' read -r name state _ <<<"$line"
+    case $state in
+      pass) st=pass; PRC_PASS=$((PRC_PASS + 1));;
+      fail|failure|cancel|cancelled|error|timed_out) st=fail; PRC_FAIL=$((PRC_FAIL + 1));;
+      pending|queued|in_progress|waiting) st=pending; PRC_PEND=$((PRC_PEND + 1));;
+      skipping|skipped|neutral) st=skipped;;
+      *) st=${state:-unknown};;
+    esac
+    PRC_LINES+="$name: $st"$'\n'
+  done <<<"$out"
+  PRC_LINES=${PRC_LINES%$'\n'}
+  if [ "$rc" = 0 ]; then PRC_STATE=pass
+  elif [ "$PRC_FAIL" -gt 0 ]; then PRC_STATE=failing
+  elif [ "$PRC_PEND" -gt 0 ] || [ "$rc" = 8 ]; then PRC_STATE=pending
+  elif grep -qi 'no pull requests found' <<<"$out"; then PRC_STATE=nopr
+  elif grep -qi 'no checks reported' <<<"$out"; then PRC_STATE=nochecks
+  elif grep -qi 'auth login\|not logged in\|authentication' <<<"$out"; then PRC_STATE=noauth
+  else PRC_STATE=unchecked; PRC_WHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); fi
+  return 0
+}
+# pr_checks_print BRANCH: pr_checks, then the verdict and one line per check; what could not be read is a warning, never a refusal
+pr_checks_print() {
+  local l
+  pr_checks "$1"
+  case $PRC_STATE in
+    pass) echo "pull request checks of $1: all passed${PRC_LINES:+ ($PRC_PASS passed)}";;
+    failing) echo "pull request checks of $1: $PRC_FAIL failing, $PRC_PEND pending, $PRC_PASS passed";;
+    pending) echo "pull request checks of $1: $PRC_PEND pending, $PRC_PASS passed";;
+    nopr) echo "warning: no pull request for $1, so no CI ran on it (qargi release push $VER${HOTFIX:+ --hotfix})";;
+    nochecks) echo "warning: the pull request of $1 reports no checks";;
+    nogh) echo "warning: gh is not installed, so the pull request checks of $1 were not read";;
+    noauth) echo "warning: gh is not authenticated, so the pull request checks of $1 were not read (gh auth login)";;
+    *) echo "warning: could not read the pull request checks of $1 (${PRC_WHY:-no answer})";;
+  esac
+  [ -z "$PRC_LINES" ] || while IFS= read -r l; do echo "  check $l"; done <<<"$PRC_LINES"
+}
+# pr_find BRANCH -> PR_NUM and PR_URL of the open pull request whose head is BRANCH (empty: none, or it could not be asked). Read-only.
+pr_find() {
+  local out
+  PR_NUM='' PR_URL=''
+  command -v "$GH" >/dev/null 2>&1 || return 0
+  out=$("$GH" -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
+  read -r PR_NUM PR_URL <<<"$out"
+  case $PR_NUM in ''|*[!0-9]*) PR_NUM='' PR_URL='';; esac
+  return 0
+}
+# remote_tag_state TAG -> RTAG (pushed|absent|none|unchecked): does the live origin have the tag? Bounded like remote_tip. Never fails.
+remote_tag_state() {
+  local out rc=0
+  RTAG=unchecked
+  g remote get-url origin >/dev/null 2>&1 || { RTAG=none; return 0; }
+  command -v timeout >/dev/null 2>&1 || return 0
+  out=$(GIT_TERMINAL_PROMPT=0 timeout "${QARGI_REMOTE_TIMEOUT:-10}" git -C "$REPO" ls-remote --tags origin "refs/tags/$1" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || return 0
+  if [ -n "$out" ]; then RTAG=pushed; else RTAG=absent; fi
+}
+# post_release: for a tag VER that exists, the checklist of what is left after `finish`: the tag on origin, the GitHub release, the assets the
+# project records (release.assets; the signatures of release.sign.files) and the project's own after-steps (release.after_steps, a list of
+# words; qargi does not record that they were done). Read-only; what cannot be asked is said, not guessed.
+post_release() {
+  local tc a base names='' step n=0
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  echo "after the release $VER (tag at ${tc:0:7}):"
+  remote_tag_state "$VER"
+  case $RTAG in
+    pushed) echo "  tag $VER: pushed to origin";;
+    absent) echo "  tag $VER: NOT on origin (git -C $REPO push origin $VER)";;
+    none) echo "  tag $VER: no origin remote";;
+    *) echo "  tag $VER: origin not checked";;
+  esac
+  if g remote get-url origin >/dev/null 2>&1; then
+    [ "${GHS_FOR:-}" = "$VER" ] || gh_release_state "$VER"   # tag_checks asked already
+    case $GHS in
+      found) echo "  GitHub release: published";;
+      missing) echo "  GitHub release: MISSING (qargi release publish $VER)";;
+      nogh) echo "  GitHub release: not checked (gh is not installed)";;
+      noauth) echo "  GitHub release: not checked (gh is not authenticated)";;
+      *) echo "  GitHub release: not checked (${GHWHY:-no answer})";;
+    esac
+    if [ "$GHS" = found ]; then
+      names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
+      if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
+      else
+        while IFS= read -r a; do
+          [ -n "$a" ] || continue
+          base=${a##*/}
+          if grep -qxF -- "$base" <<<"$names"; then echo "  asset $base: present"; else echo "  asset $base: MISSING from the release"; fi
+        done < <(jq -r '(.release? // {}) | (.assets // [])[]' "$af" 2>/dev/null)
+        if sign_configured; then
+          while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            base=${a##*/}
+            if grep -qxF -- "$base.sig" <<<"$names"; then echo "  signature $base.sig: attached"; else echo "  signature $base.sig: UNSIGNED, not attached to the release"; fi
+          done < <(jq -r '(.release.sign.files // [])[]' "$af" 2>/dev/null)
+        fi
+      fi
+    fi
+  fi
+  while IFS= read -r step; do
+    [ -n "$step" ] || continue
+    [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi does not record that they were done):"
+    n=$((n + 1)); echo "    - ${step//\{version\}/$VER}"
+  done < <(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null)
+  return 0
+}
+
 case $verb in
   start)
     rel_valid
@@ -285,6 +413,7 @@ case $verb in
       tag_checks
       sign_status
       site_status
+      post_release
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
@@ -294,9 +423,11 @@ case $verb in
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
+    if g remote get-url origin >/dev/null 2>&1; then pr_checks_print "$BR"; fi
     tag_checks
     sign_status
-    site_status;;
+    site_status
+    post_release;;
   verify)
     rel_valid
     [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"
@@ -312,6 +443,22 @@ case $verb in
     echo "full suite: $res at $(g rev-parse --short "$on")"
     tag_checks
     [ "$res" = pass ];;
+  fix)
+    # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change
+    h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
+    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already: $BR was finished, a fix is a hotfix now (qargi release start $VER --hotfix)"
+    fw=$(held "$BR")
+    if [ -z "$fw" ]; then
+      wtp=$WT_ROOT/$BR; [ ! -e "$wtp" ] || die "$wtp exists already but does not hold $BR: remove or move it"
+      mkdir -p "$(dirname "$wtp")" && g worktree add -q "$wtp" "$BR" || die "could not make the worktree of $BR at $wtp"
+      fw=$wtp; echo "created the worktree of $BR at $fw"
+    else
+      echo "$BR is checked out in $fw already"
+    fi
+    [ -z "$(git -C "$fw" status --porcelain 2>/dev/null)" ] || echo "note: $fw has uncommitted changes"
+    echo "worktree: $fw"
+    echo "next: fix there (minor fixes only) and commit on $BR; then push the fix with: qargi release fix $VER${HOTFIX:+ --hotfix} --push (the same as release push: a plan token and an approval; it updates the open pull request, whose checks run again)"
+    echo "when the checks pass: qargi release finish $VER${HOTFIX:+ --hotfix} (finish removes the worktree)";;
   push)
     rel_valid
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
@@ -320,6 +467,8 @@ case $verb in
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
     remote_report "$BR"
+    pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
+    pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
@@ -328,8 +477,18 @@ case $verb in
     journal_push "refs/heads/$BR" "$rb0" "$h" "$KIND:push"
     audit_log "release:push" "$PROJ $BR"
     command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
-    url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || die "pushed $BR; gh pr create failed: $url"
-    echo "pushed $BR and opened: $url"
+    pr_find "$BR"
+    if [ -n "$PR_NUM" ]; then
+      echo "pushed $BR and updated PR #$PR_NUM${PR_URL:+: $PR_URL} (it was open already; its checks run on the new head)"
+    else
+      url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
+        # a pull request that could not be listed is still found by the refusal of pr create
+        PR_NUM=$(grep -o '/pull/[0-9]*' <<<"$url" | head -1 | tr -dc 0-9)
+        if grep -qi 'already exists' <<<"$url" && [ -n "$PR_NUM" ]; then echo "pushed $BR and updated PR #$PR_NUM (it was open already; its checks run on the new head)"; url=''
+        else die "pushed $BR; gh pr create failed: $url"; fi
+      }
+      [ -z "$url" ] || echo "pushed $BR and opened: $url"
+    fi
     echo "when its checks pass: qargi release finish $VER${HOTFIX:+ --hotfix}";;
   finish)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
@@ -360,11 +519,22 @@ case $verb in
       [ "$n" = 0 ] || second=$rels
     fi
     detached_mix "$BR" master; detached_mix "$BR" "$second"
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
+    if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
+      pr_checks_print "$BR"
+      rw=$(remote_was "$BR"); [ -z "$rw" ] || [ "$rw" = "$h" ] || echo "warning: origin/$BR was at ${rw:0:7} at the last fetch, not at the head ${h:0:7} that is released: those checks may be of an older commit (qargi release push, then wait for the checks)"
+      case $PRC_STATE in
+        failing|pending)
+          if [ -n "$IGNORE_SET" ]; then echo "the checks are $PRC_STATE; ignored on your word: $IGNORE_CHECKS"
+          else die "the checks of the pull request of $BR are $PRC_STATE: wait for them, or fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}); to finish anyway, in your own words: --ignore-checks \"...\""; fi;;
+        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (your words are recorded: $IGNORE_CHECKS)";;
+        *) [ -z "$IGNORE_SET" ] || echo "the checks could not be read; ignored on your word: $IGNORE_CHECKS";;
+      esac
+    fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep}${IGNORE_SET:+ --ignore-checks \"$IGNORE_CHECKS\"} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin || die "fetch failed"
@@ -375,13 +545,17 @@ case $verb in
           g merge-base --is-ancestor "origin/$b" "$b" || die "$b is behind or differs from origin/$b: reconcile them first"
         fi
       done
-      command -v "$GH" >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
-      "$GH" -R "$(repo_slug)" pr checks "$BR" >/dev/null 2>&1 || die "the pull request's checks have not all passed (or there is no pull request for $BR): nothing was merged or pushed"
+      pr_checks "$BR"   # read again: they may have changed since the plan
+      if [ "$PRC_STATE" != pass ]; then
+        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"
+        elif [ "$PRC_STATE" = nogh ]; then die "gh is needed to read the pull request's checks (or --ignore-checks \"...\" in your own words)"
+        else die "the pull request's checks have not all passed (${PRC_STATE}; or there is no pull request for $BR): nothing was merged or pushed. Fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}), or --ignore-checks \"...\" in your own words"; fi
+      fi
     else
       [ "$(verified "$BR")" = "$h pass" ] || die "the repository has no origin, so no CI: the whole suite must have a passing run at the head of $BR (qargi release verify $VER${HOTFIX:+ --hotfix})"
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
-    need_free master "$second" "$BR"
+    need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
@@ -404,8 +578,9 @@ case $verb in
     journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
     merge_forget "$k1" "$k2"
-    if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
-    audit_log "release:finish" "$PROJ $VER"
+    if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
+    audit_log "release:finish" "$PROJ $VER${IGNORE_SET:+ checks ignored: $IGNORE_CHECKS}"
+    [ -z "$IGNORE_SET" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
@@ -572,5 +747,5 @@ case $verb in
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
-  *) die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;
+  *) die "usage: qargi release start|status|verify|fix|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac
