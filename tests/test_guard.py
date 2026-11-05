@@ -3022,13 +3022,16 @@ class RunRecord(unittest.TestCase):
     # --- configuration and hooks of git, written by a command that also runs git
     GIT_PLACES = ("echo '[core]' > ~/.gitconfig; git log", "echo x >> ~/.config/git/config && git status", "echo x > ~/.config/git/attributes; git log", "echo x > .git/hooks/post-checkout; git status",
                   "echo x > .git/config; git log", "printf x | tee ~/.gitconfig; git log", "cp /etc/hostname ~/.gitconfig && git status", "git status; echo x >| ~/.gitconfig",
-                  "echo x > .git/info/attributes; git log", "echo '[alias]' >> .git/config\ngit log")
+                  "echo x > .git/info/attributes; git log", "echo '[alias]' >> .git/config\ngit log",
+                  "echo '[alias]' >> .git/modules/sub/config; git -C sub log", "echo x > .git/modules/sub/hooks/post-checkout; git submodule update",
+                  "echo '[alias]' >> .git/worktrees/w/config.worktree; git log", "echo x > .git/config.worktree && git status", "cp hk .git/worktrees/w/hooks; git log")
 
     def test_a_command_that_writes_the_configuration_of_git_and_runs_git_is_refused(self):
         for cls in ("read-only", None):
             wrong = [c for c, r in self.table(self.GIT_PLACES, cls=cls) if r.returncode != 2]
             self.assertEqual(wrong, [], "class %s" % cls)
-        for c in ("cat ~/.gitconfig; git log", "git config --list", "echo x > .gitattributes.txt; git status"):
+        for c in ("cat ~/.gitconfig; git log", "git config --list", "echo x > .gitattributes.txt; git status", "echo x > docs/modules.md; git status",
+                  "echo x > worktrees.txt; git log"):
             self.assertEqual(self.call("Bash", {"command": c}, self.run_dir, None).returncode, 0, c)
 
 
@@ -3587,6 +3590,32 @@ class FifthReview(unittest.TestCase):
         self.assertEqual(self.not_refused(bad), [])
         self.assertEqual(self.not_refused(["git -c alias.co=checkout co -- ."], None, "read-only"), [])
         ok = ["git -c user.name=t -c user.email=t@x commit -m x", "git -c color.ui=never diff", "git -c safe.directory=/x status", "git --no-pager log", "git --exec-path", "git -c core.autocrlf=false add f"]
+        self.assertEqual(self.not_allowed(ok), [])
+
+    # --- G2b: git config that writes a key that runs a program or reads another file, persistent as -c is for one command
+    def test_git_config_that_runs_a_program_is_refused_when_it_is_written_too(self):
+        bad = ['git config core.fsmonitor "qargi upgrade"', "git config alias.x '!qargi upgrade'", "git config include.path ../extra.cfg", "git config core.hooksPath hk",
+               "git config alias.p push", "git config --local alias.p push", "git config --worktree core.pager x", "git config --file x.cfg alias.p push", "git config -f x.cfg alias.p push",
+               "git config set alias.p push", "git config set --local core.editor x", "git -C sub config alias.p push", "git config Alias.P push", "git config CORE.FSMONITOR x",
+               "git config core.hookspath hk", "git config core.sshCommand x", "git config core.editor x", "git config core.pager x", "git config core.askPass x", "git config core.gitProxy x",
+               "git config includeIf.gitdir:/x/.path f", "git config filter.f.clean x", "git config filter.f.smudge x", "git config filter.f.process x", "git config diff.d.textconv x",
+               "git config diff.d.command x", "git config merge.m.driver x", "git config credential.helper x", "git config sequence.editor x", "git config gpg.program x",
+               "git config gpg.ssh.program x", "git config uploadpack.packObjectsHook x", "git config receivepack.x y", "git config remote.origin.uploadpack x",
+               "git config remote.origin.receivepack x", "git config url.ext::sh.insteadOf https://h/", "git config url.x.pushInsteadOf y", "git config --add alias.p push",
+               "git config --replace-all alias.p push", "git config --add include.path f", "git config --type=path include.path f", "git config --rename-section foo alias",
+               "git config --edit", "git config edit", "git config rename-section foo alias", "git config $K x", "echo alias.p push | xargs git config",
+               "sh -c 'git config alias.p push'", "bash <<< 'git config alias.p push'", "git config diff.external x", "git config core.alternateRefsCommand x",
+               "git config submodule.s.update '!x'", "git config protocol.ext.allow always", "git config remote.origin.pushurl x", "git config remote.origin.url x"]
+        bad += ["git -c url.x.insteadOf=y fetch", "git -c uploadpack.packObjectsHook=x fetch", "git -c protocol.ext.allow=always fetch", "git -c remote.origin.pushurl=x fetch",
+                "git -c submodule.s.update=!x submodule update", "GIT_CONFIG=~/.gitconfig git config user.name x"]
+        self.assertEqual(self.not_refused(bad), [])
+        r = self.call("Bash", {"command": "git config alias.p push"})
+        self.assertIn("runs a program", r.stderr)
+        ok = ["git config user.name x", "git config user.email x@example.invalid", "git config core.autocrlf false", "git config --get alias.x", "git config -l", "git config --list",
+              "git config alias.x", "git config get alias.x", "git config list", "git config --unset alias.p", "git config unset alias.p", "git config --get-regexp alias",
+              "git config --remove-section alias", "git config --local user.name x", "git config set user.name x", "git config pull.rebase true",
+              "git commit -m 'git config alias.p push'", "git config --show-origin --get core.editor",
+              "git -c protocol.file.allow=always submodule update --init", "git -c protocol.version=2 fetch"]
         self.assertEqual(self.not_allowed(ok), [])
 
     # --- G3: the other ways to publish

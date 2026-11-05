@@ -14,9 +14,11 @@ reason on stderr), since it has no other. A refusal, a failure and an unknown cl
 
 Publishing: git push, send-pack, http-push and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
 push), the programs git-push, git-send-pack, git-http-push and git-receive-pack, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
-changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias or
-runs a program (alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand, include.path, diff.external, credential.* ...), `--exec-path=DIR`, and the variables
-GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
+changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias,
+runs a program or reads another configuration file (GIT_RUNS_CODE: alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand|askPass|gitProxy, include.path, includeIf.*.path,
+diff.external, credential.*, filter.*, gpg.*, url.*.insteadOf, remote.*.url|uploadpack ...), and `git config` that writes such a key for later (set, --add, --replace-all or
+KEY VALUE, in any scope or --file, after -C, the key read in any case), or that can write any key (--edit, a section renamed), or whose key a variable or xargs brings
+(config_refusal); `--exec-path=DIR`, and the variables GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
 
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
 under the protected ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
@@ -167,7 +169,8 @@ substitution) is refused when it could name a record file of the run (`> abilit?
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
 (/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
 variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
-a git configuration or hook file in a command that also runs git is refused for every member.
+a git configuration or hook file (GIT_PLACE: ~/.gitconfig, ~/.config/git, .git/config, .git/hooks, .git/modules, .git/worktrees, config.worktree, info/attributes) in a
+command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
@@ -290,8 +293,12 @@ def word_then_subst(word, text):
 GIT_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")   # git's global options that take the next word
 GIT_PUSHERS = {"push", "send-pack", "http-push"}             # the git subcommands that publish
 GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack"}   # and the programs behind them, run by their own name
-GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy)|diff\.external|pager\..*|"
-                           r"sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|remote\..*\.(?:receivepack|uploadpack|vcs))$", re.I)
+# the git configuration keys that make git run a program, read another configuration file, or give a command or a remote another name: refused in
+# `git -c KEY=V`, `--config-env KEY=V` and every `git config` that writes one (one list; git reads the section and the key whatever their case)
+GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy|alternaterefscommand)|"
+                           r"diff\.external|pager\..*|sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|"
+                           r"(?:diff|merge)tool\..*\.cmd|submodule\..*\.update|uploadpack\..*|receivepack\..*|url\..*\.(?:insteadof|pushinsteadof)|"
+                           r"remote\..*\.(?:receivepack|uploadpack|vcs|url|pushurl)|protocol\.(?:ext\.)?allow)$", re.I)
 GIT_ENV_RUNS_CODE = re.compile(r"^(?:GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS|GLOBAL|SYSTEM)|GIT_EXEC_PATH|GIT_SSH(?:_COMMAND)?|GIT_PROXY_COMMAND|GIT_ASKPASS|GIT_EXTERNAL_DIFF|"
                                r"GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR)$")
 REMOTE_CHANGES = ("add", "set-url", "remove", "rm", "rename", "set-branches", "set-head")
@@ -337,6 +344,10 @@ def git_refusal(pre, rest):
         return "changing a git remote is not available to an agent"
     if builds_word(sub):
         return "a git subcommand that a variable or a substitution builds (%s) could be a push or any other verb and is not available to an agent" % sub
+    if sub == "config":
+        why = config_refusal(args, any(os.path.basename(t) == "xargs" for t in pre))
+        if why:
+            return why
     for name, val in opts:
         key = (val or "").partition("=")[0]
         if (name in ("-c", "--config-env") and GIT_RUNS_CODE.match(key)) or (name == "--exec-path" and val):
@@ -346,6 +357,49 @@ def git_refusal(pre, rest):
         m = ASSIGNMENT.match(t)
         if m and GIT_ENV_RUNS_CODE.match(m.group(1)):
             return "git with %s set reads a configuration that runs a program or gives a git command another name (an alias can be a push) and is not available to an agent" % m.group(1)
+    return None
+
+
+CONFIG_VALUE_OPTS = {"--file", "-f", "--blob", "--type", "-t", "--default", "--comment", "--value", "--url"}   # git config options that take the next word
+CONFIG_VERBS = {"set", "get", "list", "unset", "rename-section", "remove-section", "edit"}       # the subcommands of git config (2.46): a key always has a dot
+CONFIG_ANY = {"--edit", "-e", "--rename-section", "edit", "rename-section"}                       # can make any key: an editor on the file, a section renamed to alias
+
+
+def config_written(args):
+    """The keys `git config ARGS` writes: the key of set, --add, --replace-all or NAME VALUE; [] for a read (--get, --list, a key alone), an unset or a section
+    removed; None when it can make any key (--edit, a section renamed)."""
+    names, opts, skip = [], [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in CONFIG_VALUE_OPTS:
+            skip = True
+        elif a.startswith("-"):
+            opts.append(a.split("=", 1)[0])
+        else:
+            names.append(a)
+    if names[:1] and names[0] in CONFIG_VERBS:
+        verb, names = names[0], names[1:]
+        return None if verb in CONFIG_ANY else names[:1] if verb == "set" else []
+    if any(o in CONFIG_ANY for o in opts):
+        return None
+    if any(o in CONFIG_READS or o in ("--unset", "--unset-all", "--remove-section") for o in opts):
+        return []
+    return names[:1] if len(names) > 1 or any(o in ("--add", "--replace-all") for o in opts) else []
+
+
+def config_refusal(args, via_xargs):
+    """The reason `git config ARGS` writes a key in GIT_RUNS_CODE (in any scope or file), one a variable or xargs brings, or any key, or None."""
+    keys = config_written(args)
+    if keys is None:
+        return ("git config --edit and a renamed section can write any key, one that runs a program or gives a git command another name (an alias can be a push) "
+                "among them, and are not available to an agent")
+    if via_xargs and not any(a.split("=", 1)[0] in CONFIG_READS for a in args):
+        return "git config through xargs writes a key the guard cannot read, which could run a program or give a git command another name, and is not available to an agent"
+    for key in keys:
+        if builds_word(key) or GIT_RUNS_CODE.match(key):
+            return ("git config %s sets a git configuration that runs a program, reads another configuration file or gives a git command or a remote another name "
+                    "(an alias can be a push) and is not available to an agent" % key)
     return None
 
 
@@ -1244,6 +1298,8 @@ def write_targets(toks, i):
                 targets += [("git " + sub, tree) for tree in trees]
             if sub == "config":
                 targets += git_config_targets(rest[k + 1:])
+                if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
+                    targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
             places = [t for t in rest[k + 1:] if not t.startswith("-")]
             if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
                 targets.append(("git clone", places[-1]))
@@ -1417,7 +1473,8 @@ DEVICE = re.compile(r"^/dev/(?:null|zero|full|tty|stdin|stdout|stderr|fd/\d+)$")
 UNKNOWN = re.compile(r"[$`*?\[]")                            # in a word: a variable, a substitution or a glob stands where the guard would read a name
 OVERWRITES = {"a redirection", "tee", "cp", "install", "ln", "rsync", "dd", "sort -o", "uniq", "mv", "truncate", "sed -i", "perl -i", "git bundle create"}   # they make or replace the file they name
 TOUCHERS = WRITERS | COPIERS | {"dd"}                          # the programs whose every operand is a file they change or take away (a source is moved or removed)
-GIT_PLACE = re.compile(r"(?:^|/)(?:\.gitconfig|\.config/git(?:/.*)?|\.git/config|\.git/hooks(?:/.*)?|info/attributes)$")   # what git reads its configuration and its hooks from
+GIT_PLACE = re.compile(r"(?:^|/)(?:\.gitconfig|\.config/git(?:/.*)?|\.git/config|\.git/hooks(?:/.*)?|\.git/modules(?:/.*)?|\.git/worktrees(?:/.*)?|config\.worktree|"
+                       r"info/attributes)$")   # what git reads its configuration and its hooks from (a submodule's and a worktree's too)
 RESTRICTED_ENV = {"PATH", "ENV", "BASH_ENV", "IFS", "HOME", "SHELL", "SHELLOPTS", "CDPATH", "GLOBIGNORE", "PAGER", "EDITOR", "VISUAL", "MANPAGER", "LESSOPEN", "TMPDIR",
                   "SSH_ASKPASS", "XDG_CONFIG_HOME", "PROMPT_COMMAND", "RIPGREP_CONFIG_PATH", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "PYTHONSTARTUP", "PYTHONPATH",
                   "EXINIT", "VIMINIT", "GREP_OPTIONS", "BROWSER", "PERL5LIB", "RUBYLIB", "NODE_PATH"}
