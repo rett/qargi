@@ -914,7 +914,7 @@ COMMANDS = {
         "opts": [ASKED],
     },
     "local": {
-        "summary": "Prepare, verify, list and clean a local run that has no way to push",
+        "summary": "Prepare, verify, close, list and clean a local run that has no way to push",
         "desc": ("The agent works in a clone of a bare copy that has no remote, runs git through a credential-less wrapper, and "
                  "verify compares every ref of the real repository before and after. It is a guard, not a sandbox."),
         "scripts": ["local.sh"],
@@ -963,6 +963,15 @@ COMMANDS = {
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
                                  "When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot "
                                  "that emptied a tmpfs) can still be applied: qargi review apply --from-saved ID. --saved ID compares the refs against that copy's snapshots.")),
+            "close": verb("Close a verified run whose patches you applied by hand (git am): it is no longer open", [("RUN_DIR", "dir")],
+                          [opt("--applied-by-am", "the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required)")],
+                          desc=("Marks the run in the lead's registry (closed: the time, closed_by: applied-by-am), never in the run directory, which a member can write; the files are kept. "
+                                "A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact-check and the compaction advice, no longer blocks "
+                                "qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it "
+                                "without asking for an applied tip (its commits are taken as applied by hand); clean --applied removes it too. Refused for a run that has no passing "
+                                "local verify (verify it first: close must not hide changed refs), a read-only run, one applied with qargi review apply (merge that branch), "
+                                "a run already closed or cleaned. Not available in a member run."),
+                          examples=["qargi local close ./run --applied-by-am"]),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
@@ -987,7 +996,7 @@ COMMANDS = {
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
-                         desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
+                         desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close --applied-by-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
                                "It is the list that qargi local clean --applied --scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), "
                                "and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove "
                                "is listed after the others as directory gone, with its saved copy and the review apply --from-saved command that applies it.")),
@@ -1006,7 +1015,7 @@ COMMANDS = {
             "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir", True)],
                           [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch"),
                            opt("--from-saved", "apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks", "ID")],
-                          desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
+                          desc=("Refuses a run applied already or closed (local close --applied-by-am), and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
                                 "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
                                 "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
                                 "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "

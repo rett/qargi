@@ -1013,14 +1013,17 @@ def task_state(r):
     verified (the mark of a passing `local verify`, or RUN/verified) or not verified, with applied (RUN/applied) and a directory that is gone."""
     run = r["run"]
     cleaned = bool(r.get("cleaned"))
+    closed = bool(r.get("closed")) and not cleaned           # `local close --applied-by-am`: taken in by hand, no open task, the files kept
     verified = bool(r.get("verified")) or os.path.exists(os.path.join(run, "verified"))
     applied = os.path.exists(os.path.join(run, "applied"))
     if cleaned:
         state = "cleaned"
+    elif closed:
+        state = "closed (applied by hand)"
     else:
         parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
         state = ", ".join(parts)
-    return {"verified": verified, "applied": applied, "cleaned": cleaned, "state": state}
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "closed": closed, "state": state}
 
 
 def tasks_of(ctx, name):
@@ -1172,12 +1175,15 @@ def print_full(d, raw_lens):
             print("  %s:" % k)
             print(indent(v + ("\n[truncated at %d characters]" % CAP if raw_lens.get(k, 0) > CAP else ""), 4))
     # the open tasks one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
-    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"]], [t for t in d["tasks"] if t["cleaned"]]
+    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"] and not t["closed"]], [t for t in d["tasks"] if t["cleaned"]]
+    closed = [t for t in d["tasks"] if t["closed"]]
     print("tasks:" + ("" if opened else " none"))
     for t in opened:
         print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], t["state"]))
     if cleaned:
         print("  cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned))
+    if closed:
+        print("  closed (applied by hand): " + " ".join(t["slug"] or t["run"] for t in closed))
     print("agent branches of feature/%s (prepared against it) not merged into it:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
     for b in d["agent_branches"]:
         print("  " + b)

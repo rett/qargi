@@ -285,8 +285,8 @@ def open_runs(state, repo, url):
     res = []
     for r in registry(state):
         d = r["run"]
-        if not os.path.isdir(d):
-            continue                                      # cleaned
+        if not os.path.isdir(d) or r.get("cleaned") or r.get("closed"):
+            continue                                      # cleaned, or closed (local close --applied-by-am: taken in by hand)
         same = (r.get("repo") and rp and os.path.realpath(r["repo"]) == rp) or (r.get("url") and url and r["url"] == url)
         if not same:
             continue
@@ -402,7 +402,7 @@ def check(a, conf, state):
         if what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))
         elif what == "verified, not applied":
-            reasons.append("a local run is verified and not applied: %s (%s %s on %s); apply it (qargi review apply %s BRANCH) and merge it, or clean it" % (d, role, slug, base, d))
+            reasons.append("a local run is verified and not applied: %s (%s %s on %s); apply it (qargi review apply %s BRANCH) and merge it, or close it if you applied it by hand (qargi local close %s --applied-by-am), or clean it" % (d, role, slug, base, d, d))
         else:
             reasons.append("a local run is applied and not merged: %s (%s %s on %s); merge it (qargi feature merge NAME BRANCH), then qargi local clean" % (d, role, slug, base))
     for n in conflicts(state, project):

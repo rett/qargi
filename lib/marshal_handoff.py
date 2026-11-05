@@ -457,13 +457,16 @@ def render_body(F):
         for wt in f["worktrees"][:LIST_MAX]:
             A("  worktree: %s on %s" % (wt["path"], wt["branch"]))
         # the open task runs one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
-        opened, cleaned = [t for t in f["tasks"] if not t["cleaned"]], [t for t in f["tasks"] if t["cleaned"]]
+        opened, cleaned = [t for t in f["tasks"] if not t["cleaned"] and not t.get("closed")], [t for t in f["tasks"] if t["cleaned"]]
+        closed = [t for t in f["tasks"] if t.get("closed")]
         for t in opened[:COMMITS_MAX]:
             A("  task run: %s (%s, %s), %s" % (t["slug"] or t["run"], t["role"], t["started"], t["state"]))
         if len(opened) > COMMITS_MAX:
             A("    and %d more task run(s)" % (len(opened) - COMMITS_MAX))
         if cleaned:
             A("  task runs cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned[:LIST_MAX]) + (" (and %d more)" % (len(cleaned) - LIST_MAX) if len(cleaned) > LIST_MAX else ""))
+        if closed:
+            A("  task runs closed (applied by hand): " + " ".join(t["slug"] or t["run"] for t in closed[:LIST_MAX]) + (" (and %d more)" % (len(closed) - LIST_MAX) if len(closed) > LIST_MAX else ""))
         for o, fs in f["overlap"].items():
             A("  files also changed by feature/%s: %s" % (o, " ".join(fs)))
     u, um = more(F["agent_unattributed"])

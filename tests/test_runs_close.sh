@@ -126,5 +126,43 @@ out=$($DA ref note 2>&1); rc=$?
 [ $rc = 2 ] && ok "ref note without a REF is a usage error" || no "no ref: rc=$rc $out"
 git -C "$A" branch -D agent-made >/dev/null; git -C "$A" push -q origin :agent-made
 
+# --- 2. local close --applied-by-am
+for r in "$T"/scr/qargi.*; do $DA local clean "$r" --discard >/dev/null 2>&1; done
+$F start cl >/dev/null 2>&1
+R=$(mkrun closed-run feature/cl); commits "$R" b1.go; collect "$R"
+out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "no passing verify" <<<"$out" && ok "close is refused for a run that was never verified" || no "close unverified: rc=$rc $out"
+out=$($DA local close "$R" 2>&1); rc=$?
+[ $rc = 2 ] && ok "close without --applied-by-am is a usage error" || no "close no flag: rc=$rc $out"
+out=$(verify "$R"); [ $? = 0 ] || no "(setup) verify: $out"
+out=$($DA lead compact-check --project app 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "a local run is verified and not applied: $R" <<<"$out" && grep -q "qargi local close $R --applied-by-am" <<<"$out" && ok "(setup) a verified run is open for compact-check, which names the way to close it" || no "compact-check: rc=$rc $out"
+# applied by hand
+git -C "$A" checkout -q parked 2>/dev/null
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q --detach "$w" feature/cl
+git -C "$w" am -q "$R"/out/patches/*.patch && git -C "$A" update-ref refs/heads/feature/cl "$(git -C "$w" rev-parse HEAD)"; git -C "$A" worktree remove --force "$w"
+out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "closed $R" <<<"$out" && [ -d "$R/clone" ] && [ -d "$R/out" ] && ok "close marks the run and keeps its files" || no "close: rc=$rc $out"
+reg=$T/s/local-runs.jsonl
+jq -e --arg r "$R" 'select(.run == $r and .closed_by == "applied-by-am" and (.closed | length) > 0)' "$reg" >/dev/null && ok "the lead's registry records it (closed, closed_by)" || no "registry: $(tail -1 "$reg")"
+out=$($DA local close "$R" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "closed already" <<<"$out" && ok "a run is closed once" || no "close twice: rc=$rc $out"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "$R" <<<"$out" && no "a closed run is still an open run for compact-check: $out" || ok "compact-check no longer lists the closed run (not verified-and-not-applied)"
+grep -q "open runs: none" <<<"$out" && ok "and the restart block says no run is open" || no "restart block: $out"
+out=$($DA local list --scratch "$T/scr" 2>&1)
+grep -E "closed-run +[0-9a-z?]+ +closed +- " <<<"$out" >/dev/null && ok "local list shows the run as closed" || no "list: $out"
+out=$($DA marshal status cl 2>&1)
+grep -q "closed (applied by hand): closed-run" <<<"$out" && ! grep -q "$R  closed-run" <<<"$out" && ok "marshal status lists it as closed, not as a task" || no "marshal status: $out"
+out=$($DA review apply "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "this run was closed" <<<"$out" && [ -z "$(git -C "$A" branch --list agent/closed-run)" ] && ok "review apply refuses a closed run: its patches are not applied a second time" || no "apply closed: rc=$rc $out"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "clean removes a closed run without asking for an applied tip" || no "clean closed: rc=$rc $out"
+# a read-only run is not closed this way, and a discarded or cleaned run does not block finish
+R2=$(mkrun ro-run feature/cl); echo "# report" > "$R2/out/report.md"; echo read-only > "$R2/class"
+out=$($DA local close "$R2" --applied-by-am 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "read-only run" <<<"$out" && ok "close refuses a read-only run" || no "close read-only: rc=$rc $out"
+$DA local clean "$R2" --discard >/dev/null 2>&1
+
 rm -rf "$T"
 exit $fail

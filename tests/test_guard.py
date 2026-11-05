@@ -3972,7 +3972,7 @@ class FifthReview(HookCase):
 
     # --- G12: the lead's runs and agents
     def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
-        verbs = ["local clean RUN", "local clean RUN --discard", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
         bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
                                                     "timeout 5 qargi %s")]
         bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]

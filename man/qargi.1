@@ -2879,7 +2879,7 @@ the request, in your words, that names the cloud instance; recorded in the audit
 .RE
 .TP
 .B qargi local
-Prepare, verify, list and clean a local run that has no way to push.
+Prepare, verify, close, list and clean a local run that has no way to push.
 .PP
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
@@ -2982,6 +2982,18 @@ verify the lead's saved copy of a passed run whose directory is gone (ID: the na
 .RE
 .RS
 .TP
+.BI "close " "RUN_DIR"
+Close a verified run whose patches you applied by hand (git am): it is no longer open.
+.br
+Marks the run in the lead's registry (closed: the time, closed_by: applied\-by\-am), never in the run directory, which a member can write; the files are kept. A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact\-check and the compaction advice, no longer blocks qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it without asking for an applied tip (its commits are taken as applied by hand); clean \-\-applied removes it too. Refused for a run that has no passing local verify (verify it first: close must not hide changed refs), a read\-only run, one applied with qargi review apply (merge that branch), a run already closed or cleaned. Not available in a member run.
+.RS
+.TP
+.B \-\-applied\-by\-am
+the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required).
+.RE
+.RE
+.RS
+.TP
 .BI "clean " "[RUN_DIR]"
 Remove a collected, verified run and its temporary directory.
 .br
@@ -3017,7 +3029,7 @@ with \-\-applied or \-\-stale: the directory the runs were prepared in; only the
 .B list
 List the local runs: role, slug, age, whether applied and merged.
 .br
-Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove is listed after the others as directory gone, with its saved copy and the review apply \-\-from\-saved command that applies it.
+Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close \-\-applied\-by\-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove is listed after the others as directory gone, with its saved copy and the review apply \-\-from\-saved command that applies it.
 .RS
 .TP
 .BI "\-\-scratch " "DIR"
@@ -3123,7 +3135,7 @@ accept a manifest with no commits (a team member that was blocked or had nothing
 .BI "apply " "[RUN_DIR]"
 Apply a collected, checked run to a task branch of the repository.
 .br
-Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run. \-\-from\-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify \-\-saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once.
+Refuses a run applied already or closed (local close \-\-applied\-by\-am), and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run. \-\-from\-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify \-\-saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
