@@ -27,6 +27,7 @@ run python3 tests/test_tierplan.py
 run bash tests/test_tier_hook.sh
 run bash tests/test_tier_packet.sh
 run python3 tests/test_help.py
+run python3 tests/test_startup.py
 run python3 tests/test_site.py
 run python3 tests/test_membackend.py
 run python3 tests/test_transfer.py
