@@ -102,7 +102,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
     the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
     that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
-    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it; any verb, also through lib/ref.sh);
+    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it, note journals a branch the lead made; any verb, also through lib/ref.sh);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -2663,8 +2663,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
     if area == "ref":
-        return OwnReason("qargi ref %s moves a branch of the lead's repository and writes the lead's ref journal, which local verify trusts, and is the lead's to run; "
-                         "report in your task output a branch you think should be rewritten" % (verb or "(no verb)"))
+        return OwnReason("qargi ref %s writes the lead's ref journal, which local verify trusts (record --rewrite also moves a branch of the lead's repository), and is the lead's to run; "
+                         "report in your task output a branch you think should be rewritten or noted" % (verb or "(no verb)"))
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))

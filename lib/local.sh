@@ -148,6 +148,16 @@ parking_of() {
   echo "${p:-scratch}"
 }
 
+# bridge_ref REPO NAME NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own: NEW is empty (the
+# branch is gone), or a worktree whose directory is named bridge-S of REPO holds it now (git worktree list). A branch of that name that no such worktree
+# holds is not the harness's.
+bridge_ref() {
+  [ -n "$3" ] || return 0
+  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v ref="$2" -v tail="/worktrees/bridge-${2#refs/heads/worktree-bridge-}" '
+    function chk() { if (br == ref && length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail) ok = 1; br = ""; p = "" }
+    /^worktree / { chk(); p = substr($0, 10) } /^branch / { br = $2 } /^$/ { chk() } END { chk(); exit ok ? 0 : 1 }'
+}
+
 # compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
 # the file ACCEPTED, one line each. Refs under refs/qargi/ are not compared (see drop_qargi_refs). A change is accepted, in either phase, when
 #   - the lead's ref journal explains it (journal_steps): a branch or a tag of the repository, or a branch or tag of its origin, moved,
@@ -155,7 +165,9 @@ parking_of() {
 #     parking branch following develop, a rewrite the lead recorded ...); a peeled tag line of origin (TAG^{}) goes with its tag;
 #   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
 #     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
-#   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi.
+#   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
+#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree holds it, or when it is gone).
+# A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
 # or a deletion nobody journaled, a tag or a push made by hand, any other ref, is offending.
@@ -184,6 +196,9 @@ compare() {
       refs/heads/?*|refs/tags/?*)
         if steps=$(journal_steps "$kind" "$name" "${old:-$zero}" "${new:-$zero}"); then ACC[$k]=1; echo "$short $a by $steps" >> "$acc"; continue; fi;;
     esac
+    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$new"; then
+      ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
+    fi
     if [ "$kind" = local ]; then
       # a remote-tracking ref of origin that says what origin has now, and a tag fetched from origin
       case $name in

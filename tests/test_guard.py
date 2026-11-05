@@ -1267,13 +1267,13 @@ class Marshal(HookCase):
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",
                 "bin/qargi ref record", "env FOO=1 qargi ref record", "sudo qargi ref record", "bash -c 'qargi ref record'", "eval 'qargi ref record'",
                 "echo $(qargi ref record)", "true && qargi ref record", "ls; qargi ref record", "qargi 'ref' 'record'", "bash lib/ref.sh record --rewrite agent/x a b --why w",
-                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record"]
+                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record", "qargi ref note feature/x", "bash lib/ref.sh note origin/x"]
         for c in cmds:
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("qargi guard:", res.stderr, c)
         for c in ("qargi ref record --rewrite agent/x a b --why w", "bash lib/ref.sh record"):
-            self.assertIn("qargi ref record moves a branch of the lead's repository", self.bash(c).stderr, c)
+            self.assertIn("qargi ref record writes the lead's ref journal", self.bash(c).stderr, c)
         for c in ("echo qargi ref record", "grep -n 'ref record' lib/commands.py", "cat lib/ref.sh", "git log --grep 'ref record'"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))

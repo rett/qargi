@@ -2611,9 +2611,9 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .TP
 .B qargi ref
-Record in the lead's ref journal a branch move that no flow verb made.
+Record in the lead's ref journal a branch move or a branch that no flow verb made.
 .PP
-The ref journal ($QARGI_STATE/ref\-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand that verify must still accept: the rewrite of an agent branch that keeps its content.
+The ref journal ($QARGI_STATE/ref\-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand that verify must still accept: the rewrite of an agent branch that keeps its content. qargi ref note adds the branches the lead made by hand or pushed (git branch, git push), so that verify does not blame the run for them.
 .RS
 .TP
 .BI "record " "REF OLD NEW"
@@ -2629,6 +2629,23 @@ the kind of move: REF goes from OLD to NEW, whose trees must be identical.
 .TP
 .BI "\-\-why " "TEXT"
 the reason, journaled and named by local verify.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RE
+.RS
+.TP
+.BI "note " "REF"
+Journal a branch you made by hand, or pushed to origin, so that local verify accepts it.
+.br
+REF (give several) is a branch NAME, or origin/NAME for the branch NAME of origin, whose live value is asked (git ls\-remote); the branch must exist now. The journal line (verb ref:note) goes from the ref being absent to the value it has now, or, when you noted that ref before, from where the earlier note left it (pushing the same branch again). Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. Only a ref that did not exist when the run was prepared (or that you noted before) is accepted this way: a ref that existed then and has moved, a deletion, and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. Not available in a member run. The harness's own worktree branches (worktree\-bridge\-NAME, held by a worktree directory bridge\-NAME) need no note: verify leaves them out.
+.RS
+.TP
+.BI "\-\-why " "TEXT"
+a reason, journaled with a local branch.
 .RE
 .RS
 .TP
@@ -2956,7 +2973,7 @@ the profile to dispatch under (for example advisor or auditor for review); resol
 .BI "verify " "[RUN_DIR]"
 Compare the repository's refs with the snapshot taken by prepare.
 .br
-Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). It accepts the lead's own moves and names each one ("develop moved by qargi feature finish"): what the lead's ref journal records (the branches and tags that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, the parking branch following develop, a rewrite recorded with qargi ref record \-\-rewrite), a remote\-tracking ref of origin that says what origin has (a fetch), and the parking branch (repo.parking_branch, default scratch) fast\-forwarded to develop's tip, by hand too. After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept your fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot that emptied a tmpfs) can still be applied: qargi review apply \-\-from\-saved ID. \-\-saved ID compares the refs against that copy's snapshots.
+Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). It accepts the lead's own moves and names each one ("develop moved by qargi feature finish"): what the lead's ref journal records (the branches and tags that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, the parking branch following develop, a rewrite recorded with qargi ref record \-\-rewrite), a remote\-tracking ref of origin that says what origin has (a fetch), the parking branch (repo.parking_branch, default scratch) fast\-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted (qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). It also leaves out the harness's own bridge branches: a branch worktree\-bridge\-NAME while a worktree directory bridge\-NAME holds it (or once it is gone). After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept your fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot that emptied a tmpfs) can still be applied: qargi review apply \-\-from\-saved ID. \-\-saved ID compares the refs against that copy's snapshots.
 .RS
 .TP
 .BI "\-\-saved " "ID"

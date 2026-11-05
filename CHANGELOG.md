@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi ref note REF...` journals a branch the lead made by hand, or pushed (`origin/NAME` for a branch of origin, whose live value is asked), so
+  `qargi local verify` and `local clean` of a run prepared before accept it and name it a ref the lead noted. The journal line starts at an absent ref
+  (or at the lead's own earlier note of that ref, as with a second push), so a ref that existed when the run was prepared, and any ref nobody noted,
+  is still found. The guard refuses it to a member.
+
+### Fixed
+- `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
+  directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added
