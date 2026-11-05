@@ -4,18 +4,13 @@
  "goal": "Integrate rel-sign, env, polish, branches, site and lead-context for one whole-suite run and one finish",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-05T03:59:59Z"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-05T08:41:42Z",
- "finished_at": null,
+ "finished_at": "2026-11-05T08:43:33Z",
  "updated_by": "rett@arc",
- "rev": 27,
- "updated_at": "2026-11-05T08:41:42Z",
+ "rev": 28,
+ "updated_at": "2026-11-05T08:43:33Z",
  "feature": "rel-0-2",
  "project": "qargi"
 }
