@@ -259,6 +259,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and the summary lists the failed steps and the slowest ten before the `total:` line. The linter runs through `xargs -P`.
   The runner fails when a `tests/test_*` file is not in the manifest or a listed file does not exist; `tests/test_gitflow_detached.sh`,
   which no list ran, is now listed. `tests/test_runner.sh` tests the runner.
+- Every command starts faster: what `bin/qargi` does before a verb runs (the dev-run banner, the arguments filled in from the
+  current directory, the project's cloud binding) is one python process, `lib/help.py preamble`, instead of three, and the model
+  list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
+  takes about half the time it did. `tests/test_startup.py` keeps the count at one process and the time under the shrink-only
+  ceiling of `tests/startup-budget.txt`.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
