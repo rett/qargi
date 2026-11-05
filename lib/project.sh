@@ -213,7 +213,13 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
     need(isinstance(cfg.get("pip", []), list), "%s.pip: a list of Python packages" % p)
-    need(isinstance(cfg.get("go", []), list), "%s.go: a list of Go modules, each with a version (module@version)" % p)
+    if "go" in cfg:
+        bad.append("%s.go: no such answer; a Go tool is an entry of %s.tools: {kind: go, name: PACKAGE, version: vX.Y.Z}" % (p, p))
+    import tools as _tools   # lib/tools.py: the pinned tools of a role (go, binary, submodule) and what each entry needs
+    bad.extend(_tools.problems(p, cfg.get("tools")))
+if isinstance(r, dict):
+    import tools as _tools
+    bad.extend(_tools.conflicts(r))
     off = cfg.get("tools_off", [])
     need(isinstance(off, list) and all(x in ("web_search", "web_fetch", "edit", "write", "read", "bash", "glob", "grep") for x in off), "%s.tools_off: built-in tools to disable (web_search, web_fetch, edit, ...)" % p)
     sk = cfg.get("skills", [])
@@ -440,8 +446,8 @@ case $verb in
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
-        build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], skills: []},
-        write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], skills: ["pdf"]}
+        build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], tools: [], skills: []},
+        write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], tools: [], skills: ["pdf"]}
       },
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
