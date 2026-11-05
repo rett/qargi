@@ -72,7 +72,17 @@ remote_report() {
 
 WT=''
 cleanup() { [ -z "$WT" ] || { g worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$WT"; WT=''; }; }
-on_exit() { marshal_hold_stop; cleanup; }
+# busy_begin KIND NAME / busy_end: a whole-suite run is in progress. The pid file $DA_STATE/busy/PROJECT.KIND.NAME.pid is what
+# `qargi lead compact-check` reads (a live pid: not now); busy_end and the EXIT trap remove it, and a file whose pid is gone is ignored.
+BUSY=''
+busy_begin() { mkdir -p "$DA_STATE/busy" 2>/dev/null; BUSY=$DA_STATE/busy/$PROJ.$1.${2//\//_}.pid; echo "$$" > "$BUSY" 2>/dev/null || BUSY=''; }
+busy_end() { [ -z "$BUSY" ] || rm -f "$BUSY"; BUSY=''; }
+# lead_advice [--feature NAME]: the one line of the stage verbs (feature finish, the last merge of a feature, release finish, marshal handoff):
+# the lead's context in use and whether a compact is safe now (lib/lead_usage.py). Fail-soft: it never changes the status of the verb.
+lead_advice() {
+  python3 -I "$(dirname "${BASH_SOURCE[0]}")/lead_usage.py" advice --state "$DA_STATE" --conf "$DA_CONF" --project "${PROJ:-}" "$@" 2>/dev/null || true
+}
+on_exit() { marshal_hold_stop; busy_end; cleanup; }
 trap on_exit EXIT   # the lease renewer never outlives the verb, whatever way it ended
 worktree() { # commit-ish -> a detached temporary worktree there (WT)
   WT=$(mktemp -d "$DA_STATE/release-wt.XXXXXX")

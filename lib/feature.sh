@@ -131,7 +131,8 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:merge
     merge_forget "feature-$NAME_ARG-merge-${EXTRA//\//_}"
     echo "merged $EXTRA into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head"
-    push_feature "$BR";;
+    push_feature "$BR"
+    lead_advice --feature "$NAME_ARG";;
   sync)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
@@ -179,9 +180,9 @@ case $verb in
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
-    hold_begin "$NAME_ARG"
+    hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     if run_suite; then res=pass; else res=fail; fi
-    hold_end
+    busy_end; hold_end
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$BR")"
     echo "full suite: $res at $(g rev-parse --short "$BR")"; [ "$res" = pass ];;
   finish)
@@ -237,6 +238,7 @@ case $verb in
         g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null && echo "deleted origin/$BR" || echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2
       fi
       echo "pushed develop"
-    fi;;
+    fi
+    lead_advice;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

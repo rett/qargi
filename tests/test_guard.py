@@ -1015,6 +1015,26 @@ class Marshal(unittest.TestCase):
         os.makedirs(os.path.join(self.t, "elsewhere/marshal"))
         self.assertEqual(self.call("Write", {"file_path": os.path.join(self.t, "elsewhere/marshal/x.enabled")}).returncode, 0)
 
+    def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
+        """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write
+        them. The verbs lead usage and lead compact-check only read, so a member may run them; claiming by succession writes the marshal."""
+        for d in ("handoff", "busy"):
+            p = os.path.join(self.state, d)
+            os.makedirs(p)
+            for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
+                for cls in ((), ("--class", "read-only")):
+                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p + "/proj.json"}, "cwd": self.clone}),
+                                         capture_output=True, text=True, env=self.env())
+                    self.assertEqual(res.returncode, 2, (d, tool, cls, res.stderr))
+                    self.assertIn("handoff note and whole-suite runs", res.stderr)
+            self.refused(["echo '{}' > %s/proj.json" % p, "rm -rf %s" % p, "echo 1 > $QARGI_STATE/%s/proj.json" % d])
+        for c in ("qargi lead usage", "qargi lead usage --json", "qargi lead compact-check", "qargi lead compact-check --advise --project proj",
+                  "cat %s/handoff/proj.json" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+        self.refused(["qargi marshal claim f --as-successor-of old", "qargi marshal claim f --project proj --as-successor-of old",
+                      "bash -c 'qargi marshal claim f --as-successor-of old'", "bash lib/marshal.sh claim f --as-successor-of old"])
+
     def test_the_switch_directory_is_found_like_the_other_qargi_paths(self):
         for st, env in ((os.path.join(self.home, ".qargi/state"), dict(QARGI_STATE=None)),
                         (os.path.join(self.t, "qh/state"), dict(QARGI_STATE=None, QARGI_HOME=os.path.join(self.t, "qh"))),

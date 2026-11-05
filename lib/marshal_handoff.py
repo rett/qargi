@@ -19,7 +19,9 @@ READ ONLY. It changes no record, no ref and no audit line, and it fetches nothin
 this machine already holds (the same backend code as `marshal status`, switched to its member-run mode, which neither fetches nor
 writes the clock cache nor the acceptance marks), and a record whose branch is gone is shown, never recorded as abandoned. The
 one thing it may write is the file named by --write: it must not exist, it is made with mode 600, and it may not lie inside a
-git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout.
+git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout, and
+$STATE/handoff/PROJECT.json remembers when and where it was written (the age `qargi lead compact-check` compares with the last merge).
+A feature that this identity leads gets a "next lead" line: the claim --as-successor-of command a restarted session runs.
 
 The goal, plan, note and purpose of a record are DATA written by a lead: they are printed under a line that says so, indented,
 with control characters removed (marshal_store.clean) and cut at marshal_store.CAP characters. Every other free-text field is
@@ -375,7 +377,9 @@ def collect(a, argv_name):
             "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
                            "repo_docs": [clean(os.path.join(repo, n)) for n in ("CLAUDE.md", "AGENTS.md") if repo and os.path.isfile(os.path.join(repo, n))],
-                           "status_command": "qargi marshal status --all --history --project %s" % a.project},
+                           "status_command": "qargi marshal status --all --history --project %s" % a.project,
+                           "successor": [{"feature": f["name"], "lead": f["record"]["lead"]["id"]} for f in feats
+                                         if f["record"]["lead"] and f["record"]["lead"]["id"] == ctx.id]},
             "do_not_assume": list(DO_NOT_ASSUME), "notes": notes, "truncated": False}
 
 
@@ -534,6 +538,8 @@ def render_body(F):
     for d in rf["repo_docs"]:
         A("repository instructions: " + d)
     A("the record, with history: %s" % rf["status_command"])
+    for s in rf["successor"]:
+        A("next lead: the lead of %s is %s; a restarted session of the same user, host and worktree continues as the lead with: qargi marshal claim %s --as-successor-of %s" % (s["feature"], s["lead"], s["feature"], s["lead"]))
     return "\n".join(L)
 
 
@@ -613,6 +619,23 @@ def write_note(path, text):
             os.close(fd)
 
 
+def record_written(a, M, F, text):
+    """Remember when and where the last note was written ($STATE/handoff/PROJECT.json: epoch, file, features), so that `qargi lead compact-check`
+    can say the note is older than the last merge. The one thing besides the note itself that a --write leaves behind; failing to write it is not
+    a failure of the note."""
+    d = os.path.join(a.state, "handoff")
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        rec = {"epoch": M.now(), "at": F["generated_at"], "file": os.path.abspath(a.write), "by": F["generated_by"],
+               "features": [f["name"] for f in F.get("features", [])]}
+        tmp = os.path.join(d, ".%s.%d.tmp" % (a.project, os.getpid()))
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, os.path.join(d, a.project + ".json"))
+    except OSError:
+        print("qargi: warning: could not record when the note was written; qargi lead compact-check will not know its age", file=sys.stderr)
+
+
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
     # describe; --state, --conf, --repo and --ttl are only passed by lib/marshal.sh
@@ -640,6 +663,7 @@ def main(argv):
                 write_note(a.write, text)
             except OSError as e:
                 raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e))
+            record_written(a, M, F, text)
             print("wrote %s (%d bytes, mode 600); read it, add your own lines marked as the lead's addition, and give it to the new session" % (a.write, len(text.encode())))
         else:
             sys.stdout.write(text)

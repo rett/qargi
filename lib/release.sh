@@ -230,7 +230,9 @@ case $verb in
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
+    busy_begin release-verify "$VER"
     if run_suite; then res=pass; else res=fail; fi
+    busy_end
     jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$on")"
     echo "full suite: $res at $(g rev-parse --short "$on")"
     tag_checks
@@ -329,7 +331,8 @@ case $verb in
       echo "pushed master, $second and tag $VER"
     else
       echo "no origin remote: nothing was pushed"
-    fi;;
+    fi
+    lead_advice;;
   sign)
     python3 -I "$RS" lead-only || exit $?
     sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
