@@ -40,6 +40,27 @@ collect() {
   echo "# series" > "$r/out/series.md"
 }
 
+# --- 3. verify says plainly that the member did not collect
+R=$(mkrun nocollect)
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && ok "(setup) a run with no commits and an empty OUT verifies: nothing to collect" || no "empty run: rc=$rc $out"
+commits "$R" a1.go; rm -f "$R/verified"
+out=$(verify "$R"); rc=$?
+[ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && grep -q "ls OUT/patches" <<<"$out" && ok "verify fails fast, naming the missing collect, when the clone has commits and OUT is empty" || no "uncollected: rc=$rc $out"
+[ ! -f "$R/verified" ] && ok "and records nothing" || no "verified written for an uncollected run"
+collect "$R"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && ok "after the member collects, verify passes" || no "collected: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+[ $rc = 0 ] && ok "(setup) clean --discard still drops a run" || no "discard: rc=$rc $out"
+R=$(mkrun reportonly); echo "# report" > "$R/out/report.md"; commits "$R" a2.go
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && ok "a report in OUT is a collect too (the check is for patches or a report)" || no "report only: rc=$rc $out"
+out=$($DA local clean "$R" --discard 2>&1)
+R=$(mkrun nocollect2); commits "$R" a3.go
+out=$($DA local clean "$R" --discard 2>&1); rc=$?
+[ $rc = 0 ] && ! grep -q "OUT is empty" <<<"$out" && ok "clean --discard of an uncollected run does not call it a refs change or an empty OUT" || no "discard uncollected: rc=$rc $out"
+
 # --- 1a. the harness's bridge worktree and branch
 R=$(mkrun bridge)
 mkdir -p "$A/.claude/worktrees"

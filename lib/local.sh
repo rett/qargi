@@ -501,6 +501,15 @@ WRAP
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
+    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. Said first and plainly, before the refs
+    # are compared (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest). Not for a saved copy, which exists only for a passed run.
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
+      ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
+      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name '*report.md' \) 2>/dev/null | head -1)" ]; then
+        echo "qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report): send it back to collect, or take the commits from the clone yourself. Nothing was compared." >&2
+        exit 1
+      fi
+    fi
     reg_load; crc=0; check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
@@ -620,7 +629,7 @@ WRAP
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
-    vrc=0; vout=$("$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
       [ -n "$DISCARD" ] || die "${vout#qargi: }"
       echo "qargi: warning: the lead's registry does not vouch for $RUN; dropped on purpose:" >&2

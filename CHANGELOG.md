@@ -12,9 +12,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (or at the lead's own earlier note of that ref, as with a second push), so a ref that existed when the run was prepared, and any ref nobody noted,
   is still found. The guard refuses it to a member.
 
+### Changed
+- The member text says that DONE of a write role requires `ls OUT/patches`.
+
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
   directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
+- `qargi local verify` fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and OUT has no
+  patches and no report, instead of leaving the lead to read the refs and the empty directory. `local clean --discard` is not affected.
 
 ## [0.2.2] - 2026-11-05
 

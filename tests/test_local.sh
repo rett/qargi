@@ -18,6 +18,9 @@ echo x > "$CLONE/f"; $GIT -C "$CLONE" add f && $GIT -C "$CLONE" commit -q -m wor
 [ "$($GIT -C "$CLONE" log -1 --format=%an)" = qargi ] && ok "author is qargi" || no "author"
 $GIT -C "$CLONE" push origin agent/demo >/dev/null 2>&1 && no "git push origin succeeded" || ok "git push origin fails"
 git -C "$CLONE" remote -v | grep -q "$T/r" && no "the clone knows the real repository" || ok "the clone does not know the real repository path"
+out=$(./bin/qargi local verify "$RUN" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "OUT is empty: the member did not collect" <<<"$out" && ok "verify fails first when the clone has commits and OUT holds neither patches nor a report" || no "verify of an uncollected run (rc=$rc): $out"
+echo "# report" > "$RUN/out/report.md"
 ./bin/qargi local verify "$RUN" >/dev/null 2>&1 && ok "verify passes after a clean run" || no "verify clean"
 [ "$(cat "$RUN/ability")" = build ] && ok "the run records its ability (build by default)" || no "ability file"
 R2=$(./bin/qargi local prepare --repo "$T/r" --base main --slug rev --scratch "$T" --role review | sed -n '1,/^$/s/^RUN=//p')
@@ -77,7 +80,7 @@ out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "
 ./bin/qargi local clean "$T" >/dev/null 2>&1 && no "clean accepted a directory that is not a run" || ok "clean refuses a directory that prepare did not make"
 # clean never drops finished work that is not merged: a run whose clone holds commits needs them applied and merged first
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c4 --scratch "$T"); C4=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G4=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL4=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
-echo y > "$CL4/g"; $G4 -C "$CL4" add g && $G4 -C "$CL4" commit -q -m work; echo '{}' > "$C4/out/manifest.json"
+echo y > "$CL4/g"; $G4 -C "$CL4" add g && $G4 -C "$CL4" commit -q -m work; echo '{}' > "$C4/out/manifest.json"; echo r > "$C4/out/report.md"
 ./bin/qargi local verify "$C4" >/dev/null 2>&1
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && no "clean removed a run with commits that were never applied" || ok "clean refuses a run whose commits were never applied"
 [ -d "$C4" ] && ok "and the finished work stays" || no "unapplied work was removed"
@@ -87,7 +90,7 @@ git -C "$T/r2" update-ref refs/heads/agent/c4 "$AT"; printf 'agent/c4 %s now\n' 
 git -C "$T/r2" update-ref refs/heads/feature/x "$AT"
 ./bin/qargi local clean "$C4" >/dev/null 2>&1 && [ ! -e "$C4" ] && ok "clean removes it once the applied tip is on another branch" || no "clean after merge"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c5 --scratch "$T"); C5=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G5=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL5=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
-echo z > "$CL5/h"; $G5 -C "$CL5" add h && $G5 -C "$CL5" commit -q -m work; echo '{}' > "$C5/out/manifest.json"; ./bin/qargi local verify "$C5" >/dev/null 2>&1
+echo z > "$CL5/h"; $G5 -C "$CL5" add h && $G5 -C "$CL5" commit -q -m work; echo '{}' > "$C5/out/manifest.json"; echo r > "$C5/out/report.md"; ./bin/qargi local verify "$C5" >/dev/null 2>&1
 err=$(./bin/qargi local clean "$C5" --discard 2>&1) && [ ! -e "$C5" ] && grep -q 'dropped 1 unmerged commit' <<<"$err" && ok "--discard drops it on purpose and says how many commits" || no "discard: $err"
 # lead-side moves: strict until a verify has passed, then fast-forwards and new branches are accepted
 LC="git -c user.name=t -c user.email=t@example.net"
@@ -299,7 +302,7 @@ lrun() { # slug scratch -> the run directory, with one commit in its clone, a ma
   local o r g c
   o=$(./bin/qargi local prepare --repo "$T/r6" --base main --slug "$1" --scratch "$2") || return 1
   r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
-  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{}' > "$r/out/manifest.json"
+  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
   ./bin/qargi local verify "$r" >/dev/null 2>&1; echo "$r"
 }
 applied() { # run branch -> a commit on top of main named for the run, recorded in RUN/applied; prints the sha
@@ -521,7 +524,7 @@ rbrun() { # slug -> a run under $T/rb with one commit, a manifest, a bundle besi
   local o r g c
   o=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug "$1" --scratch "$T/rb" 2>/dev/null) || return 1
   r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
-  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{"status":"DONE"}' > "$r/out/manifest.json"
+  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{"status":"DONE"}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
   "$g" -C "$c" bundle create -q "$r/run.bundle" main..HEAD 2>/dev/null
   ./bin/qargi local verify "$r" > "$T/vout" 2>&1; echo "$r"
 }
