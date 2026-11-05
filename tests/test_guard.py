@@ -2,34 +2,199 @@
 """qargi __guard: the PreToolUse hook that keeps a local agent's Bash from publishing."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 # hermetic: allow-file tmp,lock (the commands and paths the guard judges are text; the fixtures make their own directories)
-# hermetic: allow-file clock (the time-budget tests of the guard: their wall-clock bounds become deadline hooks, then this goes)
-import importlib.util, io, json, os, re, shutil, subprocess, sys, tarfile, tempfile, time, unittest
+import collections, contextlib, importlib.util, io, json, multiprocessing, os, random, shutil, subprocess, sys, tarfile, tempfile, time, traceback, unittest
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")
 LIBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib")
 
-
-def guard(command):
-    return subprocess.run([BIN, "__guard"], input=json.dumps({"tool_input": {"command": command}}), capture_output=True, text=True)
+Verdict = collections.namedtuple("Verdict", "returncode stdout stderr")      # what a hook process ends with: the exit status and the two streams
 
 
-class Guard(unittest.TestCase):
+class _Judge:
+    """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
+    judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None. main(args, payload, env) is the hook's
+    entry point run in this process: the verdict a `qargi __guard ARGS` process with that standard input and environment would end with."""
+    managed = []
+
+    def __init__(self, lib, name, cwd):
+        self.lib, self.cwd, self.mods = lib, cwd, {}
+        if lib not in _Judge.managed:
+            _Judge.managed.append(lib)
+        self.m = self.run(lambda: self.load(name))
+
+    def load(self, name):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(self.lib, "guard.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    dirs = {}                                                # the directory of a module's file, by the file: sys.modules is read twice per call
+
+    @classmethod
+    def owned(cls, lib):
+        out = {}
+        for k, v in list(sys.modules.items()):
+            f = getattr(v, "__file__", None)
+            if f:
+                d = cls.dirs.get(f)
+                if d is None:
+                    d = cls.dirs[f] = os.path.dirname(os.path.abspath(f))
+                if d == lib:
+                    out[k] = v
+        return out
+
+    def run(self, fn):
+        stashed = {}
+        for lib in _Judge.managed:
+            stashed.update(self.owned(lib))
+        for k in stashed:
+            sys.modules.pop(k, None)
+        sys.modules.update(self.mods)
+        sys.path.insert(0, self.lib)
+        try:
+            return fn()
+        finally:
+            self.mods = self.owned(self.lib)
+            for k in self.mods:
+                sys.modules.pop(k, None)
+            sys.modules.update(stashed)
+            while self.lib in sys.path:
+                sys.path.remove(self.lib)
+
+    def judge(self, command, cls=""):
+        def go():
+            self.m.CLASS = cls
+            try:
+                return self.m.judge(self.m.Call("shell", "Bash", command, "", self.cwd))
+            except Exception as e:                               # the hook ends in a refusal on an exception
+                return "exception %s: %s" % (type(e).__name__, e)
+        return self.run(go)
+
+    def main(self, args, payload, env=None):
+        """main() of guard.py as a hook process runs it: args is the rest of the hook command line, payload the standard input (a string as is, anything
+        else as JSON), env the process environment (this one when None); both streams are captured. The caches are cleared first, as a process starts
+        with none, and an exception main() does not catch ends in status 1 with the traceback on stderr, as the interpreter would end."""
+        def go():
+            self.m.clear_caches()
+            out, err = io.StringIO(), io.StringIO()
+            saved = (sys.argv, sys.stdin, dict(os.environ))
+            sys.argv, sys.stdin = ["guard.py", *args], io.StringIO(payload if isinstance(payload, str) else json.dumps(payload))
+            if env is not None:
+                environ(env)
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    try:
+                        rc = self.m.main()
+                    except Exception:
+                        traceback.print_exc()
+                        rc = 1
+            finally:
+                sys.argv, sys.stdin = saved[0], saved[1]
+                if env is not None:
+                    environ(saved[2])
+            return Verdict(rc, out.getvalue(), err.getvalue())
+        return self.run(go)
+
+    @contextlib.contextmanager
+    def budget(self, readings):
+        """The deadline hook of a timing test: for the block the guard counts its budget on a TickClock, and the budget is `readings` of it, so a call
+        that reads the budget more often than that ends in the budget refusal (BUDGET_REFUSAL in its verdict) on every machine alike, and no wall
+        clock is read by anyone. The loops of the guard read the budget as they go (tick), so the readings count their work."""
+        G = self.m
+        real = G.BUDGET, G._CLOCK[0]
+        G.BUDGET, G._CLOCK[0] = readings, TickClock()
+        try:
+            yield
+        finally:
+            G.BUDGET, G._CLOCK[0] = real
+
+
+BUDGET_REFUSAL = "took longer than"                          # the words of the budget refusal (guard.judge on TooSlow)
+READINGS = 1_000_000                                         # the budget of a timing test, in readings: twice the most a linear shape of the size the guard accepts (200 KB) reads it
+SUPER_LINEAR = {"12000 shell strings", "sh -c chain 5000"}   # the hostile shapes the guard reads more than that (each shell string is read again with what follows it): the budget refuses them, as it does in the hook
+_FORKED = [None]                                             # the function the workers of a fork pool run: set before the fork, inherited by each worker, never pickled
+
+
+def _in_worker(item):
+    return _FORKED[0](item)
+
+
+def in_parallel(fn, items, workers=8):
+    """fn over the items in forked copies of this process, `workers` at a time: the loaded guard module (and the budget set on it) goes with each copy, so
+    the tables of commands, and the hostile commands that cost seconds each, are judged beside each other as the hook processes of the thread pools
+    were. A short list stays in this process (a pool costs more than it does). Items and results travel pickled (strings, Verdicts); fn does not."""
+    items = list(items)
+    if len(items) < workers:
+        return [fn(item) for item in items]
+    _FORKED[0] = fn
+    try:
+        with multiprocessing.get_context("fork").Pool(max(1, min(workers, len(items), os.cpu_count() or 1))) as pool:
+            return pool.map(_in_worker, items, chunksize=1)
+    finally:
+        _FORKED[0] = None
+
+
+def environ(target):
+    """The process environment made equal to target, touching only what differs (a test's environment is this one with a few names changed)."""
+    for k in [k for k in os.environ if k not in target]:
+        del os.environ[k]
+    for k, v in target.items():
+        if os.environ.get(k) != v:
+            os.environ[k] = v
+
+
+class TickClock:
+    """A clock for the guard's budget (guard._CLOCK) that advances by one at every reading and at nothing else (its unit is the reading, not the second):
+    a deadline N away passes at the same reading on every machine, so a loop that reads the budget is cut short where it reads it, and one that does
+    not is not cut short at all."""
+    def __init__(self):
+        self.now = 0
+
+    def __call__(self):
+        self.now += 1
+        return self.now
+
+
+class HookCase(unittest.TestCase):
+    """A test class whose calls to the guard run its entry point in this process (_Judge.main) instead of a `qargi __guard` process each: one module of
+    guard.py per class, loaded in setUpClass and dropped after it, so nothing a class leaves in the module reaches the next class; each call clears the
+    caches, as a process starts with none. The process itself is held by SubprocessContract."""
+    @classmethod
+    def setUpClass(cls):
+        cls.J = _Judge(LIBDIR, "guard_" + cls.__name__.lower(), None)
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.J
+
+    def hook(self, args, payload, env=None):
+        return self.J.main(args, payload, env)
+
+    def budget(self, readings):
+        return self.J.budget(readings)
+
+    def guard(self, command):
+        return self.hook([], {"tool_input": {"command": command}})
+
+
+class Guard(HookCase):
+
     def test_refuses_what_publishes_or_reaches_out(self):
         for c in ("git push", "git push origin main", "/tmp/x/git -C /r push -f", "cd a && git push", "make gate-go; git push", "timeout 5 git push",
                   "echo hi | gh pr list", "gh api repos/x", "ssh host ls", "sudo scp a b:", "sftp host", "git remote add o u", "git remote set-url origin u"):
-            r = guard(c)
+            r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("Agents never push", r.stderr)
 
     def test_lets_ordinary_work_through(self):
         for c in ("ls -la", "git status", "git commit -m 'a push of work'", "/tmp/x/git log --oneline", "git remote -v", "git diff c2e9439..HEAD",
                   "go test ./... && go vet ./...", "grep -n 'git push' file", "make gate-go", "gitleaks git --log-opts A..B"):
-            self.assertEqual(guard(c).returncode, 0, c)
+            self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_bad_input_is_not_a_block(self):
-        r = subprocess.run([BIN, "__guard"], input="not json", capture_output=True, text=True)
+        r = self.hook([], "not json")
         self.assertEqual(r.returncode, 0)
-        self.assertEqual(guard("").returncode, 0)
+        self.assertEqual(self.guard("").returncode, 0)
 
     def test_the_member_definition_guards_bash_edits_and_key_reads(self):
         d = os.path.join(os.path.dirname(BIN), "..", "agents")
@@ -44,7 +209,7 @@ class Guard(unittest.TestCase):
             self.assertIn(t, tools)
 
 
-class Review(unittest.TestCase):
+class Review(HookCase):
     """Review is read-only as a rule: the run directory says the ability, the guard holds the clone to it."""
     def setUp(self):
         self.t = tempfile.mkdtemp()
@@ -62,8 +227,7 @@ class Review(unittest.TestCase):
             f.write(a + "\n")
 
     def call(self, tool, inp, cwd=None, *args):
-        return subprocess.run([BIN, "__guard", *args], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
-                              capture_output=True, text=True)
+        return self.hook(list(args), {"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone})
 
     def writes(self):
         c, o = self.clone, self.out
@@ -204,7 +368,7 @@ class Review(unittest.TestCase):
         self.assertEqual(self.call("Bash", {"command": "git push"}, cwd=self.t).returncode, 2)
 
 
-class Skills(unittest.TestCase):
+class Skills(HookCase):
     """Only a person, through qargi's own skills, changes a skill: the guard refuses a member the verbs that do, and writes
     under the pack library and the skill directories. The repository's own skills/ directory (in the clone) stays open."""
     def setUp(self):
@@ -227,8 +391,7 @@ class Skills(unittest.TestCase):
         e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
         e.update({"HOME": self.home, "QARGI_CONF": self.conf}, **env)
         e = {k: v for k, v in e.items() if v is not None}
-        return subprocess.run([BIN, "__guard"], input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
-                              capture_output=True, text=True, env=e)
+        return self.hook([], {"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}, e)
 
     def bash(self, command, **kw):
         return self.call("Bash", {"command": command}, **kw)
@@ -394,11 +557,11 @@ class Skills(unittest.TestCase):
                      "cd src && qargi project init p --answers a.json --force", "bash -c 'qargi project init p --answers a.json --force'", "env FOO=1 qargi project init p --answers a.json",
                      "echo $(qargi project init p --answers a.json)", "./lib/project.sh init p --answers a.json", "bash lib/project.sh init p --answers a.json --force",
                      "qargi project --x init p --answers a.json", "qargi pro''ject in\\it p --answers a.json", "qargi project $(echo init) p --answers a.json"):
-            r = guard(form)
+            r = self.guard(form)
             self.assertEqual(r.returncode, 2, form)
             self.assertIn("qargi guard:", r.stderr, form)
         for c in ("qargi project show p", "qargi project template p", "qargi project validate /tmp/a.json", "echo qargi project init p"):
-            self.assertEqual(guard(c).returncode, 0, c)
+            self.assertEqual(self.guard(c).returncode, 0, c)
 
     def test_refuses_the_forms_of_project_set_the_guard_cannot_read(self):
         """The path of a project set is read from the words of the command. A form that hides it (a quote inside the verb, a substitution that
@@ -414,13 +577,13 @@ class Skills(unittest.TestCase):
                   "xargs sh -c 'qargi project set \"$@\"' _ < args", "eval qargi project set demo '$(echo models.extensions)' x", "qargi project link $(echo p)",
                   "qargi project $(echo link) p", "QARGI_GATED_STORE=1 qargi project set demo models.extensions '[\"x\"]'",
                   "qargi project set demo release.preflight '[\"x\"]'", "qargi project set demo test_command 'x'", "qargi project set demo env.PATH x"):
-            r = guard(c)
+            r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("qargi guard:", r.stderr, c)
         for c in ("qargi project set p budget_cents 500", "qargi project set p roles.build.effort high", "qargi project set p repo.path 'ls *.py'",
                   "qargi project set p memory.memory_store 'echo $HOME'", "qargi project show $P", "qargi project list | xargs echo", "echo qargi project set p models.extensions x",
                   "grep -n 'project set' README.md", "bash -c 'qargi project show p'"):
-            r = guard(c)
+            r = self.guard(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
     def test_refuses_the_script_that_stores_the_gated_answers(self):
@@ -429,10 +592,10 @@ class Skills(unittest.TestCase):
         for c in ("python3 -I lib/gated_answers.py store p models.extensions '[\"x\"]'", "./lib/gated_answers.py store p models.extensions '[]'",
                   "cd lib && python3 gated_answers.py store p models.extensions '[]'", "/opt/q/lib/gated_answers.py store p models.extensions x", "bash -c 'python3 lib/gated_answers.py store p models.extensions x'",
                   "sudo python3 lib/gated_answers.py"):
-            r = guard(c)
+            r = self.guard(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("gated_answers.py", r.stderr, c)
-        self.assertEqual(guard("cat lib/gated_answers.py").returncode, 0)
+        self.assertEqual(self.guard("cat lib/gated_answers.py").returncode, 0)
 
     def test_refuses_local_run_to_a_member(self):
         """qargi local run starts a process (a vendor CLI) with an environment the definition names: the lead's call. Refused as the verb and as
@@ -773,7 +936,7 @@ class Skills(unittest.TestCase):
             self.assertEqual(self.call(*call).returncode, 2, call)
 
 
-class RenderTree(unittest.TestCase):
+class RenderTree(HookCase):
     """$DA_STATE/render/<project>/<runtime> is the render a runtime loads (Claude Code with --add-dir): instructions a session follows. No member
     class may write there; reading stays open. The claude/ directory an earlier version used is not special any more."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
@@ -798,8 +961,7 @@ class RenderTree(unittest.TestCase):
             for p in (os.path.join(r, "skills/s/SKILL.md"), os.path.join(r, "new.md"), os.path.join(self.state, "render/other/x"),
                       os.path.join(self.state, "render"), "to-render/skills/s/SKILL.md", "to-renders/proj/new.md", "../../state/render/proj/claude-code/CLAUDE.md"):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                     self.assertIn("managed by qargi and changed only by the lead", res.stderr)
 
@@ -880,7 +1042,7 @@ class RenderTree(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
 
 
-class Marshal(unittest.TestCase):
+class Marshal(HookCase):
     """The feature marshal is changed only by the lead: its records under $DA_STATE/features are protected, the verbs that
     change it and the lead identity (QARGI_LEAD) are not available to a member. Reading and status/check stay allowed."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
@@ -902,8 +1064,7 @@ class Marshal(unittest.TestCase):
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (f + "/proj-f.json", f + "/proj-new.json", f, "to-features/proj-f.json", "../../state/features/x.json"):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                     self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
 
@@ -1126,8 +1287,7 @@ class Marshal(unittest.TestCase):
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (m + "/proj.enabled", m + "/new.enabled", m, "to-marshal/proj.enabled", "../../state/marshal/x.enabled"):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                     self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
         self.refused(["echo '{}' > %s/proj.enabled" % m, "echo x>>%s/proj.enabled" % m, "echo x | tee %s/proj.enabled" % m, "cp a.json %s/proj.enabled" % m,
@@ -1148,8 +1308,7 @@ class Marshal(unittest.TestCase):
         open(os.path.join(p, "refs.before"), "w").close()
         for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
             for cls in ((), ("--class", "read-only")):
-                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p + "/out/patches/0001-x.patch"}, "cwd": self.clone}),
-                                     capture_output=True, text=True, env=self.env())
+                res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p + "/out/patches/0001-x.patch"}, "cwd": self.clone}, self.env())
                 self.assertEqual(res.returncode, 2, (tool, cls, res.stderr))
                 self.assertIn("saved copies of passed local runs", res.stderr)
         for c in ("echo x > %s/refs.before" % p, "rm -rf %s" % p, "cp -r /tmp %s/out" % p, "echo 1 > $QARGI_STATE/runs/qargi.zzzzzz/applied",
@@ -1169,8 +1328,7 @@ class Marshal(unittest.TestCase):
             os.makedirs(p)
             for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p + "/proj.json"}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p + "/proj.json"}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (d, tool, cls, res.stderr))
                     self.assertIn("handoff note and whole-suite runs", res.stderr)
             self.refused(["echo '{}' > %s/proj.json" % p, "rm -rf %s" % p, "echo 1 > $QARGI_STATE/%s/proj.json" % d])
@@ -1381,8 +1539,7 @@ class Marshal(unittest.TestCase):
                             ("../../state/marshal/x.signers", "allowed signers"), (f + "/.accepted-proj.json", "acceptance marks"),
                             (f + "/.accepted-new.json", "acceptance marks"), ("to-features/.accepted-proj.json", "acceptance marks")):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                     self.assertIn("the lead changes the marshal; report it in your task output", res.stderr)
                     self.assertIn(text, res.stderr, (tool, p))
@@ -1420,7 +1577,7 @@ class Marshal(unittest.TestCase):
             self.assertEqual(self.bash(c).returncode, 0, c)
 
 
-class RefJournal(unittest.TestCase):
+class RefJournal(HookCase):
     """The lead's ref journal ($QARGI_STATE/ref-journal.jsonl) is changed only by the lead's own verbs: a write, move, delete
     or redirect of it, its lock or a rotated file beside it is refused to a member; reading stays allowed. (The journal is
     trusted only as far as the state directory is: an executor running as the same OS user could still edit it by code the guard
@@ -1459,8 +1616,7 @@ class RefJournal(unittest.TestCase):
         for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
             for p in (j, j + ".lock", j + ".1", j + ".tmp", j + ".2024.gz", "to-journal", "../../state/ref-journal.jsonl"):
                 for cls in ((), ("--class", "read-only")):
-                    res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                         capture_output=True, text=True, env=self.env())
+                    res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, self.env())
                     self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                     self.assertIn(self.NOTE, res.stderr)
 
@@ -1494,7 +1650,7 @@ class RefJournal(unittest.TestCase):
             self.assertEqual(self.bash("echo x >> %s" % p, **env).returncode, 2, (p, env))
 
 
-class FailsClosed(unittest.TestCase):
+class FailsClosed(HookCase):
     """An exception inside the guard is a refusal (exit 2 with the reason), never a silent pass or a bare crash (exit 1)."""
     def run_main(self, payload, patch=None):
         import importlib.util, io, contextlib
@@ -1527,7 +1683,7 @@ class FailsClosed(unittest.TestCase):
     def test_input_the_guard_cannot_read_is_exit_2_end_to_end(self):
         for inp in ({"tool_name": "Bash", "tool_input": {"command": 7}}, {"tool_name": "Bash", "tool_input": "ls"},
                     {"tool_name": "Edit", "tool_input": {"file_path": ["a"]}}, ["not", "an", "object"]):
-            r = subprocess.run([BIN, "__guard"], input=json.dumps(inp), capture_output=True, text=True)
+            r = self.hook([], inp)
             self.assertEqual(r.returncode, 2, inp)
             self.assertIn("qargi guard: internal error", r.stderr)
 
@@ -1540,7 +1696,7 @@ class FailsClosed(unittest.TestCase):
         self.assertIn("never change a skill", text.replace("\n", " "))
 
 
-class MemoryTiers(unittest.TestCase):
+class MemoryTiers(HookCase):
     """The memory tiers are changed only by the lead: a member is refused `qargi memory init|move|split|merge|copy` however it is run,
     and writes under $QARGI_HOME/memory and ~/.qargi/memory. Reading and tiers|check|get|lint stay allowed."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
@@ -1598,8 +1754,7 @@ class MemoryTiers(unittest.TestCase):
             for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("NotebookEdit", "notebook_path")):
                 for p in (root + "/shared/README.md", root + "/projects/demo/CANON.md", root + "/new.md", root, "../../qh/memory/shared/x.md"):
                     for cls in ((), ("--class", "read-only")):
-                        res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}),
-                                             capture_output=True, text=True, env=dict(self.env_for(), QARGI_HOME=self.qh))
+                        res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, dict(self.env_for(), QARGI_HOME=self.qh))
                         self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                         self.assertIn("qargi guard:", res.stderr)
                         self.assertIn("memory", res.stderr)
@@ -1723,7 +1878,7 @@ FAKECLI_HOOK = {"input": "json-stdin", "tool_pointer": "/call/name", "command_po
                 "deny": {"exit": 3, "stream": "stdout"}, "allow": {"exit": 0}}
 
 
-class ProviderHook(unittest.TestCase):
+class ProviderHook(HookCase):
     """`qargi __guard --provider NAME` reads how that provider's hook hands over a call and how it denies from the provider's definition,
     and asks the same decisions. The runtimes here are definitions in a library; none of them is Claude Code."""
     def setUp(self):
@@ -1755,7 +1910,7 @@ class ProviderHook(unittest.TestCase):
     def run_guard(self, args, payload):
         e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
         e.update({"HOME": self.home, "QARGI_CONF": self.conf})
-        return subprocess.run([BIN, "__guard", *args], input=payload if isinstance(payload, str) else json.dumps(payload), capture_output=True, text=True, env=e)
+        return self.hook(list(args), payload, e)
 
     def md(self, tool, args, *more):
         return self.run_guard(["--provider", "fakemd", *more], {"event": {"tool": tool, "args": args}, "workdir": self.clone})
@@ -1921,7 +2076,7 @@ class ProviderHook(unittest.TestCase):
         self.assertEqual(self.run_guard(["--provider", "search-via-read"], {"event": {"tool": "grep_tree", "args": {"target": "src"}}, "workdir": self.clone}).returncode, 0)
 
 
-class ProviderRoots(unittest.TestCase):
+class ProviderRoots(HookCase):
     """The skills and agents directories the guard protects are the ones the provider definitions name (resources.skills and
     resources.agents: project_dir and user_dir), whatever runtime they belong to."""
     setUp_skills, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call      # the same fixture, not its tests
@@ -2043,7 +2198,7 @@ class ProviderRoots(unittest.TestCase):
         self.refused("echo y > %s/.claude/skills/p/SKILL.md" % self.proj)
 
 
-class RuntimeRender(unittest.TestCase):
+class RuntimeRender(HookCase):
     """$DA_STATE/render/<project>/<runtime> is where the renders of every runtime go (skills, tools, members): instructions a session follows,
     changed only by the lead."""
     setUp_skills, tearDown, bash, call_skills = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
@@ -2064,8 +2219,7 @@ class RuntimeRender(unittest.TestCase):
         for tool, key, p in (("Write", "file_path", r + "/agents/m.toml"), ("Edit", "file_path", "to-render/agents/m.toml"), ("NotebookEdit", "notebook_path", r + "/n.ipynb"),
                              ("Write", "file_path", os.path.join(self.state, "render")), ("Write", "file_path", "../../state/render/proj/x")):
             for cls in ((), ("--class", "read-only")):
-                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}), capture_output=True, text=True,
-                                     env={**os.environ, "HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
+                res = self.hook(list(cls), {"tool_name": tool, "tool_input": {key: p}, "cwd": self.clone}, {**os.environ, "HOME": self.home, "QARGI_CONF": self.conf, "QARGI_STATE": self.state})
                 self.assertEqual(res.returncode, 2, (tool, p, cls, res.stderr))
                 self.assertIn("the render of a project's skills, tools and members that a runtime loads", res.stderr)
                 self.assertIn("changed only by the lead", res.stderr)
@@ -2083,7 +2237,7 @@ class RuntimeRender(unittest.TestCase):
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
 
-class ProviderVerbs(unittest.TestCase):
+class ProviderVerbs(HookCase):
     """The provider definitions are the user's: a member is refused every verb that changes them (new, import, seal, remove, rename,
     enable, disable, attest and accept, and any verb that is added) and keeps the ones that only read."""
     setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
@@ -2149,7 +2303,7 @@ class ProviderVerbs(unittest.TestCase):
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
 
-class BashText(unittest.TestCase):
+class BashText(HookCase):
     """The guard reads a Bash command as the plain split reads it: the line is cut at every ; && || | & and newline, inside quotes, comments and heredocs
     too, and a $( ), <( ), >( ) or backtick substitution is a command of its own. A refused verb written anywhere a command could start is refused, text or
     not; a member writes a message to a file and commits it with `git commit -F FILE`. The table is read as one: the failures are listed together."""
@@ -2253,9 +2407,7 @@ class BashText(unittest.TestCase):
     )
 
     def verdicts(self, cmds):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(self.bash, cmds)))
+        return list(zip(cmds, in_parallel(self.bash, cmds)))
 
     def test_a_refused_verb_in_the_place_of_a_command_is_refused_however_it_is_dressed(self):
         wrong = [c for c, r in self.verdicts(self.REFUSED) if r.returncode != 2]
@@ -2290,7 +2442,7 @@ class BashText(unittest.TestCase):
         self.assertEqual(self.bash("grep -n 'ssh host' f").returncode, 0)               # one command whose program is grep
 
 
-class StdinPrograms(unittest.TestCase):
+class StdinPrograms(HookCase):
     """A shell that takes its program from its standard input (a pipe, a here-string, a heredoc, sh -s, . /dev/stdin, the words xargs brings) or from a file
     the same line writes is read like `sh -c STRING`: the program the line shows (a here-string, an echo or printf piped in, an echo written to the file) is
     read again, a heredoc body is read by the plain split already, and a program the guard cannot see (a pipe from another program, `bash < FILE`, a file cp
@@ -2394,9 +2546,7 @@ class StdinPrograms(unittest.TestCase):
     )
 
     def verdicts(self, cmds):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(self.bash, cmds)))
+        return list(zip(cmds, in_parallel(self.bash, cmds)))
 
     def test_a_program_the_line_shows_is_read_again(self):
         results = self.verdicts(self.SHOWN)
@@ -2427,7 +2577,7 @@ class StdinPrograms(unittest.TestCase):
         self.assertIn("cp, which writes s.sh in the same command", self.bash("cp a s.sh; bash s.sh").stderr)
 
 
-class TrimmedExpansions(unittest.TestCase):
+class TrimmedExpansions(HookCase):
     """${var%%:*}, ${var%/*} and ${var##*/} cut a part off the variable's own value: the * and the / belong to the pattern, so the word is no glob on the
     signing key. A default (${X:-dir}) or a recursive reader still is."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
@@ -2446,7 +2596,7 @@ class TrimmedExpansions(unittest.TestCase):
             self.assertIn("signing key", r.stderr, c)
 
 
-class InPlaceScripts(unittest.TestCase):
+class InPlaceScripts(HookCase):
     """In sed -i -e SCRIPT FILE the script is no file: a glob, a $ or a -S in it does not name a file the guard cannot read. The file still is judged."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
 
@@ -2464,7 +2614,7 @@ class InPlaceScripts(unittest.TestCase):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
 
-class TextIsData(unittest.TestCase):
+class TextIsData(HookCase):
     """Text inside a quoted argument or a heredoc body that mentions a verb is data when every command of the line only prints, writes or searches (echo,
     cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
     text keeps the plain split: another program in the line (printf too: -v assigns a variable), a comment, a backslash, a substitution, $'..', ${..}, a
@@ -2544,9 +2694,7 @@ class TextIsData(unittest.TestCase):
     )
 
     def verdicts(self, cmds):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(self.bash, cmds)))
+        return list(zip(cmds, in_parallel(self.bash, cmds)))
 
     def test_text_that_only_an_echo_a_cat_a_commit_or_a_search_holds_is_data(self):
         wrong = [(c, r.stderr[:100]) for c, r in self.verdicts(self.DATA) if r.returncode != 0]
@@ -2598,64 +2746,16 @@ class TextIsData(unittest.TestCase):
             self.assertIn("Agents never push", r.stderr, c)
 
     def test_data_is_cut_in_linear_time(self):
-        for name, c in (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
+        shapes = (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
                         ("many heredocs", "".join("cat <<'E%d'\nqargi upgrade\nE%d\n" % (i, i) for i in range(3000))),
                         ("a big heredoc", "cat <<'E'\n" + "qargi upgrade\n" * 15000 + "E"), ("many quotes", "echo " + "'a;b' " * 30000),
                         ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000),
-                        ("one long word", "echo " + "a';'" * 50000 + "; qargi upgrade")):
-            t0 = time.perf_counter()
-            r = self.bash(c)
-            took = time.perf_counter() - t0
-            self.assertLess(took, 12.0, "%s: %.1f s" % (name, took))
+                  ("one long word", "echo " + "a';'" * 50000 + "; qargi upgrade"))
+        with self.budget(READINGS):
+            got = in_parallel(self.bash, [c for _, c in shapes])
+        for (name, _), r in zip(shapes, got):
+            self.assertNotIn(BUDGET_REFUSAL, r.stderr, name)
             self.assertIn(r.returncode, (0, 2), name)
-
-
-class _Judge:
-    """guard.py of any revision, loaded by itself with the modules of its own lib, so that two revisions can judge one command in one process.
-    judge(command, cls) is the refusal, or a sentence for an exception (the hook refuses on one), or None."""
-    managed = []
-
-    def __init__(self, lib, name, cwd):
-        self.lib, self.cwd, self.mods = lib, cwd, {}
-        _Judge.managed.append(lib)
-        self.m = self.run(lambda: self.load(name))
-
-    def load(self, name):
-        spec = importlib.util.spec_from_file_location(name, os.path.join(self.lib, "guard.py"))
-        m = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(m)
-        return m
-
-    @staticmethod
-    def owned(lib):
-        return {k: v for k, v in list(sys.modules.items()) if getattr(v, "__file__", None) and os.path.dirname(os.path.abspath(v.__file__)) == lib}
-
-    def run(self, fn):
-        stashed = {}
-        for lib in _Judge.managed:
-            stashed.update(self.owned(lib))
-        for k in stashed:
-            sys.modules.pop(k, None)
-        sys.modules.update(self.mods)
-        sys.path.insert(0, self.lib)
-        try:
-            return fn()
-        finally:
-            self.mods = self.owned(self.lib)
-            for k in self.mods:
-                sys.modules.pop(k, None)
-            sys.modules.update(stashed)
-            while self.lib in sys.path:
-                sys.path.remove(self.lib)
-
-    def judge(self, command, cls=""):
-        def go():
-            self.m.CLASS = cls
-            try:
-                return self.m.judge(self.m.Call("shell", "Bash", command, "", self.cwd))
-            except Exception as e:                               # the hook ends in a refusal on an exception
-                return "exception %s: %s" % (type(e).__name__, e)
-        return self.run(go)
 
 
 def old_lib(test, rev="2b41028"):
@@ -2674,7 +2774,7 @@ def old_lib(test, rev="2b41028"):
     return os.path.join(d, "lib")
 
 
-class ReviewedReading(unittest.TestCase):
+class ReviewedReading(HookCase):
     """The adversarial review of the Bash reader: commands that run a refused verb or git push in a form a lighter reading of the text would miss (a comment
     that starts after an escaped blank, a heredoc inside ${ }, a trap, an alias, an eval ...). The plain split on every separator refuses them all."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
@@ -2792,9 +2892,7 @@ class ReviewedReading(unittest.TestCase):
     )
 
     def verdicts(self, cmds):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(self.bash, cmds)))
+        return list(zip(cmds, in_parallel(self.bash, cmds)))
 
     def test_every_command_the_review_found_is_refused(self):
         wrong = [c for c, r in self.verdicts(self.REFUSED) if r.returncode != 2]
@@ -2871,7 +2969,8 @@ class Segments(unittest.TestCase):
 
     def test_hostile_commands_are_judged_in_seconds(self):
         """The hook has 20 seconds and a hook that times out does not block: a command of the size the guard accepts costs a verdict, never a timeout. The
-        time budget (BUDGET) refuses what takes longer; this is the whole of judge()."""
+        time budget (BUDGET) refuses what takes longer; this is the whole of judge(). The budget here is READINGS of the clock (budget), which counts the
+        work of the loops on any machine alike: a shape that stays linear is judged under it, and the two that do not (SUPER_LINEAR) are the budget's."""
         shapes = {"2000 heredocs": "".join("cat > f%d <<'E'\nbody %d\nE\n" % (i, i) for i in range(2000)),
                   "12000 commands": "".join("git status %d; " % i for i in range(12000)),
                   "12000 shell strings": "".join("sh -c 'echo %d'; " % i for i in range(12000)),
@@ -2885,29 +2984,25 @@ class Segments(unittest.TestCase):
                   "many redirections": "echo " + "> /tmp/f%d " * 100 % tuple(range(100)),
                   "wide glob": "cat /*/*/*/*/*/*",
                   "a glob in every word": "cat " + "/*/*/x%d " * 2000 % tuple(range(2000))}
-        for name, c in shapes.items():
-            t0 = time.perf_counter()
-            why = self.J.judge(c)
-            took = time.perf_counter() - t0
-            self.assertLess(took, 20.0, "%s: %.1f s" % (name, took))
+        with self.J.budget(READINGS):
+            verdicts = dict(zip(shapes, in_parallel(self.J.judge, shapes.values())))
+        for name, why in verdicts.items():
+            if name in SUPER_LINEAR:
+                self.assertIn(BUDGET_REFUSAL, why or "", name)
+            else:
+                self.assertNotIn(BUDGET_REFUSAL, why or "", name)
             if name.endswith("substitutions") and name.startswith(("nested", "unclosed")):
                 self.assertIn("nested more than", why or "", name)
         for name, c in {"wide glob": "cat /*/*/*/*/*/*", "a glob that finds nothing": "cat /*/*/*/*/*/*/*/*/zzz_not_here"}.items():
-            t0 = time.perf_counter()
-            why = self.J.judge(c)
-            took = time.perf_counter() - t0
-            self.assertLess(took, 10.0, "%s: %.1f s" % (name, took))
+            with self.J.budget(READINGS):
+                why = self.J.judge(c)
+            self.assertNotIn(BUDGET_REFUSAL, why or "", name)
             self.assertIn("too many directories", why or "", name)
 
     def test_a_command_that_takes_too_long_to_check_is_refused_not_let_through(self):
-        G = self.G
-        real = G.BUDGET
-        G.BUDGET = 0.0
-        try:
+        with self.J.budget(0):                               # the deadline is the first reading; the next loop reads past it, on any machine
             why = self.J.judge("git status; echo hi; git log %s" % time.time())
-        finally:
-            G.BUDGET = real
-        self.assertIn("took longer", why or "")
+        self.assertIn(BUDGET_REFUSAL, why or "")
 
 
 class OldReading(unittest.TestCase):
@@ -2974,7 +3069,7 @@ class OldReading(unittest.TestCase):
         self.assertFalse(old.judge("sleep 1 & qargi upgrade"))
 
 
-class Substitutions(unittest.TestCase):
+class Substitutions(HookCase):
     """A command substitution is a command of its own wherever it sits: after a here-string, inside double quotes, inside a backtick pair, in a process
     substitution. Each of these was let through by a reading that cut the line but kept the substitution's closing quote on its last word."""
     setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
@@ -3009,9 +3104,7 @@ class Substitutions(unittest.TestCase):
     MAY_RUN = ('cat <<<"$(git status)"', 'echo "$(ls) done"', 'x="$(pwd)"; echo $x', 'diff <(ls) <(ls -a)', 'cat <<<"plain text"', 'echo "`date`"')
 
     def test_every_substitution_that_runs_a_refused_verb_is_refused(self):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            res = list(zip(self.MUST_REFUSE, ex.map(self.bash, self.MUST_REFUSE)))
+        res = list(zip(self.MUST_REFUSE, in_parallel(self.bash, self.MUST_REFUSE)))
         self.assertEqual([c for c, r in res if r.returncode != 2], [])
 
     def test_a_substitution_of_an_ordinary_command_is_allowed(self):
@@ -3019,7 +3112,7 @@ class Substitutions(unittest.TestCase):
             self.assertEqual(self.bash(c).returncode, 0, c)
 
 
-class RunRecord(unittest.TestCase):
+class RunRecord(HookCase):
     """What a member cannot do to the run directory, and that the read-only class of the hook holds without asking the run. Write channels that name a file
     by a glob, a variable or a substitution are refused when they could be the run's record, the others as before."""
     def setUp(self):
@@ -3037,13 +3130,10 @@ class RunRecord(unittest.TestCase):
     def call(self, tool, inp, cwd=None, cls="read-only"):
         e = {k: v for k, v in os.environ.items() if k not in ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "HOME")}
         e.update({"HOME": self.home, "QARGI_CONF": self.conf})
-        return subprocess.run([BIN, "__guard"] + (["--class", cls] if cls else []), input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}),
-                              capture_output=True, text=True, env=e)
+        return self.hook(["--class", cls] if cls else [], {"tool_name": tool, "tool_input": inp, "cwd": cwd or self.clone}, e)
 
     def table(self, cmds, cwd=None, cls="read-only"):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(lambda c: self.call("Bash", {"command": c}, cwd, cls), cmds)))
+        return list(zip(cmds, in_parallel(lambda c: self.call("Bash", {"command": c}, cwd, cls), cmds)))
 
     # --- write channels into the clone
     CHANNELS = (
@@ -3190,7 +3280,7 @@ class RunRecord(unittest.TestCase):
             self.assertEqual(self.call("Bash", {"command": c}, self.run_dir, None).returncode, 0, c)
 
 
-class MoveBeside(unittest.TestCase):
+class MoveBeside(HookCase):
     """A file moved INTO a directory that only lies above a protected location (/tmp, the temporary directory, $HOME, a conf directory) or above the run does
     not change that location. The directory is refused when what is moved is, holds or has the name of the place, and always as the target of mv -T."""
     base = None                                          # where the fixture lives: the default temporary directory, or /tmp, or /dev/shm
@@ -3252,7 +3342,7 @@ class MoveBesideUnderShm(MoveBeside):
     base = "/dev/shm"
 
 
-class GlobBound(unittest.TestCase):
+class GlobBound(HookCase):
     """The key checks used to expand a glob to the end: `cat /*/*/*/*/*/*` took 106 seconds, five times the time the hook has. A glob is expanded by reading
     at most GLOB_ENTRIES directory entries; a pattern that needs more is refused."""
     setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
@@ -3260,10 +3350,9 @@ class GlobBound(unittest.TestCase):
 
     def test_a_wide_glob_is_refused_in_seconds_not_minutes(self):
         for c in ("cat /*/*/*/*/*/*", "grep -r x /*/*/*/*/*/*/*/*", "cat /*/*/*/*/*/*/*/*/zzz_not_here", "cp -r /*/*/*/*/*/* /tmp/x"):
-            t0 = time.perf_counter()
-            r = self.bash(c)
-            took = time.perf_counter() - t0
-            self.assertLess(took, 10.0, (c, took))                    # it took minutes; a slow or busy machine takes seconds
+            with self.budget(READINGS):                               # it took minutes: the entries read are bounded, not the time
+                r = self.bash(c)
+            self.assertNotIn(BUDGET_REFUSAL, r.stderr, c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("too many directories", r.stderr, c)
 
@@ -3278,7 +3367,7 @@ class GlobBound(unittest.TestCase):
             self.assertEqual(self.bash(c).returncode, 0, c)
 
 
-class GlobsAndProtectedRoots(unittest.TestCase):
+class GlobsAndProtectedRoots(HookCase):
     """A write whose glob can name a protected location is refused; one that cannot is not."""
     setUp, tearDown, bash = Skills.setUp, Skills.tearDown, Skills.bash
     call = Skills.call
@@ -3296,7 +3385,7 @@ class GlobsAndProtectedRoots(unittest.TestCase):
             self.assertEqual(self.bash(c).returncode, 0, c)
 
 
-class LibraryScripts(unittest.TestCase):
+class LibraryScripts(HookCase):
     """lib/linker.py (the link engine: what a checkout loads its skills and agents from) and lib/render.py (the renderer of member
     definitions, which can run the command a definition names) are qargi's own and are not available to a member when run directly. Their
     names are common, so only the files of the tool are refused: a render.py or linker.py of a project, or of the clone a member works in, is
@@ -3348,7 +3437,7 @@ class LibraryScripts(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
-class ThirdReview(unittest.TestCase):
+class ThirdReview(HookCase):
     """The third security review of the Bash reader. Every case here was allowed by the guard it reviewed and is refused now. The base is a run directory
     (what `qargi local prepare` makes: clone, out, the record) with every protected location a member could aim at."""
     def setUp(self):
@@ -3379,13 +3468,10 @@ class ThirdReview(unittest.TestCase):
         return e
 
     def call(self, tool, inp, cwd=None, cls=None):
-        return subprocess.run([BIN, "__guard"] + (["--class", cls] if cls else []), input=json.dumps({"tool_name": tool, "tool_input": inp, "cwd": cwd or os.path.join(self.clone, "sub")}),
-                              capture_output=True, text=True, env=self.env())
+        return self.hook(["--class", cls] if cls else [], {"tool_name": tool, "tool_input": inp, "cwd": cwd or os.path.join(self.clone, "sub")}, self.env())
 
     def table(self, cmds, cwd=None, cls=None):
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(8) as ex:
-            return list(zip(cmds, ex.map(lambda c: self.call("Bash", {"command": c}, cwd, cls), cmds)))
+        return list(zip(cmds, in_parallel(lambda c: self.call("Bash", {"command": c}, cwd, cls), cmds)))
 
     def not_refused(self, cmds, cwd=None, cls=None):
         return [(c, r.stderr.strip()[:80]) for c, r in self.table(cmds, cwd, cls) if r.returncode != 2]
@@ -3577,22 +3663,17 @@ class ThirdReview(unittest.TestCase):
         }
 
     def test_the_hostile_commands_of_the_review_are_judged_well_inside_the_hooks_timeout(self):
-        """Whole hook processes, as Claude Code runs them: a verdict, allowed or refused, well inside the hook's timeout of 20 seconds (BUDGET, checked in every
-        loop, is 5; the bound here is 15 for a busy machine), so the hook never reaches it. The loops were checked once per segment, and a word, a brace or a project word could cost 25 seconds."""
-        from concurrent.futures import ThreadPoolExecutor
+        """Whole hook calls, as Claude Code makes them: a verdict, allowed or refused, well inside the hook's timeout of 20 seconds (BUDGET, checked in every
+        loop, is 5), so the hook never reaches it. The loops were checked once per segment, and a word, a brace or a project word could cost 25 seconds. The
+        bound here is READINGS of the clock (budget): the loops' work counted on any machine alike, with the one shape that outreads it (SUPER_LINEAR) the budget's."""
         inputs = self.hostile()
-
-        def run(c):
-            t0 = time.monotonic()
-            r = self.call("Bash", {"command": c})
-            return r, time.monotonic() - t0
-        with ThreadPoolExecutor(4) as ex:
-            got = dict(zip(inputs, ex.map(run, inputs.values())))
-        slow = {n: round(t, 1) for n, (r, t) in got.items() if t >= 15.0}
-        self.assertEqual(slow, {})
+        with self.budget(READINGS):
+            got = dict(zip(inputs, in_parallel(lambda c: self.call("Bash", {"command": c}), inputs.values())))
+        slow = {n for n, r in got.items() if BUDGET_REFUSAL in r.stderr}
+        self.assertEqual(slow, SUPER_LINEAR & set(got))
         for name in ("qargi project x12000 then a write", "brace words 5000", "empty braces, each different, x12000", "cd chain 10000"):
-            self.assertEqual(got[name][0].returncode, 2, (name, got[name][0].stderr[:200]))
-        self.assertIn("ability", got["qargi project x12000 then a write"][0].stderr)
+            self.assertEqual(got[name].returncode, 2, (name, got[name].stderr[:200]))
+        self.assertIn("ability", got["qargi project x12000 then a write"].stderr)
 
     def test_a_brace_list_is_checked_whole_or_refused_never_cut(self):
         """Only the first 64 words of a brace expression were looked at: the signing key placed before the 64th was not."""
@@ -3606,7 +3687,8 @@ class ThirdReview(unittest.TestCase):
 
     def test_a_loop_inside_one_command_is_cut_short_by_the_time_budget(self):
         """The budget is read inside the loops (the words of a segment, its write targets, the project words, the brace words), not once per segment: with
-        0.2 seconds left, each of these single segments is cut short by its own loop and not by the next check made after it."""
+        200 readings left on a clock that advances at every reading and at nothing else (TickClock: the machine's speed plays no part), each of these
+        single segments is cut short by its own loop, at the first reading past the deadline, and not by the next check made after it (which reads it once)."""
         J = _Judge(LIBDIR, "guard_budget", self.clone)
         G = J.m
         words = ["/usr/lib/x%d" % k for k in range(15000)]
@@ -3614,16 +3696,17 @@ class ThirdReview(unittest.TestCase):
                  "review of the targets": lambda: G.review_segment(["touch"] + words, 0, self.clone, "touch"),
                  "project words": lambda: G.unreadable_project_verb("qargi project " * 12000),
                  "brace words": lambda: [G.brace_expand("a{b,c}{d,e}%d" % k) for k in range(100000)]}
+        real = G._CLOCK[0]
         for name, run in loops.items():
             getattr(G, "clear_caches", lambda: None)()
-            G._DEADLINE[0] = time.monotonic() + 0.2
-            t0 = time.perf_counter()
+            clock = TickClock()
+            G._CLOCK[0], G._DEADLINE[0] = clock, 200
             try:
                 with self.assertRaises(G.TooSlow, msg=name):
                     run()
             finally:
-                G._DEADLINE[0] = None
-            self.assertLess(time.perf_counter() - t0, 5.0, name)
+                G._CLOCK[0], G._DEADLINE[0] = real, None
+            self.assertEqual(clock.now, 201, name)                      # cut at the first reading past the deadline: the loop reads the budget as it goes
 
     def test_what_is_read_from_the_files_is_read_again_for_each_call(self):
         """The reading of the run's files is kept for the call that made it, not for the next: a judge that outlives one call sees the file as it is then."""
@@ -3700,7 +3783,7 @@ class ThirdReview(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
 
 
-class FifthReview(unittest.TestCase):
+class FifthReview(HookCase):
     """The fifth audit of the Bash reader (guard-r5): every command here was run against the hook and allowed, and is refused now (the first two tests), or was
     refused for the wrong reason and is allowed now (the *_stay_allowed tests). The base is ThirdReview's: a run directory with every protected location."""
     tearDown, env, call, table, not_refused, not_allowed = (ThirdReview.tearDown, ThirdReview.env, ThirdReview.call, ThirdReview.table, ThirdReview.not_refused,
@@ -3957,11 +4040,149 @@ class FifthReview(unittest.TestCase):
                  "at signs": "rsync " + "@" * 100000 + ":", "user at host": "rsync " + "a@" * 80000, "alias dots": "git -c alias." + "." * 100000 + "x s", "diff dots": "git -c diff." + "." * 100000 + " s",
                  "find -exec": "find . " + "-exec echo {} + " * 20000, "find -exec blanks": "find ." + " " * 100000 + "-exec " + " " * 100000 + "echo", "cd words": "cd " + "$d " * 20000,
                  "env -C": "env " + "-C x " * 20000 + "ls", "braces": "echo ${x:-" + "a" * 100000 + "}", "ln": "ln -s " + "a " * 30000 + "b"}
-        for name, command in cases.items():
-            t0 = time.perf_counter()
-            J.judge(command)
-            took = time.perf_counter() - t0
-            self.assertLess(took, 15.0, "%s: %.1f s" % (name, took))
+        with J.budget(READINGS):
+            verdicts = dict(zip(cases, in_parallel(J.judge, cases.values())))
+        for name, why in verdicts.items():
+            self.assertNotIn(BUDGET_REFUSAL, why or "", name)
+
+
+def case_pool(t):
+    """Every call of the in-process classes that needs no fixture but ThirdReview's: the Bash tables (each command under the plain class and the read-only
+    one), the bare redirections and key reads aimed at its targets, and the file tools on every target. SubprocessContract and Differential draw from it
+    by a fixed seed, so the sample is the same on every machine and every run."""
+    cmds = list(BashText.REFUSED) + list(BashText.AS_TEXT) + list(ReviewedReading.REFUSED) + list(ReviewedReading.CONSERVATIVE) + list(Review.TAG_LISTS) + list(Review.TAG_CHANGES)
+    cmds += list(StdinPrograms.SHOWN) + list(StdinPrograms.UNREAD) + list(StdinPrograms.ALLOWED) + list(TextIsData.DATA) + list(TextIsData.STILL)
+    cmds += list(Substitutions.MUST_REFUSE) + list(Substitutions.MAY_RUN) + list(RunRecord.CHANNELS) + list(RunRecord.RECORD) + list(RunRecord.ENV) + list(RunRecord.GIT_PLACES)
+    cmds += [f % v for f in ProviderVerbs.FORMS for v in ProviderVerbs.LIFECYCLE] + [x.replace("@@", p) for x in OldReading.RUNNING + OldReading.TEXTS for p in OldReading.PAYLOADS]
+    cmds += [form.replace("T", path) for path in t.targets.values() for form in ThirdReview.BARE] + [form.replace("K", t.key) for form in ThirdReview.KEYS]
+    sub = os.path.join(t.clone, "sub")
+    pool = [(cls, {"tool_name": "Bash", "tool_input": {"command": c}, "cwd": sub}) for c in dict.fromkeys(cmds) for cls in ([], ["--class", "read-only"])]
+    pool += [(cls, {"tool_name": tool, "tool_input": {key: p}, "cwd": sub})
+             for p in list(t.targets.values()) + [t.key, os.path.join(t.out, "report.md"), os.path.join(t.clone, "src.go")]
+             for tool, key in (("Edit", "file_path"), ("Write", "file_path"), ("Read", "file_path"), ("NotebookEdit", "notebook_path"), ("Grep", "path"))
+             for cls in ([], ["--class", "read-only"])]
+    return pool
+
+
+def process(args, payload, env):
+    """One `qargi __guard ARGS` process, as the hook runs it: payload on its standard input (bytes or a string as they are, anything else as JSON), the
+    verdict with both streams as bytes (what the hook reads)."""
+    data = payload if isinstance(payload, bytes) else (payload if isinstance(payload, str) else json.dumps(payload)).encode()
+    r = subprocess.run([BIN, "__guard", *args], input=data, capture_output=True, env=env)
+    return Verdict(r.returncode, r.stdout, r.stderr)
+
+
+class SubprocessContract(unittest.TestCase):
+    """The real entry point: `qargi __guard` as the hook runs it (bin/qargi, then `python3 -I lib/guard.py`), one process per call. Every other class
+    judges in this process (HookCase), so these calls hold what only the process shows: the exit status and the stream each kind of verdict goes to,
+    in every combination the entry point produces (allowed: 0 and silence; refused: 2 and a line on stderr, or the provider's own exit and stream, a
+    JSON document or a line on stdout; a hook command or protocol it cannot use: 2 and a line); what unreadable, malformed, oversized and NUL-bearing
+    input does; a non-UTF-8 locale and an empty environment; and a fixed-seed sample of the case tables the in-process classes judge, for the shape
+    of every verdict (Differential holds its sense against the process). About forty calls."""
+    setUp, tearDown, env, define = ThirdReview.setUp, ThirdReview.tearDown, ThirdReview.env, ProviderHook.define
+    SEED, SAMPLE = 20261105, 12
+
+    def call(self, tool, inp, *args, **env):
+        return self.verdict(args, {"tool_name": tool, "tool_input": inp, "cwd": os.path.join(self.clone, "sub")}, **env)
+
+    def verdict(self, args, payload, env=None, **more):
+        r = process(args, payload, dict(self.env() if env is None else env, **more))
+        return Verdict(r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace"))
+
+    def refusal(self, r, where, text):
+        """A refusal is one line on the stream it belongs to, starting with the guard's name, and nothing on the other."""
+        self.assertEqual(r.returncode, 2, (where, text, r))
+        self.assertEqual(r.stdout, "", (where, text, r))
+        self.assertTrue(r.stderr.startswith("qargi guard: ") and r.stderr.endswith("\n") and r.stderr.count("\n") == 1, (where, text, r))
+        self.assertIn(text, r.stderr, where)
+
+    def test_an_allowed_call_is_exit_0_and_silence_on_both_streams(self):
+        for tool, inp in (("Bash", {"command": "ls -la"}), ("Bash", {"command": "git status && git log --oneline -3"}), ("Bash", {"command": "git commit -m 'a push of work'"}),
+                          ("Read", {"file_path": os.path.join(self.clone, "docs", "x.md")}), ("Write", {"file_path": os.path.join(self.out, "report.md")})):
+            self.assertEqual(self.call(tool, inp), Verdict(0, "", ""), (tool, inp))
+
+    def test_a_refusal_is_exit_2_and_one_reason_line_on_stderr(self):
+        for tool, inp, text in (("Bash", {"command": "git push origin main"}, "Agents never push"), ("Bash", {"command": "echo hi | gh pr list"}, "Agents never push"),
+                                ("Bash", {"command": "qargi packs seed"}, "changes a skill"), ("Bash", {"command": "echo x > %s" % self.targets["skills"]}, "protected location"),
+                                ("Bash", {"command": "cat %s" % self.key}, "signing key"), ("Edit", {"file_path": self.targets["features"]}, "the lead changes the marshal")):
+            self.refusal(self.call(tool, inp), (tool, inp), text)
+        with open(os.path.join(self.run_dir, "ability"), "w") as f:
+            f.write("review\n")
+        self.refusal(self.call("Write", {"file_path": os.path.join(self.clone, "src.go")}), "review", "writes its report to OUT")
+
+    def test_the_class_and_the_provider_of_the_hook_command_line(self):
+        write = ("Write", {"file_path": os.path.join(self.clone, "src.go")})
+        self.assertEqual(self.call(*write).returncode, 0)
+        self.refusal(self.call(*write, "--class", "read-only"), "read-only", "read-only")
+        self.assertEqual(self.call("Bash", {"command": "git log -3"}, "--class", "read-only"), Verdict(0, "", ""))
+        for args in (("--class", "root"), ("--class",)):
+            self.refusal(self.call("Bash", {"command": "ls"}, *args), args, "unknown class")
+        for args in (("--provider",), ("--provider", "nosuch")):
+            self.refusal(self.call("Bash", {"command": "ls"}, *args), args, "cannot use the hook protocol")
+
+    def test_a_providers_verdict_goes_where_its_protocol_says(self):
+        self.define("fakemd", barrier={"kind": "hook", "hook": FAKEMD_HOOK})
+        self.define("fakecli", barrier={"kind": "hook", "hook": FAKECLI_HOOK})
+        md = lambda cmd: self.verdict(["--provider", "fakemd"], {"event": {"tool": "run_shell", "args": {"cmd": cmd}}, "workdir": self.clone})
+        cli = lambda cmd: self.verdict(["--provider", "fakecli"], {"call": {"name": "sh", "input": {"command": cmd}, "cwd": self.clone}})
+        r = md("git push")                                     # a JSON document on stdout, exit 0
+        self.assertEqual((r.returncode, r.stderr), (0, ""), r)
+        self.assertEqual(json.loads(r.stdout)["decision"], "deny")
+        self.assertIn("Agents never push", json.loads(r.stdout)["reason"])
+        self.assertEqual(md("ls"), Verdict(0, "", ""))
+        r = cli("git push")                                    # a line on stdout, exit 3
+        self.assertEqual((r.returncode, r.stderr), (3, ""), r)
+        self.assertTrue(r.stdout.startswith("qargi guard: ") and r.stdout.count("\n") == 1, r)
+        self.assertEqual(cli("ls"), Verdict(0, "", ""))
+
+    def test_input_that_is_no_call_passes_and_input_the_guard_cannot_read_is_refused(self):
+        for payload in ("not json", "", "{\"tool_name\": \"Bash\""):
+            self.assertEqual(self.verdict([], payload), Verdict(0, "", ""), payload)
+        for inp in ({"tool_name": "Bash", "tool_input": {"command": 7}}, {"tool_name": "Bash", "tool_input": "ls"}, {"tool_name": "Edit", "tool_input": {"file_path": ["a"]}},
+                    ["not", "an", "object"]):
+            self.refusal(self.verdict([], inp), inp, "qargi guard: internal error")
+
+    def test_oversized_and_nul_bearing_commands_are_refused_before_they_are_read(self):
+        self.refusal(self.call("Bash", {"command": "ls " + "a" * 262144}), "one over the limit", "cannot be checked")
+        self.refusal(self.call("Bash", {"command": "ls " + "a; " * 1000000}), "3 MB", "cannot be checked")
+        self.refusal(self.call("Bash", {"command": "echo hi\x00; git push"}), "NUL", "NUL")
+
+    def test_a_non_utf8_locale_and_an_empty_environment(self):
+        r = self.call("Bash", {"command": "echo café été; git push"}, LC_ALL="C", LANG="C")
+        self.refusal(r, "C locale", "git push")
+        self.assertEqual(self.call("Bash", {"command": "echo café"}, LC_ALL="C", LANG="C"), Verdict(0, "", ""))
+        self.refusal(self.call("Bash", {"command": "git push"}, env={}), "empty environment", "Agents never push")
+        self.assertEqual(self.call("Bash", {"command": "ls"}, env={}), Verdict(0, "", ""))
+
+    def test_a_fixed_sample_of_the_case_tables_has_the_shape_of_a_verdict(self):
+        pool = case_pool(self)
+        self.assertGreater(len(pool), 1000)
+        for args, payload in random.Random(self.SEED).sample(pool, self.SAMPLE):
+            r = self.verdict(args, payload)
+            if r.returncode == 0:
+                self.assertEqual(r, Verdict(0, "", ""), (args, payload))
+            else:
+                self.refusal(r, (args, payload), "qargi guard: ")
+
+
+class Differential(HookCase):
+    """The in-process judge against the process, on the same calls in the same run: fifty cases drawn by a fixed seed from the case tables (Bash commands
+    under both classes, the file tools on every protected target), each judged by HookCase's hook and by a `qargi __guard` process, agree on the exit
+    status and on both streams byte for byte. A difference names the case."""
+    setUp, tearDown, env = ThirdReview.setUp, ThirdReview.tearDown, ThirdReview.env
+    SEED, CASES = 20261105, 50
+
+    def test_fifty_cases_end_the_same_in_the_process_and_in_this_one(self):
+        pool = case_pool(self)
+        cases = random.Random(self.SEED).sample(pool, self.CASES)
+        self.assertEqual(len({json.dumps(c) for c in cases}), self.CASES)
+        verdicts = set()
+        for args, payload in cases:
+            mine = self.hook(args, payload, self.env())
+            theirs = process(args, payload, self.env())
+            self.assertEqual((mine.returncode, mine.stdout.encode("utf-8", "surrogateescape"), mine.stderr.encode("utf-8", "surrogateescape")), theirs, (args, payload))
+            verdicts.add(mine.returncode)
+        self.assertEqual(verdicts, {0, 2}, "the sample holds both verdicts")
 
 
 if __name__ == "__main__":

@@ -42,8 +42,8 @@ fast | par | 300 | 5 | python3 tests/test_cloud.py | lib/cloud.py
 fast | par | 300 | 5 | python3 tests/test_upgrade.py | lib/upgrade.sh
 full | par | 300 | 33 | python3 tests/test_supervise.py | lib/supervise.sh lib/supervise.py
 full | par | 300 | 14 | bash tests/test_prompt.sh
-full | par | 3174 | 529 | python3 tests/test_guard.py | lib/guard.py
-fast | par | 300 | 10 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts | lib/guard.py
+full | par | 390 | 65 | python3 tests/test_guard.py | lib/guard.py
+fast | par | 300 | 12 | python3 tests/test_guard.py Guard FailsClosed HookProtocol Substitutions GlobBound TrimmedExpansions InPlaceScripts SubprocessContract | lib/guard.py
 full | par | 678 | 113 | bash tests/test_agent.sh | lib/agent.sh
 full | par | 300 | 39 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 36 | bash tests/test_valued_opts.sh
