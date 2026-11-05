@@ -4,13 +4,18 @@
  "goal": "",
  "plan": "",
  "note": "handoff note: memory handoff-2026-11-04.md",
- "status": "released",
- "lead": null,
- "renewed_at": "2026-11-04T21:59:04Z",
+ "status": "active",
+ "lead": {
+  "id": "rett@arc",
+  "user": "rett",
+  "host": "arc",
+  "since": "2026-11-05T03:34:51Z"
+ },
+ "renewed_at": "2026-11-05T03:34:51Z",
  "finished_at": null,
  "updated_by": "rett@arc",
- "rev": 13,
- "updated_at": "2026-11-04T22:11:27Z",
+ "rev": 14,
+ "updated_at": "2026-11-05T03:34:51Z",
  "feature": "env",
  "project": "qargi"
 }
