@@ -992,6 +992,30 @@ class Marshal(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_changelog_renumber_is_the_leads_unless_it_only_checks(self):
+        """changelog renumber rewrites the changelog of a work tree; with --check it writes nothing. Every other way to run it, through the script, its
+        library, a wrapper or a word a variable builds, is refused with the reason of its own, and --check as the value of --project is no check."""
+        write = ["qargi changelog renumber", "qargi changelog renumber --project p", "qargi changelog", "qargi changelog fix", "qargi changelog --project p",
+                 "/opt/q/bin/qargi changelog renumber", "bin/qargi changelog renumber", "env FOO=1 qargi changelog renumber", "sudo qargi changelog renumber",
+                 "bash -c 'qargi changelog renumber'", "eval 'qargi changelog renumber'", "echo $(qargi changelog renumber)", "true && qargi changelog renumber",
+                 "ls; qargi changelog renumber", "qargi 'changelog' 'renumber'", "bash lib/changelog.sh renumber", "lib/changelog.sh renumber", "python3 -I lib/changelog.sh renumber",
+                 "python3 -I lib/changelog_numbers.py renumber CHANGELOG.md /tmp/a.json", "nohup qargi changelog renumber", "qargi changelog renumber --project --check",
+                 "v=renumber; qargi changelog $v", "qargi changelog $v --check", "qargi changelog renumber $C", "xargs qargi changelog renumber --check",
+                 "qargi changelog renumber --check $(echo --project x)"]
+        for c in write:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+            self.assertNotIn("writes the feature marshal", res.stderr, c)
+            self.assertNotIn("changes a skill", res.stderr, c)
+        for c in ("qargi changelog renumber", "bash lib/changelog.sh renumber", "python3 -I lib/changelog_numbers.py renumber CHANGELOG.md /tmp/a.json"):
+            self.assertIn("qargi changelog renumber rewrites the changelog of a work tree", self.bash(c).stderr.replace("qargi changelog (no verb)", "qargi changelog renumber"), c)
+        for c in ("qargi changelog renumber --check", "qargi changelog renumber --check --project p", "qargi changelog renumber --project p --check", "/opt/q/bin/qargi changelog renumber --check",
+                  "bash lib/changelog.sh renumber --check", "python3 -I lib/changelog_numbers.py renumber CHANGELOG.md /tmp/a.json --check", "qargi changelog --help",
+                  "qargi changelog renumber --help --check", "echo qargi changelog renumber", "grep -n 'changelog renumber' lib/commands.py", "ls lib/changelog.sh", "cat lib/changelog_numbers.py"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_switch_directory_is_protected_like_features(self):
         """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
         m = os.path.join(self.state, "marshal")

@@ -9,7 +9,8 @@
 #   feature.sh list [--project P]                  the open features: purpose, distance from develop, and the files two features both change
 #   feature.sh park [--project P]                  refresh the parking branch (answers repo.parking_branch, default scratch) in the main checkout:
 #                                                  checkout -B it onto develop; refused when the tree is dirty or the branch has commits develop lacks
-#   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed)
+#   feature.sh sync NAME [--project P]             merge develop into the feature (do it before its checkpoint, after another feature landed). With the answer
+#                                                  release.changelog.numbered it warns of duplicate changelog item numbers (finish refuses them)
 #   feature.sh merge NAME BRANCH [--project P]     merge a verified task branch into feature/NAME with --no-ff. NAME may instead be a detached
 #                                                  long-lived branch (answers repo.detached): BRANCH must be an agent/* branch and the merge,
 #                                                  local only, takes --plan T --approved W. A detached branch never meets develop, master,
@@ -79,6 +80,13 @@ merge_detached() {
   echo "merged $EXTRA into the detached branch $d ($(g rev-parse --short "$d"))"
 }
 
+# sync_numbers REF: with the answer release.changelog.numbered, a warning when the changelog at REF has duplicate item numbers (the sync is done either way;
+# feature finish refuses until they are renumbered)
+sync_numbers() {
+  local r
+  r=$(changelog_check "$1") || { echo "qargi: warning: $BR has duplicate changelog item numbers (release.changelog.numbered); feature finish refuses until they are renumbered:" >&2; printf '%s\n' "$r" | sed 's/^/  /' >&2; }
+}
+
 case $verb in
   park)
     # the main checkout rests on the parking branch (answers repo.parking_branch, default scratch), so qargi can move develop under it
@@ -137,7 +145,7 @@ case $verb in
   sync)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
-    g merge-base --is-ancestor develop "$BR" && { echo "$BR already contains develop"; exit 0; }
+    g merge-base --is-ancestor develop "$BR" && { echo "$BR already contains develop"; sync_numbers "$h"; exit 0; }
     detached_mix develop "$BR"
     need_free_wt "$BR"
     merge_step "$h" refs/heads/develop "feature-$NAME_ARG-sync" "Merge branch 'develop' into $BR"
@@ -146,6 +154,7 @@ case $verb in
     journal_ref "$REPO" "refs/heads/$BR" "$h" "$MERGED" feature:sync
     merge_forget "feature-$NAME_ARG-sync"
     echo "merged develop into $BR ($(g rev-parse --short "$BR")); the earlier full-suite result no longer applies to the new head"
+    sync_numbers "$MERGED"
     push_feature "$BR";;
   list)
     branches=$(g for-each-ref --format='%(refname:short)' 'refs/heads/feature/*')
@@ -195,6 +204,7 @@ case $verb in
       ov=$(comm -12 <(g diff --name-only --no-renames "develop...$BR" | sort) <(g diff --name-only --no-renames "$BR...develop" | sort))
       [ -z "$ov" ] || die "$BR is behind develop, and both changed these files since they parted:"$'\n'"$(printf '%s\n' "$ov" | head -20 | sed 's/^/  /')"$'\n'"run qargi feature sync $NAME_ARG first (resolve any conflict), verify again, then finish. Nothing was changed."
     fi
+    cdups=$(changelog_check "$BR") || die "$BR has duplicate changelog item numbers (release.changelog.numbered):"$'\n'"$(printf '%s\n' "$cdups" | sed 's/^/  /')"$'\n'"Nothing was changed."
     [ "$(verified "$BR")" = "$h pass" ] || die "the whole suite has no passing run at the head of $BR (qargi feature verify $NAME_ARG); the branch must not move after it"
     d0=$(sha_of develop); [ -n "$d0" ] || die "no develop branch"
     g merge-base --is-ancestor "$d0" "$BR" || die "develop has moved on since $BR was cut: qargi feature sync $NAME_ARG, verify again, then finish (the run must have seen what develop now holds)"

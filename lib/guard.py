@@ -81,6 +81,8 @@ check records what it verified and may run a pack's code, and adapter-run runs t
 Release: `qargi release publish` (it creates the GitHub release of a tag) and `qargi release sign` (it signs the release files with the
 lead's key) are refused to a member, found like the skill verbs, also as a verb held in a variable and through lib/release.sh and
 lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
+Changelog: `qargi changelog renumber` without --check (it rewrites the changelog of a work tree) is the lead's, found like the skill verbs, also through
+lib/changelog.sh and lib/changelog_numbers.py and when a word is held in a variable; `renumber --check` only reads and stays allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -201,7 +203,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -2270,6 +2272,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "branch.sh":
         words = ["branch"] + words
+    if name in ("changelog.sh", "changelog_numbers.py"):   # the script of the verb and its library: any use is the verb
+        words = ["changelog"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
@@ -2307,6 +2311,14 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
+    if area == "changelog":
+        # renumber writes the changelog of a work tree and only --check reads; a --check that is the value of --project is no flag, and a word a variable
+        # or a substitution builds could be anything. Help alone reads.
+        check = any(t == "--check" and (i == 0 or rest[i - 1] != "--project") for i, t in enumerate(rest))
+        if not ((verb == "renumber" and check and not via_xargs and not any("$" in t or "`" in t for t in rest))
+                or (verb == "" and any(t in ("-h", "--help") for t in rest))):
+            return OwnReason("qargi changelog %s rewrites the changelog of a work tree and is the lead's to run; only qargi changelog renumber --check (it writes nothing) is available to an agent; "
+                             "report the duplicate item numbers in your task output" % (verb or "(no verb)"))
     if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
         return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
