@@ -136,8 +136,10 @@ refused, and a member writes a message to a file with its file tool and commits 
 a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, cat, tee, grep or git commit|log|status|diff|show|add
 (they print, write or search the text and run nothing from it; not printf, whose -v assigns a variable), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
 `git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
-function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or the target of a
-redirection in quotes keeps the plain split. A $( ), <( ), >( ) or backtick substitution, also
+function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, or a quote or heredoc never closed keeps
+the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
+blanked. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
+location (or names the signing key) is refused as a path (separator_path_refusal). A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
@@ -659,6 +661,7 @@ MASK_BAIL = re.compile(r"[\\`\0\r\x0b\x0c]|\$[\[\x27\"({]|[<>]\(")  # a backslas
 MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.""", re.S)
 HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
 MASK_SEPARATORS = re.compile(r"[;|&\n]")
+REDIRECT_END = re.compile(r"[<>][|&]?$")                    # a word that is a redirection whose file is the next word (>, &>, 2>>, {fd}>, >|, >&)
 
 
 def inert_command(words):
@@ -669,12 +672,15 @@ def inert_command(words):
 def mask_data(command):
     """The command with its data made harmless to the plain split, or the command itself. The split (segments) cuts a line at every ; | & and newline,
     inside quotes and heredocs too, so `git commit -m "Docs; qargi packs seed"` and a heredoc that a commit message is written from were refused as the
-    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, cat, tee, grep, git commit|log|
-    status|diff|show|add; not printf, whose -v NAME assigns a variable, and an array subscript in NAME runs a substitution), a quoted string of it cannot run anything, and a heredoc body is the input of such a command: the separators in the quoted
-    strings become blanks and the heredoc bodies are cut out (the delimiter line stays), and nothing else changes, so a redirection or a path in the
-    line is still judged. Any other command in the line (a shell, make, find, a script, a function, an assignment, a keyword, a group), a comment, a
-    backslash, a substitution, $'..', ${..}, a quote or heredoc that is never closed, a redirection's own target: the command is returned as it is, and
-    the plain split reads all of it. Used for the verbs that change a skill or the marshal, not for push/gh/ssh (blocked() reads the whole text)."""
+    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, cat, tee, grep, git commit|log|status|
+    diff|show|add; not printf, whose -v NAME assigns a variable, and an array subscript in NAME runs a substitution), a quoted string of it cannot run
+    anything, and a heredoc body is the input of such a command: the separators in the quoted strings become blanks and the heredoc bodies are cut out
+    (the delimiter line stays), and nothing else changes, so a redirection or a path in the line is still judged. Any other command in the line (a shell,
+    make, find, a script, a function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc that
+    is never closed: the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
+    word that holds a < or > (`>"a;b"`, `&>"a;b"`, `&>>"a;b"`, `x>"a;b"`, `{fd}>"a;b"`) or in the word after one (`> "a;b"`), and the command is returned
+    as it is when a quoted string with a separator is among the words of tee (the files it writes). Used for the verbs that change a skill or the
+    marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
     if not QUOTED.search(command) or MASK_BAIL.search(command):
         return command
     n, pos, count = len(command), 0, 0
@@ -697,9 +703,12 @@ def mask_data(command):
             j = command.find(t, end)
             if j < 0:
                 return command                              # never closed
-            target = bool(re.match(r"\d*[<>]", cur)) or (not cur and bool(words) and bool(re.fullmatch(r"\d*[<>]+[|&]?", words[-1])))
-            if not target and MASK_SEPARATORS.search(command, end, j):
-                quotes.append((end, j))
+            target = "<" in cur or ">" in cur or (not cur and bool(words) and bool(REDIRECT_END.search(words[-1])))   # a file a redirection names
+            if MASK_SEPARATORS.search(command, end, j):
+                if words and words[0] == "tee":
+                    return command                          # a file tee writes: the plain split reads it, and separator_path_refusal the name
+                if not target:
+                    quotes.append((end, j))
             cur += "\x01"
             end = j + 1
         elif t == "<<<":
@@ -2033,7 +2042,37 @@ def skill_refusal(call):
         return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and below_key_dir(full))) else None
     if call.kind != "shell":
         return None
-    return bash_skill_refusal(mask_data(call.command), call.cwd, 0)
+    return bash_skill_refusal(mask_data(call.command), call.cwd, 0) or separator_path_refusal(call.command, call.cwd)
+
+
+SEPARATOR_WORD = re.compile(r"[;|&\n]")
+WORD_QUOTING = re.compile(r"[\"'\\]")
+
+
+def separator_path_refusal(command, here):
+    """A backstop of the plain split, which cuts a word at a ; | & or newline even inside quotes and so never judges it whole as a path: a word that,
+    after quote removal, still holds one of them and resolves into a protected location, or names the signing key, is refused (`echo x > "s;/x/SKILL.md"`
+    or `tee 's;/x/SKILL.md'` with a link `s;` to a skills directory). A read of such a name is refused too: which words a command writes is not read here.
+    The directory is the one of the call (a cd in the line is not followed), and a word longer than a path can be is no path."""
+    if not WORD_QUOTING.search(command) or not SEPARATOR_WORD.search(command):
+        return None
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)   # the redirection operators are words of their own: `x>"a;b"` is x, >, a;b
+        lex.whitespace_split, lex.commenters = True, ""
+        words = set(lex)
+    except ValueError:                                       # an open quote (an apostrophe in a heredoc body): the quoted strings alone
+        words = {a or b for a, b in re.findall(r"'([^']*)'|\"([^\"]*)\"", command)}
+    for w in words:
+        tick()
+        if len(w) > 4096 or not SEPARATOR_WORD.search(w):
+            continue
+        full = resolve(here, w)
+        root = protected(full)
+        if root:
+            return refusal_text("a command", w, root)
+        if is_key(full) or below_key_dir(full):
+            return key_refusal_text("", w, "a command")
+    return None
 
 
 def names_lead(t):

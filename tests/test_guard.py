@@ -2271,6 +2271,25 @@ class TextIsData(unittest.TestCase):
                   "printf 'x; qargi upgrade'", "printf -vPATH %s . ; echo 'x; qargi packs seed'"):
             self.assertEqual(self.bash(c).returncode, 2, c)
 
+    def test_a_quoted_file_name_is_no_data(self):
+        """A quoted string that a redirection or tee names is a file, not text: the mask leaves it to the plain split, and a name that holds a separator
+        and resolves into a protected location is refused as a path (a link `s;` in the clone to a skills directory)."""
+        os.symlink(self.lskill, os.path.join(self.clone, "s;"))
+        for c in ('echo x >"s;/x/SKILL.md"', 'echo x &>"s;/x/SKILL.md"', 'echo x &>>"s;/x/SKILL.md"', 'echo x>"s;/x/SKILL.md"', 'echo x > "s;/x/SKILL.md"',
+                  'echo x {fd}>"s;/x/SKILL.md"', 'echo x 2>> \'s;/x/SKILL.md\'', 'echo x | tee "s;/x/SKILL.md"', "echo x | tee -a 's;/x/SKILL.md'",
+                  "tee 's;/x/SKILL.md' <<'E'\nbody\nE", "cat <<'E' > 's;/x/SKILL.md'\nbody\nE", 'echo x > s\\;/x/SKILL.md', "echo x > 's;'/x/SKILL.md"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("a protected location", r.stderr, c)
+        for c in ("echo 'a;b' > out.txt", "echo x | tee 'a;b.txt'", "git commit -m 'x; y'", "echo x > 's;b.txt'"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        sys.path.insert(0, LIBDIR)
+        import guard as G
+        for c in ('echo x >"a;b"', 'echo x &>"a;b"', 'echo x &>>"a;b"', 'echo x>"a;b"', 'echo x {fd}>"a;b"', 'echo x &> "a;b"', 'echo x >| "a;b"',
+                  'echo x | tee "a;b"', "tee -a 'a;b' <<'E'\nbody\nE"):
+            self.assertEqual(G.mask_data(c), c, c)
+        self.assertEqual(G.mask_data('echo "a;b" 2>&1 "c;d" > f'), 'echo "a b" 2>&1 "c d" > f')
+
     def test_a_real_verb_next_to_data_is_refused_and_so_is_a_real_write(self):
         for c in ("echo 'a; b'; qargi upgrade", "git commit -m 'a; b' && qargi packs seed", "echo 'a; b' | qargi upgrade", "cat <<'E'\nbody\nE\nqargi upgrade",
                   "echo 'a; b' > ~/.bashrc", "echo 'a; b' >> ~/.claude/settings.json", "cat <<'E' > ~/.bashrc\nx\nE", "git commit -m 'a; b' | tee ~/.bashrc",
