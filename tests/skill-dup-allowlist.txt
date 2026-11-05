@@ -1,3 +1,2 @@
 # Sentences of 12 words or more that stand in two or more texts: SHA12 and the texts. Sorted; delete a line when its duplicate is gone.
-7f5b59ce8ebf agents/member.body.md, agents/member.md
 fb249299ba6c agents/member.body.md, agents/member.md

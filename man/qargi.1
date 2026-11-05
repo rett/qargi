@@ -1895,7 +1895,7 @@ the project, instead of the one inferred from here.
 .BI "finish " "NAME"
 Merge the feature into develop with \-\-no\-ff and delete it.
 .br
-Needs a passing whole\-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows it and its token covers origin's tip. The answer branches.push_features (never, when\-shared, always; default never) decides whether feature start, merge and sync push the feature branch: when\-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the worktree root is detached and removed after the merge, when the branch is deleted. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge.
+Needs a passing whole\-suite run at the feature's head. A feature behind develop is refused (exit 1, nothing changed); when both sides changed the same files since their merge base, the message lists them and says to run qargi feature sync first. With the answer release.changelog.numbered true it also refuses a changelog with duplicate item numbers (qargi changelog renumber). Pushes develop if the repository has an origin. With the answer branches.delete_merged local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows it and its token covers origin's tip. The answer branches.push_features (never, when\-shared, always; default never) decides whether feature start, merge and sync push the feature branch: when\-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the worktree root is detached and removed after the merge, when the branch is deleted. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. A merge that conflicts changes nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, and the same command with \-\-resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists each one: prepared and not verified, verified and not applied, or applied and not merged. A run that was cleaned, discarded (local clean \-\-discard), closed (local close \-\-applied\-by\-am) or applied and merged is not open.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2611,9 +2611,9 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .TP
 .B qargi ref
-Record in the lead's ref journal a branch move that no flow verb made.
+Record in the lead's ref journal a branch move or a branch that no flow verb made.
 .PP
-The ref journal ($QARGI_STATE/ref\-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand that verify must still accept: the rewrite of an agent branch that keeps its content.
+The ref journal ($QARGI_STATE/ref\-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand that verify must still accept: the rewrite of an agent branch that keeps its content. qargi ref note adds the branches the lead made by hand or pushed (git branch, git push), so that verify does not blame the run for them.
 .RS
 .TP
 .BI "record " "REF OLD NEW"
@@ -2629,6 +2629,23 @@ the kind of move: REF goes from OLD to NEW, whose trees must be identical.
 .TP
 .BI "\-\-why " "TEXT"
 the reason, journaled and named by local verify.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RE
+.RS
+.TP
+.BI "note " "REF"
+Journal a branch you made by hand, or pushed to origin, so that local verify accepts it.
+.br
+REF (give several) is a branch NAME, or origin/NAME for the branch NAME of origin, whose live value is asked (git ls\-remote); the branch must exist now. The journal line (verb ref:note) goes from the ref being absent to the value it has now, or, when you noted that ref before, from where the earlier note left it (pushing the same branch again). Nothing is created, moved or pushed. A run prepared before it then verifies with the branch named as one you noted. Only a ref that did not exist when the run was prepared (or that you noted before) is accepted this way: a ref that existed then and has moved, a deletion, and any ref you did not note stay offending, so a branch the run's agent made or moved is still found. Note only what you made. Not available in a member run. The harness's own worktree branches (worktree\-bridge\-NAME, held by a worktree directory bridge\-NAME) need no note: verify leaves them out.
+.RS
+.TP
+.BI "\-\-why " "TEXT"
+a reason, journaled with a local branch.
 .RE
 .RS
 .TP
@@ -2862,7 +2879,7 @@ the request, in your words, that names the cloud instance; recorded in the audit
 .RE
 .TP
 .B qargi local
-Prepare, verify, list and clean a local run that has no way to push.
+Prepare, verify, close, list and clean a local run that has no way to push.
 .PP
 The agent works in a clone of a bare copy that has no remote, runs git through a credential\-less wrapper, and verify compares every ref of the real repository before and after. It is a guard, not a sandbox.
 .RS
@@ -2956,11 +2973,23 @@ the profile to dispatch under (for example advisor or auditor for review); resol
 .BI "verify " "[RUN_DIR]"
 Compare the repository's refs with the snapshot taken by prepare.
 .br
-Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). It accepts the lead's own moves and names each one ("develop moved by qargi feature finish"): what the lead's ref journal records (the branches and tags that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, the parking branch following develop, a rewrite recorded with qargi ref record \-\-rewrite), a remote\-tracking ref of origin that says what origin has (a fetch), and the parking branch (repo.parking_branch, default scratch) fast\-forwarded to develop's tip, by hand too. After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept your fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot that emptied a tmpfs) can still be applied: qargi review apply \-\-from\-saved ID. \-\-saved ID compares the refs against that copy's snapshots.
+Fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and RUN/out holds neither patches nor a report: nothing is compared, and the member must collect (its DONE needs ls OUT/patches to list the patches). Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). It accepts the lead's own moves and names each one ("develop moved by qargi feature finish"): what the lead's ref journal records (the branches and tags that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, the parking branch following develop, a rewrite recorded with qargi ref record \-\-rewrite), a remote\-tracking ref of origin that says what origin has (a fetch), the parking branch (repo.parking_branch, default scratch) fast\-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted (qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). It also leaves out the harness's own bridge branches: a branch worktree\-bridge\-NAME while a worktree directory bridge\-NAME holds it (or once it is gone). After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept your fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot that emptied a tmpfs) can still be applied: qargi review apply \-\-from\-saved ID. \-\-saved ID compares the refs against that copy's snapshots.
 .RS
 .TP
 .BI "\-\-saved " "ID"
 verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX).
+.RE
+.RE
+.RS
+.TP
+.BI "close " "RUN_DIR"
+Close a verified run whose patches you applied by hand (git am): it is no longer open.
+.br
+Marks the run in the lead's registry (closed: the time, closed_by: applied\-by\-am), never in the run directory, which a member can write; the files are kept. A closed run is no longer listed as open or counted as applied and not merged by qargi lead compact\-check and the compaction advice, no longer blocks qargi feature finish and is listed by marshal status as closed; qargi local list shows closed in the APPLIED column. qargi local clean then removes it without asking for an applied tip (its commits are taken as applied by hand); clean \-\-applied removes it too. Refused for a run that has no passing local verify (verify it first: close must not hide changed refs), a read\-only run, one applied with qargi review apply (merge that branch), a run already closed or cleaned. Not available in a member run.
+.RS
+.TP
+.B \-\-applied\-by\-am
+the way the run was taken in: you applied its patches by hand with git am (the only way close knows; required).
 .RE
 .RE
 .RS
@@ -3000,7 +3029,7 @@ with \-\-applied or \-\-stale: the directory the runs were prepared in; only the
 .B list
 List the local runs: role, slug, age, whether applied and merged.
 .br
-Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove is listed after the others as directory gone, with its saved copy and the review apply \-\-from\-saved command that applies it.
+Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran; closed for a run closed with close \-\-applied\-by\-am), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove is listed after the others as directory gone, with its saved copy and the review apply \-\-from\-saved command that applies it.
 .RS
 .TP
 .BI "\-\-scratch " "DIR"
@@ -3106,7 +3135,7 @@ accept a manifest with no commits (a team member that was blocked or had nothing
 .BI "apply " "[RUN_DIR]"
 Apply a collected, checked run to a task branch of the repository.
 .br
-Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run. \-\-from\-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify \-\-saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once.
+Refuses a run applied already or closed (local close \-\-applied\-by\-am), and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run. \-\-from\-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify \-\-saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

@@ -10,6 +10,14 @@
 #       it accept it and name it as a rewrite, and `local clean` and `local list` follow a recorded run's applied tip to NEW.
 #       Nothing else changes: no working tree (the trees are the same), no other ref, nothing on origin. The lead's verb: the guard
 #       refuses it to a member.
+#
+#   ref.sh note REF... [--why TEXT] [--project P]
+#       The lead made a branch by hand (git branch, git switch -c) or pushed one (git push: the branch is new on origin). Each REF (a branch NAME, or
+#       origin/NAME for the branch NAME of origin, whose live value is asked) is journaled (verb ref:note) from absent to what it is now, or, when an
+#       earlier note of it exists, from where that note left it (a second push of the same branch). Nothing is moved or created. The line leads from an
+#       absent ref (or from the lead's own earlier note), so `local verify` and `local clean` of a run prepared before accept the creation of the ref and
+#       name it a ref the lead noted; a ref that already existed when the run was prepared is not explained by it (the journal does not start where that
+#       ref was), nor is a ref nobody noted. The lead's verb: the guard refuses it to a member.
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
@@ -23,8 +31,51 @@ while [ $# -gt 0 ]; do
     *) ARGS+=("$1"); shift;;
   esac
 done
-USAGE="usage: qargi ref record --rewrite REF OLD NEW --why \"TEXT\" [--project P]"
-[ "$verb" = record ] || usage_die "$USAGE"
+USAGE="usage: qargi ref record --rewrite REF OLD NEW --why \"TEXT\" [--project P] | qargi ref note REF... [--why \"TEXT\"] [--project P]"
+case $verb in record|note) ;; *) usage_die "$USAGE";; esac
+if [ "$verb" = note ]; then
+  [ "${#ARGS[@]}" -ge 1 ] || usage_die "ref note takes one or more REF (a branch NAME, or origin/NAME for a branch of origin); $USAGE"
+  [ -z "$MODE" ] || usage_die "ref note takes no --rewrite; $USAGE"
+  . "$(dirname "$0")/gitflow.sh"
+  project_load
+  jf=$DA_STATE/ref-journal.jsonl
+  rp=$(readlink -f "$REPO" 2>/dev/null) || rp=$REPO
+  uk=''; if g remote get-url origin >/dev/null 2>&1; then uk=$(url_key "$(g remote get-url origin)"); fi
+  bad=0
+  for a in "${ARGS[@]}"; do
+    side=local br=$a
+    case $a in
+      refs/remotes/origin/?*) side=remote br=${a#refs/remotes/origin/};;
+      origin/?*) side=remote br=${a#origin/};;
+      refs/heads/?*) br=${a#refs/heads/};;
+    esac
+    if ! git check-ref-format "refs/heads/$br"; then echo "qargi: '$a' is not a branch name; nothing was noted for it" >&2; bad=1; continue; fi
+    if [ "$side" = local ]; then
+      cur=$(sha_of "$br"); [ -n "$cur" ] || { echo "qargi: no branch $br in $REPO; nothing was noted for it" >&2; bad=1; continue; }
+    else
+      [ -n "$uk" ] || { echo "qargi: $REPO has no origin; nothing was noted for $a" >&2; bad=1; continue; }
+      remote_tip "$br"
+      case $RSTATE in
+        found) cur=$RTIP;;
+        absent) echo "qargi: origin has no branch $br (asked live); nothing was noted for it" >&2; bad=1; continue;;
+        *) echo "qargi: origin could not be asked about $br (${RWHY:-no answer}); nothing was noted for it" >&2; bad=1; continue;;
+      esac
+    fi
+    # from absent, or from where the lead's last note of this ref left it
+    old=''
+    if [ -f "$jf" ]; then
+      old=$(jq -sr --arg r "$rp" --arg ref "refs/heads/$br" --arg side "$side" --arg u "$uk" \
+        '[ .[] | select(type == "object" and .verb == "ref:note" and .repo == $r and .ref == $ref and (if $side == "remote" then .remote == "origin" and .url == $u else (has("remote") | not) end)) ] | last | .new // empty' "$jf" 2>/dev/null) || old=''
+    fi
+    [ "$old" != "$cur" ] || { echo "$a is at ${cur:0:12} as your last note left it: nothing to note"; continue; }
+    if [ "$side" = local ]; then journal_line "$REPO" "refs/heads/$br" "$old" "$cur" ref:note '' "$WHY"
+    else journal_push "refs/heads/$br" "$old" "$cur" ref:note; fi
+    audit_log "ref:note" "$PROJ $a ${cur:0:12}"
+    if [ -n "$old" ]; then echo "noted $a: ${old:0:12} to ${cur:0:12} (after your earlier note)"; else echo "noted $a: created at ${cur:0:12}"; fi
+  done
+  [ "$bad" = 0 ] || exit 1
+  exit 0
+fi
 [ "$MODE" = rewrite ] || usage_die "ref record needs --rewrite (the one kind of move it records); $USAGE"
 [ "${#ARGS[@]}" = 3 ] || usage_die "ref record --rewrite takes REF, OLD and NEW; $USAGE"
 [ -n "$WHY" ] || usage_die "ref record --rewrite needs --why \"TEXT\": the reason is journaled and verify names it"

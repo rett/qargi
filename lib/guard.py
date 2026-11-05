@@ -30,7 +30,7 @@ redirection, a command that creates, changes or removes files, or a git command 
 reflog expire and delete, hash-object -w, unpack-objects and git lfs included).
 
 Skills: only a person, through qargi's own skills, changes a skill, so the guard refuses a member
-  - the lead's runs and agents: qargi local run|prepare|verify|clean (`local clean --discard` removes another run with no token), agent remove, project new,
+  - the lead's runs and agents: qargi local run|prepare|verify|close|clean (`local clean --discard` removes another run with no token), agent remove, project new,
     team run and task;
   - the verbs that change one: qargi skill|tool new|import|seal|remove|unlink|link|enable|disable, qargi skill accept|unaccept
     (they record which skills the owner accepts, in <packs>/accepted.json), qargi discover
@@ -102,7 +102,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
     the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
     that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
-    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it; any verb, also through lib/ref.sh);
+    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it, note journals a branch the lead made; any verb, also through lib/ref.sh);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -237,7 +237,7 @@ MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
 ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
-LEAD_VERBS = {("local", "clean"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
+LEAD_VERBS = {("local", "clean"), ("local", "close"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
@@ -2663,8 +2663,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
     if area == "ref":
-        return OwnReason("qargi ref %s moves a branch of the lead's repository and writes the lead's ref journal, which local verify trusts, and is the lead's to run; "
-                         "report in your task output a branch you think should be rewritten" % (verb or "(no verb)"))
+        return OwnReason("qargi ref %s writes the lead's ref journal, which local verify trusts (record --rewrite also moves a branch of the lead's repository), and is the lead's to run; "
+                         "report in your task output a branch you think should be rewritten or noted" % (verb or "(no verb)"))
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
