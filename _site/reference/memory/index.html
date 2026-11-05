@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Reference: Memory · qargi</title>
+<meta name="description" content="Reference for the &quot;Memory&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+
+<link rel="canonical" href="https://qargi.rettware.com/reference/memory/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Reference: Memory · qargi">
+<meta property="og:description" content="Reference for the &quot;Memory&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<meta property="og:url" content="https://qargi.rettware.com/reference/memory/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Reference: Memory · qargi">
+<meta name="twitter:description" content="Reference for the &quot;Memory&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Reference: Memory","description":"Reference for the \"Memory\" group of qargi commands: every verb with its arguments, options and examples, generated from the release.","url":"https://qargi.rettware.com/reference/memory/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-05"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Reference","item":"https://qargi.rettware.com/reference/"},{"@type":"ListItem","position":3,"name":"Reference: Memory","item":"https://qargi.rettware.com/reference/memory/"}]}]}</script>
+<script src="../../assets/search.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<input type="checkbox" id="menu-toggle" class="menu-toggle" aria-controls="sidebar">
+<header class="site-header">
+<div class="wrap wide">
+<a class="brand" href="../../">qargi</a>
+<span class="stamp">qargi 0.2.2</span>
+<label for="menu-toggle" class="menu-button">Menu</label>
+
+</div>
+</header>
+<div class="layout">
+<div class="sidebar" id="sidebar">
+<nav aria-label="Site">
+<details class="side-section">
+<summary>Guides</summary>
+<ul>
+<li><a href="../../">Home</a></li>
+<li><a href="../../install/">Install and update</a></li>
+<li><a href="../../first-project/">Your first project</a></li>
+<li><a href="../../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../../about/">About these docs</a></li>
+</ul>
+</details>
+<details class="side-section" open>
+<summary>Reference</summary>
+<ul>
+<li><a href="../">Overview</a></li>
+<li><details class="side-group">
+<summary>Set up</summary>
+<ul>
+<li><a href="../set-up/">Overview</a></li>
+<li><a href="../set-up/#project">project</a></li>
+<li><a href="../set-up/#methodology">methodology</a></li>
+<li><a href="../set-up/#cloud">cloud</a></li>
+<li><a href="../set-up/#agent">agent</a></li>
+<li><a href="../set-up/#role">role</a></li>
+<li><a href="../set-up/#provider">provider</a></li>
+<li><a href="../set-up/#provision">provision</a></li>
+<li><a href="../set-up/#env">env</a></li>
+<li><a href="../set-up/#instances">instances</a></li>
+<li><a href="../set-up/#skill">skill</a></li>
+<li><a href="../set-up/#tool">tool</a></li>
+<li><a href="../set-up/#packs">packs</a></li>
+<li><a href="../set-up/#discover">discover</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Run a task</summary>
+<ul>
+<li><a href="../run-a-task/">Overview</a></li>
+<li><a href="../run-a-task/#feature">feature</a></li>
+<li><a href="../run-a-task/#marshal">marshal</a></li>
+<li><a href="../run-a-task/#release">release</a></li>
+<li><a href="../run-a-task/#branch">branch</a></li>
+<li><a href="../run-a-task/#changelog">changelog</a></li>
+<li><a href="../run-a-task/#upstream">upstream</a></li>
+<li><a href="../run-a-task/#ref">ref</a></li>
+<li><a href="../run-a-task/#start">start</a></li>
+<li><a href="../run-a-task/#send">send</a></li>
+<li><a href="../run-a-task/#status">status</a></li>
+<li><a href="../run-a-task/#report">report</a></li>
+<li><a href="../run-a-task/#noticed">noticed</a></li>
+<li><a href="../run-a-task/#watch">watch</a></li>
+<li><a href="../run-a-task/#collect">collect</a></li>
+<li><a href="../run-a-task/#stop">stop</a></li>
+<li><a href="../run-a-task/#close">close</a></li>
+<li><a href="../run-a-task/#mark">mark</a></li>
+<li><a href="../run-a-task/#track">track</a></li>
+<li><a href="../run-a-task/#local">local</a></li>
+<li><a href="../run-a-task/#supervise">supervise</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Review and apply</summary>
+<ul>
+<li><a href="../review-and-apply/">Overview</a></li>
+<li><a href="../review-and-apply/#review">review</a></li>
+<li><a href="../review-and-apply/#team">team</a></li>
+</ul>
+</details></li>
+<li><details class="side-group" open>
+<summary>Memory</summary>
+<ul>
+<li><a href="./" aria-current="page">Overview</a></li>
+<li><a href="./#memory">memory</a></li>
+<li><a href="./#canon">canon</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Lead and credentials</summary>
+<ul>
+<li><a href="../lead-and-credentials/">Overview</a></li>
+<li><a href="../lead-and-credentials/#lead">lead</a></li>
+<li><a href="../lead-and-credentials/#credential">credential</a></li>
+<li><a href="../lead-and-credentials/#hook">hook</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Export and import</summary>
+<ul>
+<li><a href="../export-and-import/">Overview</a></li>
+<li><a href="../export-and-import/#export">export</a></li>
+<li><a href="../export-and-import/#import">import</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Other</summary>
+<ul>
+<li><a href="../other/">Overview</a></li>
+<li><a href="../other/#upgrade">upgrade</a></li>
+<li><a href="../other/#help">help</a></li>
+<li><a href="../other/#version">version</a></li>
+</ul>
+</details></li>
+<li><a href="../topics/">Help topics</a></li>
+<li><a href="../files/">Files</a></li>
+<li><a href="../environment/">Environment</a></li>
+</ul>
+</details>
+<details class="side-section">
+<summary>Releases</summary>
+<ul>
+<li><a href="../../releases/">Release notes</a></li>
+</ul>
+</details>
+</nav>
+</div>
+<main id="main" class="content">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../../">Home</a></li><li><a href="../">Reference</a></li><li aria-current="page">Reference: Memory</li></ol></nav>
+<article>
+<h1>Reference: Memory</h1>
+<p class="lede">Reference for the &quot;Memory&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.</p>
+<p class="dates">Updated <time datetime="2026-11-05">2026-11-05</time></p>
+
+<h2 id="memory">qargi memory <a class="anchor" href="#memory" aria-label="Link to: qargi memory">#</a></h2>
+<p class="summary">Check a memory store, list its tiers, read a note, split, merge or copy stores.</p>
+<p>split, merge and copy work between two stores, each a directory of notes, a .jsonl dump (read-only: a source, never a target) or a memstore_ id. A note with a name starting with a dot, or that a store cannot hold, makes the plan refuse and name it. Nothing is deleted: what a split moves out of a store goes to /_archive/&lt;date&gt;/ and a collision to /_conflicts/&lt;date&gt;/, and the origin of every note written is added to its Sources: line, so each change can be undone. Without --approved they print the plan and its token and change nothing; a store whose notes changed since the plan is refused.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#memory-lint"><code>lint</code></a></td><td>Check a store against the canon</td></tr><tr><td><a href="#memory-get"><code>get</code></a></td><td>Print one note</td></tr><tr><td><a href="#memory-tiers"><code>tiers</code></a></td><td>List the project&#x27;s memory tiers (repo, cloud, project, shared, system): where each is, whether it exists, its notes</td></tr><tr><td><a href="#memory-check"><code>check</code></a></td><td>Check every existing memory tier against the canon, and that no note lives in two tiers</td></tr><tr><td><a href="#memory-init"><code>init</code></a></td><td>Create a memory tier (repo, project, shared or system) as an empty store of the standard layout</td></tr><tr><td><a href="#memory-move"><code>move</code></a></td><td>Move notes from one tier to another, with the original archived in the first</td></tr><tr><td><a href="#memory-split"><code>split</code></a></td><td>Copy the notes a selector picks into another store, optionally archiving the originals</td></tr><tr><td><a href="#memory-merge"><code>merge</code></a></td><td>Add every note of FROM that TO lacks</td></tr><tr><td><a href="#memory-copy"><code>copy</code></a></td><td>Copy notes into another store, leaving the source as it is</td></tr></tbody></table></div>
+<h3 id="memory-lint">qargi memory lint <a class="anchor" href="#memory-lint" aria-label="Link to: qargi memory lint">#</a></h3>
+<p class="usage"><code>qargi memory lint STORE_ID [OPTIONS]</code></p>
+<p>Check a store against the canon.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>recipes or reference (for a store before the canon)</td></tr></tbody></table></div>
+<h3 id="memory-get">qargi memory get <a class="anchor" href="#memory-get" aria-label="Link to: qargi memory get">#</a></h3>
+<p class="usage"><code>qargi memory get STORE_ID PATH</code></p>
+<p>Print one note.</p>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi memory get memstore_01ABC /shared/INDEX.md</code></pre>
+<h3 id="memory-tiers">qargi memory tiers <a class="anchor" href="#memory-tiers" aria-label="Link to: qargi memory tiers">#</a></h3>
+<p class="usage"><code>qargi memory tiers [OPTIONS]</code></p>
+<p>List the project&#x27;s memory tiers (repo, cloud, project, shared, system): where each is, whether it exists, its notes.</p>
+<p>A tier is one memory store of the standard layout at a fixed rank, highest first: repo &gt; cloud &gt; project &gt; shared &gt; system. Where they are comes from the project&#x27;s answers (memory.tiers; each key is optional and has a default). The reference store is not a tier. Reads only; nothing is created or changed.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--json</code></td><td></td><td>machine-readable</td></tr></tbody></table></div>
+<h3 id="memory-check">qargi memory check <a class="anchor" href="#memory-check" aria-label="Link to: qargi memory check">#</a></h3>
+<p class="usage"><code>qargi memory check [OPTIONS]</code></p>
+<p>Check every existing memory tier against the canon, and that no note lives in two tiers.</p>
+<p>Runs the canon check on each tier that exists, then reports a note path present in two or more tiers (structural files such as README.md and INDEX.md repeat per tier and are fine). A tier that does not exist (memory init creates it) or cannot be reached is information, not a failure. Exit 1 when anything failed.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr></tbody></table></div>
+<h3 id="memory-init">qargi memory init <a class="anchor" href="#memory-init" aria-label="Link to: qargi memory init">#</a></h3>
+<p class="usage"><code>qargi memory init TIER [OPTIONS]</code></p>
+<p>Create a memory tier (repo, project, shared or system) as an empty store of the standard layout.</p>
+<p>Without --approved it shows what would be created and a plan token and changes nothing. It refuses a tier that holds files that are not a standard store, one whose place overlaps another tier, a repo tier outside the checkout, and the cloud tier (provision creates that). The repo tier is written inside your repository checkout: qargi never commits it, so review it and commit or ignore it yourself. A tier that is already set up says so and exits 0.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h3 id="memory-move">qargi memory move <a class="anchor" href="#memory-move" aria-label="Link to: qargi memory move">#</a></h3>
+<p class="usage"><code>qargi memory move PATH [OPTIONS]</code></p>
+<p>Move notes from one tier to another, with the original archived in the first.</p>
+<p>PATH is one note (ending in .md) or a folder prefix under shared/ or roles/ROLE/. Only notes move, never indexes. A note must live in one tier, so it refuses a path that is also in another tier. Nothing is deleted: the original goes to /_archive/&lt;date&gt;/ of the first tier and each copy records its origin. Without --approved it prints the plan and its token and changes nothing; a tier whose notes changed since the plan is refused.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--from</code></td><td><code>TIER</code></td><td>the tier the notes are in</td></tr><tr><td><code>--to</code></td><td><code>TIER</code></td><td>the tier they go to</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h3 id="memory-split">qargi memory split <a class="anchor" href="#memory-split" aria-label="Link to: qargi memory split">#</a></h3>
+<p class="usage"><code>qargi memory split FROM TO [OPTIONS]</code></p>
+<p>Copy the notes a selector picks into another store, optionally archiving the originals.</p>
+<p>At least one of --prefix, --role and --note-kind is needed; a note must match every one given. Notes already in TO are left; a different one goes to /_conflicts/&lt;date&gt;/ in TO.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--prefix</code></td><td><code>PATH</code></td><td>pick the notes under this path (repeat for several)</td></tr><tr><td><code>--role</code></td><td><code>ROLE</code></td><td>pick the notes under /roles/ROLE/</td></tr><tr><td><code>--note-kind</code></td><td><code>KIND</code></td><td>pick the notes whose Kind: header is KIND (setup, gate, rule, ...)</td></tr><tr><td><code>--archive</code></td><td></td><td>move the originals to /_archive/&lt;date&gt;/ in FROM (with their origin in Sources:)</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi memory split ./memory ./build --role build --archive
+qargi memory split ./memory ./build --role build --archive --plan TOKEN --approved &quot;go&quot;</code></pre>
+<h3 id="memory-merge">qargi memory merge <a class="anchor" href="#memory-merge" aria-label="Link to: qargi memory merge">#</a></h3>
+<p class="usage"><code>qargi memory merge FROM TO [OPTIONS]</code></p>
+<p>Add every note of FROM that TO lacks.</p>
+<p>FROM is only read. A note whose original sits in TO&#x27;s archive is moved back from it, so merging what a split wrote undoes the split.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--policy</code></td><td><code>POLICY</code></td><td>what to do when a note differs: conflicts (put the incoming one in /_conflicts/&lt;date&gt;/, default) or keep (leave it and report)</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi memory merge ./build ./memory</code></pre>
+<h3 id="memory-copy">qargi memory copy <a class="anchor" href="#memory-copy" aria-label="Link to: qargi memory copy">#</a></h3>
+<p class="usage"><code>qargi memory copy FROM TO [OPTIONS]</code></p>
+<p>Copy notes into another store, leaving the source as it is.</p>
+<p>Without a selector every note is copied except /CANON.md. Each copy records its origin in Sources:.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--prefix</code></td><td><code>PATH</code></td><td>pick the notes under this path (repeat for several)</td></tr><tr><td><code>--role</code></td><td><code>ROLE</code></td><td>pick the notes under /roles/ROLE/</td></tr><tr><td><code>--note-kind</code></td><td><code>KIND</code></td><td>pick the notes whose Kind: header is KIND (setup, gate, rule, ...)</td></tr><tr><td><code>--policy</code></td><td><code>POLICY</code></td><td>what to do when a note differs: conflicts (put the incoming one in /_conflicts/&lt;date&gt;/, default) or keep (leave it and report)</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h2 id="canon">qargi canon <a class="anchor" href="#canon" aria-label="Link to: qargi canon">#</a></h2>
+<p class="summary">Bring a project&#x27;s two memory stores to the standard layout and keep them there.</p>
+<p>The canon fixes the layout and the note format of both stores (shared/ and roles/&lt;role&gt;/, a header on every note, an index with a Load column). plan and apply set up an empty store and keep a current one current; a store of an older layout or canon version is reported as unknown and not changed.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#canon-check"><code>check</code></a></td><td>Report conformance and the version of each store</td></tr><tr><td><a href="#canon-plan"><code>plan</code></a></td><td>Print every step needed to reach the current canon (changes nothing)</td></tr><tr><td><a href="#canon-apply"><code>apply</code></a></td><td>Run the plan</td></tr><tr><td><a href="#canon-seed-role"><code>seed-role</code></a></td><td>Write a role&#x27;s baseline notes without overwriting anything</td></tr><tr><td><a href="#canon-promote"><code>promote</code></a></td><td>Move a role&#x27;s note to shared/</td></tr><tr><td><a href="#canon-audit"><code>audit</code></a></td><td>Report a session that wrote under another role&#x27;s folder</td></tr></tbody></table></div>
+<h3 id="canon-check">qargi canon check <a class="anchor" href="#canon-check" aria-label="Link to: qargi canon check">#</a></h3>
+<p class="usage"><code>qargi canon check [PROJECT] [OPTIONS]</code></p>
+<p>Report conformance and the version of each store.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>which store: memory or reference (default: both)</td></tr></tbody></table></div>
+<h3 id="canon-plan">qargi canon plan <a class="anchor" href="#canon-plan" aria-label="Link to: qargi canon plan">#</a></h3>
+<p class="usage"><code>qargi canon plan [PROJECT] [OPTIONS]</code></p>
+<p>Print every step needed to reach the current canon (changes nothing).</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>which store: memory or reference (default: both)</td></tr></tbody></table></div>
+<h3 id="canon-apply">qargi canon apply <a class="anchor" href="#canon-apply" aria-label="Link to: qargi canon apply">#</a></h3>
+<p class="usage"><code>qargi canon apply [PROJECT] [OPTIONS]</code></p>
+<p>Run the plan.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>which store: memory or reference (default: both)</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h3 id="canon-seed-role">qargi canon seed-role <a class="anchor" href="#canon-seed-role" aria-label="Link to: qargi canon seed-role">#</a></h3>
+<p class="usage"><code>qargi canon seed-role [PROJECT] [OPTIONS]</code></p>
+<p>Write a role&#x27;s baseline notes without overwriting anything.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--role</code></td><td><code>ROLE</code></td><td>the role, or shared</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h3 id="canon-promote">qargi canon promote <a class="anchor" href="#canon-promote" aria-label="Link to: qargi canon promote">#</a></h3>
+<p class="usage"><code>qargi canon promote [PROJECT] [OPTIONS]</code></p>
+<p>Move a role&#x27;s note to shared/.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>which store: memory or reference (default: both)</td></tr><tr><td><code>--path</code></td><td><code>PATH</code></td><td>the note, /roles/&lt;role&gt;/...</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h3 id="canon-audit">qargi canon audit <a class="anchor" href="#canon-audit" aria-label="Link to: qargi canon audit">#</a></h3>
+<p class="usage"><code>qargi canon audit [PROJECT] [OPTIONS]</code></p>
+<p>Report a session that wrote under another role&#x27;s folder.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--kind</code></td><td><code>KIND</code></td><td>which store: memory or reference (default: both)</td></tr></tbody></table></div>
+</article>
+</main>
+</div>
+<footer class="site-footer">
+<div class="wrap wide">
+<p>Checked against qargi 0.2.2.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Freference%2Fmemory%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

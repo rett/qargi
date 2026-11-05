@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://qargi.rettware.com/sitemap.xml

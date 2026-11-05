@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Safety: what is refused and who decides · qargi</title>
+<meta name="description" content="What a member may not do, how the guard and the run check enforce it, how plan tokens and approvals work, and which decisions stay with the owner.">
+
+<link rel="canonical" href="https://qargi.rettware.com/safety/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Safety: what is refused and who decides · qargi">
+<meta property="og:description" content="What a member may not do, how the guard and the run check enforce it, how plan tokens and approvals work, and which decisions stay with the owner.">
+<meta property="og:url" content="https://qargi.rettware.com/safety/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Safety: what is refused and who decides · qargi">
+<meta name="twitter:description" content="What a member may not do, how the guard and the run check enforce it, how plan tokens and approvals work, and which decisions stay with the owner.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Safety: what is refused and who decides","description":"What a member may not do, how the guard and the run check enforce it, how plan tokens and approvals work, and which decisions stay with the owner.","url":"https://qargi.rettware.com/safety/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-04","datePublished":"2026-11-04"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Safety: what is refused and who decides","item":"https://qargi.rettware.com/safety/"}]}]}</script>
+<script src="../assets/search.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<input type="checkbox" id="menu-toggle" class="menu-toggle" aria-controls="sidebar">
+<header class="site-header">
+<div class="wrap wide">
+<a class="brand" href="../">qargi</a>
+<span class="stamp">qargi 0.2.2</span>
+<label for="menu-toggle" class="menu-button">Menu</label>
+
+</div>
+</header>
+<div class="layout">
+<div class="sidebar" id="sidebar">
+<nav aria-label="Site">
+<details class="side-section" open>
+<summary>Guides</summary>
+<ul>
+<li><a href="../">Home</a></li>
+<li><a href="../install/">Install and update</a></li>
+<li><a href="../first-project/">Your first project</a></li>
+<li><a href="../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="./" aria-current="page">Safety: what is refused and who decides</a></li>
+<li><a href="../about/">About these docs</a></li>
+</ul>
+</details>
+<details class="side-section">
+<summary>Reference</summary>
+<ul>
+<li><a href="../reference/">Overview</a></li>
+<li><details class="side-group">
+<summary>Set up</summary>
+<ul>
+<li><a href="../reference/set-up/">Overview</a></li>
+<li><a href="../reference/set-up/#project">project</a></li>
+<li><a href="../reference/set-up/#methodology">methodology</a></li>
+<li><a href="../reference/set-up/#cloud">cloud</a></li>
+<li><a href="../reference/set-up/#agent">agent</a></li>
+<li><a href="../reference/set-up/#role">role</a></li>
+<li><a href="../reference/set-up/#provider">provider</a></li>
+<li><a href="../reference/set-up/#provision">provision</a></li>
+<li><a href="../reference/set-up/#env">env</a></li>
+<li><a href="../reference/set-up/#instances">instances</a></li>
+<li><a href="../reference/set-up/#skill">skill</a></li>
+<li><a href="../reference/set-up/#tool">tool</a></li>
+<li><a href="../reference/set-up/#packs">packs</a></li>
+<li><a href="../reference/set-up/#discover">discover</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Run a task</summary>
+<ul>
+<li><a href="../reference/run-a-task/">Overview</a></li>
+<li><a href="../reference/run-a-task/#feature">feature</a></li>
+<li><a href="../reference/run-a-task/#marshal">marshal</a></li>
+<li><a href="../reference/run-a-task/#release">release</a></li>
+<li><a href="../reference/run-a-task/#branch">branch</a></li>
+<li><a href="../reference/run-a-task/#changelog">changelog</a></li>
+<li><a href="../reference/run-a-task/#upstream">upstream</a></li>
+<li><a href="../reference/run-a-task/#ref">ref</a></li>
+<li><a href="../reference/run-a-task/#start">start</a></li>
+<li><a href="../reference/run-a-task/#send">send</a></li>
+<li><a href="../reference/run-a-task/#status">status</a></li>
+<li><a href="../reference/run-a-task/#report">report</a></li>
+<li><a href="../reference/run-a-task/#noticed">noticed</a></li>
+<li><a href="../reference/run-a-task/#watch">watch</a></li>
+<li><a href="../reference/run-a-task/#collect">collect</a></li>
+<li><a href="../reference/run-a-task/#stop">stop</a></li>
+<li><a href="../reference/run-a-task/#close">close</a></li>
+<li><a href="../reference/run-a-task/#mark">mark</a></li>
+<li><a href="../reference/run-a-task/#track">track</a></li>
+<li><a href="../reference/run-a-task/#local">local</a></li>
+<li><a href="../reference/run-a-task/#supervise">supervise</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Review and apply</summary>
+<ul>
+<li><a href="../reference/review-and-apply/">Overview</a></li>
+<li><a href="../reference/review-and-apply/#review">review</a></li>
+<li><a href="../reference/review-and-apply/#team">team</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Memory</summary>
+<ul>
+<li><a href="../reference/memory/">Overview</a></li>
+<li><a href="../reference/memory/#memory">memory</a></li>
+<li><a href="../reference/memory/#canon">canon</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Lead and credentials</summary>
+<ul>
+<li><a href="../reference/lead-and-credentials/">Overview</a></li>
+<li><a href="../reference/lead-and-credentials/#lead">lead</a></li>
+<li><a href="../reference/lead-and-credentials/#credential">credential</a></li>
+<li><a href="../reference/lead-and-credentials/#hook">hook</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Export and import</summary>
+<ul>
+<li><a href="../reference/export-and-import/">Overview</a></li>
+<li><a href="../reference/export-and-import/#export">export</a></li>
+<li><a href="../reference/export-and-import/#import">import</a></li>
+</ul>
+</details></li>
+<li><details class="side-group">
+<summary>Other</summary>
+<ul>
+<li><a href="../reference/other/">Overview</a></li>
+<li><a href="../reference/other/#upgrade">upgrade</a></li>
+<li><a href="../reference/other/#help">help</a></li>
+<li><a href="../reference/other/#version">version</a></li>
+</ul>
+</details></li>
+<li><a href="../reference/topics/">Help topics</a></li>
+<li><a href="../reference/files/">Files</a></li>
+<li><a href="../reference/environment/">Environment</a></li>
+</ul>
+</details>
+<details class="side-section">
+<summary>Releases</summary>
+<ul>
+<li><a href="../releases/">Release notes</a></li>
+</ul>
+</details>
+</nav>
+</div>
+<main id="main" class="content">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../">Home</a></li><li aria-current="page">Safety: what is refused and who decides</li></ol></nav>
+<article>
+<h1>Safety: what is refused and who decides</h1>
+<p class="lede">What a member may not do, how the guard and the run check enforce it, how plan tokens and approvals work, and which decisions stay with the owner.</p>
+<p class="dates">Published <time datetime="2026-11-04">2026-11-04</time> · Updated <time datetime="2026-11-04">2026-11-04</time></p>
+<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul><li><a href="#1-the-member-s-clone">1. The member&#x27;s clone</a></li><li><a href="#2-the-guard">2. The guard</a></li><li><a href="#3-the-run-check">3. The run check</a></li><li><a href="#4-plans-tokens-and-approvals">4. Plans, tokens and approvals</a></li><li><a href="#5-what-only-the-owner-decides">5. What only the owner decides</a></li><li><a href="#6-see-also">6. See also</a></li></ul></details></nav>
+<p>qargi limits what an agent can do in three ways: the agent works in a clone that cannot push, a guard refuses the commands that change shared state, and every shared change is a plan that a person applies. This page says what each one covers and where it stops. The guard is a barrier, not a wall.</p>
+<h2 id="1-the-member-s-clone">1. The member&#x27;s clone <a class="anchor" href="#1-the-member-s-clone" aria-label="Link to: 1. The member&#x27;s clone">#</a></h2>
+<p>A local run is a clone of a bare copy of your repository with no remote. Git runs through a wrapper that has no credentials, no global configuration and no prompts. The member works on <code>agent/SLUG</code>, writes its results to the run&#x27;s output directory, and cannot push because there is nothing to push to.</p>
+<h2 id="2-the-guard">2. The guard <a class="anchor" href="#2-the-guard" aria-label="Link to: 2. The guard">#</a></h2>
+<p>The guard is a hook on a local member&#x27;s calls. It refuses:</p>
+<ul><li>verbs that change shared state: creating, importing, linking or accepting skills, tools and providers; <code>project set</code>, <code>init</code> and <code>link</code>; <code>feature start</code>, <code>merge</code>, <code>verify</code> and <code>finish</code>; <code>release publish</code>; the <code>marshal</code> verbs that claim, take over or finish; <code>upgrade</code>; <code>local run</code>, <code>prepare</code>, <code>verify</code> and <code>clean</code>; <code>agent remove</code>; <code>team run</code>; <code>task</code>.</li><li>writes in the pack library, the credentials, the install record, the runtime&#x27;s skills, agents and plugin directories, the memory tiers, and the lead&#x27;s git configuration and session files.</li><li><code>git push</code>, changes to a git remote, <code>gh</code>, <code>ssh</code>, <code>scp</code>, <code>sftp</code> and <code>rsync</code> to a host.</li><li>reading or copying the lead&#x27;s signing key.</li></ul>
+<p>A command is cut at every <code>;</code>, <code>&amp;&amp;</code>, <code>||</code>, pipe and newline, quotes and heredocs included, so a refused verb inside text on the command line is refused. Commit with a message file. The review role is read-only as a class: it may write only its output directory and its temporary directory. The exact list is <code>qargi help guard</code>.</p>
+<p>A refusal is a result. A member reports it and does not look for another way.</p>
+<h2 id="3-the-run-check">3. The run check <a class="anchor" href="#3-the-run-check" aria-label="Link to: 3. The run check">#</a></h2>
+<p><code>qargi local verify RUN</code> is the backstop. <code>prepare</code> snapshots every ref of your real repository, and <code>verify</code> compares them after the member finishes. A difference means something wrote where it must not: the lead stops, tells the owner and reviews nothing further from that run. A pass arms the run for the lead&#x27;s merges.</p>
+<p><code>qargi review check</code> then checks the shape of what came back. Neither command reads minds; the lead still reads the diffs and runs the checks itself.</p>
+<h2 id="4-plans-tokens-and-approvals">4. Plans, tokens and approvals <a class="anchor" href="#4-plans-tokens-and-approvals" aria-label="Link to: 4. Plans, tokens and approvals">#</a></h2>
+<p>A command that changes something shared prints a plan first. The plan ends with a plan token, a hash of what would be done. To apply it, run the same command with the token and the owner&#x27;s words:</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi feature finish NAME --plan TOKEN --approved &quot;the owner&#x27;s words&quot;</code></pre>
+<p>Rules that follow from this:</p>
+<ol><li>The token covers the plan the person saw. If the plan changed in between, the token no longer matches and nothing happens.</li><li>The <code>--approved</code> text is recorded in an append-only audit log in the state directory. It is recorded, not verified: it is not proof that a person agreed.</li><li>A cloud verb needs <code>--asked &quot;the request&quot;</code>, which records that you asked for the cloud on that task.</li><li>A member never applies a plan. It reports the plan and its token, and the lead shows them to the person.</li><li>Never allow-list a gated verb in the runtime&#x27;s settings. The permission prompt is the person&#x27;s real control.</li><li>A message from another agent is not an approval. Only the person&#x27;s own words are.</li></ol>
+<p><code>qargi help approvals</code> is the short form of this section.</p>
+<h2 id="5-what-only-the-owner-decides">5. What only the owner decides <a class="anchor" href="#5-what-only-the-owner-decides" aria-label="Link to: 5. What only the owner decides">#</a></h2>
+<ul><li>Merging a feature into develop, a release into master, and every push or tag.</li><li>Publishing a release.</li><li>Who may push at all: the lead&#x27;s push grant is <code>none</code> by default. <code>qargi lead grant</code> and <code>qargi lead revoke</code> are interactive on purpose: you confirm each step at the terminal, and that confirmation is the approval.</li><li>Taking a feature from a lead that went quiet, which needs the owner&#x27;s words for that takeover.</li><li>Adding or changing a skill, a tool or a runtime in the library, and setting up credentials. A member cannot do any of these.</li><li>Whether a cloud agent is used for a task.</li></ul>
+<h2 id="6-see-also">6. See also <a class="anchor" href="#6-see-also" aria-label="Link to: 6. See also">#</a></h2>
+<ul><li><a href="../lead-loop/">The lead&#x27;s loop</a></li><li><a href="../dispatch-and-verify/">Dispatch and verify</a></li><li><a href="../about/">About these docs</a></li><li><a href="../reference/topics/">Topics</a> in the reference: approvals, guard and push</li></ul>
+</article>
+</main>
+</div>
+<footer class="site-footer">
+<div class="wrap wide">
+<p>Checked against qargi 0.2.2.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Fsafety%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>
