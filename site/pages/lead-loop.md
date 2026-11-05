@@ -62,10 +62,10 @@ This puts the series on `agent/rename-verb`, in a temporary worktree at the run'
 ```bash
 qargi feature merge NAME agent/rename-verb
 qargi local clean RUN
-qargi review prune
+qargi branch prune
 ```
 
-`feature merge` keeps the member's commits separate. `local clean` removes the run and refuses one whose work was not merged; `review prune` lists merged `agent/*` branches, and `review prune --yes` deletes them. Never clean a run before its merge is confirmed.
+`feature merge` keeps the member's commits separate. `local clean` removes the run and refuses one whose work was not merged; `branch prune` lists the merged `agent/*` and `feature/*` branches with a plan token; run it again with `--plan TOKEN --approved "..."` to delete them. Never clean a run before its merge is confirmed.
 
 If the merge conflicts, the command exits 3 and changes nothing. It names a worktree with the merge in progress: resolve there, `git add`, `git commit`, then run the same command again with `--resolved`.
 
