@@ -17,9 +17,11 @@
 # Run: tests/test_neutral.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 ROOT=$PWD
 T=$(mktemp -d); fail=0
-trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 RE='claude|anthropic|\bant\b|skilloverrides|\.claude|subagent'
 LIST=$ROOT/tests/neutral-allowlist.txt

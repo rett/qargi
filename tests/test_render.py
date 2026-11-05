@@ -763,7 +763,7 @@ class CommandRenderer(CommandBase):
         t0 = time.monotonic()
         with self.assertRaisesRegex(R.RenderError, "timed out"):
             R.render_command(defn(), self.spec(self.script("import time\ntime.sleep(30)\n"), timeout=0.5), root=self.root)
-        self.assertLess(time.monotonic() - t0, 10)
+        self.assertLess(time.monotonic() - t0, 10)   # hermetic: allow clock (the script sleeps 30 s: the bound is its cut-off at 0.5 s, with a margin)
         with self.assertRaisesRegex(R.RenderError, "timed out"):                        # the caller's limit is an upper bound
             R.render_command(defn(), self.spec(self.script("import time\ntime.sleep(30)\n"), timeout=100), root=self.root, timeout=0.5)
         with self.assertRaisesRegex(R.RenderError, "timed out"):                        # the default limit applies without either
@@ -804,7 +804,7 @@ class CommandRenderer(CommandBase):
         self.assertEqual(len(self.run_("import sys\nsys.stdout.write('x' * %d)\n" % R.MAX_BYTES)["content"]), R.MAX_BYTES)
         t0 = time.monotonic()
         self.refuses("larger", "import sys\nwhile True:\n    sys.stdout.write('x' * 65536)\n    sys.stdout.flush()\n")      # never stops: killed at the cap
-        self.assertLess(time.monotonic() - t0, 20)
+        self.assertLess(time.monotonic() - t0, 20)   # hermetic: allow clock (a script that never stops: the bound is the cap that kills it)
 
     def test_the_declared_format_is_checked(self):
         spec = self.spec(self.script("print('{\"a\": 1}')\n"), format="json")

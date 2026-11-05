@@ -122,6 +122,7 @@ class Apply(Fixtures):
         self.assertNotEqual(self.token(), t4)                             # the bootstrap command is part of it
 
     def test_privileged_lines_are_grouped(self):
+        # hermetic: allow tmp (a word of the Makefile text that is judged, never run)
         self.set_makefile(MAKEFILE + "\tsudo ./record.sh rooted\n\tcd /tmp && doas whoami\n\tenv A=1 sh -c 'pkexec id'\n\t@echo sudo is a word here\n")
         r = self.plan("--approve-exec", "make")
         self.assertEqual(r.returncode, 0, r.stderr)
