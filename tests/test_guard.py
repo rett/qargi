@@ -789,12 +789,12 @@ class RenderTree(unittest.TestCase):
 
     def test_a_path_that_merely_says_render_is_allowed(self):
         e = os.path.join(self.t, "elsewhere/render/proj")
-        for p in (e + "/CLAUDE.md", os.path.join(self.state, "runs/render/x"), os.path.join(self.state, "render-notes.md"),
-                  os.path.join(self.state, "runs/x.log"), os.path.join(self.t, "state2/render/proj/x")):
+        for p in (e + "/CLAUDE.md", os.path.join(self.state, "notes/render/x"), os.path.join(self.state, "render-notes.md"),
+                  os.path.join(self.state, "notes/x.log"), os.path.join(self.t, "state2/render/proj/x")):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0, p)
             self.assertEqual(self.bash("echo x > %s" % p).returncode, 0, p)
-        for c in ("echo x > %s/runs/audit.log" % self.state, "rm -rf %s/runs/old" % self.state, "touch render/x", "echo render > notes.txt"):
+        for c in ("echo x > %s/notes/audit.log" % self.state, "rm -rf %s/notes/old" % self.state, "touch render/x", "echo render > notes.txt"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
@@ -1043,8 +1043,11 @@ class Marshal(unittest.TestCase):
                                      capture_output=True, text=True, env=self.env())
                 self.assertEqual(res.returncode, 2, (tool, cls, res.stderr))
                 self.assertIn("saved copies of passed local runs", res.stderr)
-        self.refused(["echo x > %s/refs.before" % p, "rm -rf %s" % p, "cp -r /tmp %s/out" % p, "echo 1 > $QARGI_STATE/runs/qargi.zzzzzz/applied",
-                      "mkdir -p %s/runs/qargi.planted" % self.state])
+        for c in ("echo x > %s/refs.before" % p, "rm -rf %s" % p, "cp -r /tmp %s/out" % p, "echo 1 > $QARGI_STATE/runs/qargi.zzzzzz/applied",
+                  "mkdir -p %s/runs/qargi.planted" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
         for c in ("cat %s/refs.before" % p, "ls %s/out" % p):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
