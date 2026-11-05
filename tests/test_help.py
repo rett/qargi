@@ -217,6 +217,18 @@ class Render(unittest.TestCase):
             r = subprocess.run(["groff", "-k", "-ww", "-man", "-Tutf8"], input=page, capture_output=True, text=True)
             self.assertEqual(r.stderr, "", "groff warnings")
 
+    def test_man_page_is_written_by_a_copy_without_skills(self):
+        # a copy of lib alone (a partial or packaged one) writes the whole page; SEE ALSO names the skills generically
+        t = tempfile.mkdtemp()
+        try:
+            shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(t, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+            r = subprocess.run([sys.executable, os.path.join(t, "lib", "help.py"), "man"], capture_output=True, text=True, cwd=t, stdin=subprocess.DEVNULL)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith(".TH QARGI 1 "), r.stdout[:80])
+            self.assertIn("The qargi skills, loaded by the lead's session", r.stdout)
+        finally:
+            shutil.rmtree(t)
+
 
 class Env(unittest.TestCase):
     def setUp(self):
