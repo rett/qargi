@@ -981,32 +981,104 @@ def overlaps(ctx, name, files_cache):
     return res
 
 
-def tasks_of(ctx, name):
-    out, p = [], os.path.join(ctx.state, "local-runs.jsonl")
+def registry_lines(ctx):
+    """The lead's registry of local runs ($STATE/local-runs.jsonl, written by `local prepare`): one record per run directory (its last line
+    wins), in the order first seen, for this repository only (a line that names another repository is left out; one that names none, or a
+    URL, is kept)."""
+    p = os.path.join(ctx.state, "local-runs.jsonl")
     try:
         lines = open(p).read().splitlines()
     except OSError:
-        return out
+        return []
+    rp = os.path.realpath(ctx.repo) if ctx.repo else ""
+    runs, order = {}, []
     for ln in lines:
         try:
             r = json.loads(ln)
         except ValueError:
             continue
-        if not isinstance(r, dict) or r.get("base") != "feature/" + name:
+        if not isinstance(r, dict) or not isinstance(r.get("run"), str) or not r["run"]:
             continue
-        run = r.get("run") or ""
-        out.append({"run": clean(run), "slug": clean(r.get("slug") or ""), "role": clean(r.get("ability") or r.get("role") or ""),
-                    "started": clean(r.get("started") or ""), "verified": bool(run) and os.path.exists(os.path.join(run, "verified"))})
+        repo = r.get("repo")
+        if rp and isinstance(repo, str) and repo and os.path.realpath(repo) != rp:
+            continue
+        if r["run"] not in runs:
+            order.append(r["run"])
+        runs[r["run"]] = r
+    return [runs[k] for k in order]
+
+
+def task_state(r):
+    """What the registry and the run directory say of a run: cleaned (the line is marked by `local clean`: no open task any more), else
+    verified (the mark of a passing `local verify`, or RUN/verified) or not verified, with applied (RUN/applied) and a directory that is gone."""
+    run = r["run"]
+    cleaned = bool(r.get("cleaned"))
+    verified = bool(r.get("verified")) or os.path.exists(os.path.join(run, "verified"))
+    applied = os.path.exists(os.path.join(run, "applied"))
+    if cleaned:
+        state = "cleaned"
+    else:
+        parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
+        state = ", ".join(parts)
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "state": state}
+
+
+def tasks_of(ctx, name):
+    out = []
+    for r in registry_lines(ctx):
+        if r.get("base") != "feature/" + name:
+            continue
+        out.append(dict(task_state(r), run=clean(r["run"]), slug=clean(r.get("slug") or ""), role=clean(r.get("ability") or r.get("role") or ""),
+                        started=clean(r.get("started") or "")))
     return out
 
 
+def agent_bases(ctx):
+    """{agent/SLUG: the branch the run was prepared against} from the registry: what says which feature an agent branch belongs to."""
+    out = {}
+    for r in registry_lines(ctx):
+        slug, base = r.get("slug"), r.get("base")
+        if isinstance(slug, str) and slug and isinstance(base, str) and base:
+            out["agent/" + slug] = base
+    return out
+
+
+def agent_branches(ctx):
+    return (git(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads/agent/*") or "").split()
+
+
+def is_ancestor(ctx, ref, of):
+    return git(ctx, "merge-base", '--is-ancestor', ref, of) is not None
+
+
 def unmerged_agents(ctx, name):
-    out = git(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads/agent/*") or ""
+    """The agent/* branches prepared against feature/NAME (the registry's base) that the feature does not contain yet."""
+    bases = agent_bases(ctx)
+    return [b for b in agent_branches(ctx)
+            if bases.get(b) == "feature/" + name and not is_ancestor(ctx, "refs/heads/" + b, "refs/heads/feature/" + name)]
+
+
+def unattributed_agents(ctx):
+    """[(branch, base or "")]: the agent/* branches of no open feature (no base recorded, or a base that is not an existing feature branch)
+    that are merged neither into develop nor into any feature branch. Listed once, so they do not repeat under every feature."""
+    bases, feats = agent_bases(ctx), set(open_features(ctx))
+    targets = ["refs/heads/feature/" + n for n in sorted(feats)]
+    if git(ctx, "rev-parse", "-q", '--verify', "refs/heads/develop") is not None:
+        targets.append("refs/heads/develop")
     res = []
-    for b in out.split():
-        if git(ctx, "merge-base", '--is-ancestor', "refs/heads/" + b, "refs/heads/feature/" + name) is None:
-            res.append(b)
+    for b in agent_branches(ctx):
+        base = bases.get(b, "")
+        if base.startswith("feature/") and base[len("feature/"):] in feats:
+            continue
+        if any(is_ancestor(ctx, "refs/heads/" + b, t) for t in targets):
+            continue
+        res.append((b, clean(base)))
     return res
+
+
+def unattributed_line(ua):
+    return "unattributed agent branches (of no open feature, not merged into develop or a feature): " + \
+        " ".join(b + (" (base %s)" % base if base else "") for b, base in ua)
 
 
 def worktrees_of(ctx, name):
@@ -1099,10 +1171,14 @@ def print_full(d, raw_lens):
         for k, v in fields:
             print("  %s:" % k)
             print(indent(v + ("\n[truncated at %d characters]" % CAP if raw_lens.get(k, 0) > CAP else ""), 4))
-    print("tasks:" + ("" if d["tasks"] else " none"))
-    for t in d["tasks"]:
-        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], "verified" if t["verified"] else "not verified"))
-    print("agent branches not merged into feature/%s:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
+    # the open tasks one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
+    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"]], [t for t in d["tasks"] if t["cleaned"]]
+    print("tasks:" + ("" if opened else " none"))
+    for t in opened:
+        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], t["state"]))
+    if cleaned:
+        print("  cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned))
+    print("agent branches of feature/%s (prepared against it) not merged into it:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
     for b in d["agent_branches"]:
         print("  " + b)
     print("worktrees on feature/%s or agent/*:%s" % (d["feature"], "" if d["worktrees"] else " none"))
@@ -1148,9 +1224,14 @@ def v_status(ctx, a):
         items = gather(ctx, [a.name])
     else:
         items = listed(ctx, a.history)
+    # the agent branches of no open feature are said once, after the features, never under each of them
+    ua = [] if a.brief else [{"branch": b, "base": base} for b, base in unattributed_agents(ctx)]
     if a.json:
         objs = [d for _, d, _ in items]
-        print(json.dumps(objs[0] if a.name else {"project": ctx.project, "features": objs}, indent=1))
+        if a.name:
+            print(json.dumps(dict(objs[0], agent_unattributed=ua), indent=1))
+        else:
+            print(json.dumps({"project": ctx.project, "features": objs, "agent_unattributed": ua}, indent=1))
         return
     if not items:
         print("no open features (qargi feature start NAME)")
@@ -1163,6 +1244,9 @@ def v_status(ctx, a):
             print()
         r = fresh(ctx, n, rec)
         print_full(d, {k: len(clean(r[k])) for k in ("goal", "plan", "note")})
+    if ua:
+        print()
+        print(unattributed_line([(u["branch"], u["base"]) for u in ua]))
 
 
 def succeed(ctx, name, rec, old):
