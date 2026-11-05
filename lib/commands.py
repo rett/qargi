@@ -18,6 +18,9 @@ INTRO = (
 
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by roles/<role>/ROLE.md
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
 def _provider_models():
     """The model ids and aliases of the shipped runtimes (lib/provider.py, their catalogs followed), for completion."""
     import os, sys
@@ -33,8 +36,13 @@ def _provider_models():
     return tuple(dict.fromkeys(m for m in out if isinstance(m, str)))
 
 
-MODELS = _provider_models()
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+def __getattr__(name):
+    """MODELS is read from the runtime descriptors the first time it is asked for (completion of a model value), not at import:
+    every qargi command imports this table before it runs, and reading the descriptors is the costly part."""
+    if name == "MODELS":
+        globals()["MODELS"] = _provider_models()
+        return globals()["MODELS"]
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
 def opt(flag, help, arg=None, type="none"):

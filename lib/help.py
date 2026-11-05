@@ -5,8 +5,11 @@
   help.py man [--keep-date F] the manual page (roff) on stdout; its .TH date is the one in F (default man/qargi.1, else the
                               copy committed at HEAD, as `> man/qargi.1` empties the file before this runs), empty when none
   help.py complete WORDS...   completion candidates for the last word (qargi __complete, used by the bash completion)
+
+The modules a plain run does not need (text wrapping, subprocess, glob) are imported where they are used: every qargi
+command imports this module before it runs.
 """
-import glob, json, os, re, shutil, subprocess, sys, textwrap
+import json, os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -30,12 +33,18 @@ def b(s):
 
 
 def width():
+    import shutil
     return max(60, min(100, shutil.get_terminal_size((100, 24)).columns))
+
+
+def fill(text, width_, initial_indent, subsequent_indent):
+    import textwrap
+    return textwrap.fill(text, width_, initial_indent=initial_indent, subsequent_indent=subsequent_indent)
 
 
 def wrap(text, indent=0, first=None):
     pad = " " * indent
-    return textwrap.fill(text, width() , initial_indent=(first if first is not None else pad), subsequent_indent=pad)
+    return fill(text, width(), (first if first is not None else pad), pad)
 
 
 def load_json(path):
@@ -92,7 +101,7 @@ def opts_block(opts, indent):
     w = max([len(optstr(o)) for o in opts] + [0]) + 2
     for o in opts:
         left = optstr(o).ljust(w)
-        lines.append(textwrap.fill(o["help"], width(), initial_indent=" " * indent + left, subsequent_indent=" " * (indent + w)))
+        lines.append(fill(o["help"], width(), " " * indent + left, " " * (indent + w)))
     return lines
 
 
@@ -102,7 +111,7 @@ def show_overview():
     for title, cmds in C.GROUPS:
         out.append(b(title))
         for c in cmds:
-            out.append(textwrap.fill(C.COMMANDS[c]["summary"], width(), initial_indent="  " + c.ljust(w), subsequent_indent="  " + " " * w))
+            out.append(fill(C.COMMANDS[c]["summary"], width(), "  " + c.ljust(w), "  " + " " * w))
         out.append("")
     out.append(b("Topics") + "  (qargi help TOPIC)")
     tw = max(len(t) for t in C.TOPICS) + 2
@@ -143,7 +152,7 @@ def show_command(cmd, verb=None):
         w = max(len(v) for v in vs) + 2
         for v, vd in vs.items():
             left = ("  " + v).ljust(w + 2)
-            out.append(textwrap.fill(vd["summary"], width(), initial_indent=left, subsequent_indent=" " * (w + 2)))
+            out.append(fill(vd["summary"], width(), left, " " * (w + 2)))
         out += ["", "qargi help %s VERB  shows a verb's arguments and options." % cmd]
         allopts = []
         for vd in vs.values():
@@ -197,6 +206,7 @@ def esc(s):
 
 def th_date(text):
     """The date field of the first .TH line of a manual page, or None when the text has no .TH line with that field."""
+    import re
     for line in text.split("\n"):
         if line.startswith(".TH "):
             tok = re.findall(r'"[^"]*"|\S+', line)
@@ -208,6 +218,7 @@ def kept_date(path=None):
     """The date `qargi release start` set in the manual page, so that regenerating the page does not undo it. From PATH, else
     man/qargi.1 of the repository; the shell redirection in `help.py man > man/qargi.1` has emptied that file by the time it is
     read, so a file with no .TH line is read again from HEAD. Empty when there is no page."""
+    import subprocess
     sources = [lambda: open(path or os.path.join(ROOT, "man", "qargi.1"), encoding="utf-8").read()]
     if not path:
         sources.append(lambda: subprocess.run(["git", "-C", ROOT, "show", "HEAD:man/qargi.1"], capture_output=True, text=True, check=True).stdout)
@@ -345,9 +356,18 @@ def money(cents):
         return ""
 
 
+def project_files():
+    """The stored answers, one file per project, in name order."""
+    d = os.path.join(conf(), "projects")
+    try:
+        return [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".json") and not n.startswith(".")]
+    except OSError:
+        return []
+
+
 def projects(teams_only=False):
     out = []
-    for f in sorted(glob.glob(os.path.join(conf(), "projects", "*.json"))):
+    for f in project_files():
         d = _read(f)
         if teams_only and not d.get("teams"):
             continue
@@ -382,6 +402,7 @@ def sessions(want=""):
 
 
 def packs(words):
+    import glob
     lib, out = os.path.join(conf(), "packs"), []
     if not words or words[0] != "tool":
         out += [(os.path.basename(p), "skill") for p in sorted(glob.glob(os.path.join(lib, "skills", "*")))]
@@ -452,6 +473,7 @@ def models():
 
 
 def branches(words):
+    import subprocess
     path = os.path.expanduser((project_data(words).get("repo") or {}).get("path") or os.getcwd())
     try:
         r = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"],
@@ -466,8 +488,14 @@ def branches(words):
     return [(b, "") for b in names_]
 
 
-FIELD_VALUES = {"effort": C.EFFORTS, "model": C.MODELS, "local": ("true", "false"), "cloud": ("none", "branches"),
+FIELD_VALUES = {"effort": C.EFFORTS, "local": ("true", "false"), "cloud": ("none", "branches"),
                 "merge": ("ask", "never"), "release": ("ask", "never"), "mode": ("none",), "numbered": ("true", "false")}
+
+
+def field_values(name):
+    """The fixed words a project answer takes, by the last part of its key; a model's come from the runtime descriptors
+    (C.MODELS, read on demand, not at import)."""
+    return C.MODELS if name == "model" else FIELD_VALUES.get(name)
 # answers a project may hold that are not there yet, so a key can be typed before it exists
 EXTRA_KEYS = ("lead.model", "lead.effort", "lead.push.local", "lead.push.cloud", "lead.push.branch_pattern", "lead.push.merge",
               "lead.push.release", "lead.context_window", "lead.compact_advice_pct", "budget_cents", "test_command", "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.changelog.numbered",
@@ -499,9 +527,9 @@ def keys(words):
 def values(words):
     key = words[-1] if words else ""
     cur = flatten(project_data(words[:-1])).get(key)
-    last = key.rsplit(".", 1)[-1]
-    if last in FIELD_VALUES:
-        return [(v, "") for v in FIELD_VALUES[last]]
+    vals = field_values(key.rsplit(".", 1)[-1])
+    if vals:
+        return [(v, "") for v in vals]
     if isinstance(cur, bool):
         return [("true", ""), ("false", "")]
     return []
@@ -637,7 +665,7 @@ def infer_project():
     if p:
         return p
     here, best, blen = os.path.realpath(os.getcwd()), None, -1
-    for f in glob.glob(os.path.join(conf(), "projects", "*.json")):
+    for f in project_files():
         try:
             rp = load_json(f).get("repo", {}).get("path") or ""
         except (OSError, ValueError):
