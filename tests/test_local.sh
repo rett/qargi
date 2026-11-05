@@ -118,6 +118,8 @@ echo '{}' > "$P1/out/manifest.json"
 # a remote change fails even after a passing verify
 git -C "$T/r3" remote add origin "$T/remote.git"; out=$(mk p3); P3=$(runof <<<"$out")
 [ "$(rc "$P3")" = 0 ] && ok "verify passes with a remote" || no "p3 verify"
+git -C "$T/r3" fetch -q origin; out=$(./bin/qargi local verify "$P3" 2>&1); r=$?
+[ $r = 0 ] && grep -q "origin/main created to what origin has" <<<"$out" && ok "a fetch (remote-tracking refs that say what origin has) is accepted and named" || no "fetch: $r $out"
 git --git-dir="$T/remote.git" update-ref refs/heads/elsewhere "$(git --git-dir="$T/remote.git" rev-parse main)"
 [ "$(rc "$P3")" = 2 ] && ok "a remote ref change fails with exit 2 after a passing verify" || no "remote change accepted"
 git --git-dir="$T/remote.git" update-ref -d refs/heads/elsewhere

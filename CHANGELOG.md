@@ -281,6 +281,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lead's git configuration and session files), the rules for `cd`, the 5-second budget and the `git commit -F FILE` advice, within
   330 words; `tests/test_help.py` fails when a refused verb is in neither the topic nor a documented exemption, and compares the
   manual page's APPROVALS and GUARD sections with the topics.
+- `local verify` and `local clean` accept qargi's own moves and name them (`develop moved by qargi feature finish`), so a run no
+  longer has to be cleaned before the next `feature finish`. The ref journal also records the pushes, the deletions on origin and
+  the tags of `feature finish`, `release finish` (and hotfix), `release push`, `branch prune --remote` and the pushes of
+  `branches.push_features` (lines with `remote: "origin"` and the origin URL); verify accepts a remote-tracking ref of origin that
+  says what origin has (a fetch), a tag fetched from origin, the parking branch fast-forwarded to develop's tip (by hand too), and
+  every journaled move after a passing verify as well as before (a journaled deletion failed there).
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.

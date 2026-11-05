@@ -138,20 +138,61 @@ refused "$R" "a deleted branch that was not journaled"
 $F start fin >/dev/null 2>&1; task agent/t1 t1.txt t1; $F merge fin agent/t1 >/dev/null 2>&1
 $F verify fin >/dev/null 2>&1
 d0=$(sha develop); fin=$(sha feature/fin); t=$($F finish fin 2>&1 | tok); n=$(jn)
+RF=$(fresh r-finish)                                     # strict: no passing verify yet
+RF3=$(fresh r-finish3)                                   # strict too: cleaned without a verify of its own after the finish
+RF2=$(mkrun r-finish2); $DA local verify "$RF2" >/dev/null 2>&1 || no "(setup) r-finish2 does not verify"   # after a passing verify
+rd0=$(git --git-dir="$T/origin.git" rev-parse develop)
 $F finish fin --plan "$t" --approved go >/dev/null 2>&1; rc=$?
 d1=$(sha develop)
 [ $rc = 0 ] && [ "$d1" != "$d0" ] && jhas develop "$d0" "$d1" && ok "feature finish journals develop's move" || no "finish: rc=$rc, journal $(tail -n +"$((n + 1))" "$J" 2>&1)"
 jhas feature/fin "$fin" "$Z" && ok "and the deletion of the feature branch" || no "finish left no deletion line"
+jq -e --arg o "$rd0" --arg n "$d1" --arg u "$T/origin" 'select(.remote == "origin" and .url == $u and .ref == "refs/heads/develop" and .old == $o and .new == $n and .verb == "feature:finish")' "$J" >/dev/null \
+  && ok "and its push of develop to origin (remote origin, the origin URL, what origin had and what it has now)" || no "finish left no push line: $(tail -n 4 "$J")"
+out=$($DA local verify "$RF" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "develop moved by qargi feature finish" <<<"$out" && grep -q "develop on origin moved by qargi feature finish" <<<"$out" \
+  && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && grep -q "origin/develop moved to what origin has" <<<"$out"; } \
+  && ok "a run prepared before the finish verifies, and verify names develop's move and push, the deletion and the fetch" || no "verify after finish (strict): rc=$rc $out"
+out=$($DA local verify "$RF2" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && ok "after a passing verify too: the journaled deletion of the feature branch is accepted (fast-forwards alone were before)" || no "verify after finish (lenient): rc=$rc $out"
+echo '{}' > "$RF3/out/manifest.json"; out=$($DA local clean "$RF3" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RF3" ] && grep -q "accepted, the lead's own move: develop moved by qargi feature finish" <<<"$out" && ok "clean accepts those moves and names them" || no "clean after finish: rc=$rc $out"
 
 # --- a release
 $REL verify 0.2.0 >/dev/null 2>&1; d0=$(sha develop)
 $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1; rb=$(sha release/0.2.0)
 jhas release/0.2.0 "$Z" "$rb" && [ "$rb" != "$Z" ] && ok "release start journals the new release branch" || no "release start left no journal line"
+RR=$(fresh r-release)
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
+jq -e --arg n "$rb" 'select(.remote == "origin" and .ref == "refs/heads/release/0.2.0" and .old == "0000000000000000000000000000000000000000" and .new == $n and .verb == "release:push")' "$J" >/dev/null \
+  && ok "release push journals the new branch on origin" || no "release push left no push line: $(tail -n 2 "$J")"
 m0=$(sha master); d0=$(sha develop); t=$($REL finish 0.2.0 | tok)
 $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1; rc=$?
 m1=$(sha master); d1=$(sha develop)
 [ $rc = 0 ] && [ "$m1" != "$m0" ] && jhas master "$m0" "$m1" && jhas develop "$d0" "$d1" && jhas release/0.2.0 "$rb" "$Z" && ok "release finish journals master, develop and the release branch's deletion" || no "release finish: rc=$rc, lines $(tail -n 4 "$J" 2>&1)"
+tg=$(git -C "$A" rev-parse refs/tags/0.2.0)
+[ "$(jq -c --arg n "$tg" 'select(.ref == "refs/tags/0.2.0" and .old == "0000000000000000000000000000000000000000" and .new == $n and .verb == "release:finish")' "$J" | wc -l)" = 2 ] \
+  && jq -e 'select(.remote == "origin" and .ref == "refs/heads/release/0.2.0" and .new == "0000000000000000000000000000000000000000")' "$J" >/dev/null \
+  && ok "and the tag (in the repository and on origin) and the deletion of the release branch on origin" || no "release finish tag lines: $(grep tags "$J")"
+out=$($DA local verify "$RR" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "master moved by qargi release finish" <<<"$out" && grep -q "master on origin moved by qargi release finish" <<<"$out" \
+  && grep -q "tag 0.2.0 created by qargi release finish" <<<"$out" && grep -q "tag 0.2.0 on origin created by qargi release finish" <<<"$out" \
+  && grep -q "release/0.2.0 deleted by qargi release finish" <<<"$out"; } \
+  && ok "a run prepared before the release verifies, and verify names every move, push and tag of the release" || no "verify after release: rc=$rc $out"
+
+# --- the parking branch (answers repo.parking_branch, default scratch) fast-forwarded to develop by hand is accepted; nothing else of the kind
+git -C "$A" branch scratch develop~1
+R=$(fresh r-park); git -C "$A" branch -f scratch develop
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "scratch (the parking branch) fast-forwarded to develop" <<<"$out" && ok "a hand fast-forward of the parking branch to develop's tip is accepted and named" || no "parking ff: rc=$rc $out"
+R=$(fresh r-park2); git -C "$A" branch -f scratch "$(hand scratch)"
+refused "$R" "a hand move of the parking branch that does not end at develop's tip"
+git -C "$A" branch -f scratch develop; git -C "$A" branch zz2 develop~1
+R=$(fresh r-park3); git -C "$A" branch -f zz2 develop
+refused "$R" "a hand fast-forward to develop of a branch that is not the parking branch"
+jq '.repo.parking_branch = "zz2"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "zz2 (the parking branch)" <<<"$out" && ok "the parking branch is the one the answers name (repo.parking_branch)" || no "answers parking: rc=$rc $out"
+jq 'del(.repo.parking_branch)' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

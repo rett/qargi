@@ -335,6 +335,14 @@ cred_file() { # project -> expanded credential file path, or empty
 git_auth_env() { # credential-file -> exports for the caller's subshell
   export QARGI_ASKPASS_FILE=$1 GIT_ASKPASS=$QARGI_TOOL/lib/askpass.sh GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_SSH_COMMAND=false
 }
+# url_key URL -> the one spelling of a repository URL that the ref journal records and `local verify` compares: https://HOST/PATH with
+# no user or password, no trailing / and no .git (git@HOST:PATH and ssh://git@HOST/PATH give the same); a local path stays a path
+url_key() {
+  local u=$1 h
+  case $u in '') return 0;; /*) u=${u%/}; printf '%s\n' "${u%.git}"; return 0;; *://*) u=${u#*://};; *:*) u=${u/:/\/};; esac
+  h=${u%%/*}; u=${u#"$h"}; h=${h##*@}; u=${u%/}
+  printf 'https://%s%s\n' "$h" "${u%.git}"
+}
 
 # The system prompt of a cloud agent of ROLE: the cloud preamble (names the role), the agent
 # contract (contract/), and the role's instructions (roles/<role>/ROLE.md, the same text a local member's task block carries), or for the lead its contract. Provisioning and refresh-prompt

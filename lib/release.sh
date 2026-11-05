@@ -248,7 +248,9 @@ case $verb in
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
+    rb0=$RTIP; [ "$RSTATE" = found ] || [ "$RSTATE" = absent ] || rb0=$(remote_was "$BR")   # remote_report asked origin live
     g push -q -u origin "$BR" || die "pushing $BR failed"
+    journal_push "refs/heads/$BR" "$rb0" "$h" "$KIND:push"
     audit_log "release:push" "$PROJ $BR"
     command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
     url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || die "pushed $BR; gh pr create failed: $url"
@@ -306,6 +308,7 @@ case $verb in
     fi
     need_free master "$second" "$BR"
     m0=$(sha_of master); s0=$(sha_of "$second")
+    rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
     merge_step "$m0" "refs/heads/$BR" "$k1" "Merge branch '$BR'"
     nm=$MERGED
@@ -317,7 +320,11 @@ case $verb in
       if ! g push -q --atomic origin "$nm:refs/heads/master" "$ns:refs/heads/$second" "refs/tags/$VER"; then
         g tag -d "$VER" >/dev/null 2>&1; die "the push failed; nothing was changed locally or on origin (run it again)"
       fi
+      journal_push refs/heads/master "$rm0" "$nm" "$KIND:finish"
+      journal_push "refs/heads/$second" "$rs0" "$ns" "$KIND:finish"
+      journal_push "refs/tags/$VER" "" "$(g rev-parse "refs/tags/$VER")" "$KIND:finish"
     fi
+    journal_ref "$REPO" "refs/tags/$VER" "" "$(g rev-parse "refs/tags/$VER")" "$KIND:finish"
     g update-ref refs/heads/master "$nm" "$m0" && g update-ref "refs/heads/$second" "$ns" "$s0" || die "origin has the release but master or $second moved locally meanwhile: git fetch origin, then check master and $second against origin"
     journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
@@ -327,7 +334,9 @@ case $verb in
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
-      if [ -z "$KEEP" ] && g rev-parse -q --verify "refs/remotes/origin/$BR" >/dev/null; then g push -q origin --delete "$BR" || echo "note: could not delete origin/$BR" >&2; fi
+      if [ -z "$KEEP" ] && [ -n "$rb0" ]; then
+        if g push -q origin --delete "$BR"; then journal_push "refs/heads/$BR" "$rb0" "" "$KIND:finish"; else echo "note: could not delete origin/$BR" >&2; fi
+      fi
       echo "pushed master, $second and tag $VER"
     else
       echo "no origin remote: nothing was pushed"

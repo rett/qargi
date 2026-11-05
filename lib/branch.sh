@@ -104,7 +104,7 @@ for e in "${LOCAL[@]}"; do
 done
 for e in "${REM[@]}"; do
   IFS=$TAB read -r b sha _ <<<"$e"
-  if g push -q --force-with-lease="refs/heads/$b:$sha" origin ":refs/heads/$b" 2>/dev/null; then m=$((m + 1)); echo "deleted origin/$b"
+  if g push -q --force-with-lease="refs/heads/$b:$sha" origin ":refs/heads/$b" 2>/dev/null; then journal_push "refs/heads/$b" "$sha" "" branch:prune; m=$((m + 1)); echo "deleted origin/$b"
   else echo "qargi: warning: could not delete origin/$b (it moved, or origin refused)" >&2; fi
 done
 audit_log "branch:prune" "$PROJ $n local $m remote"
