@@ -35,13 +35,14 @@ class MdError(Exception):
 
 class Doc:
     """The result: html, headings [(level, id, text, line)], links [(line, url)],
-    code [(line, kind, text)] with kind 'fence:LANG' or 'span'."""
+    code [(line, kind, text)] with kind 'fence:LANG' or 'span', and the number of tables."""
 
     def __init__(self):
         self.html = ""
         self.headings = []
         self.links = []
         self.code = []
+        self.tables = 0
 
 
 def esc(s):
@@ -472,6 +473,7 @@ class _Converter:
             return "<%s%s%s>%s</%s>" % (tag, scope, st, h, tag)
         th = "".join(cell("th", c, align[k], ln, ' scope="col"') for k, c in enumerate(head))
         trs = "".join("<tr>%s</tr>" % "".join(cell("td", c, align[k], rl) for k, c in enumerate(cs)) for rl, cs in rows)
+        self.doc.tables += 1
         out.append(("table", table_html(th, trs)))
         return j
 

@@ -2,7 +2,9 @@
 """The documentation site generator: the Markdown converter (lib/site_md.py) and lib/site.py, offline.
 Run: python3 tests/test_site.py"""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -187,6 +189,10 @@ class Converter(unittest.TestCase):
         with self.assertRaises(MD.MdError) as cm:
             self.conv("## A\n\n<b>\n", first_line=10)
         self.assertEqual(cm.exception.line, 12)
+
+    def test_tables_are_counted(self):
+        d = self.conv("## A\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\ntext\n\n| c |\n|---|\n| 3 |\n")
+        self.assertEqual(d.tables, 2)
 
     def test_heading_ids_are_unique_and_prefixed(self):
         d = self.conv("## Same\n\n### Same\n\n## Same\n", id_prefix="v1-")
@@ -543,7 +549,7 @@ class Build(unittest.TestCase):
 
     def test_builds_and_the_output_checks(self):
         self.assertEqual((self.rc, self.stderr), (0, ""), self.stdout)
-        rc, out, err = run("check-output", self.out)
+        rc, out, err = run("check-output", self.out, "--pages", os.path.join(self.tmp, "fix", "pages"))
         self.assertEqual((rc, err), (0, ""), out)
         self.assertIn("0 error(s), 0 warning(s)", out)
 
@@ -1530,6 +1536,147 @@ class CheckOutput(unittest.TestCase):
     def test_not_a_directory_is_a_refusal(self):
         rc, out, err = run("check-output", os.path.join(self.tmp, "nope"))
         self.assertEqual(rc, 2)
+
+
+class RenderCheck(unittest.TestCase):
+    """What a reader sees: the built pages against their sources, and no Markdown marks left in their text."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        shutil.copytree(FIX, os.path.join(cls.tmp, "fix"))
+        cls.pages = os.path.join(cls.tmp, "fix", "pages")
+        cls.good = os.path.join(cls.tmp, "good")
+        rc, out, err = build(cls.good, cls.pages)
+        assert rc == 0, out + err
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def check(self, name, edit, *extra):
+        d = os.path.join(self.tmp, name)
+        shutil.copytree(self.good, d)
+        edit(d)
+        rc, out, err = run("check-output", d, "--pages", self.pages, *extra)
+        return rc, out
+
+    def sub(self, rel, old, new):
+        def edit(d):
+            p = os.path.join(d, rel)
+            t = slurp(p)
+            assert old in t, (rel, old)
+            spit(p, t.replace(old, new, 1))
+        return edit
+
+    def cut_after(self, rel, marker, tail):
+        """What Kramdown makes of a line that starts with a tag: the page up to the line, the rest as escaped Markdown text."""
+        def edit(d):
+            p = os.path.join(d, rel)
+            t = slurp(p)
+            k = t.index(marker)
+            spit(p, t[:k] + "<p>" + tail + "</p></article></main></div></body></html>\n")
+        return edit
+
+    def test_the_built_pages_match_their_sources(self):
+        rc, out = self.check("clean", lambda d: None)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("0 error(s), 0 warning(s)", out)
+
+    def test_the_marks_check_needs_no_source(self):
+        d = os.path.join(self.tmp, "nosrc")
+        shutil.copytree(self.good, d)
+        self.sub("first-project/index.html", "<article>", "<article><p>a `tick`</p>")(d)
+        rc, out, _ = run("check-output", d)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("first-project/index.html:", out)
+        self.assertIn("holds a backtick", out)
+
+    def test_a_page_cut_short_is_found_by_its_headings_code_blocks_and_tables(self):
+        rc, out = self.check("cut", self.cut_after("first-project/index.html", '<h2 id="add-a-member">', "plain text"))
+        self.assertEqual(rc, 1, out)
+        self.assertRegex(out, r"error: first-project\.md:20: the heading 'Add a member' is not in the built page")
+        self.assertIn("a line that starts with <", out)
+        self.assertIn("the source has 2 fenced code block(s), the built page 1 pre element(s)", out)
+        self.assertIn("the source has 1 table(s), the built page 0 table element(s)", out)
+
+    def test_the_marks_of_unrendered_markdown_are_found(self):
+        cases = [
+            ("tick", "a `tick` here", "holds a backtick"),
+            ("bold", "a **bold** here", "holds ** "),
+            ("link", "a [text](https://example.org/) here", "holds ]("),
+            ("tilde", "~~~", "holds a ~~~ fence mark"),
+            ("fence", "```bash", "holds a backtick"),
+            ("head", "text\n## A heading", "starts with '## A heading'"),
+            ("row", "text\n| a | b |", "starts with '| a | b |'"),
+        ]
+        for name, text, frag in cases:
+            rc, out = self.check(name, self.sub("first-project/index.html", "<article>", "<article><p>%s</p>" % text))
+            self.assertEqual(rc, 1, name + out)
+            self.assertIn(frag, out, name)
+
+    def test_code_and_the_heading_anchor_may_hold_the_marks(self):
+        rc, out = self.check("incode", self.sub("first-project/index.html", "<article>",
+                             "<article><p>use <code>`x` **y** [a](b) # not a heading</code></p><pre><code>```\n| a |\n# c\n</code></pre>"))
+        self.assertEqual(rc, 1, out)                       # the added pre element is one more than the source has
+        self.assertIn("3 pre element(s)", out)
+        self.assertNotIn("holds", out)
+        self.assertNotIn("starts with", out)
+
+    def test_the_command_reference_may_hold_a_backtick_but_no_other_mark(self):
+        rc, out = self.check("ref", self.sub("reference/set-up/index.html", "<article>", "<article><p>an `x` quote</p>"))
+        self.assertEqual(rc, 0, out)
+        rc, out = self.check("ref2", self.sub("reference/set-up/index.html", "<article>", "<article><p>**x**</p>"))
+        self.assertEqual(rc, 1, out)
+
+    def test_a_missing_built_page_is_found(self):
+        def edit(d):
+            shutil.rmtree(os.path.join(d, "first-project"))
+        rc, out = self.check("gone", edit)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("first-project.md: the page source has no built page first-project/index.html", out)
+
+    def test_headings_are_compared_in_order_and_at_levels_two_and_three(self):
+        doc = MD.convert("## A\n\n### B\n\n#### D\n\n## C\n", start_level=2)
+        m = S.Main()
+        m.feed('<main id="main"><h2 id="a">A <a class="anchor" href="#a">#</a></h2><h3 id="b">B</h3><h2 id="c">C</h2></main>')
+        self.assertEqual(S.structure_problems(m, doc), [])
+        m = S.Main()
+        m.feed('<main id="main"><h2 id="c">C</h2><h3 id="b">B</h3><h2 id="a">A</h2></main>')
+        got = S.structure_problems(m, doc)
+        self.assertEqual(len(got), 1)
+        self.assertIn("'B'", got[0][1])
+        self.assertEqual(got[0][0], 3)
+        m = S.Main()
+        m.feed('<main id="main"><h2 id="a">A</h2><h2 id="b">B</h2><h2 id="c">C</h2></main>')      # B is an h2 here, not an h3
+        self.assertIn("'B'", S.structure_problems(m, doc)[0][1])
+
+    def test_text_outside_main_is_not_read(self):
+        m = S.Main()
+        m.feed('<body><nav>```</nav><main id="main"><p>fine <code>`x`</code></p></main><footer>**</footer></body>')
+        self.assertEqual(S.residue_problems(m), [])
+
+    def test_the_build_removes_a_site_that_does_not_show_its_pages(self):
+        t = os.path.join(self.tmp, "regress")
+        orig = S.render_page
+
+        def broken(site, p):
+            html = orig(site, p)
+            k = html.find('<h2 id="add-a-member">')
+            if p.path == "first-project/" and k >= 0:
+                return html[:k] + "<p>## Add a member\n```bash\nx\n```</p></article></main></div></body></html>\n"
+            return html
+        S.render_page = broken
+        self.addCleanup(setattr, S, "render_page", orig)
+        buf = io.StringIO()
+        show = S.Report.show
+        S.Report.show = lambda rep, label, file=None: show(rep, label, buf)        # the report's output stream is fixed when it is defined
+        self.addCleanup(setattr, S.Report, "show", show)
+        with contextlib.redirect_stdout(buf):
+            rc = S.main(["build", "--release", RELEASE, "--source", ROOT, *pg(self.pages), "--out", t])
+        self.assertEqual(rc, 1, buf.getvalue())
+        self.assertIn("error: first-project.md:20: the heading 'Add a member' is not in the built page", buf.getvalue())
+        self.assertFalse(os.path.exists(t))
 
 
 class Diff(unittest.TestCase):

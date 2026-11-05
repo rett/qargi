@@ -19,6 +19,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   markers) with an HTML-like tag, with the file, the line and the fix. A Kramdown (Jekyll) page reads such a line, for example a hard-wrapped code span
   whose placeholder lands at the start of a line, as a raw HTML block and shows everything after it as plain text, while every other check stays green.
   The site's own converter already refused raw HTML in a hand page, so its output cannot show the defect; its message now names the fix too.
+- `lib/site.py check-output DIR --pages PAGES` compares each built page with its source: the h2 and h3 headings in order, as many pre elements as fenced
+  blocks and table elements as tables. With or without `--pages` it refuses Markdown marks left in the text outside code (a backtick, `**`, `](`, `~~~`,
+  a line starting with `#` or `|`; a backtick is accepted in the command reference). `build` runs the same check on its output and removes a build that
+  does not show its pages.
 
 ### Changed
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
