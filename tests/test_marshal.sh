@@ -101,6 +101,26 @@ M $t0 status f2 --json; jq -e '.agent_branches == ["agent/othertask"] and (.agen
 "$DA" feature status f2 >"$T/o" 2>"$T/e"
 grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && grep -q "^unattributed agent branches .*agent/ondev" "$T/o" && ok "feature status: the same attribution and the unattributed line" || no "SPEC feature status attribution: $(out)"
 git -C "$R" update-ref -d refs/heads/agent/othertask; git -C "$R" update-ref -d refs/heads/agent/ondev
+# task lines tell the truth: the registry's marks (verified by local verify, cleaned by local clean) and the run directory decide what a task reads
+mkdir -p "$T/run-open" "$T/run-ver"; : > "$T/run-ver/verified"
+printf '%s\n' "{\"run\":\"$T/run-open\",\"slug\":\"opentask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-ver\",\"slug\":\"vertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-gone\",\"slug\":\"donetask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\",\"cleaned\":\"2026-01-01T02:00:00Z\"}" \
+  "{\"run\":\"$T/run-regver\",\"slug\":\"regvertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\"}" >> "$S/local-runs.jsonl"
+M $t0 status f5
+grep -q "opentask (build) started 2026-01-01T00:00:00Z, not verified$" "$T/o" && ok "status: a run with no passing verify reads not verified" || no "SPEC not verified: $(out)"
+grep -q "vertask (build) .*, verified$" "$T/o" && ok "status: RUN/verified reads verified" || no "SPEC verified file: $(out)"
+grep -q "regvertask (build) .*, verified, directory gone$" "$T/o" && ok "status: the registry's verified mark reads verified when the directory is gone" || no "SPEC verified mark: $(out)"
+! grep -q "donetask (build)" "$T/o" && grep -q "^  cleaned: donetask$" "$T/o" && ok "status: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC cleaned: $(out)"
+M $t0 status f5 --json; jq -e '[.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
+# feature merge warns of a run that exists and has no passing verify, and only of that
+agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from donetask feature/f5
+"$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && grep -q "warning: the run $T/run-open of agent/opentask has no passing verify" "$T/e" && ok "feature merge: warns when the branch's run exists and was never verified (the merge goes on)" || no "SPEC merge warning: rc=$rc $(out)"
+"$DA" feature merge f5 agent/vertask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a verified run" || no "SPEC merge verified: rc=$rc $(out)"
+"$DA" feature merge f5 agent/donetask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a cleaned run" || no "SPEC merge cleaned: rc=$rc $(out)"
 M $t0 status ov1 --as alice; grep -q "shared.txt" "$T/o" && grep -q ov2 "$T/o" && ok "status: overlapping files with another open feature" || no "SPEC overlap: $(out)"
 M $t0 claim ov1 --as alice; M $t0 check ov1 --as alice; rc=$?
 [ $rc = 0 ] && grep -q shared.txt "$T/e" && ok "check: file overlap is a warning on stderr, exit 0" || no "SPEC overlap warning: rc=$rc $(out)"

@@ -47,8 +47,15 @@ out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c2 --scratch "
 echo '{}' > "$C2/out/p--manifest.json"; touch "$TM2/leftover"
 ./bin/qargi local clean "$C2" >/dev/null 2>&1 && [ ! -e "$C2" ] && [ ! -e "$TM2" ] && ok "clean removes the run and its temporary directory" || no "clean: $C2 $TM2"
 [ -d "$TM" ] && ok "another run's temporary directory is untouched" || no "touched another run's tmp"
+# the registry (one line per run) records the clean: the line stays, marked cleaned, so a cleaned run is never listed as an open task
+regline() { jq -c --arg r "$1" 'select(.run == $r)' "$T/s/local-runs.jsonl"; }
+[ "$(regline "$C2" | wc -l)" = 1 ] && [ -n "$(regline "$C2" | jq -r '.cleaned // ""')" ] && [ "$(regline "$C2" | jq -r '.verified // ""')" != "" ] \
+  && ok "clean marks the run's registry line cleaned (and the verify it ran, verified), still one line per run" || no "registry after clean: $(regline "$C2")"
+[ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ok "the registry keeps mode 600 after the mark" || no "registry mode $(stat -c %a "$T/s/local-runs.jsonl")"
+[ -z "$(regline "$C1" | jq -r '.cleaned // ""')" ] && ok "a run clean refused is not marked cleaned" || no "refused clean marked: $(regline "$C1")"
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c3 --scratch "$T"); C3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 ./bin/qargi local clean "$C3" --discard >/dev/null 2>&1 && [ ! -e "$C3" ] && ok "--discard cleans a run that produced no manifest" || no "discard"
+[ -n "$(regline "$C3" | jq -r '.cleaned // ""')" ] && ok "--discard marks the line cleaned too" || no "registry after discard: $(regline "$C3")"
 ./bin/qargi local clean "$T" >/dev/null 2>&1 && no "clean accepted a directory that is not a run" || ok "clean refuses a directory that prepare did not make"
 # clean never drops finished work that is not merged: a run whose clone holds commits needs them applied and merged first
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c4 --scratch "$T"); C4=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); G4=$(sed -n '1,/^$/s/^GIT=//p' <<<"$out"); CL4=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$out")
@@ -93,6 +100,8 @@ $LC -C "$T/r3" commit -q --allow-empty -m lead-move && git -C "$T/r3" branch age
 [ "$(rc "$P1")" = 2 ] && ok "no passing verify yet: the strict comparison applies (exit 2)" || no "strict: a moved branch was accepted"
 out=$(mk p2); P2=$(runof <<<"$out")
 [ "$(rc "$P2")" = 0 ] && [ -f "$P2/verified" ] && ok "a passing verify records RUN/verified" || no "verified record"
+[ "$(regline "$P2" | wc -l)" = 1 ] && [ -n "$(regline "$P2" | jq -r '.verified // ""')" ] && ok "a passing verify marks the run's registry line verified (one line per run)" || no "registry after verify: $(regline "$P2")"
+[ -z "$(regline "$P1" | jq -r '.verified // ""')" ] && ok "a failing verify leaves the line unmarked" || no "registry after a failed verify: $(regline "$P1")"
 $LC -C "$T/r3" commit -q --allow-empty -m lead-ff && git -C "$T/r3" branch feature/new && git -C "$T/r3" branch agent/new2
 [ "$(rc "$P2")" = 0 ] && ok "after a passing verify, a fast-forward and new agent/feature branches are accepted" || no "ff refused"
 git -C "$T/r3" branch stray

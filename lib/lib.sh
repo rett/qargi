@@ -115,6 +115,19 @@ reg_get() {
   [ -n "${LRUNS[$rr]+x}" ] || return 0
   jq -r --arg k "$2" 'if (.[$k] | type) == "string" then .[$k] else "" end' <<<"${LRUNS[$rr]}" 2>/dev/null || true
 }
+# reg_mark DIR KEY VALUE -> sets KEY to VALUE (a string) in the registry's line for the run DIR, in place, under the registry's lock (the one
+# prepare appends under), mode 600 kept; a run the registry does not name is left alone, and a failure is not the caller's (the mark is a
+# record, the run's own files stay what verify and clean decide on). verify marks a run verified, clean marks it cleaned: the run keeps its
+# one line, and the readers (marshal status, handoff, report) see the truth after the run directory is gone.
+reg_mark() {
+  local f=$DA_STATE/local-runs.jsonl rr
+  rr=$(readlink -f -- "$1" 2>/dev/null) || rr=$1
+  [ -f "$f" ] || return 0
+  ( flock 9 && umask 077 && jq -c --arg r "$rr" --arg g "$1" --arg k "$2" --arg v "$3" \
+      'if type == "object" and ((.run | type) == "string") and (.run == $r or .run == $g) then .[$k] = $v else . end' "$f" > "$f.tmp" \
+      && chmod 600 "$f.tmp" && mv "$f.tmp" "$f"
+  ) 9> "$f.lock" 2>/dev/null || true
+}
 # run_record RUN -> 0 and sets RUN_REPO, RUN_URL and RUN_CRED from the registry (reg_load first); 1 with the reason on stderr when the registry does not
 # name the run, names no repository for it, or the run directory's own repo.path, repo.url or cred.path (which a member can write) differ from it or are not
 # plain files. verify, clean, run and review apply take the repository, the URL and the credential path from these variables and from nothing else: git run

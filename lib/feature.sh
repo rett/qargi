@@ -63,6 +63,7 @@ merge_detached() {
   case $EXTRA in agent/*) ;; *) die "only an agent/* task branch is merged into the detached branch $d (not $EXTRA)";; esac
   t=$(sha_of "$EXTRA"); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
   g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $d"
+  run_warning "$EXTRA"
   detached_mix "$EXTRA" "$d"
   tok=$(printf '%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$d" "$h" "$EXTRA" "$t" | plan_token)
   echo "merge $EXTRA into the detached branch $d with --no-ff (local only: nothing is pushed)"
@@ -76,6 +77,21 @@ merge_detached() {
   merge_forget "detached-${d//\//_}-merge-${EXTRA//\//_}"
   audit_log "feature:merge" "$PROJ $d $EXTRA"
   echo "merged $EXTRA into the detached branch $d ($(g rev-parse --short "$d"))"
+}
+
+# run_warning BRANCH -> a warning on stderr for each run of BRANCH (an agent/SLUG branch: the registry's line with that slug, of this repository, not
+# cleaned, its directory still there) that has no passing verify (neither the registry's mark nor RUN/verified): its refs were never checked. The
+# merge goes on; the lead decides.
+run_warning() {
+  local slug=${1#agent/} rp d line
+  reg_load; rp=$(readlink -f -- "$REPO" 2>/dev/null) || rp=$REPO
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    line=${LRUNS[$d]}
+    [ "$(jq -r --arg s "$slug" --arg p "$rp" 'select(.slug == $s and ((.repo // "") == "" or .repo == $p) and ((.cleaned // "") == "")) | "x"' <<<"$line" 2>/dev/null)" = x ] || continue
+    [ -d "$d" ] || continue
+    [ -z "$(jq -r '.verified // ""' <<<"$line" 2>/dev/null)" ] && [ ! -f "$d/verified" ] || continue
+    echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
+  done
 }
 
 case $verb in
@@ -123,6 +139,7 @@ case $verb in
     [ -n "$EXTRA" ] || usage_die "usage: qargi feature merge $NAME_ARG BRANCH"
     t=$(g rev-parse -q --verify "refs/heads/$EXTRA" || true); [ -n "$t" ] || die "no local branch $EXTRA (apply the verified series to a branch first: /qargi-verify)"
     g merge-base --is-ancestor "$t" "$h" && die "$EXTRA is already in $BR"
+    run_warning "$EXTRA"
     detached_mix "$EXTRA" "$BR"
     need_free_wt "$BR"
     merge_step "$h" "refs/heads/$EXTRA" "feature-$NAME_ARG-merge-${EXTRA//\//_}" "Merge branch '$EXTRA' into $BR"

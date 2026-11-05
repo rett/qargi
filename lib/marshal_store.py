@@ -1008,14 +1008,28 @@ def registry_lines(ctx):
     return [runs[k] for k in order]
 
 
+def task_state(r):
+    """What the registry and the run directory say of a run: cleaned (the line is marked by `local clean`: no open task any more), else
+    verified (the mark of a passing `local verify`, or RUN/verified) or not verified, with applied (RUN/applied) and a directory that is gone."""
+    run = r["run"]
+    cleaned = bool(r.get("cleaned"))
+    verified = bool(r.get("verified")) or os.path.exists(os.path.join(run, "verified"))
+    applied = os.path.exists(os.path.join(run, "applied"))
+    if cleaned:
+        state = "cleaned"
+    else:
+        parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
+        state = ", ".join(parts)
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "state": state}
+
+
 def tasks_of(ctx, name):
     out = []
     for r in registry_lines(ctx):
         if r.get("base") != "feature/" + name:
             continue
-        run = r["run"]
-        out.append({"run": clean(run), "slug": clean(r.get("slug") or ""), "role": clean(r.get("ability") or r.get("role") or ""),
-                    "started": clean(r.get("started") or ""), "verified": os.path.exists(os.path.join(run, "verified"))})
+        out.append(dict(task_state(r), run=clean(r["run"]), slug=clean(r.get("slug") or ""), role=clean(r.get("ability") or r.get("role") or ""),
+                        started=clean(r.get("started") or "")))
     return out
 
 
@@ -1157,9 +1171,13 @@ def print_full(d, raw_lens):
         for k, v in fields:
             print("  %s:" % k)
             print(indent(v + ("\n[truncated at %d characters]" % CAP if raw_lens.get(k, 0) > CAP else ""), 4))
-    print("tasks:" + ("" if d["tasks"] else " none"))
-    for t in d["tasks"]:
-        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], "verified" if t["verified"] else "not verified"))
+    # the open tasks one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
+    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"]], [t for t in d["tasks"] if t["cleaned"]]
+    print("tasks:" + ("" if opened else " none"))
+    for t in opened:
+        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], t["state"]))
+    if cleaned:
+        print("  cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned))
     print("agent branches of feature/%s (prepared against it) not merged into it:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
     for b in d["agent_branches"]:
         print("  " + b)
