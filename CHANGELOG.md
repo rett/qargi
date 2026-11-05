@@ -180,6 +180,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `packs/skills/`, `provision/templates/*.md` and `methodologies/` beyond the counts in `tests/vendor-words-allowlist.txt`, which can
   only shrink. `tests/test_tool_copy.sh` keeps `install.sh --copy`'s `tool_dirs`, the tests' `TOOL_DIRS` (one `copy_tool` helper in
   `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
+- `qargi ref record --rewrite REF OLD NEW --why "TEXT"`: the lead rewrites an `agent/*` branch to a commit with the same tree
+  (`git rev-parse OLD^{tree}` must equal NEW's) while REF is at OLD, and the move is journaled with the reason, so `local verify`
+  and `local clean` of a run prepared before it accept it and name it as a rewrite, and `local clean` and `local list` count the
+  run's applied tip as merged when the commit it was rewritten to is. Refused to a member.
 
 ### Changed
 - Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local

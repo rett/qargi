@@ -56,10 +56,18 @@ snapshot() { # repo -> sorted refs of the repository and of its remote
 # merged_tip REPO TIP -> 0 when the commit TIP (the second word of a run's applied file, which a member can write) is on a local branch
 # other than agent/*, 1 when it is not, 2 when TIP is not a full hex object name. A word that is not one never reaches git, so an
 # option-like text cannot become an option of for-each-ref; the value is given in the --contains=VALUE form and the ref patterns after --.
+# A tip the lead rewrote (qargi ref record --rewrite: the same tree, journaled as ref:rewrite) counts as merged when the commit it was
+# rewritten to is: the lead's ref journal is followed from TIP, line by line, to the last rewrite of it.
 merged_tip() {
-  case $2 in ''|*[!0-9a-f]*) return 2;; esac
-  [ "${#2}" = 40 ] || [ "${#2}" = 64 ] || return 2
-  [ -n "$(git -C "$1" for-each-ref --contains="$2" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
+  local tip=$2 rp nx n=0
+  case $tip in ''|*[!0-9a-f]*) return 2;; esac
+  [ "${#tip}" = 40 ] || [ "${#tip}" = 64 ] || return 2
+  if [ -f "$DA_STATE/ref-journal.jsonl" ]; then
+    rp=$(readlink -f "$1" 2>/dev/null) || rp=$1
+    while [ $n -lt 50 ] && nx=$(jq -sr --arg r "$rp" --arg o "$tip" '[ .[] | select(type == "object" and .verb == "ref:rewrite" and .repo == $r and .old == $o) | .new ] | last // empty' \
+          "$DA_STATE/ref-journal.jsonl" 2>/dev/null) && [[ $nx =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; do tip=$nx; n=$((n + 1)); done
+  fi
+  [ -n "$(git -C "$1" for-each-ref --contains="$tip" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
 }
 
 # journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
