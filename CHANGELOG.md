@@ -11,6 +11,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it (`feature merge`, `sync`, `status`, `verify` and `finish`; `local prepare`, `verify` and `clean`; `review check` and `apply`),
   once a third of the lease has passed and also when it lapsed meanwhile, as long as nobody else took the feature over. Another
   identity is still refused while the lease is live, and `marshal check` itself stays a read.
+- `marshal release NAME` after `feature finish` (or on a feature that is abandoned, already released, or has neither a record nor
+  a branch) exits 0 with one line, "nothing to release", instead of "you are not the lead of NAME, which is without a lead"; it
+  needs no `--note` then. A feature held by another lead, or one with a branch that was never claimed, is still refused.
 
 ## [0.2.2] - 2026-11-05
 

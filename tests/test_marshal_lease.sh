@@ -75,5 +75,29 @@ QARGI_LEAD=bob at $((t0 + 6000)) "$DA" local verify "$RUN"
 at $((t0 + 7000)) "$DA" local clean "$RUN" --discard; rc=$?
 [ $rc = 0 ] && [ "$(j r1 .renewed_at)" = "$(iso $((t0 + 7000)))" ] && ok "local clean renews the lease" || no "SPEC local clean renews: rc=$rc $(out) $(j r1 .renewed_at)"
 
+# --- release: after feature finish it is quiet; another live lead's feature is still refused
+mkfeat f1
+at $((t0 + 100)) $F verify f1 >/dev/null 2>&1
+at $LATE $F finish f1
+tokn=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' "$T/o")
+at $((LATE + 1)) $F finish f1 --plan "$tokn" --approved "go ahead"; rc=$?
+[ $rc = 0 ] && [ "$(j f1 .status)" = finished ] && ok "finish by a lead whose lease lapsed during the run" || no "finish: rc=$rc $(out)"
+at $((LATE + 2)) "$DA" marshal release f1 --note "done"; rc=$?
+[ $rc = 0 ] && [ "$(wc -l < "$T/o")" = 1 ] && grep -q "nothing to release" "$T/o" && [ ! -s "$T/e" ] && ok "release after finish: one quiet line, exit 0" || no "SPEC release after finish: rc=$rc $(out)"
+at $((LATE + 3)) "$DA" marshal release f1; rc=$?
+[ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release after finish needs no note" || no "SPEC release after finish without note: rc=$rc $(out)"
+at $((LATE + 4)) "$DA" marshal release never-existed --note n; rc=$?
+[ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release of a name with no record and no branch: nothing to release" || no "SPEC release unknown: rc=$rc $(out)"
+mkfeat h1
+QARGI_LEAD=bob at $((t0 + 100)) "$DA" marshal release h1 --note n; rc=$?
+[ $rc = 1 ] && [ "$(j h1 .lead.id)" = alice ] && ok "release of a feature another live lead holds is still refused" || no "SPEC release by non-lead: rc=$rc $(out)"
+at $((t0 + 100)) "$DA" marshal release h1 --note "left off"; rc=$?
+[ $rc = 0 ] && [ "$(j h1 .status)" = released ] && grep -q "^released h1" "$T/o" && ok "release by the lead: released as before" || no "release by the lead: rc=$rc $(out)"
+at $((t0 + 101)) "$DA" marshal release h1 --note again; rc=$?
+[ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release of a released feature: nothing to release" || no "release twice: rc=$rc $(out)"
+git -C "$R" branch feature/u1 develop
+at $t0 "$DA" marshal release u1 --note n; rc=$?
+[ $rc = 1 ] && grep -q "no record for feature u1" "$T/e" && ok "release of a feature with a branch and no record is still refused" || no "SPEC release unclaimed: rc=$rc $(out)"
+
 [ "$fail" = 0 ] && echo "marshal lease: all passed" || echo "marshal lease: FAILED"
 exit "$fail"

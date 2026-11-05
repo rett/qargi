@@ -324,7 +324,10 @@ COMMANDS = {
                           desc="This verb only reads; it renews no lease. The commands of the flow that ask the marshal first (feature merge, sync, verify, finish; local prepare) renew the lease of their own lead as they ask."),
             "renew": verb("Renew your lease on a feature (long verbs and the lead's other commands on the feature do this themselves)", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "release": verb("Give the feature up, leaving a handoff note; it has no lead until someone takes it", [("NAME", "none")],
-                            [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")]),
+                            [PROJECT_OPT, AS_OPT, opt("--note", "what the next lead must know", "TEXT")],
+                            desc=("When there is nothing to give up, because the feature was finished (feature finish deletes the branch and ends the claim), abandoned or released "
+                                  "already, or has no record and no branch, it exits 0 with one line, 'nothing to release', and needs no --note. A feature that another lead holds, "
+                                  "or that has a branch and was never claimed, is still refused.")),
             "take": verb("Become the lead of a feature that was released", [("NAME", "none")], [PROJECT_OPT, AS_OPT]),
             "takeover": verb("Take a feature from a lead that stopped (no change for the project's marshal.lease_minutes); needs your words", [("NAME", "none")],
                              [PROJECT_OPT, AS_OPT, APPROVED]),
