@@ -25,7 +25,8 @@ cd "$(dirname "$0")/.." || exit 1
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
 trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
-ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
+# shellcheck source=fixtures.sh
+. tests/fixtures.sh
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
 unset GIT_TERMINAL_PROMPT
@@ -35,51 +36,21 @@ ORIGIN=$T/origin.git; LOG=$T/shim.log; : > "$LOG"
 mkdir -p "$T/m" "$T/shimbin" "$T/slow" "$T/hooks"
 WORDS="the shared refs are fine for this project"
 
-# --- the git shim: logs push, fetch, pull, ls-remote and clone as `SUB<TAB>prompt=<GIT_TERMINAL_PROMPT><TAB>cwd<TAB>args after SUB`
-cat > "$T/shimbin/git" <<SHIM
-#!/usr/bin/env bash
-key=\$(printf '%s' "\$HOME" | tr / _)
-sub=''; i=0; skip=0
-for a in "\$@"; do
-  i=\$((i + 1))
-  if [ \$skip = 1 ]; then skip=0; continue; fi
-  case \$a in -C|-c) skip=1;; -*) ;; *) sub=\$a; break;; esac
-done
-case \$sub in
-  push|fetch|pull|ls-remote|clone)
-    printf '%s\t%s\t%s\t%s\n' "\$sub" "prompt=\${GIT_TERMINAL_PROMPT-unset}" "\$PWD" "\${*:\$((i + 1))}" >> "$LOG"
-    if [ -f "$T/slow/\$key" ] && grep -qw "\$sub" "$T/slow/\$key"; then exec sleep 30; fi;;
-esac
-"$REALGIT" "\$@"; rc=\$?
-if [ "\$sub" = fetch ] && [ -f "$T/hooks/\$key" ]; then   # a command to run right after this machine's next fetch (once)
-  mv "$T/hooks/\$key" "$T/hooks/\$key.run"; bash "$T/hooks/\$key.run" >/dev/null 2>&1
-fi
-exit \$rc
-SHIM
-chmod +x "$T/shimbin/git"; export PATH=$T/shimbin:$PATH
+# --- the git shim: logs push, fetch, pull, ls-remote and clone as `SUB<TAB>prompt=<GIT_TERMINAL_PROMPT><TAB>cwd<TAB>args after SUB`; it hangs the verbs
+# listed in $T/slow/KEY and runs $T/hooks/KEY once right after that machine's next fetch (KEY: the machine's HOME with / as _)
+git_shim "$T/shimbin" "$LOG" "$REALGIT" "$T"
+export PATH=$T/shimbin:$PATH
 nsub() { local n; n=$(grep -c "^$1	" "$LOG" 2>/dev/null); echo "${n:-0}"; }   # count of logged pushes / fetches
 nall() { wc -l < "$LOG"; }
 
 # --- the origin, seeded from a scratch repository, and the machines
-git init -q --bare "$ORIGIN"
-git init -q -b master "$T/seed"; echo 0.1.0 > "$T/seed/VERSION"
-git -C "$T/seed" add -A && git -C "$T/seed" commit -q -m one && git -C "$T/seed" branch develop
-git -C "$T/seed" remote add origin "$ORIGIN" && git -C "$T/seed" push -q origin master develop
-mk() { # NAME: a machine with its own home, conf, state and a clone of the origin
-  local d=$T/m/$1
-  mkdir -p "$d/home" "$d/c/projects" "$d/s"
-  git clone -q "$ORIGIN" "$d/app" && git -C "$d/app" branch develop origin/develop >/dev/null 2>&1
-  # a valid project (the template has a role, the models and a budget), pointed at this machine's clone
-  env HOME="$d/home" QARGI_CONF="$d/c" QARGI_STATE="$d/s" "$DA" project template app \
-    | jq --arg p "$d/app" '.repo.path = $p | .repo.url = "https://github.com/acme/app" | .methodology = "gitflow" | .test_command = "true"' > "$d/c/projects/app.json"
-}
+make_origin "$ORIGIN"
 # XE MACHINE [VAR=val...] ARGS...: qargi as that machine, output in $T/o and $T/e, the exit status returned
 XE() {
   local m=$1; shift; local -a ev=()
   while [[ ${1:-} =~ ^[A-Z_]+= ]]; do ev+=("$1"); shift; done
   env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "${ev[@]}" "$DA" "$@" >"$T/o" 2>"$T/e"
 }
-out() { cat "$T/o" "$T/e"; }
 S() { echo "$T/m/$1/s"; }                  # the state directory of a machine
 fb() { local n d; for n in "$@"; do for d in "$T"/m/*; do git -C "$d/app" branch "feature/$n" develop; done; done; }   # the branch on every machine
 en() { # MACHINE: switch the machine to the refs backend the way an owner does (plan, then apply with the token and words)
@@ -98,7 +69,7 @@ hook_after_fetch() { # TARGET SRC ARGS...: right after TARGET's next fetch, run 
 slow() { printf '%s\n' "$2" > "$T/slow/$(printf '%s' "$T/m/$1/home" | tr / _)"; }       # SLOW MACHINE "fetch push": those git verbs hang
 unslow() { rm -f "$T/slow/$(printf '%s' "$T/m/$1/home" | tr / _)"; }
 
-mk a; mk b
+make_machine a; make_machine b
 fb off0 f1 f2 f3 f4 f5 r6 r8 r8u tk tw1 tw2 tb fin fa off1 off2 off3 gh1 loc1 mr1 pc1
 TTL=900
 
@@ -179,7 +150,7 @@ XE b marshal claim r6 --as bob; rc=$?
 
 # ============================================================ (7) parallel race: 8 claims released together
 RACERS="z1 z2 z3 z4 z5 z6 z7 z8"
-for m in $RACERS; do mk "$m"; en "$m" || true; done
+make_machine z1; en z1 || true; for m in ${RACERS#z1 }; do clone_machine z1 "$m"; done   # z2..z8 are copies of the enabled z1
 fb race
 mkfifo "$T/go"; exec 9<>"$T/go"
 i=0; pids=''
@@ -188,7 +159,8 @@ for m in $RACERS; do
   ( : > "$T/m/$m.ready"; read -r -u 9 _; env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "$DA" marshal claim race --as "u$i" >"$T/m/$m.o" 2>"$T/m/$m.e"; echo $? > "$T/m/$m.rc" ) &
   pids="$pids $!"
 done
-for m in $RACERS; do for _ in $(seq 1 200); do [ -e "$T/m/$m.ready" ] && break; sleep 0.05; done; done   # all eight wait at the fifo
+ready() { local m; for m in $RACERS; do [ -e "$T/m/$m.ready" ] || return 1; done; }
+wait_until ready 10   # every racer has started; the go lines wait in the fifo
 for _ in $RACERS; do echo go >&9; done
 # shellcheck disable=SC2086  # the pids
 wait $pids
@@ -301,23 +273,24 @@ rm -f "$ORIGIN/hooks/pre-receive"
 # ============================================================ (12) offline
 XE b marshal status --all --brief >/dev/null            # B's cache is warm
 slow a fetch; slow b fetch
-rm -f "$T/hook.done"
-cat > "$ORIGIN/hooks/pre-receive" <<HOOK
+cat > "$ORIGIN/hooks/pre-receive" <<'HOOK'
 #!/bin/sh
-sleep 5   # hermetic: allow sleep (the slow hook of the origin, not a wait of the test)
-: > "$T/hook.done"
+touch hook.started
+n=0; while [ ! -e hook.release ] && [ $n -lt 200 ]; do n=$((n + 1)); sleep 0.05; done
+touch hook.done
 exit 1
 HOOK
 chmod +x "$ORIGIN/hooks/pre-receive"
 XE b QARGI_REMOTE_TIMEOUT=1 marshal status --all --brief; rc=$?
-[ $rc = 0 ] && grep -q "remote not checked" <(out) && grep -q "^f1 " "$T/o" && [ ! -e "$T/hook.done" ] \
+[ $rc = 0 ] && grep -q "remote not checked" <(out) && grep -q "^f1 " "$T/o" && [ ! -e "$ORIGIN/hook.done" ] \
   && ok "offline: status shows the cache with 'remote not checked' and exits 0" || no "SPEC offline status (rc=$rc): $(out)"
 XE a QARGI_REMOTE_TIMEOUT=1 marshal claim off1 --as alice
 grep -q "remote not checked" <(out) && ok "offline: the claim says 'remote not checked'" || no "SPEC offline claim must say 'remote not checked': $(out)"
 [ "$(jq -r '.state // ""' "$(S a)/features/app-off1.json" 2>/dev/null)" = provisional ] && [ "$(oref refs/qargi/features/off1)" = none ] \
   && ok "offline: the claim stays provisional locally and nothing reached the origin" || no "SPEC offline claim is provisional: $(cat "$(S a)/features/app-off1.json" 2>&1), origin $(oref refs/qargi/features/off1)"
 unslow a; unslow b; rm -f "$ORIGIN/hooks/pre-receive"
-for _ in $(seq 1 300); do [ -e "$T/hook.done" ] && break; sleep 0.1; done   # the hook of the killed push ends (and rejects) before the origin is used again
+# the hook of the killed push ends (and rejects) before the origin is used again
+touch "$ORIGIN/hook.release"; if [ -e "$ORIGIN/hook.started" ]; then wait_until '[ -e "$ORIGIN/hook.done" ]' 10; fi
 XE a marshal renew off1 --as alice; rc=$?
 [ $rc = 0 ] && [ "$(orec refs/qargi/features/off1 | jq -r .lead.id)" = alice ] && [ "$(jq -r '.state // ""' "$(S a)/features/app-off1.json" 2>/dev/null)" != provisional ] \
   && ok "offline: the next verb completes the provisional claim" || no "SPEC provisional claim completes on the next verb (rc=$rc), origin $(oref refs/qargi/features/off1): $(out)"
@@ -484,26 +457,30 @@ cat > "$T/rn.sh" <<EOS
 . '$TOOL/lib/lib.sh'; . '$TOOL/lib/marshal.sh'
 marshal_hold_start app "\$1"
 echo "\$MARSHAL_HOLD_PID" > "$T/rn.pid"
-sleep "\$2"
+while [ ! -e "$T/rn.stop" ]; do sleep 0.05; done
 EOS
 RN() { env HOME="$T/m/a/home" QARGI_CONF="$T/m/a/c" QARGI_STATE="$T/m/a/s" QARGI_PROJECT=app QARGI_LEAD=alice QARGI_MARSHAL_RENEW_SEC=1 QARGI_REMOTE_TIMEOUT=1 bash "$T/rn.sh" "$@" >/dev/null 2>&1; }
 XE a marshal claim hv1 --as alice >/dev/null 2>&1
 n0=$(ocount refs/qargi/features/hv1)
 slow a "fetch push"
-RN hv1 9 & rp=$!
-sleep 3.5; unslow a   # hermetic: allow sleep (the renewer works in real time, one round a second: the remote stays out of reach for a few of them)
+# shellcheck disable=SC2034  # nl is read by the wait_until command
+nl=$(nall); rm -f "$T/rn.stop"
+RN hv1 & rp=$!
+wait_until '[ "$(( $(nall) - nl ))" -ge 2 ]' 20; unslow a   # the remote stayed unreachable for a few rounds
+wait_until '[ "$(ocount refs/qargi/features/hv1)" -gt "$n0" ]' 20; touch "$T/rn.stop"
 wait "$rp"
 n1=$(ocount refs/qargi/features/hv1)
 [ "$n0" = 1 ] && [ "$n1" -gt "$n0" ] \
   && ok "renewer: renewals go on after the remote was unreachable for a few rounds (hv1: $n0 -> $n1 commits)" || no "SPEC the renewer must go on when the remote is not checked: hv1 commits $n0 -> $n1"
 XE a marshal claim hv2 --as alice >/dev/null 2>&1
-RN hv2 12 & rp=$!
-for _ in $(seq 1 100); do [ "$(ocount refs/qargi/features/hv2)" -gt 1 ] && break; sleep 0.1; done   # the renewer has renewed once
+rm -f "$T/rn.stop" "$T/rn.pid"
+RN hv2 & rp=$!
+wait_until '[ -s "$T/rn.pid" ]' 10
 XE a marshal release hv2 --as alice --note n >/dev/null 2>&1; XE b marshal take hv2 --as bob >/dev/null 2>&1
-for _ in $(seq 1 100); do kill -0 "$(cat "$T/rn.pid")" 2>/dev/null || break; sleep 0.1; done   # the renewer ends once its renewal is refused
+wait_until '! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null' 20
 kill -0 "$rp" 2>/dev/null && ! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null \
   && ok "renewer: it ends when the renewal is refused (another lead took the feature), its holder still running" || no "SPEC the renewer must end on a refusal (holder alive: $(kill -0 "$rp" 2>&1 && echo yes), renewer $(cat "$T/rn.pid") alive: $(kill -0 "$(cat "$T/rn.pid")" 2>&1 && echo yes))"
-kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
+touch "$T/rn.stop"; kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
 [ "$(orec refs/qargi/features/hv2 | jq -r .lead.id)" = bob ] && ok "renewer: the refused renewal left bob's lead alone" || no "renewer overwrote bob's lead on hv2: $(orec refs/qargi/features/hv2)"
 
 # ============================================================ (23) a fetch leaves the lead's FETCH_HEAD alone
@@ -513,7 +490,7 @@ XE b marshal status --all --brief >/dev/null 2>&1
   && ok "fetch: the refresh does not write FETCH_HEAD of the lead's repository" || no "SPEC the refresh must fetch with --no-write-fetch-head; FETCH_HEAD is now: $(head -c 100 "$T/m/b/app/.git/FETCH_HEAD" 2>&1)"
 
 # ============================================================ (24) inherited APPROVED and PLAN_ARG never apply a marshal verb
-mk e6
+make_machine e6
 XE e6 APPROVED=leaked PLAN_ARG=leaked marshal enable; rc=$?
 [ $rc = 0 ] && grep -q "^plan token: " "$T/o" && [ ! -e "$(S e6)/marshal/app.enabled" ] && ! grep -q "marshal:enable" "$(S e6)/audit.log" 2>/dev/null \
   && ok "enable: APPROVED and PLAN_ARG from the environment are not options; without options it only prints the plan" || no "SPEC inherited APPROVED/PLAN_ARG must not apply enable (rc=$rc, file: $(ls "$(S e6)/marshal" 2>&1)): $(out)"
