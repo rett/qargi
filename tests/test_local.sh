@@ -31,6 +31,24 @@ git -C "$CLONE" push -q "$T/remote.git" agent/demo 2>/dev/null   # a bypass with
 grep -qi 'token\|secret' "$T/s/local-runs.jsonl" && no "the registry holds a secret" || ok "the registry holds a repository path and no token"
 [ "$(jq -r 'select(.slug=="demo") | .tmpdir' "$T/s/local-runs.jsonl")" = "$TMP" ] && [ "$(jq -r 'select(.slug=="demo") | .slug' "$T/s/local-runs.jsonl")" = demo ] \
   && ok "the registry names each run's temporary directory (and its slug): the lead's record of what clean removes" || no "registry tmpdir: $(cat "$T/s/local-runs.jsonl")"
+# a submodule the role declares (roles.build.tools, kind submodule) is checked out in the clone from the lead's copy, offline, push disabled
+git init -q -b main "$T/sub" && git -C "$T/sub" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
+git -C "$T/r" -c protocol.file.allow=always submodule add -q "$T/sub" vendor/acme-test && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -qm sub
+git -C "$T/sub" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m two; SUBSHA=$(git -C "$T/sub" rev-parse HEAD)
+git -C "$T/r/vendor/acme-test" fetch -q origin && git -C "$T/r/vendor/acme-test" checkout -q "$SUBSHA" && git -C "$T/r" add vendor/acme-test && git -C "$T/r" -c user.name=t -c user.email=t@example.net commit -qm bump
+cp "$T/c/projects/rproj.json" "$T/rproj.bak"; jq '.roles.build.tools=[{kind:"submodule",name:"acme-test",path:"vendor/acme-test"}]' "$T/rproj.bak" > "$T/c/projects/rproj.json"
+out=$(./bin/qargi local prepare --repo "$T/r" --base main --slug sub1 --scratch "$T" 2>"$T/sub1.err"); S1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
+grep -q '^SUBMODULES=vendor/acme-test$' <<<"$out" && ok "prepare prints SUBMODULES=path for a declared submodule it checked out" || no "SUBMODULES line: $out"
+[ "$(git -C "$S1/clone/vendor/acme-test" rev-parse HEAD 2>/dev/null)" = "$SUBSHA" ] && ok "the clone has the submodule at the commit HEAD records (fetched by nobody: the lead's copy)" || no "submodule checkout: $(cat "$T/sub1.err")"
+[ "$(git -C "$S1/clone/vendor/acme-test" remote get-url --push origin)" = DISABLED ] && ok "the submodule's push URL is disabled" || no "submodule push url"
+case $(git -C "$S1/clone/vendor/acme-test" remote get-url origin) in "$S1"/sub/*) ok "its origin is the run's own copy, not the lead's repository";; *) no "submodule origin: $(git -C "$S1/clone/vendor/acme-test" remote get-url origin)";; esac
+git clone -q "$T/r" "$T/rs2"   # a lead's checkout that never initialised the submodule: no objects of it on this host
+jq --arg p "$T/rs2" '.project="rs2proj" | .repo.path=$p | .repo.url="https://github.com/example/rs2proj"' "$T/c/projects/rproj.json" > "$T/c/projects/rs2proj.json"
+out=$(./bin/qargi local prepare --repo "$T/rs2" --base main --slug sub2 --scratch "$T" 2>"$T/sub2.err"); S2=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
+[ -n "$S2" ] && ! grep -q '^SUBMODULES=' <<<"$out" && grep -q 'qargi: note: submodule vendor/acme-test is not initialised in' "$T/sub2.err" && grep -q 'nothing is fetched' "$T/sub2.err" \
+  && ok "a submodule whose objects are not on this host is a note, nothing is fetched and the run is still made" || no "unavailable submodule: $out $(cat "$T/sub2.err")"
+[ ! -e "$S2/clone/vendor/acme-test/.git" ] && ok "and the clone's submodule is left alone" || no "submodule fetched"
+rm -rf "$S1" "$S2" "$T/c/projects/rs2proj.json"; mv "$T/rproj.bak" "$T/c/projects/rproj.json"; sed -i '/"slug":"sub[12]"/d' "$T/s/local-runs.jsonl"
 # clean: a collected, verified run goes away with its temporary directory; anything else is refused
 git init -q -b main "$T/r2" && git -C "$T/r2" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
 out=$(./bin/qargi local prepare --repo "$T/r2" --base main --slug c1 --scratch "$T"); C1=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out"); TM=$(sed -n '1,/^$/s/^TMP=//p' <<<"$out")
