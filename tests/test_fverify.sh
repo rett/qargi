@@ -141,13 +141,16 @@ out=$($F verify wn 2>&1)
 # a tests/run.sh process whose directory belongs to this repository (Linux: /proc)
 if [ -d /proc/$$ ]; then
   mkdir -p "$R/sleeper/tests" "$T/other/tests"; git init -q "$T/other"
-  printf '#!/bin/sh\nwhile :; do sleep 1; done\n' | tee "$R/sleeper/tests/run.sh" > "$T/other/tests/run.sh"
+  printf '#!/bin/bash\ntrap '"'"'kill $p'"'"' TERM\nsleep 600 &\np=$!\nwait $p\n' | tee "$R/sleeper/tests/run.sh" > "$T/other/tests/run.sh"
   (cd "$T/other" && exec bash tests/run.sh) & opid=$!
   out=$($F verify wn 2>&1)
   [ "$(warns "$out")" = 0 ] && ok "a tests/run.sh of another repository is not counted" || no "other repo process: $out"
   (cd "$R/sleeper" && exec bash tests/run.sh) & rpid=$!
-  sleep 1
-  out=$($F verify wn 2>&1); rc=$?
+  for _ in $(seq 20); do
+    out=$($F verify wn 2>&1); rc=$?
+    grep -q "^qargi: warning: tests/run.sh is running" <<<"$out" && break
+    sleep 0.5
+  done
   [ $rc = 0 ] && grep -q "^qargi: warning: tests/run.sh is running in this repository (pid $rpid, in $R/sleeper)" <<<"$out" && ok "a tests/run.sh running in the repository: a warning" || no "process warning rc=$rc: $out"
   out=$($REL verify 0.9.1 2>&1); rc=$?
   [ $rc = 0 ] && grep -q "^qargi: warning: tests/run.sh is running in this repository (pid $rpid" <<<"$out" && grep -q '^full suite: pass' <<<"$out" && ok "release verify warns the same way and goes on" || no "release warning rc=$rc: $out"
