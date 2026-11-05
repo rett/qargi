@@ -1,5 +1,7 @@
 name: debug-guard
-on: workflow_dispatch
+on:
+  push:
+    branches: [fix/ci-guard-diag]
 permissions:
   contents: read
 jobs:
