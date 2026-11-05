@@ -281,6 +281,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lead's git configuration and session files), the rules for `cd`, the 5-second budget and the `git commit -F FILE` advice, within
   330 words; `tests/test_help.py` fails when a refused verb is in neither the topic nor a documented exemption, and compares the
   manual page's APPROVALS and GUARD sections with the topics.
+- `qargi feature finish NAME` refuses a feature that is behind develop when both sides changed the same files since their merge
+  base (exit 1, nothing changed). It lists those files and says to run `qargi feature sync NAME` first. A feature behind develop
+  with no file in common is refused as before, without the list.
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.

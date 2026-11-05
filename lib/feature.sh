@@ -18,7 +18,8 @@
 #   feature.sh verify NAME [--project P]           the whole suite on the feature's head (the checkpoint before finishing)
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
-#                                                  origin exists. Needs a passing run at the feature's head.
+#                                                  origin exists. Needs a passing run at the feature's head. A feature behind develop is refused; when
+#                                                  both sides changed the same files, the message lists them and says to sync first.
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
 # (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
 # your lease alive while they run, finish marks the record finished, and list and status show the lead.
@@ -188,6 +189,12 @@ case $verb in
   finish)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
+    # behind develop, with files both sides changed since they parted: a sync is due, and the files are named. A feature behind develop
+    # with no such file is not refused here: the check on develop below says the same without the list.
+    if branch_exists develop && ! g merge-base --is-ancestor develop "$BR"; then
+      ov=$(comm -12 <(g diff --name-only --no-renames "develop...$BR" | sort) <(g diff --name-only --no-renames "$BR...develop" | sort))
+      [ -z "$ov" ] || die "$BR is behind develop, and both changed these files since they parted:"$'\n'"$(printf '%s\n' "$ov" | head -20 | sed 's/^/  /')"$'\n'"run qargi feature sync $NAME_ARG first (resolve any conflict), verify again, then finish. Nothing was changed."
+    fi
     [ "$(verified "$BR")" = "$h pass" ] || die "the whole suite has no passing run at the head of $BR (qargi feature verify $NAME_ARG); the branch must not move after it"
     d0=$(sha_of develop); [ -n "$d0" ] || die "no develop branch"
     g merge-base --is-ancestor "$d0" "$BR" || die "develop has moved on since $BR was cut: qargi feature sync $NAME_ARG, verify again, then finish (the run must have seen what develop now holds)"
