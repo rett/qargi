@@ -287,6 +287,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi release status VERSION` shows, next to the full-suite verdict, the command that produced it and when it ran (from the suite
   record). When `release.test_command` is set and is not that command, or the project's `test_command` changed since the run, a line
   of its own says so, so the pass is not read as the release gate. A record made by another command is shown, not reported as "not run".
+- `qargi release start VERSION` lists, after it creates the branch, the features merged into develop since the previous tag (the
+  `--no-ff` merges whose message is "Merge branch 'feature/...'"), one per line with the short sha, or says there are none.
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.

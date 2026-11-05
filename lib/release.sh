@@ -11,6 +11,7 @@
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
+#                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
 #   release.sh status VERSION [--hotfix]    the full-suite verdict names the command that produced it and when it ran (the suite record); a
 #                                           release.test_command that is not that command gets a line of its own: the pass is not the release gate.
 #                                           For an existing tag also warns: no GitHub release for it (gh release view, through
@@ -222,6 +223,12 @@ case $verb in
     g update-ref "refs/heads/$BR" "$(git -C "$WT" rev-parse HEAD)" "" || die "could not create $BR"
     journal_ref "$REPO" "refs/heads/$BR" "" "$(sha_of "$BR")" "$KIND:start"
     echo "created $BR from $BASE ($(g rev-parse --short "$BR")): the version is $VER and the changelog (and a man page) is dated $DATE"
+    if [ "$KIND" = release ]; then   # what the release contains: the features merged into develop since the previous tag (--no-ff merges "Merge branch 'feature/...'")
+      prev=$(g describe --tags --abbrev=0 --match '[0-9]*' "$b0" 2>/dev/null || true)
+      feats=$(g log --first-parent --merges --format='%h %s' "${prev:+$prev..}$b0" | sed -n "s/^\([0-9a-f]*\) Merge branch '\(feature\/[^']*\)'.*/  \1 \2/p")
+      if [ -n "$feats" ]; then echo "features merged into develop since ${prev:-the first commit} ($(printf '%s\n' "$feats" | wc -l)):"; printf '%s\n' "$feats"
+      else echo "no feature was merged into develop since ${prev:-the first commit}"; fi
+    fi
     echo "other files that carry the version (a manifest) are yours to bump on this branch"
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
   status)
