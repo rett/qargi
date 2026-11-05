@@ -33,7 +33,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, upstream), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; upstream status, sync; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home directory is not. It refuses git push, git remote changes, git \-c alias.*, gh, ssh, scp, sftp and rsync to a host.
 .PP
@@ -2481,6 +2481,62 @@ the project, instead of the one inferred from here.
 .TP
 .B \-\-remote
 also the merged agent/* and feature/* branches on origin.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
+.RE
+.RE
+.TP
+.B qargi upstream
+Follow an upstream repository: how far behind, what is new, sync its branch.
+.PP
+A project that is a fork keeps its own changes, the overlay, on top of an upstream repository. The answers name the remote (upstream.remote), the branch it follows (upstream.branch) and the local branch that carries the upstream line and nothing else (upstream.into, default upstream); upstream.overlay_check, optional, is a command array that checks the overlay still applies or builds. status fetches that one branch of that remote (the only verb that reaches the network) and says where the branch stands; review and sync work from the last fetch. The upstream line never meets develop directly: after a sync, cut a feature and merge the branch into it (qargi feature start upstream\-X, then qargi feature merge upstream\-X BRANCH), fix the overlay there, and let the feature land as any other. Nothing is pushed.
+.RS
+.TP
+.B status
+Fetch the upstream branch and say how far the local branch is behind and ahead of it, with the newest upstream commits.
+.br
+The fetch is of that one branch of that remote, with no tags; it changes the remote\-tracking ref and nothing else.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RE
+.RS
+.TP
+.B review
+List the upstream commits not yet in the local branch, with the files each one touches; a commit that touches a file the overlay changed is marked.
+.br
+The overlay is what develop changed since it parted from the upstream line (their merge base). Reads the last fetch (qargi upstream status); changes nothing.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-limit " "N"
+show at most N commits, newest first (default 30).
+.RE
+.RE
+.RS
+.TP
+.B sync
+Fast\-forward the local branch to the fetched upstream branch (\-\-ff\-only), with the token and an approval.
+.br
+Refused when the branch has commits of its own (not a fast\-forward): it carries the upstream line only. Creates the branch at the upstream tip when it does not exist yet. The move is journaled; nothing is pushed and nothing is merged into develop: the next step is printed. With upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast\-forward stands either way; a failure or a merge conflict exits 1).
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
 .RE
 .RS
 .TP

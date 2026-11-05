@@ -45,6 +45,7 @@ declare -A SCRIPTS=(
   [release.sh]="release start|release finish"
   [registry.sh]="instances init|instances list|instances show x"
   [branch.sh]="branch prune"
+  [upstream.sh]="upstream status|upstream review|upstream sync"
   [review.sh]="review apply x"
   [session.sh]="start x|send x|track x|status|stop x|close x"
   [supervise.sh]="supervise nudge x|supervise tick"
