@@ -15,6 +15,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `closed_by`), the files are kept, and the run is no longer open: `lead compact-check` and the compaction advice stop counting it as applied and not merged,
   `feature finish` is not blocked by it, `marshal status` and the handoff note list it as closed, `local list` shows `closed`, and `local clean` removes it
   without asking for an applied tip. `review apply` refuses a closed run.
+- `lib/site.py check` and `build` refuse a line of a hand page, or of `CHANGELOG.md`, outside a code fence that starts (also behind `>` and list
+  markers) with an HTML-like tag, with the file, the line and the fix. A Kramdown (Jekyll) page reads such a line, for example a hard-wrapped code span
+  whose placeholder lands at the start of a line, as a raw HTML block and shows everything after it as plain text, while every other check stays green.
+  The site's own converter already refused raw HTML in a hand page, so its output cannot show the defect; its message now names the fix too.
+- `lib/site.py check-output DIR --pages PAGES` compares each built page with its source: the h2 and h3 headings in order, as many pre elements as fenced
+  blocks and table elements as tables. With or without `--pages` it refuses Markdown marks left in the text outside code (a backtick, `**`, `](`, `~~~`,
+  a line starting with `#` or `|`; a backtick is accepted in the command reference). `build` runs the same check on its output and removes a build that
+  does not show its pages.
 
 ### Changed
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
@@ -42,6 +50,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   merge with `qargi changelog renumber` (a member may only run it with `--check`), which `/qargi-verify` now names.
 - The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
   reports the disagreement.
+- The `docs-site-member` pack tells a member that no line may start with a less-than sign (keep a code span that holds a placeholder on one line, or put the
+  placeholder after other text) and to run the render check, not only the Markdown checks, before reporting.
+- A wrapped code span in `CONTRIBUTING.md` no longer starts a line with a less-than sign.
 
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree

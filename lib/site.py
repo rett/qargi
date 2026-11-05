@@ -3,7 +3,7 @@
 
   site.py build   --release V --source DIR --out DIR [--pages DIR] [--config FILE] [--url URL] [--allow-unreleased]
   site.py check   --release V --source DIR [--pages DIR] [--config FILE] [--url URL] [--allow-unreleased]
-  site.py check-output DIR
+  site.py check-output DIR [--pages DIR]
   site.py diff    OLD NEW --source-old DIR --source-new DIR [--pages DIR]
 
 --source is a checkout (or an extracted `git archive`) of the release: lib/commands.py, CHANGELOG.md, VERSION and
@@ -11,8 +11,15 @@ LICENSE are read from it. The reference pages (/reference/) and the releases pag
 commands.py and CHANGELOG.md; every other page is a hand page, a Markdown file in --pages (front matter: title,
 description) converted by lib/site_md.py. `check` validates the hand pages against the source and writes nothing;
 `build` runs the same checks and then writes the site (with a sidebar on every page but the 404 page, and assets/search.js with
-assets/search-index.json for the search box); `check-output` validates a built tree; `diff` lists what
+assets/search-index.json for the search box), and refuses (removing the build) a page that does not show its source; `check-output`
+validates a built tree and, given the hand pages it was built from (--pages), compares each built page with its source: the h2 and h3
+headings in order, as many pre elements as fenced blocks and table elements as tables, and no Markdown marks (backtick, **, ](, a line
+starting with # or |, ~~~) in the text outside code; `diff` lists what
 changed in the command line between two sources and which hand pages still name what is gone.
+
+A hand page, and the changelog, are refused when a line outside a code fence starts (also behind > and list markers) with an HTML-like
+tag: a Kramdown (Jekyll) page reads it as a raw HTML block and shows the rest of the page as plain text, and every other check stays green.
+Keep a code span that holds a placeholder on one line, or put the placeholder after other text.
 
 Trust: reading the command line IMPORTS lib/commands.py of --source (and --source-old/--source-new for `diff`), which runs
 that source's code. Give only a source you trust. The import happens in a boxed child (python -I -S -B, an empty working
@@ -76,6 +83,10 @@ esc = MD.esc
 
 class Refusal(Exception):
     """An unsafe or unusable input: exit status 2."""
+
+
+class RenderFailed(Exception):
+    """A built page does not show its source; the build is removed."""
 
 
 class Report:
@@ -379,7 +390,10 @@ class Source:
         cl = os.path.join(path, "CHANGELOG.md")
         self.sections = []      # (version, date or None, first_line, text)
         if os.path.isfile(cl):
-            self._split(read_text(cl, 8 * 1024 * 1024))
+            text = read_text(cl, 8 * 1024 * 1024)
+            for ln, msg in MD.html_starts(text):       # the file is also shown as it is, by other renderers
+                rep.err("CHANGELOG.md:%d" % ln, msg)
+            self._split(text)
         self.release_date = None
         for v, d, _, _ in self.sections:
             if v == release:
@@ -605,6 +619,11 @@ def gather_hand(pages_dir, rep):
         body = "\n".join(text.split("\n")[used:])
         if not body.strip():
             rep.err(rel, "the page has no text")
+            continue
+        starts = MD.html_starts(body, used + 1, allow=())
+        for ln, msg in starts:
+            rep.err("%s:%d" % (rel, ln), msg)
+        if starts:
             continue
         try:
             doc = MD.convert(body, start_level=2, first_line=used + 1, ids=set(PAGE_IDS))
@@ -1661,11 +1680,175 @@ def parse_html(path):
     return t
 
 
-def check_output(out):
+# ------------------------------------------------------------------ the render check
+BREAKS = {"p", "li", "ul", "ol", "tr", "td", "th", "table", "thead", "tbody", "h1", "h2", "h3", "h4", "h5", "h6", "div", "br", "hr",
+          "blockquote", "details", "summary", "nav", "article", "section", "pre", "main", "dl", "dt", "dd"}
+
+
+class Main(HTMLParser):
+    """What a reader sees of a built page, from its <main> element: the h2 and h3 headings, the number of pre and table
+    elements, and the text that is not code, with each block on its own line (a code span is one NUL mark)."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.headings = []     # (level, text) of the h2 and h3 headings
+        self.pre = 0
+        self.tables = 0
+        self.chunks = []       # (html line, text) of the text outside pre and code
+        self._code = 0
+        self._skip = None      # the stack depth at which an element whose text is not content (the heading anchor, a script) opened
+        self._head = None
+
+    def _in_main(self):
+        return "main" in self.stack
+
+    def _put(self, text):
+        self.chunks.append((self.getpos()[0], text))
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if self._in_main():
+            if tag in BREAKS:
+                self._put("\n")
+            if tag == "pre":
+                self.pre += 1
+            if tag == "table":
+                self.tables += 1
+            if tag in ("pre", "code"):
+                if not self._code:
+                    self._put("\x00")
+                self._code += 1
+            if self._skip is None and (tag in ("script", "style") or (tag == "a" and "anchor" in (a.get("class") or "").split())):
+                self._skip = len(self.stack)
+            if tag in ("h2", "h3"):
+                self._head = [int(tag[1]), ""]
+        if tag not in VOID:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID and self.stack and self.stack[-1] == tag:
+            self.stack.pop()
+
+    def handle_endtag(self, tag):
+        if tag in VOID or tag not in self.stack:
+            return
+        while self.stack and self.stack[-1] != tag:
+            self.stack.pop()
+        if self._in_main():
+            if self._skip is not None and len(self.stack) - 1 == self._skip:
+                self._skip = None
+            if tag in ("pre", "code") and self._code:
+                self._code -= 1
+            if self._head and tag == "h%d" % self._head[0]:
+                self.headings.append((self._head[0], " ".join(self._head[1].split())))
+                self._head = None
+            if tag in BREAKS:
+                self._put("\n")
+        self.stack.pop()
+
+    def handle_data(self, data):
+        if not self._in_main() or self._skip is not None:
+            return
+        if self._head is not None:
+            self._head[1] += data
+        if not self._code:
+            self._put(data)
+
+
+def parse_main(path):
+    with open(path, "rb") as f:
+        text = f.read().decode("utf-8", "replace")
+    m = Main()
+    m.feed(text)
+    m.close()
+    return m
+
+
+MARKUP_LEFT = (("`", "a backtick"), ("**", "**"), ("](", "]("), ("~~~", "a ~~~ fence mark"))
+
+
+def residue_problems(m, plain_ticks=False):
+    """[(html line, message)]: Markdown marks left in the text outside code, which shows the page was not rendered.
+    `plain_ticks`: a backtick is accepted (the command reference shows the plain help text of the commands, which quotes with them)."""
+    text = "".join(t for _, t in m.chunks)
+    starts, at = [], 0
+    for line, t in m.chunks:
+        starts.append((at, line))
+        at += len(t)
+
+    def line_of(off):
+        best = starts[0][1] if starts else 0
+        for o, ln in starts:
+            if o > off:
+                break
+            best = ln
+        return best
+    out = []
+    for mark, name in MARKUP_LEFT:
+        if plain_ticks and mark == "`":
+            continue
+        k = text.find(mark)
+        if k >= 0:
+            out.append((line_of(k), "the text outside code holds %s (%r): the page was shown as Markdown text, not rendered" % (name, text[max(0, k - 20):k + 20].replace("\n", " "))))
+    off = 0
+    for ln in text.split("\n"):
+        if ln.strip().startswith(("#", "|")):
+            out.append((line_of(off), "a line of the text outside code starts with %r: the page was shown as Markdown text, not rendered" % ln.strip()[:30]))
+            break
+        off += len(ln) + 1
+    return out
+
+
+def structure_problems(m, doc):
+    """[(source line or 0, message)] where the built main content lacks what the page source has: its h2 and h3 headings in order,
+    and as many pre elements as fenced blocks and table elements as tables."""
+    out = []
+    built = m.headings
+    k = 0
+    for level, _, text, line in doc.headings:
+        if level not in (2, 3):
+            continue
+        want = " ".join(text.split())
+        j = k
+        while j < len(built) and built[j] != (level, want):
+            j += 1
+        if j == len(built):
+            out.append((line, "the heading %r is not in the built page after the one before it: the page stops rendering above it, "
+                              "often at a line that starts with < (keep a code span that holds a placeholder on one line)" % text))
+            break
+        k = j + 1
+    fences = len([1 for _, kind, _ in doc.code if kind.startswith("fence:")])
+    if m.pre != fences:
+        out.append((0, "the source has %d fenced code block(s), the built page %d pre element(s)" % (fences, m.pre)))
+    if m.tables != doc.tables:
+        out.append((0, "the source has %d table(s), the built page %d table element(s)" % (doc.tables, m.tables)))
+    return out
+
+
+def check_render(out, rels, hand, rep):
+    """Check what the pages show, not only that the markup is valid. Every page in rels (paths below out) is checked for Markdown marks
+    left in its text; a page that is the build of a hand page in `hand` (a file -> Page map) also against its source."""
+    for rel in rels:
+        full = os.path.join(out, *rel.split("/"))
+        if not os.path.isfile(full):
+            continue
+        m = parse_main(full)
+        for line, msg in residue_problems(m, rel.startswith("reference/")):
+            rep.err("%s:%d" % (rel, line), msg)
+        p = hand.get(rel)
+        if p is not None and p.doc is not None:
+            for line, msg in structure_problems(m, p.doc):
+                rep.err("%s:%d" % (p.rel, line) if line else p.rel, msg + " (built page %s)" % rel)
+
+
+def check_output(out, pages=None, allow_root=()):
+    """Validate a built tree. With `pages` (the directory of hand pages it was built from) the built pages are also compared with their sources."""
     rep = Report()
     out = _real(out)
     if not os.path.isdir(out):
         raise Refusal("%s is not a directory" % out)
+    pages_dir = safe_dir(pages, allowed_roots(out, allow_root), "--pages") if pages else None
     files = {}
     for dirpath, dirs, fs in os.walk(out, followlinks=False):
         for n in fs + dirs:
@@ -1750,6 +1933,13 @@ def check_output(out):
                 _check_target(rel, 0, t.meta["og:image"], site_url, files, trees, rep)
         for line, tag, attr, val in t.links:
             _check_target(rel, line, val, site_url, files, trees, rep, tag, attr)
+    hand = {}
+    if pages_dir:
+        for p in gather_hand(pages_dir, rep):
+            hand[p.file] = p
+            if p.file not in trees:
+                rep.err(p.rel, "the page source has no built page %s" % p.file)
+    check_render(out, sorted(trees), hand, rep)
     _check_sitemap(out, files, trees, site_url, rep)
     _check_index(files, trees, rep)
     return rep
@@ -2036,8 +2226,10 @@ def main(argv=None):
     b.add_argument("--out", required=True, help="a new or empty directory")
     c = sub.add_parser("check", help="check the hand pages against the source; write nothing")
     common(c)
-    o = sub.add_parser("check-output", help="validate a built tree")
+    o = sub.add_parser("check-output", help="validate a built tree, and with --pages compare each page with its source")
     o.add_argument("dir")
+    o.add_argument("--pages", help="the hand pages the tree was built from: their h2 and h3 headings, fenced blocks and tables must be in the built pages")
+    o.add_argument("--allow-root", action="append", default=[], help="another directory --pages may be under")
     d = sub.add_parser("diff", help="the command line changes between two sources")
     d.add_argument("old")
     d.add_argument("new")
@@ -2048,7 +2240,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     try:
         if args.verb == "check-output":
-            return check_output(args.dir).show("check-output")
+            return check_output(args.dir, args.pages, args.allow_root).show("check-output")
         if args.verb == "diff":
             return run_diff(args)
         rep = Report()
@@ -2060,7 +2252,18 @@ def main(argv=None):
         source_roots = [_real(args.source)] + ([_real(args.pages)] if args.pages else [])
         inside = ([_real(args.pages)] if args.pages else []) + ([_real(os.path.join(site.cfg.dir, "static"))] if site.cfg and site.cfg.dir else [])
         out = prepare_out(args.out, source_roots, inside)
-        build_into(out, lambda d: write_site(site, d))
+        hand = {p.file: p for p in site.pages.values() if p.src}
+
+        def writer(d):
+            w = write_site(site, d)
+            check_render(d, sorted(p.file for p in site.pages.values()), hand, rep)
+            if rep.errors:
+                raise RenderFailed()
+            return w
+        try:
+            build_into(out, writer)
+        except RenderFailed:
+            return rep.show("build")
         rc = rep.show("build")
         print("built %d page(s) in %s" % (len([k for k in site.pages]), out))
         return rc
