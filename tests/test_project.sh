@@ -36,6 +36,25 @@ chk "worktrees.root: relative"      1 '.worktrees={root:"worktrees"}'
 chk "worktrees.root: empty"         1 '.worktrees={root:""}'
 chk "worktrees.root: unknown key"   1 '.worktrees={path:"/tmp/x"}'
 chk "worktrees.root: in the repo"   1 '.repo.path="/tmp/qrepo" | .worktrees={root:"/tmp/qrepo/wt"}'
+GO='{kind:"go",name:"github.com/acme/lint/cmd/acme-lint",version:"v1.2.0"}'
+BIN='{kind:"binary",name:"acme-fmt",version:"2.0.1",url:"https://downloads.example.test/acme-fmt-2.0.1",sha256:"'"$(printf 'a%.0s' $(seq 64))"'"}'
+SUB='{kind:"submodule",name:"acme-test",path:"vendor/acme-test"}'
+chk "roles.R.tools: the three kinds" 0 ".roles.build.tools=[$GO,$BIN,$SUB]"
+chk "roles.R.tools: empty"           0 '.roles.build.tools=[]'
+chk "roles.R.tools: not a list"      1 '.roles.build.tools={}'
+chk "roles.R.tools: apt is no kind"  1 '.roles.build.tools=[{kind:"apt",name:"jq"}]'
+chk "roles.R.tools: go unpinned"     1 ".roles.build.tools=[$GO | .version=\"latest\"]"
+chk "roles.R.tools: go version in name" 1 ".roles.build.tools=[$GO | .name=\"github.com/acme/lint@v1.2.0\"]"
+chk "roles.R.tools: binary no sha256" 1 ".roles.build.tools=[$BIN | del(.sha256)]"
+chk "roles.R.tools: binary bad sha256" 1 ".roles.build.tools=[$BIN | .sha256=\"abc\"]"
+chk "roles.R.tools: binary url not http" 1 ".roles.build.tools=[$BIN | .url=\"ftp://x/y\"]"
+chk "roles.R.tools: submodule no path" 1 ".roles.build.tools=[$SUB | del(.path)]"
+chk "roles.R.tools: submodule path .." 1 ".roles.build.tools=[$SUB | .path=\"vendor/../x\"]"
+chk "roles.R.tools: unknown key"     1 ".roles.build.tools=[$GO | .url=\"https://x\"]"
+chk "roles.R.tools: twice"           1 ".roles.build.tools=[$GO,$GO]"
+chk "roles.R.tools: same in two roles" 0 ".roles.build.tools=[$GO] | .roles.write.tools=[$GO]"
+chk "roles.R.tools: two roles disagree" 1 ".roles.build.tools=[$GO] | .roles.write.tools=[$GO | .version=\"v1.3.0\"]"
+chk "roles.R.go is gone"             1 '.roles.build.go=["github.com/acme/lint@v1.2.0"]'
 chk "unknown role"                  1 '.roles.fresh=.roles.build'
 chk "a base as a role entry"        0 '.roles.worker=.roles.build | .roles.reviewer=.roles.build'
 chk "no roles"                      1 '.roles={}'
