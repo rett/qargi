@@ -310,6 +310,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
 
 ### Fixed
+- `marshal status`, `marshal handoff` and `feature status` list an unmerged agent branch only under the feature its run was
+  prepared against (`local prepare --base feature/NAME`, the base the registry of local runs records), not under every feature;
+  the agent branches of no open feature are said once, on one `unattributed agent branches` line. The handoff note lists only the
+  agent branches merged since the feature was cut from develop, not every merged branch in the history (the `(and 51 more)` tail).
+- Task lines tell the truth: `marshal status`, `marshal handoff` and `feature status` said `not verified` of a run that had passed
+  `local verify`, been applied, merged and cleaned. A passing `local verify` marks the run's line in the registry of local runs
+  verified and `local clean` marks it cleaned (the line stays, one per run, rewritten under the registry's lock); a task reads
+  `verified`, `applied` or `not verified` as the registry and the run directory say, and a cleaned run is listed only on a
+  `cleaned:` line, never as an open task. `feature merge` of an agent branch whose run exists and has no passing verify warns.
 - `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
   hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
 - The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.

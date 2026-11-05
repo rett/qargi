@@ -81,6 +81,46 @@ git -C "$R" update-ref refs/heads/agent/derivedtask "$(git -C "$R" commit-tree -
 M $t0 status f1 --as alice
 grep -q derivedtask "$T/o" && ! grep -q othertask "$T/o" && ok "status: derived tasks are the local runs whose base is feature/NAME" || no "SPEC derived tasks: $(out)"
 grep -q "agent/derivedtask" "$T/o" && ok "status: lists unmerged agent/* branches" || no "SPEC agent branches: $(out)"
+# an agent branch belongs to the feature its run was prepared against (the base the registry records): it is listed under that feature only;
+# one with no known feature base is said once, on one line after the features, never under each of them
+agent_from() { git -C "$R" update-ref "refs/heads/agent/$1" "$(git -C "$R" commit-tree -p "$2" -m "$1 work" "$2^{tree}")"; }   # agent/NAME: one commit on top of BRANCH
+agent_from othertask feature/f2; agent_from stray feature/f1; agent_from ondev develop
+printf '%s\n' '{"run":"r3","slug":"ondev","base":"develop"}' >> "$S/local-runs.jsonl"
+M $t0 status f1 --as alice
+grep -q "agent/derivedtask" "$T/o" && ! grep -q "agent/othertask" "$T/o" && ok "status NAME: an unmerged agent branch prepared against another feature is not listed under this one" || no "SPEC attribution: $(out)"
+M $t0 status f2 --as alice
+grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && ok "status NAME: the branch is listed under the feature it was prepared against" || no "SPEC attribution f2: $(out)"
+M $t0 status --all
+[ "$(grep -c "agent/stray" "$T/o")" = 1 ] && grep -q "^unattributed agent branches .*agent/stray" "$T/o" && ok "status --all: a branch with no known base is on one 'unattributed agent branches' line, not under every feature" || no "SPEC unattributed: $(grep -n "agent/stray" "$T/o")"
+grep -q "^unattributed agent branches .*agent/ondev (base develop)" "$T/o" && ok "status --all: a branch prepared against develop is unattributed too, with its base" || no "SPEC unattributed base: $(grep unattributed "$T/o")"
+[ "$(grep -c "agent/othertask" "$T/o")" = 1 ] && [ "$(grep -c "agent/derivedtask" "$T/o")" = 1 ] && ok "status --all: each attributed branch appears once, under its feature" || no "SPEC once: $(grep -n "agent/" "$T/o")"
+git -C "$R" update-ref refs/heads/feature/f1 agent/stray   # merged into a feature: no longer unattributed
+M $t0 status --all; grep -q "agent/stray" "$T/o" && no "SPEC an agent branch merged into a feature is still listed as unattributed: $(grep -n stray "$T/o")" || ok "status --all: a branch merged into a feature leaves the unattributed line"
+M $t0 status --all --json; jq -e '[.agent_unattributed[].branch] == ["agent/ondev"] and ([.features[] | select(.feature == "f1") | .agent_branches[]] == ["agent/derivedtask"])' "$T/o" >/dev/null 2>&1 && ok "status --all --json: agent_branches per feature, agent_unattributed once" || no "SPEC json attribution: $(out)"
+M $t0 status f2 --json; jq -e '.agent_branches == ["agent/othertask"] and (.agent_unattributed | length) == 1' "$T/o" >/dev/null 2>&1 && ok "status NAME --json: the feature's branches and the unattributed ones" || no "SPEC json NAME attribution: $(out)"
+"$DA" feature status f2 >"$T/o" 2>"$T/e"
+grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && grep -q "^unattributed agent branches .*agent/ondev" "$T/o" && ok "feature status: the same attribution and the unattributed line" || no "SPEC feature status attribution: $(out)"
+git -C "$R" update-ref -d refs/heads/agent/othertask; git -C "$R" update-ref -d refs/heads/agent/ondev
+# task lines tell the truth: the registry's marks (verified by local verify, cleaned by local clean) and the run directory decide what a task reads
+mkdir -p "$T/run-open" "$T/run-ver"; : > "$T/run-ver/verified"
+printf '%s\n' "{\"run\":\"$T/run-open\",\"slug\":\"opentask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-ver\",\"slug\":\"vertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-gone\",\"slug\":\"donetask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\",\"cleaned\":\"2026-01-01T02:00:00Z\"}" \
+  "{\"run\":\"$T/run-regver\",\"slug\":\"regvertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\"}" >> "$S/local-runs.jsonl"
+M $t0 status f5
+grep -q "opentask (build) started 2026-01-01T00:00:00Z, not verified$" "$T/o" && ok "status: a run with no passing verify reads not verified" || no "SPEC not verified: $(out)"
+grep -q "vertask (build) .*, verified$" "$T/o" && ok "status: RUN/verified reads verified" || no "SPEC verified file: $(out)"
+grep -q "regvertask (build) .*, verified, directory gone$" "$T/o" && ok "status: the registry's verified mark reads verified when the directory is gone" || no "SPEC verified mark: $(out)"
+! grep -q "donetask (build)" "$T/o" && grep -q "^  cleaned: donetask$" "$T/o" && ok "status: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC cleaned: $(out)"
+M $t0 status f5 --json; jq -e '[.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
+# feature merge warns of a run that exists and has no passing verify, and only of that
+agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from donetask feature/f5
+"$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && grep -q "warning: the run $T/run-open of agent/opentask has no passing verify" "$T/e" && ok "feature merge: warns when the branch's run exists and was never verified (the merge goes on)" || no "SPEC merge warning: rc=$rc $(out)"
+"$DA" feature merge f5 agent/vertask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a verified run" || no "SPEC merge verified: rc=$rc $(out)"
+"$DA" feature merge f5 agent/donetask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a cleaned run" || no "SPEC merge cleaned: rc=$rc $(out)"
 M $t0 status ov1 --as alice; grep -q "shared.txt" "$T/o" && grep -q ov2 "$T/o" && ok "status: overlapping files with another open feature" || no "SPEC overlap: $(out)"
 M $t0 claim ov1 --as alice; M $t0 check ov1 --as alice; rc=$?
 [ $rc = 0 ] && grep -q shared.txt "$T/e" && ok "check: file overlap is a warning on stderr, exit 0" || no "SPEC overlap warning: rc=$rc $(out)"

@@ -6,8 +6,8 @@
 A lead that ends a session (after /compact, after a change a running session cannot reload, when its context is tight) runs
 this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
-this host), the feature(s) (tip, whether the whole-suite result applies to the tip, merged and unmerged agent/* branches,
-commits ahead of develop), the marshal record, the packs (check summary and the launch line), the environment (the last
+this host), the feature(s) (tip, whether the whole-suite result applies to the tip, the agent/* branches merged into it since it was
+cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the marshal record, the packs (check summary and the launch line), the environment (the last
 `qargi env check` and `env apply` of the project, read from state/env/PROJECT.json and compared with HEAD), what to read first, and a
 fixed list of things a new session must not assume.
 
@@ -156,19 +156,26 @@ def suite_of(state, project, test_cmd, name, tip):
     return dict(base, state="older", text="%s at an older head (%s), NOT at this tip: it does not apply" % (res, sha[:7]))
 
 
-def branches(repo, name):
-    """-> (merged agent/* branches, [(unmerged agent/* branch, commits ahead of the feature)])."""
+def branches(repo, name, bases):
+    """-> (the agent/* branches merged into feature/NAME since it was cut from develop, [(unmerged agent/* branch prepared against it,
+    commits ahead of the feature)]). bases is {agent branch: the base its run was prepared against} from the lead's registry: an unmerged
+    branch is this feature's only when its base is feature/NAME (the others are listed once, unattributed). A merged branch that develop
+    held before the feature was cut (an ancestor of their merge base) is history, not this feature's."""
     ref = "refs/heads/feature/" + name
     fmt = "--format=%(refname:short)"
-    merged = (git(repo, "for-each-ref", fmt, "--merged=" + ref, "refs/heads/agent/*") or "").split()
+    floor = (git(repo, "merge-base", "refs/heads/develop", ref) or "").strip()
+    merged = [b for b in (git(repo, "for-each-ref", fmt, "--merged=" + ref, "refs/heads/agent/*") or "").split()
+              if not floor or git(repo, "merge-base", "--is-ancestor", "refs/heads/" + b, floor) is None]
     unmerged = []
     for b in (git(repo, "for-each-ref", fmt, "--no-merged=" + ref, "refs/heads/agent/*") or "").split():
+        if bases.get(b) != "feature/" + name:
+            continue
         n = (git(repo, "rev-list", "--count", "%s..refs/heads/%s" % (ref, b)) or "").strip()
         unmerged.append((b, int(n) if n.isdigit() else None))
     return merged, unmerged
 
 
-def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache):
+def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache, bases):
     rec = M.unled(ctx, name, ctx.be.get(ctx, name))
     d = M.describe(ctx, name, rec, cache)
     f = {"name": name, "branch_exists": d["branch"], "tip": "", "ahead": None, "behind": None, "suite": {"state": "not-run", "text": "no branch"},
@@ -185,7 +192,7 @@ def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache):
             f["ahead"], f["behind"] = (int(a) if a.isdigit() else None), (int(b) if b.isdigit() else None)
             out = git(repo, "log", "--format=%h %s", "-n", str(COMMITS_MAX), "refs/heads/develop..%s" % ref) or ""
             f["commits"] = [line(ln, 120) for ln in out.splitlines()]
-        f["agent_merged"], f["agent_unmerged"] = branches(repo, name)
+        f["agent_merged"], f["agent_unmerged"] = branches(repo, name, bases)
     ld = {k: line(v, 128) for k, v in d["lead"].items()} if d["lead"] else None     # one line each: a record is data, a newline could forge a heading
     f["record"] = {k: d[k] for k in ("status", "lease", "minutes_since_renewal", "ttl_minutes", "rev", "ghost", "finished_at")}
     f["record"]["updated_by"] = line(d["updated_by"], 128)
@@ -363,8 +370,9 @@ def collect(a, argv_name):
         ns.backend = "local"
         ctx = M.Ctx(ns, M.LocalBackend())
         names = get_features(ctx)
-    cache = {}
-    feats = [feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache) for n in names]
+    cache, bases = {}, M.agent_bases(ctx)
+    feats = [feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache, bases) for n in names]
+    unattributed = [{"branch": line(b), "base": line(base)} for b, base in M.unattributed_agents(ctx)] if repo else []
     if be.refs and not argv_name and not feats:
         notes.append("no open feature in the local cache of the shared records; the remote was not asked")
     for f in feats:
@@ -372,7 +380,7 @@ def collect(a, argv_name):
             notes.append("feature %s has no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored" % f["name"])
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
-            "where": where, "features": feats, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
+            "where": where, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
             "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
@@ -448,10 +456,19 @@ def render_body(F):
                     A("    and %d more" % (f["ahead"] - len(f["commits"])))
         for wt in f["worktrees"][:LIST_MAX]:
             A("  worktree: %s on %s" % (wt["path"], wt["branch"]))
-        for t in f["tasks"][:COMMITS_MAX]:
-            A("  task run: %s (%s, %s), %s" % (t["slug"] or t["run"], t["role"], t["started"], "verified" if t["verified"] else "not verified"))
+        # the open task runs one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
+        opened, cleaned = [t for t in f["tasks"] if not t["cleaned"]], [t for t in f["tasks"] if t["cleaned"]]
+        for t in opened[:COMMITS_MAX]:
+            A("  task run: %s (%s, %s), %s" % (t["slug"] or t["run"], t["role"], t["started"], t["state"]))
+        if len(opened) > COMMITS_MAX:
+            A("    and %d more task run(s)" % (len(opened) - COMMITS_MAX))
+        if cleaned:
+            A("  task runs cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned[:LIST_MAX]) + (" (and %d more)" % (len(cleaned) - LIST_MAX) if len(cleaned) > LIST_MAX else ""))
         for o, fs in f["overlap"].items():
             A("  files also changed by feature/%s: %s" % (o, " ".join(fs)))
+    u, um = more(F["agent_unattributed"])
+    if u:
+        A(ms().unattributed_line([(x["branch"], x["base"]) for x in u]) + (" (and %d more)" % um if um else ""))
     A("")
     A("== marshal record")
     A("records: %s%s" % ("shared refs (read from the local cache, not fetched)" if F["backend"] == "refs" else "local to this host",
@@ -566,6 +583,7 @@ def render_json(F):
         return len(json.dumps(F, indent=1).encode())
     if size() > CAP_BYTES:
         F["truncated"] = True
+        F["agent_unattributed"] = []
         for f in F["features"]:
             f["commits"], f["tasks"], f["worktrees"], f["overlap"] = [], [], [], {}
     while size() > CAP_BYTES and F["features"]:
