@@ -4,19 +4,13 @@
  "goal": "The docs site gets a left sidebar (sections, current page, mobile menu) and a client-side search over a generated index, in the generator and its tests",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "lead",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-05T15:01:41Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-05T15:40:20Z",
- "finished_at": null,
+ "finished_at": "2026-11-05T15:44:30Z",
  "updated_by": "lead",
- "rev": 3,
- "updated_at": "2026-11-05T15:40:20Z",
+ "rev": 4,
+ "updated_at": "2026-11-05T15:44:30Z",
  "feature": "site-sidebar",
  "project": "qargi"
 }
