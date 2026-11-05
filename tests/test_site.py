@@ -920,7 +920,7 @@ class SidebarAndSearch(unittest.TestCase):
         self.assertIn(("qargi release verify", "reference/run-a-task/#release-verify"), titles)      # a command section is searchable
         self.assertIn(("Your first project", "first-project/"), titles)
 
-    def test_the_index_is_bounded_and_a_forbidden_word_in_it_fails_the_build(self):
+    def test_the_index_is_bounded_and_follows_the_pages_on_forbidden_words(self):
         site = type("FakeSite", (), {})()
         site.cfg = None
         site.pages = {"": S.Page("", "home", "Home", "Home page.", "<p>%s</p>" % ("word " * 400)),
@@ -942,7 +942,8 @@ class SidebarAndSearch(unittest.TestCase):
             S.INDEX_MAX_BYTES = old
         self.assertEqual(len(rep.errors), 1)
         self.assertIn("more than the limit of 100", rep.errors[0])
-        # a word the config forbids that only a generated page carries (the hand pages are checked line by line already)
+        # a word the config forbids that only a generated page carries is no error: the reference documents the tool, and the
+        # index holds what the pages hold (a hand page with the word fails on its own line, as before)
         d = os.path.join(self.tmp, "forbid")
         shutil.copytree(os.path.join(self.tmp, "fix"), d)
         cfg = os.path.join(d, "site.json")
@@ -950,9 +951,8 @@ class SidebarAndSearch(unittest.TestCase):
         data["forbidden"] = ["whether the whole suite passed"]
         spit(cfg, json.dumps(data))
         rc, out, err = build(os.path.join(self.tmp, "forbid-out"), os.path.join(d, "pages"))
-        self.assertEqual(rc, 1, out + err)
-        self.assertRegex(out, r"error: search index: the entry for /reference/run-a-task/(?:#release-status)? contains the forbidden word 'whether the whole suite passed'")
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, "forbid-out")))
+        self.assertEqual(rc, 0, out + err)
+        self.assertNotIn("forbidden word", out + err)
 
     def test_the_script_is_one_small_file_with_no_dynamic_code_and_no_network_beyond_the_index(self):
         js = self.page("assets/search.js")

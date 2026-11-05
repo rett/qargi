@@ -1285,9 +1285,10 @@ def search_entries(site):
 
 
 def search_index(site, rep=None):
-    """The JSON of the search index as bytes. With a report: errors when it is too large or holds a word the site config
-    forbids, and a note with its size. The text of a hand page was checked line by line already, so only the generated
-    pages are checked here."""
+    """The JSON of the search index as bytes. With a report: an error when it is too large, and a note with its size. It
+    holds the text of the pages and nothing else, and the pages are checked for the words the site config forbids
+    (the hand pages line by line; the generated reference documents the tool and may name what the config forbids), so
+    the index follows the pages and is not checked again."""
     pairs = search_entries(site)
     entries = [e for e, _ in pairs]
     data = (json.dumps({"version": 1, "entries": entries}, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
@@ -1295,10 +1296,6 @@ def search_index(site, rep=None):
         rep.note("search index", "%d entries, %d bytes (limit %d)" % (len(entries), len(data), INDEX_MAX_BYTES))
         if len(data) > INDEX_MAX_BYTES:
             rep.err("search index", "%d bytes is more than the limit of %d" % (len(data), INDEX_MAX_BYTES))
-        for w in (site.cfg.forbidden if site.cfg else []):
-            for e, owner in pairs:
-                if not owner.src and w.lower() in (e["t"] + " " + e["p"] + " " + e.get("g", "") + " " + e["x"]).lower():
-                    rep.err("search index", "the entry for /%s contains the forbidden word '%s'" % (e["p"], w))
     return data
 
 
