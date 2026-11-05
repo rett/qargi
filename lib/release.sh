@@ -49,7 +49,7 @@
 #                                           default gh-pages when repo.detached lists it, and site.config, default site/site.json, whose folder pages/ holds
 #                                           the hand pages). Only when site.enabled is true. The source is the tag's tree (git archive), the generator is
 #                                           lib/site.py; the work is done in a temporary worktree of the site branch, which moves by update-ref only after
-#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json and regenerates _site/.
+#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json; the build checks the site and its output (_site/) is not committed, a Pages build of the branch needing _site/ empty.
 #                                           It never pushes: it prints the push command. Refused in a member run and when QARGI_NESTED is set.
 #                                           `finish` ends with "next: qargi release site VERSION" (the methodology's after_release step) and `status`
 #                                           says whether the site of VERSION is built and pushed, both only when site.enabled is true.
@@ -552,18 +552,21 @@ case $verb in
     bout=$(cd "$WT" && python3 -I "$(dirname "$0")/site.py" build --release "$VER" --source "$SITESRC" --pages "$WT/$SITE_PAGES" --config "$WT/$SITE_CONF" \
              --out "$WT/_site" --allow-root "$WT" </dev/null 2>&1) \
       || die "the site of $VER did not build; nothing was changed:"$'\n'"$(printf '%s\n' "$bout" | tail -n 25 | sed 's/^/  | /')"
-    git -C "$WT" add -A -- "$SITE_CONF" _site
+    # the build runs to check the site (a page that does not build refuses), but its output is not committed: a Pages build of the branch needs _site/
+    # empty. A _site/ that an earlier build committed is removed by the commit (the git rm above).
+    rm -rf "${WT:?}/_site"
+    git -C "$WT" add -A -- "$SITE_CONF"
     if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
     tree=$(git -C "$WT" write-tree)
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
     echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
-    echo "commit it on $SITE_BR: $SITE_CONF records release $VER and _site/ holds the built site; nothing is pushed"
+    echo "commit it on $SITE_BR: $SITE_CONF records release $VER; the build only checks the site, _site/ is not committed (and one an earlier build committed is removed); nothing is pushed"
     printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'
     echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
     remote_report "$SITE_BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
-    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER and _site/ is regenerated."
+    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER; _site/ is not committed."
     new=$(git -C "$WT" rev-parse HEAD)
     g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"
     journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"

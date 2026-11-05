@@ -501,8 +501,9 @@ COMMANDS = {
                          desc=("Only when the answer site.enabled is true. The source is the tree of the tag VERSION (its CHANGELOG.md, VERSION, README.md and "
                                "lib/commands.py, from which the reference is generated); the hand pages and site.json are those of the site branch (site.branch, "
                                "default gh-pages when repo.detached lists it; site.config, default site/site.json, with the hand pages in pages/ beside it). "
-                               "lib/site.py builds it in a temporary worktree of the site branch: the site.json records release VERSION and _site/ holds the built "
-                               "site. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the built tree; "
+                               "lib/site.py builds it in a temporary worktree of the site branch: the site.json records release VERSION. The build checks the site, "
+                               "but its output (_site/) is not committed, because a Pages build of the branch needs _site/ empty; a _site/ that an earlier build "
+                               "committed is removed by the commit. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the tree to commit; "
                                "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
                                "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),

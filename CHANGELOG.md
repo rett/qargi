@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.
+  The build still runs, so a page that does not build refuses; the commit now records the release in `site.json` and removes a
+  `_site/` that an earlier build committed.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added

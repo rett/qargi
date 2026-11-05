@@ -214,8 +214,8 @@ into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, loc
 A documentation site kept on such a branch is regenerated when a release ships. With `site.enabled` set to `true` (and
 `site.branch`, which defaults to `gh-pages` when `repo.detached` lists it, and `site.config`, default `site/site.json` with the
 hand pages in `site/pages/`), `release finish` ends with `next: qargi release site VERSION`. That verb builds the site of the
-tag with `lib/site.py` and commits it on the site branch (`_site/`), behind a plan and token; it never pushes and prints the
-push command. `release status VERSION` says whether the site of that version is built and pushed.
+tag with `lib/site.py` to check it and commits the release it built on the site branch (`site.json`; the build's `_site/` is not
+committed, because a Pages build needs it empty), behind a plan and token; it never pushes and prints the push command. `release status VERSION` says whether the site of that version is built and pushed.
 
 ### Feature branches on origin
 
