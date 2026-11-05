@@ -499,8 +499,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local prepare` refuses a `--repo-url` that carries a user name or a password; the token goes in `--credential-file`.
 - `qargi project link` (memory) compares real paths, so a link below the memory root that leads outside it is refused, and a project
   whose tiers resolve without a project tier is refused with a message, not a traceback.
-- `qargi project set` of `release.*`, `test_command` or `env.*` is refused to a member, as `models.*` is: the lead later runs those
-  commands, so a member that set them would run its own command with the lead's rights.
+- `qargi project set` of `release.*`, `test_command`, `env.*` or `site.*` is refused to a member, as `models.*` is: the lead later runs
+  those commands, or builds and commits the documentation site from `site.*` (`qargi release site`), so a member that set them would
+  run its own command with the lead's rights.
 - The member guard refuses `git config` that writes a key which makes git run a program, read another configuration file or give a command or a remote
   another name, as it refused the one-shot `git -c` form: `git config core.fsmonitor ...`, `git config alias.x '!...'`, `git config include.path ...`,
   `git config core.hooksPath ...` and `git config alias.p push` (then `git p` pushed) were allowed since 0.2.0. Both forms share one list (core.fsmonitor, hooksPath,
