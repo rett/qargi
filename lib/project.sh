@@ -32,6 +32,9 @@
 #                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
 #                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
 #                                         the same links and puts back what they replaced
+#   project.sh profile check [NAME] [--profile FILE]   read only: the repository's profile (CONFIG/profiles/<repository>.md, or FILE): exit 1 when it still
+#                                         carries the shipped template header; a gate command the repository's instruction files and Makefile targets do not
+#                                         know is a warning (exit 0). project validate prints the header finding as a WARN line
 #   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
 #                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
 #                                         status, so storing and the flows after it work as before)
@@ -753,6 +756,18 @@ PY
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
-  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; };;
-  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
+  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"
+    validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" warn "$DA_CONF" "$f" || true; };;
+  profile)
+    # profile check [NAME] [--profile FILE]: read only; the profile of the project's repository, the shipped template header (exit 1), gates the repository does not know (warnings)
+    [ "${1:-}" = check ] || usage_die "usage: project profile check [NAME] [--profile FILE]"; shift
+    n='' pf=''
+    while [ $# -gt 0 ]; do
+      case $1 in --profile) need_val "$1" $#; pf=$2; shift 2;; -*) usage_die "unknown option $1";; *) [ -z "$n" ] || usage_die "profile check takes one project name"; n=$1; shift;; esac
+    done
+    [ -n "$n" ] || n=$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer 2>/dev/null) || n=''
+    af=''
+    if [ -n "$n" ]; then af=$PROJ_DIR/$n.json; [ -f "$af" ] || die "no project named '$n' (see: project list)"; fi
+    exec python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" check "$DA_CONF" "$af" "${pf/#\~/$HOME}";;
+  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate|profile ...";;
 esac
