@@ -18,7 +18,7 @@ concurrency:
 jobs:
   suite:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 120   # the whole suite runs about an hour; a margin, not a ratio
     steps:
       - uses: actions/checkout@v4
         with:
