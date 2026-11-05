@@ -429,6 +429,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   says to propose it in the report.
 - `qargi env check` printed `packs: no drift` for a project whose packs were never applied, since `packs check` passes then; it prints
   `packs: not applied (qargi packs apply --target T PROJECT)`, a note and not a missing item.
+- `qargi env check` counted a `STALE`, `DRIFT` or `MISSING` member as current when the path of its file made the `agent list` line
+  longer than 160 characters: the line was cut before its state was read.
 
 ### Security
 - A member's `qargi project set` of `roles.ROLE.tools` (or of a whole role, or of `roles`) is refused, as `env.*`, `release.*` and

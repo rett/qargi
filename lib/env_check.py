@@ -301,9 +301,10 @@ def declared_tools(answers, repo):
 
 # ---- the qargi layer ---------------------------------------------------------------------------------------------------
 
-def sub(args):
-    """(exit, output lines) of a qargi verb run read-only for the qargi layer. (Flags of other commands are in single quotes: the help test
-    reads a double-quoted flag as one this script parses.)"""
+def sub(args, width=160):
+    """(exit, output lines) of a qargi verb run read-only for the qargi layer, each line made safe to print and cut to width characters (a caller
+    that parses the end of a line asks for more). (Flags of other commands are in single quotes: the help test reads a double-quoted flag as one
+    this script parses.)"""
     qargi = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "qargi")
     try:
         r = subprocess.run([qargi] + args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=SUB_TIMEOUT)
@@ -311,7 +312,7 @@ def sub(args):
         return None, ["timed out after %d s" % SUB_TIMEOUT]
     except OSError as e:
         return None, ["could not run: %s" % e.__class__.__name__]
-    return r.returncode, [E.clean(x.strip(), 160) for x in (r.stdout + r.stderr).splitlines() if x.strip()]
+    return r.returncode, [E.clean(x.strip(), width) for x in (r.stdout + r.stderr).splitlines() if x.strip()]
 
 
 def quietly(fn, *a, keep=()):
@@ -379,10 +380,10 @@ def qargi_layer(project, answers, repo):
         row("link", "not checked, %s" % e)
     except Exception as e:
         row("link", "not checked, %s" % e.__class__.__name__)
-    rc, lines = sub(["agent", "list", "--project", project])
+    rc, lines = sub(["agent", "list", "--project", project], width=8192)   # the state is at the end of a line, after the member file's path: never cut
     members = [ln for ln in lines if re.match(r"^\S+\s+\S+\s+\S+\s+\S+/\S+\s+\S+", ln)]
     if rc != 0:
-        row("members", "not checked: %s" % (lines[0] if lines else "agent list failed"))
+        row("members", "not checked: %s" % (E.clean(lines[0], 160) if lines else "agent list failed"))
     elif not members:
         row("members", "none yet")
     else:

@@ -574,6 +574,21 @@ class Check(Fixtures):
         self.assertEqual(sorted(tools), ["go"])
         self.assertEqual(tools["go"], [("go.mod", ">=1.22"), (".tool-versions", "1.22.3")])
 
+    def test_a_member_state_after_a_long_path_is_read(self):
+        """agent list puts a member's state after the path of its file; the line is not cut to the 160 characters of a printed line before it is read,
+        or a member file under a long directory reads as current whatever its state."""
+        from unittest import mock
+        import env_check as C
+        line = "acme  forge  build  m/high  /" + "deep/" * 60 + "forge.md (DRIFT: qargi agent refresh forge --project acme)"
+
+        def fake_sub(args, width=160):
+            return 0, [E.clean(line, width)] if args[:2] == ["agent", "list"] else []
+        with mock.patch.object(C, "sub", fake_sub), mock.patch.object(C, "links", lambda project, repo: []), \
+                mock.patch.object(C, "packs_target", lambda answers, project: None):
+            res = C.qargi_layer("acme", {}, self.t)
+        self.assertIn(("members", "0 current, forge DRIFT"), res["rows"])
+        self.assertTrue(any(k == "missing" and t.startswith("members not current: forge DRIFT") for k, t in res["items"]), res["items"])
+
     def test_the_qargi_layer_for_a_stored_project(self):
         d = self.doctor_repo("echo 'ok: git'\n")
         rc, out, _ = self.check(d)
