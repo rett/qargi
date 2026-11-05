@@ -33,7 +33,7 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish and sign; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign and site; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
 It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home directory is not. It refuses git push, git remote changes, git \-c alias.*, gh, ssh, scp, sftp and rsync to a host.
 .PP
@@ -2293,7 +2293,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .B qargi release
 Releases and hotfixes by the git\-flow rules.
 .PP
-release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with \-\-no\-ff, tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with \-\-no\-ff and deletes it. A release starts only from a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default '## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] \- {date}'), release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non\-zero exit refuses and shows the tail of its output). A member may not set them: the lead runs them.
+release/<version> is cut from develop (a hotfix/<version> from master); its first commit bumps VERSION and dates the changelog and the man page. It is pushed and a pull request into master runs CI on the commit that will be released. Finishing merges it into master with \-\-no\-ff, tags it, merges it into develop (a hotfix: into the open release branch, if there is one) with \-\-no\-ff and deletes it. A release starts only from a develop whose head passed the whole suite. Pushing, merging, tagging and publishing need the plan token and an approval; signing needs your terminal. The layout of what a release updates is the project's, set in its answers (all optional): release.version_file (the file that holds only the version; default VERSION; none when there is no such file, and the version is then the changelog heading and the tag), release.changelog.unreleased (the heading of the changes to come, default '## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] \- {date}'), release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non\-zero exit refuses and shows the tail of its output). A member may not set them: the lead runs them. A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh\-pages when repo.detached lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then release finish ends with 'next: qargi release site VERSION' (the methodology's after_release step) and release status has a site line.
 .RS
 .TP
 .BI "start " "VERSION"
@@ -2326,7 +2326,7 @@ release although the unreleased section of CHANGELOG.md ('## [Unreleased]' by de
 .BI "status " "VERSION"
 Show the branch, its commits and whether the whole suite passed at its head.
 .br
-It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way.
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. When site.enabled is true a site line says 'site: not built for VERSION', 'site: built at SHA, not pushed' or 'site: pushed' (the commit of qargi release site on the site branch, and whether the live origin has it).
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2387,7 +2387,7 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .BI "finish " "VERSION"
 After the checks pass: merge into master, tag, merge back, delete the branch, push.
 .br
-Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved. It refuses a branch whose manual page has an empty .TH date or version, and, when release.version_file is none, one whose changelog has no section for VERSION. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached.
+Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree the message names, commit, and run the same command with \-\-resolved. It refuses a branch whose manual page has an empty .TH date or version, and, when release.version_file is none, one whose changelog has no section for VERSION. It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, 'next: qargi release site VERSION'.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2461,6 +2461,28 @@ attach this file (relative to the repository, inside it) to the release; repeat 
 .TP
 .BI "\-\-notes\-file " "FILE"
 take the notes from this file (relative to the repository) instead of the changelog section; the answer release.notes_file does the same.
+.RE
+.RE
+.RS
+.TP
+.BI "site " "VERSION"
+Build the documentation site of the tag VERSION and commit it on the detached site branch; never pushes.
+.br
+Only when the answer site.enabled is true. The source is the tree of the tag VERSION (its CHANGELOG.md, VERSION, README.md and lib/commands.py, from which the reference is generated); the hand pages and site.json are those of the site branch (site.branch, default gh\-pages when repo.detached lists it; site.config, default site/site.json, with the hand pages in pages/ beside it). lib/site.py builds it in a temporary worktree of the site branch: the site.json records release VERSION and _site/ holds the built site. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the built tree; the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set.
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RS
+.TP
+.BI "\-\-plan " "TOKEN"
+the plan token printed by the same command without \-\-approved.
+.RE
+.RS
+.TP
+.BI "\-\-approved " "WORDS"
+your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP

@@ -41,6 +41,16 @@
 #                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
 #                                           plan token covers the notes and the hash of every asset.
 #
+#   release.sh site VERSION [--plan T --approved W]
+#                                           build the documentation site of the tag VERSION and commit it on the detached site branch (answers site.branch,
+#                                           default gh-pages when repo.detached lists it, and site.config, default site/site.json, whose folder pages/ holds
+#                                           the hand pages). Only when site.enabled is true. The source is the tag's tree (git archive), the generator is
+#                                           lib/site.py; the work is done in a temporary worktree of the site branch, which moves by update-ref only after
+#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json and regenerates _site/.
+#                                           It never pushes: it prints the push command. Refused in a member run and when QARGI_NESTED is set.
+#                                           `finish` ends with "next: qargi release site VERSION" (the methodology's after_release step) and `status`
+#                                           says whether the site of VERSION is built and pushed, both only when site.enabled is true.
+#
 # The layout of what a release updates is the project's: the answers release.version_file (default VERSION; none: the project has no such file),
 # release.changelog.unreleased and .released (heading templates; default '## [Unreleased]' and '## [{version}] - {date}'), release.man_pages (default
 # man/*.1), release.test_command (what `verify` runs; default test_command) and release.preflight (an argv list, {version} replaced, run by `start` and
@@ -63,7 +73,7 @@ done
 [ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -81,8 +91,8 @@ VFILE=$(jq -r '(.release? // {}) | .version_file // "VERSION"' "$af"); VFILE_SET
 RTC=$(jq -r '(.release? // {}) | .test_command // empty | if type == "array" then map(@sh) | join(" ") else . end' "$af"); [ -z "$RTC" ] || TESTCMD=$RTC
 GH=${QARGI_GH:-gh}   # the one way this script talks to GitHub; tests put a stub here
 repo_slug() { jq -r '.repo.url' "$af" | sed 's|^https://[^/]*/||; s|\.git$||'; }
-notes=''   # the temporary file of `publish`
-rel_exit() { [ -z "$notes" ] || rm -f "$notes"; on_exit; }   # the one EXIT handler: what gitflow.sh cleans up, and the notes file
+notes='' SITESRC=''   # the temporary file of `publish`, the extracted tag of `site`
+rel_exit() { [ -z "$notes" ] || rm -f "$notes"; [ -z "$SITESRC" ] || rm -rf "$SITESRC"; on_exit; }   # the one EXIT handler: what gitflow.sh cleans up, and the temporary files
 trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
@@ -151,6 +161,39 @@ sign_gate() {
   done < <(jq -r '.release.sign.files[]' "$af")
 }
 
+# The documentation site of a release (lib/release_site.py holds the answers' checks; lib/site.py is the generator)
+RSITE=$(dirname "$0")/release_site.py
+SITE_SUBJECT="Site: built from release"   # the subject of the commit `site` makes, followed by the version: `status` finds it by it
+# site_answers -> SITE_ON (true|false), SITE_BR, SITE_CONF, SITE_PAGES; fails when the site answers are not valid
+site_answers() {
+  local line
+  line=$(python3 -I "$RSITE" config "$af") || return 1
+  IFS=$'\t' read -r SITE_ON SITE_BR SITE_CONF SITE_PAGES <<<"$line"
+}
+# site_status: when site.enabled is true, one line saying whether the site of VER is built on the site branch and whether origin has it. Read-only.
+site_status() {
+  local c why=''
+  site_answers 2>/dev/null && [ "$SITE_ON" = true ] || return 0
+  branch_exists "$SITE_BR" || { echo "site: not built for $VER (no local branch $SITE_BR)"; return 0; }
+  c=$(g log -1 --format=%H --grep="^$SITE_SUBJECT ${VER//./\\.}\$" "refs/heads/$SITE_BR" --)
+  [ -n "$c" ] || { echo "site: not built for $VER"; return 0; }
+  remote_tip "$SITE_BR"
+  case $RSTATE in
+    found)
+      if [ "$RTIP" = "$c" ] || { g cat-file -e "$RTIP^{commit}" 2>/dev/null && g merge-base --is-ancestor "$c" "$RTIP"; }; then echo "site: pushed"; return 0; fi
+      g cat-file -e "$RTIP^{commit}" 2>/dev/null || why=" (origin $SITE_BR is at ${RTIP:0:7}, which is not fetched)";;
+    unchecked)
+      if g rev-parse -q --verify "refs/remotes/origin/$SITE_BR" >/dev/null && g merge-base --is-ancestor "$c" "refs/remotes/origin/$SITE_BR"; then
+        echo "site: pushed (as of the last fetch; origin not checked: $RWHY)"; return 0
+      fi
+      why=" (origin not checked: $RWHY)";;
+    none) why=" (no origin remote)";;
+  esac
+  echo "site: built at ${c:0:7}, not pushed$why"
+}
+# after_release: the methodology's steps after a release (methodology.json after_release) whose answer is true, as "next: ..." lines
+after_release() { python3 -I "$RSITE" next "$af" "$METH" "$VER" 2>/dev/null || true; }
+
 # rel_valid: the release answers of the project must be valid before a verb relies on them
 rel_valid() { python3 -I "$RS" config "$af" || die "the release answers of $PROJ are not valid (qargi project validate $PROJ)"; }
 # man_pages_at REF: the manual pages a release dates, one per line: release.man_pages, else the man/*.1 files tracked at REF
@@ -214,6 +257,7 @@ case $verb in
       remote_report "$BASE"
       tag_checks
       sign_status
+      site_status
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
@@ -222,7 +266,8 @@ case $verb in
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
     tag_checks
-    sign_status;;
+    sign_status
+    site_status;;
   verify)
     rel_valid
     [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"
@@ -332,7 +377,8 @@ case $verb in
     else
       echo "no origin remote: nothing was pushed"
     fi
-    lead_advice;;
+    lead_advice
+    after_release;;
   sign)
     python3 -I "$RS" lead-only || exit $?
     sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
@@ -443,5 +489,48 @@ case $verb in
     out=$("$GH" -R "$(repo_slug)" release create "$VER" --verify-tag --title "$title" --notes-file "$notes" "${assets[@]}" 2>&1 </dev/null) || die "gh release create failed for tag $VER: $out"
     audit_log "release:publish" "$PROJ $VER${assets[0]:+ (${#assets[@]} asset(s))}"
     echo "published the release of tag $VER: $out";;
-  *) die "usage: qargi release start|status|verify|push|finish|sign|publish VERSION [--hotfix] [--project P]";;
+  site)
+    python3 -I "$RSITE" lead-only || exit $?
+    [ -z "$HOTFIX" ] || die "--hotfix does not belong to release site: the site is built from the tag VERSION, whatever made it"
+    site_answers || die "the site answers of $PROJ are not valid (qargi project validate $PROJ)"
+    [ "$SITE_ON" = true ] || die "the site of $PROJ is not enabled: set site.enabled to true (qargi project set $PROJ site.enabled true; site.branch and site.config say where it lives)"
+    tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it): the site is built from the tag"
+    s0=$(sha_of "$SITE_BR")
+    if [ -z "$s0" ]; then
+      g rev-parse -q --verify "refs/remotes/origin/$SITE_BR" >/dev/null && die "no local branch $SITE_BR: git -C $REPO branch $SITE_BR origin/$SITE_BR"
+      die "no branch $SITE_BR (site.branch): the hand pages live there; make it once with git switch --orphan $SITE_BR"
+    fi
+    is_detached "$SITE_BR" || die "$SITE_BR is not in repo.detached: the site branch never meets the git-flow branches"
+    g cat-file -e "$s0:$SITE_CONF" 2>/dev/null || die "$SITE_BR has no $SITE_CONF (site.config)"
+    g cat-file -e "$s0:$SITE_PAGES" 2>/dev/null || die "$SITE_BR has no folder $SITE_PAGES beside $SITE_CONF: the hand pages live there"
+    need_free "$SITE_BR"
+    # the source is the tag's tree, extracted; the hand pages and site.json are the site branch's, in a temporary worktree of it
+    SITESRC=$(mktemp -d "$DA_STATE/release-site-src.XXXXXX")
+    g archive --format=tar "$tc" | tar -x -C "$SITESRC" || die "could not extract the tree of tag $VER"
+    worktree "$s0"
+    python3 -I "$RSITE" set-release "$WT/$SITE_CONF" "$VER" || exit 1
+    git -C "$WT" rm -r -q --ignore-unmatch -- _site >/dev/null; rm -rf "${WT:?}/_site"
+    bout=$(cd "$WT" && python3 -I "$(dirname "$0")/site.py" build --release "$VER" --source "$SITESRC" --pages "$WT/$SITE_PAGES" --config "$WT/$SITE_CONF" \
+             --out "$WT/_site" --allow-root "$WT" </dev/null 2>&1) \
+      || die "the site of $VER did not build; nothing was changed:"$'\n'"$(printf '%s\n' "$bout" | tail -n 25 | sed 's/^/  | /')"
+    git -C "$WT" add -A -- "$SITE_CONF" _site
+    if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
+    tree=$(git -C "$WT" write-tree)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
+    echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
+    echo "commit it on $SITE_BR: $SITE_CONF records release $VER and _site/ holds the built site; nothing is pushed"
+    printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'
+    echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
+    remote_report "$SITE_BR"
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
+    need_plan "$tok"
+    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER and _site/ is regenerated."
+    new=$(git -C "$WT" rev-parse HEAD)
+    g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"
+    journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"
+    audit_log "release:site" "$PROJ $VER $SITE_BR ${new:0:12}"
+    echo "built the site of $VER on $SITE_BR at ${new:0:7}; nothing was pushed"
+    if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
+    else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
+  *) die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac
