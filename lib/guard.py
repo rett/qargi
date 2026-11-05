@@ -35,7 +35,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
-    `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
+    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
     verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
     found like linker.py, so env show stays open), packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
@@ -143,7 +143,13 @@ location (or names the signing key) is refused as a path (separator_path_refusal
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
-A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. No file is guessed to be run later.
+A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. So is the program a shell (sh, bash, dash, zsh, ksh; source
+and . of /dev/stdin, /dev/fd/0, /proc/self/fd/0 or -) takes from its standard input (sh -s, sh - or no file, the words xargs brings, -I included) or from a file a
+command of the same line writes, when the line shows it (program_fed): a here-string, an echo or printf piped in (through cat and tee; printf's format filled in,
+escapes decoded) or written to that file; a heredoc body is read by the plain split already, and a redirection glued to the shell (bash<<<TEXT) is a word of its own.
+A program the line does not show is refused, since the guard cannot read it: a pipe from cat FILE, curl or any other program, `bash < FILE`, a descriptor, a process
+substitution, a here-string or an echo that a variable or a substitution builds, a file cp, a download or any other writer makes in the same line. The member writes
+the script with its file tool and runs `bash FILE`. No other file is guessed to be run later.
 Where the shell is: the line is cut more than once (the substitutions cut out, left whole, and each on its own), and every cut starts in the directory of
 the call. A plain `cd DIR` at the top level (and pushd, popd, and a cd after an && whose chain is cds alone) changes the directory of what follows when DIR
 is there; a cd to a word a variable, a substitution or a glob builds, with a CDPATH, or `env -C DIR` (and `builtin cd`) leaves the directory unknown (UNKNOWN_DIR),
@@ -166,8 +172,8 @@ The run: a directory is a run when it holds ability and refs.before, or the clon
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
-Not seen: a script built by code (python -c ...), a program or a verb held in a variable, what a pipe or a here-string hands a shell (`echo qargi upgrade | sh`,
-`bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
+Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
+a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
 JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
@@ -185,6 +191,7 @@ AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
 EXECUTED_ANSWERS = ("release", "test_command", "env")      # the answers the lead later runs or passes to a process: a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
+XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
            "ex", "vi", "vim", "nvim", "ed", "rename", "sqlite3", "setfacl", "mkfifo"}      # the editors and the like write the files they are given
@@ -368,6 +375,14 @@ def blocked(command, depth=0):
         why = blocked(inner, depth + 1) if inner is not None else None
         if why:
             return why
+    for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
+        for n, p in enumerate(ps):
+            toks, i = parsed(p.text)
+            if i < len(toks) and (os.path.basename(toks[i]) in SHELLS or os.path.basename(toks[i]) in SOURCES):
+                for text in program_fed(ps, n, ".")[0]:
+                    why = blocked(as_program(text), depth + 1)
+                    if why:
+                        return why
     return None
 
 
@@ -400,30 +415,45 @@ def ansi_c(text):
         elif c == "$" and quote == "" and text[k + 1:k + 2] == "'":
             buf, k = [], k + 2
             while k < n and text[k] != "'":
-                if text[k] == "\\" and k + 1 < n:
-                    m = ANSI_CODE.match(text, k + 1)
-                    if text[k + 1] in ANSI_ESCAPES:
-                        buf.append(ANSI_ESCAPES[text[k + 1]])
-                        k += 2
-                    elif m and m.group(5) is not None:
-                        buf.append(chr(ord(m.group(5)) & 31))
-                        k = m.end()
-                    elif m:
-                        code = int(m.group(1) or m.group(3) or m.group(4) or m.group(2), 16 if m.group(2) is None else 8)
-                        buf.append(chr(code) if 0 < code < 0x110000 else "")
-                        k = m.end()
-                    else:
-                        buf.append(text[k:k + 2])
-                        k += 2
-                else:
-                    buf.append(text[k])
-                    k += 1
+                k = escape_at(text, k, buf)
             out.append("'" + "".join(buf).replace("'", "'\\''") + "'")
             k += 1
             continue
         out.append(c)
         k += 1
     return "".join(out)
+
+
+def escape_at(text, k, buf):
+    """Append to buf what the character at text[k] stands for in an ANSI-C string (a backslash escape: \\n, \\xHH, \\NNN, \\uHHHH, \\cX ...; else the
+    character itself) and return the index after it."""
+    n = len(text)
+    if text[k] != "\\" or k + 1 >= n:
+        buf.append(text[k])
+        return k + 1
+    m = ANSI_CODE.match(text, k + 1)
+    if text[k + 1] in ANSI_ESCAPES:
+        buf.append(ANSI_ESCAPES[text[k + 1]])
+        return k + 2
+    if m and m.group(5) is not None:
+        buf.append(chr(ord(m.group(5)) & 31))
+        return m.end()
+    if m:
+        code = int(m.group(1) or m.group(3) or m.group(4) or m.group(2), 16 if m.group(2) is None else 8)
+        buf.append(chr(code) if 0 < code < 0x110000 else "")
+        return m.end()
+    buf.append(text[k:k + 2])
+    return k + 2
+
+
+def escapes_decoded(text):
+    """text with its backslash escapes decoded as an ANSI-C string decodes them (what echo -e, printf and %b print for them)."""
+    if "\\" not in text:
+        return text
+    buf, k = [], 0
+    while k < len(text):
+        k = escape_at(text, k, buf)
+    return "".join(buf)
 
 
 @functools.cache
@@ -448,13 +478,16 @@ BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")      
 def skip_wrappers(toks):
     """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
     redirections written before the program (> f, 2>&1)."""
-    i, env = 0, False
+    i, env, xargs = 0, False, False
     while i < len(toks):
         t = toks[i]
         if t in ("-C", "--chdir") and env:
             i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
+        elif xargs and t in XARGS_VALUE_OPTS:
+            i += 2                                           # xargs -I {} sh -c '{}': {} is the replace string, not the program
         elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
             env = env or os.path.basename(t) == "env"
+            xargs = xargs or os.path.basename(t) == "xargs"
             i += 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
@@ -463,12 +496,19 @@ def skip_wrappers(toks):
     return i
 
 
+GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with a redirection glued to it
+
+
 @functools.cache
 def parsed(seg):
     """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
     asks). The list is shared: not to be changed."""
     toks = list(_cmd_tokens(seg))
-    return toks, skip_wrappers(toks)
+    i = skip_wrappers(toks)
+    m = GLUED_SHELL.match(toks[i]) if i < len(toks) else None
+    if m and (os.path.basename(m.group(1)) in SHELLS or m.group(1) in SOURCES):
+        toks[i:i + 1] = [m.group(1), m.group(2)]               # bash<<<TEXT, sh<FILE: the redirection glued to the program is a word of its own for the shell
+    return toks, i
 
 
 @functools.cache
@@ -539,7 +579,7 @@ def substitutions(text, depth=0):
     return out
 
 
-Piece = collections.namedtuple("Piece", "text top chained")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&
+Piece = collections.namedtuple("Piece", "text top chained piped")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&; piped: it follows a | (its standard input is the output of the piece before it)
 SEQUENCE = ("", ";")                                         # separators after which a command runs whatever came before (a newline strips to "")
 KEYWORDS_OPEN, KEYWORDS_CLOSE = ("if", "while", "until", "for", "select", "case"), ("fi", "done", "esac")
 
@@ -595,11 +635,12 @@ def pieces(text, whole=False, top=True):
         while ends[j] <= at:
             j += 2
         counted.setdefault(j, [0, 0])[0 if kind > 0 else 1] += 1
-    out, depth, quote, heredoc, comment = [], 0, "", False, False
+    out, depth, quote, heredoc, comment, piped = [], 0, "", False, False, False
     for k in range(0, len(parts), 2):
         tick()
         piece = parts[k]
         before, after = (parts[k - 1] if k else ""), (parts[k + 1] if k + 1 < len(parts) else "")
+        piped = piped or before.strip() == "|"                # `a |& b` and `a |<newline> b` leave an empty piece between the | and the command
         opens, closes = counted.get(k - 1, (0, 0))
         ahead = counted.get(k + 1, (0, 0))[0]                # a substitution starts behind this piece: its command goes on after it
         if "\n" in before:
@@ -608,7 +649,8 @@ def pieces(text, whole=False, top=True):
         top_level = (top and depth == 0 and not quote and not heredoc and not comment and before.strip() in SEQUENCE + ("&&",) and after.strip() not in ("|", "&")
                      and not ahead and not opens and not closes)
         if piece.strip():
-            out.append(Piece(piece.strip(), top_level, before.strip() == "&&"))
+            out.append(Piece(piece.strip(), top_level, before.strip() == "&&", piped))
+            piped = False
         words = piece.split()
         first = words[0] if words else ""
         depth = max(0, depth + piece.count("(") - piece.count(")") + (first in KEYWORDS_OPEN) - (first in KEYWORDS_CLOSE) + words.count("{") - words.count("}"))
@@ -830,7 +872,7 @@ def env_chdir(toks, i):
 
 
 def walk(command, here):
-    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, texts, text, dirs). texts: the pieces of the
+    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, ps, text, dirs). ps: the pieces of the
     cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
     them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
     subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
@@ -844,12 +886,11 @@ def walk(command, here):
         if len(dirs) > MAX_DIRS:
             raise TooManyDirs()
         stack, ran = [], False                               # ran: the piece before was a cd that is certain
-        texts = [p.text for p in ps]
         for n, piece in enumerate(ps):
             tick()
             toks, i = parsed(piece.text)
             chdir = env_chdir(toks, i)
-            yield n, texts, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
+            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -1368,6 +1409,10 @@ class OwnReason(MarshalReason):
     """A refusal that carries its own advice: decide_call() prints it as it is."""
 
 
+class TextReason(MarshalReason):
+    """A refusal that carries its own advice, and the advice about text when the command holds a quote or a heredoc (the plain split may have read text as a command)."""
+
+
 DEVICE = re.compile(r"^/dev/(?:null|zero|full|tty|stdin|stdout|stderr|fd/\d+)$")           # a device a redirection may name; /dev/shm and the rest are directories
 UNKNOWN = re.compile(r"[$`*?\[]")                            # in a word: a variable, a substitution or a glob stands where the guard would read a name
 OVERWRITES = {"a redirection", "tee", "cp", "install", "ln", "rsync", "dd", "sort -o", "uniq", "mv", "truncate", "sed -i", "perl -i", "git bundle create"}   # they make or replace the file they name
@@ -1497,7 +1542,7 @@ def review_refusal(call):
     if call.kind != "shell":
         return None
     seen, places, runs_git = set(), [], False
-    for n, texts, seg, dirs in walk(call.command, cwd):
+    for n, ps, seg, dirs in walk(call.command, cwd):
         toks, i = parsed(seg)
         prog = os.path.basename(toks[i]) if i < len(toks) else ""
         for here in dirs:                                    # a cd that may not happen leaves several: each is judged
@@ -2101,7 +2146,7 @@ def bash_skill_refusal(command, here, depth):
     if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
-    for n, texts, seg, dirs in walk(command, here):
+    for n, ps, seg, dirs in walk(command, here):
         toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
@@ -2126,10 +2171,18 @@ def bash_skill_refusal(command, here, depth):
                     return why
                 inner = shell_string(prog, rest) if depth < 3 else None
                 if inner is not None:
-                    inner += " ; " + " ; ".join(texts[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
+                    inner += " ; " + " ; ".join(p.text for p in ps[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
                     why = bash_skill_refusal(inner, [at], depth + 1)
                     if why:
                         return why
+                if prog in SHELLS or prog in SOURCES:            # its program on its standard input, or in a file this line writes: read again what the line shows of it
+                    fed, unread = program_fed(ps, n, at)
+                    if unread or (fed and depth >= 3):
+                        return fed_refusal(prog, unread or "a program nested more than three shells deep")
+                    for text in fed:
+                        why = bash_skill_refusal(as_program(text), [at], depth + 1)
+                        if why:
+                            return why
             why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
@@ -2223,7 +2276,224 @@ def shell_string(prog, rest):
         text = next((" ".join(rest[k + 1:]) for k, t in enumerate(rest) if SHELL_C.match(t)), None)
     else:
         return None
-    return None if text is None else text.replace('"', "").replace("'", "").replace("\\$", "$").replace("\\`", "`")
+    return None if text is None else as_program(text)
+
+
+def as_program(text):
+    """A program text a shell is handed, made ready to be read again as shell_string reads one (its quotes dropped, `\\$` and `\\`` as the expansions)."""
+    return text.replace('"', "").replace("'", "").replace("\\$", "$").replace("\\`", "`")
+
+
+# --- a shell that reads its program from its standard input or from a file the line writes (sh -s, bash <<< TEXT, echo TEXT | sh, . /dev/stdin)
+
+SOURCES = {"source", "."}                                    # run a file in the shell itself, as sh FILE does in a new one
+STDIN_NAMES = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}   # the names of the standard input
+SHELL_VALUE_OPTS = re.compile(r"^(?:[-+][A-Za-z]*[oO]|--rcfile|--init-file)$")   # shell options that take the next word (-o pipefail, -euo pipefail, -O extglob, --rcfile F)
+SHELL_STDIN_OPT = re.compile(r"^-[A-Za-z]*s[A-Za-z]*$")      # -s: the program is read from the standard input, the words are its arguments
+STDIN_REDIR = re.compile(r"^0?(<<<|<<-?|<>|<&|<)(.*)$", re.S)   # a redirection of the standard input: here-string, heredoc, file, descriptor
+XARGS_REPLACE = re.compile(r"^(?:-I|-i|--replace)")          # xargs puts its input into the words of the command (sh -c '{}')
+PRINTERS = {"echo", "printf"}                                # print the words they are given: the line shows what they write
+PASSERS = {"cat", "tee"}                                     # hand their standard input on (cat with no file, tee always)
+PRINTF_CONV = re.compile(r"%(?:%|[-+ 0#']*(\*|\d+)?(?:\.(\*|\d*))?([a-zA-Z]))")
+FED_NOTE = ("write the script to a file with your file tool and run it with `bash FILE` (a heredoc on the command line is read too)")
+
+
+def shell_source(prog, rest, pre):
+    """Where a shell (or source and .) takes its program from: "string" (sh -c: shell_string reads it), ("file", NAME), "stdin" (sh -s, sh -, no file, a name of
+    the standard input, or the words xargs brings from its own), or None when prog is no shell. pre: the words before the program (xargs among them)."""
+    if prog not in SHELLS and prog not in SOURCES:
+        return None
+    x = next((k for k, t in enumerate(pre) if os.path.basename(t) == "xargs"), None)
+    replaces = x is not None and any(XARGS_REPLACE.match(t) for t in pre[x + 1:])
+    words, k = [], 0
+    while k < len(rest):                                     # the words without the redirections; a process substitution is a word (the name of a file)
+        t = rest[k]
+        if t.startswith(("<(", ">(")) or not LEADING_REDIR.match(t):
+            words.append(t)
+        elif BARE_REDIR.match(t):
+            k += 1
+        k += 1
+    k = 0
+    if prog in SHELLS:
+        while k < len(words):
+            t = words[k]
+            if SHELL_C.match(t):
+                return "stdin" if x is not None and (k + 1 >= len(words) or replaces) else "string"
+            if SHELL_STDIN_OPT.match(t):
+                return "stdin"
+            if t in ("-", "--"):
+                k += 1
+                break
+            if not t.startswith(("-", "+")) or len(t) < 2:
+                break
+            k += 2 if SHELL_VALUE_OPTS.match(t) else 1
+    elif words[:1] == ["--"]:
+        k = 1
+    if k < len(words):
+        return "stdin" if words[k] in STDIN_NAMES else ("file", words[k])
+    return "stdin" if prog in SHELLS or x is not None else None   # no file: the standard input (xargs brings the name of one from it)
+
+
+def stdin_redirect(toks):
+    """The last redirection of the standard input among the words of a command, as (operator, word): ("<<<", TEXT), ("<<", DELIM), ("<", FILE), ("<&", N), or None."""
+    last, k = None, 0
+    while k < len(toks):
+        t = toks[k]
+        m = STDIN_REDIR.match(t)
+        if m and not t.startswith("<("):
+            op, val = m.group(1), m.group(2)
+            if not val and k + 1 < len(toks):
+                val, k = toks[k + 1], k + 1
+            last = (op, val)
+        elif BARE_REDIR.match(t):
+            k += 1
+        k += 1
+    return last
+
+
+def here_string_expands(seg):
+    """True when the outer shell expands the word of the last here-string of a segment (a variable, a substitution or a glob in it, outside single quotes)."""
+    words, out = lex(seg), False
+    for k, (w, e) in enumerate(words):
+        m = re.match(r"^0?<<<", w)
+        if m:
+            out = e if w[m.end():] else (k + 1 < len(words) and words[k + 1][1])
+    return out
+
+
+def printf_text(fmt, args):
+    """What printf FORMAT ARGS prints, close enough to read a command in it: the escapes decoded, a conversion given its argument as it is (%b decoded, %c its
+    first character, no width padding), and the format used again while arguments are left."""
+    fmt, args, out = escapes_decoded(fmt), list(args), []
+    while True:
+        used, last = False, 0
+        for m in PRINTF_CONV.finditer(fmt):
+            tick()
+            out.append(fmt[last:m.start()])
+            last = m.end()
+            if m.group() == "%%":
+                out.append("%")
+                continue
+            for star in (m.group(1), m.group(2)):
+                if star == "*" and args:
+                    args.pop(0)
+            a, used = (args.pop(0) if args else ""), True
+            out.append(escapes_decoded(a) if m.group(3) == "b" else a[:1] if m.group(3) == "c" else a)
+        out.append(fmt[last:])
+        if not args or not used:
+            return "".join(out)
+
+
+def printed(prog, words):
+    """The texts echo or printf prints for its words (the redirections left out): echo's words as they are and with their escapes decoded (echo -e, and sh's
+    echo, decode them), printf's format filled in; nothing for printf -v, which assigns."""
+    if prog == "echo":
+        k = 0
+        while k < len(words) and re.fullmatch(r"-[neE]+", words[k]):
+            k += 1
+        raw = " ".join(words[k:])
+        return list(dict.fromkeys([raw, escapes_decoded(raw)]))
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if not words or words[0].startswith("-v"):
+        return []
+    return [printf_text(words[0], words[1:])]
+
+
+def plain_words(rest):
+    """The words of a command without its redirections and the words they name."""
+    out, k = [], 0
+    while k < len(rest):
+        t = rest[k]
+        if BARE_REDIR.match(t):
+            k += 1
+        elif not LEADING_REDIR.match(t) and not REDIR.match(t):
+            out.append(t)
+        k += 1
+    return out
+
+
+def input_of(ps, n, depth=0):
+    """What the command ps[n] (a piece of a cut) reads on its standard input: (texts, why). texts: the text the line shows for it (a here-string, an echo or a
+    printf piped in, through cat and tee); why: what gives it when the guard cannot read it (another program, a file, a descriptor), else None. A heredoc
+    gives nothing to read again, since the plain split reads its body as commands, and a command with no redirection and no pipe reads the call's own input."""
+    seg = ps[n].text
+    r = stdin_redirect(parsed(seg)[0])
+    if r:
+        op, val = r
+        if op == "<<<":
+            return ([], "a here-string that a variable, a substitution or a glob builds") if here_string_expands(seg) else ([val], None)
+        if op in ("<<", "<<-") or (op == "<" and val == "/dev/null") or (op == "<&" and val == "-"):
+            return [], None
+        if not ((op == "<" and val in STDIN_NAMES - {"-"}) or (op == "<&" and val == "0")):
+            if not val or val.startswith(("<(", "(")):
+                return [], "a process substitution"           # `bash < <(curl x)`: the cut that takes the substitution out leaves the < with no word
+            return [], ("descriptor %s" % val) if op == "<&" else ("the file %s" % val)
+    if ps[n].piped and n > 0:
+        return output_of(ps, n - 1, depth)
+    return [], None
+
+
+def output_of(ps, m, depth=0):
+    """What the command ps[m] writes to its standard output, as input_of says it: the text of echo and printf (unless the shell builds a word of it), what cat
+    with no file and tee hand on, and for any other program its name as the reason."""
+    seg = ps[m].text
+    toks, i = parsed(seg)
+    if i >= len(toks):
+        return [], "a command the guard cannot read"
+    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
+    if prog in PRINTERS:
+        if any(e for _, e in lex(seg)):
+            return [], "%s of a word that a variable, a substitution or a glob builds" % prog
+        return printed(prog, plain_words(rest)), None
+    if prog in PASSERS and depth < 8:
+        if prog == "cat" and [t for t in operands(rest) if t != "-"]:
+            return [], "the files cat reads"
+        return input_of(ps, m, depth + 1)
+    return [], "the output of %s" % prog
+
+
+@functools.lru_cache(maxsize=64)
+def pass_writes(ps, here):
+    """{real path: (index, what)} of every file the pieces of one cut write, the first writer of each (write_targets), seen from the directory here."""
+    out = {}
+    for m, p in enumerate(ps):
+        tick()
+        toks, i = parsed(p.text)
+        for what, dest in write_targets(toks, i):
+            if dest:
+                out.setdefault(resolve(here, dest), (m, what))
+    return out
+
+
+def program_fed(ps, n, here):
+    """What the shell ps[n] runs when that is not a -c string (shell_string) or a file that was there before the command: (texts, why), as input_of says it.
+    Its standard input (sh -s, sh with no file, a name of the standard input, the words of xargs), or a file a command of the same line writes: what
+    an echo or printf writes there is read, a heredoc is read already, and any other writer (cp, curl, a download, a copy) is why."""
+    toks, i = parsed(ps[n].text)
+    if i >= len(toks):
+        return [], None
+    src = shell_source(os.path.basename(toks[i]), toks[i + 1:], toks[:i])
+    if src == "stdin":
+        return input_of(ps, n)
+    if not isinstance(src, tuple):
+        return [], None
+    name = src[1]
+    if name.startswith(("<(", ">(")):
+        return [], "a process substitution"
+    w = pass_writes(ps, here).get(resolve(here, name))
+    if w is None:
+        return [], None
+    m, what = w
+    if what == "a redirection":
+        return output_of(ps, m)
+    if what == "tee":
+        return input_of(ps, m)
+    return [], "%s, which writes %s in the same command" % (what, name)
+
+
+def fed_refusal(prog, why):
+    return TextReason("%s takes its program from %s, which the guard cannot read, so it is not available to an agent; %s" % (prog, why, FED_NOTE))
 
 
 def own_script(path, here):
@@ -2673,7 +2943,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps):
+    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
         f.cache_clear()
 
 
@@ -2721,7 +2991,7 @@ def decide_call(call):
         return "qargi guard: %s. Agents never push; return patches instead.%s" % (why, hint)
     why = skill_refusal(call)
     if isinstance(why, MarshalReason):
-        return "qargi guard: %s.%s" % (why, hint if type(why) is MarshalReason else "")
+        return "qargi guard: %s.%s" % (why, hint if type(why) in (MarshalReason, TextReason) else "")
     if why:
         return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change in your report.%s" % (why, hint))
     why = review_refusal(call)
