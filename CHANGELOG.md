@@ -275,7 +275,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Help and manual wording: `agent`, `concepts` and `roles` speak of roles, not abilities; `provider` describes one runtime on one
   surface; `local run`, `local prepare` and the render warning name no vendor and say `--target RUNTIME`; `local run` lists its exit
   statuses 0 to 4 and `review check` its exit 1; a refusal of the read-only class says "under the read-only class"; the manual
-  page's SEE ALSO lists every shipped skill. `qargi help guard` names every verb the guard refuses, the protected files and
+  page's SEE ALSO lists every shipped skill (a copy without `skills/` names them generically). `qargi help guard` names every verb the guard refuses, the protected files and
   directories (the pack library, credentials, `install.json`, `state/render`, the memory tiers, the state's `providers/`, the ref
   journal and the run registry, the marshal and feature directories, the runtimes' skills, agents and plugin directories, the
   lead's git configuration and session files), the rules for `cd`, the 5-second budget and the `git commit -F FILE` advice, within
