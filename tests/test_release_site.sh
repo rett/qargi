@@ -130,6 +130,7 @@ out=$($REL status 0.5.0 2>&1); grep -qx "site: not built for 0.5.0" <<<"$out" &&
 out=$($REL site 0.5.0 2>&1); t=$(tok <<<"$out")
 $REL site 0.5.0 --plan "$t" --approved go > "$T/o" 2>&1
 grep -q "^push it with: git -C $R push origin gh-pages\$" "$T/o" && [ "$(git -C "$R" rev-parse origin/gh-pages)" = "$P1" ] && ok "with an origin it prints the push command and pushes nothing" || no "push line: $(cat "$T/o")"
+grep -q "^preview it before you push: " "$T/o" && ok "it tells the lead to preview the built site before pushing it" || no "no preview hint before the push"
 P2=$(git -C "$R" rev-parse gh-pages)
 git -C "$R" checkout -q gh-pages
 printf -- '---\ntitle: Broken\ndescription: A page that names a command the release does not have, so that the build of the site refuses it.\n---\n\n## 1. Run\n\n```bash\nqargi nosuchverb\n```\n' > "$R/site/pages/broken.md"
