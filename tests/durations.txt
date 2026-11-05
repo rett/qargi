@@ -6,6 +6,7 @@
 228 bash tests/test_packs_render.sh
 245 bash tests/test_packs_audit.sh
 82 bash tests/test_flow.sh
+39 bash tests/test_fverify.sh
 101 bash tests/test_local.sh
 90 bash tests/test_packs.sh
 2 bash tests/test_watch.sh

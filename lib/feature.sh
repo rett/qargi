@@ -228,6 +228,7 @@ case $verb in
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
+    other_runs_warning
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     t0=$SECONDS
     if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi

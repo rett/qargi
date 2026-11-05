@@ -54,7 +54,7 @@ fast | par | 300 | 11 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 4 | bash tests/test_new.sh
 full | par | 300 | 18 | bash tests/test_adopt.sh
 full | par | 480 | 80 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh
-full | par | 300 | 20 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh
+full | par | 300 | 40 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh
 fast | par | 300 | 3 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 7 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 3 | bash tests/test_verify_env.sh

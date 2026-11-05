@@ -10,6 +10,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
   false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
   develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
+- `qargi feature verify` and `qargi release verify` warn on standard error, and go on, when another suite may be running: a
+  whole-suite run of the project in progress, a local run of the repository with a file changed in the last 10 minutes
+  (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
+- The advisor sign-off in the `qargi-flow` skill tells the lead to put "do not run the test suite while a feature verify is
+  running" in the brief it writes for the advisor.
 
 ### Changed
 - `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task

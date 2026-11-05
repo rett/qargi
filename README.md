@@ -184,7 +184,8 @@ refusal changes nothing.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
-   current.
+   current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
+   failed one ends with the failing tests and the path of the log.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`

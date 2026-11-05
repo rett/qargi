@@ -108,5 +108,53 @@ feat pd3 e3
 out=$($F finish pd3 2>&1)
 [ "$(head -n 1 <<<"$out")" = "local only, will not push (the repository has no origin)" ] && ok "a repository with no origin: local only, whatever the answer" || no "no origin plan: $out"
 
+# --- 4. verify warns, and goes on, when another suite may be running
+$F start wn >/dev/null 2>&1; task g1; $F merge wn agent/g1 >/dev/null 2>&1
+warns() { grep -c '^qargi: warning: \(another whole-suite run\|the local run\|tests/run.sh is running\)' <<<"$1" || true; }
+out=$($F verify wn 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(warns "$out")" = 0 ] && ok "nothing else running: no warning" || no "quiet verify rc=$rc: $out"
+# a whole-suite run of the project in progress (a live pid in the busy directory)
+sleep 60 & spid=$!
+mkdir -p "$T/s/busy"; echo "$spid" > "$T/s/busy/app.verify.other.pid"
+out=$($F verify wn 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "^qargi: warning: another whole-suite run of app is in progress (verify.other, pid $spid)" <<<"$out" && grep -q '^full suite: pass' <<<"$out" && ok "a live whole-suite run of the project: a warning, and the verify goes on" || no "busy warning rc=$rc: $out"
+kill "$spid" 2>/dev/null; wait "$spid" 2>/dev/null
+out=$($F verify wn 2>&1)
+[ "$(warns "$out")" = 0 ] && ok "a pid file whose process is gone is ignored" || no "dead pid: $out"
+rm -f "$T/s/busy/app.verify.other.pid"
+# a local run of this repository with recent activity
+RUN=$T/run1; mkdir -p "$RUN/clone/.git" "$RUN/out"; echo x > "$RUN/started"; echo y > "$RUN/clone/.git/index"
+jq -nc --arg r "$RUN" --arg p "$R" '{run:$r, slug:"x", repo:$p}' > "$T/s/local-runs.jsonl"
+out=$($F verify wn 2>&1)
+grep -q "^qargi: warning: the local run $RUN of app had activity in the last 10 minutes" <<<"$out" && ok "a local run of the repository with a recent file: a warning" || no "recent run: $out"
+find "$RUN" -exec touch -d '3 hours ago' {} +
+out=$($F verify wn 2>&1)
+[ "$(warns "$out")" = 0 ] && ok "the same run, quiet for hours: no warning" || no "old run: $out"
+touch "$RUN/clone/.git/index"; out=$(QARGI_ACTIVE_MINUTES=0 $F verify wn 2>&1)
+[ "$(warns "$out")" = 0 ] && ok "QARGI_ACTIVE_MINUTES sets how recent counts" || no "minutes: $out"
+jq -nc --arg r "$RUN" --arg p "$R" --arg c "2026-01-01T00:00:00Z" '{run:$r, slug:"x", repo:$p, cleaned:$c}' > "$T/s/local-runs.jsonl"
+out=$($F verify wn 2>&1)
+[ "$(warns "$out")" = 0 ] && ok "a cleaned run is not counted" || no "cleaned run: $out"
+jq -nc --arg r "$RUN" --arg p "$T/elsewhere" '{run:$r, slug:"x", repo:$p}' > "$T/s/local-runs.jsonl"
+out=$($F verify wn 2>&1)
+[ "$(warns "$out")" = 0 ] && ok "nor is a run of another repository" || no "other repo run: $out"
+# a tests/run.sh process whose directory belongs to this repository (Linux: /proc)
+if [ -d /proc/$$ ]; then
+  mkdir -p "$R/sleeper/tests" "$T/other/tests"; git init -q "$T/other"
+  printf '#!/bin/sh\nwhile :; do sleep 1; done\n' | tee "$R/sleeper/tests/run.sh" > "$T/other/tests/run.sh"
+  (cd "$T/other" && exec bash tests/run.sh) & opid=$!
+  out=$($F verify wn 2>&1)
+  [ "$(warns "$out")" = 0 ] && ok "a tests/run.sh of another repository is not counted" || no "other repo process: $out"
+  (cd "$R/sleeper" && exec bash tests/run.sh) & rpid=$!
+  sleep 1
+  out=$($F verify wn 2>&1); rc=$?
+  [ $rc = 0 ] && grep -q "^qargi: warning: tests/run.sh is running in this repository (pid $rpid, in $R/sleeper)" <<<"$out" && ok "a tests/run.sh running in the repository: a warning" || no "process warning rc=$rc: $out"
+  out=$($REL verify 0.9.1 2>&1); rc=$?
+  [ $rc = 0 ] && grep -q "^qargi: warning: tests/run.sh is running in this repository (pid $rpid" <<<"$out" && grep -q '^full suite: pass' <<<"$out" && ok "release verify warns the same way and goes on" || no "release warning rc=$rc: $out"
+  kill "$opid" "$rpid" 2>/dev/null; wait "$opid" "$rpid" 2>/dev/null
+  out=$($F verify wn 2>&1)
+  [ "$(warns "$out")" = 0 ] && ok "and nothing once it has ended" || no "after: $out"
+fi
+
 [ "$fail" = 0 ] && echo "all fverify tests passed"
 exit "$fail"
