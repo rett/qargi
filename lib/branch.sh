@@ -18,12 +18,12 @@ while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
     --remote) REMOTE=1; shift;;
-    -*) die "unknown option $1";;
-    *) die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]";;
+    -*) usage_die "unknown option $1";;
+    *) usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]";;
   esac
 done
 export PLAN_ARG   # need_plan reads it
-[ "$verb" = prune ] || die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]"
+[ "$verb" = prune ] || usage_die "usage: qargi branch prune [--project P] [--remote] [--plan T --approved WORDS]"
 . "$(dirname "$0")/gitflow.sh"
 project_load
 branch_exists develop || die "no develop branch"
