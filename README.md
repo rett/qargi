@@ -382,7 +382,11 @@ All three, and the checks that keep them true, come from one description of the 
 
 qargi ships one neutral member definition (`agents/member.json` and its prompt
 `agents/member.body.md`) and installs none: you create the members with `qargi agent add`, which
-renders it through the project's local runtime. The runtime's definition says how (`renderers.agent`)
+renders it through the project's local runtime. The render is kept in the configuration directory
+(`~/.qargi/config/agents/PROJECT/NAME.EXT`, beside `agents.json` and outside every repository) and
+written from there to the runtime's agents location, so a checkout that is cleaned or cloned afresh
+gets its members back with `qargi agent refresh NAME --project P`; `agent list` names that command
+beside a member that is `MISSING`, `STALE` or `DRIFT`. The runtime's definition says how (`renderers.agent`)
 and which of its own tools the neutral names (shell, read, edit, write, search, monitor, skill, ...)
 become. For Claude Code a member may call `Bash`, `Read`, `Edit`, `Write`,
 `Grep`, `Glob`, `Monitor`, `TaskStop`, `ToolSearch` and `Skill`, and every Bash, Edit,
