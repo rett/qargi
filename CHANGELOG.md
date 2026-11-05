@@ -545,8 +545,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The member guard refuses `git config` that writes a key which makes git run a program, read another configuration file or give a command or a remote
   another name, as it refused the one-shot `git -c` form: `git config core.fsmonitor ...`, `git config alias.x '!...'`, `git config include.path ...`,
   `git config core.hooksPath ...` and `git config alias.p push` (then `git p` pushed) were allowed since 0.2.0. Both forms share one list (core.fsmonitor, hooksPath,
-  sshCommand, editor, pager, askPass, gitProxy, include.path, includeIf.*.path, alias.*, filter, diff, merge and tool drivers, credential, sequence.editor, gpg,
-  uploadpack, receivepack, remote.*.url|pushurl|uploadpack|receivepack, url.*.insteadOf, submodule.*.update, protocol.ext.allow), read in any case, in every scope
+  sshCommand, editor, pager, askPass, gitProxy, include.path, `includeIf.*.path`, `alias.*`, filter, diff, merge and tool drivers, credential, sequence.editor, gpg,
+  uploadpack, receivepack, `remote.*.url|pushurl|uploadpack|receivepack`, `url.*.insteadOf`, `submodule.*.update`, protocol.ext.allow), read in any case, in every scope
   and file, after `-C`, in the `git config set` syntax; `--edit`, a renamed section and a key that a variable or xargs brings are refused too. `user.name`,
   `user.email` and the other plain settings stay allowed, and `GIT_CONFIG=FILE` in front of `git config` names the file it writes, so a protected one is refused.
 - On a line that also runs git, the member guard also refuses a write under `.git/modules/`, `.git/worktrees/` or to a `config.worktree` (the configuration and
