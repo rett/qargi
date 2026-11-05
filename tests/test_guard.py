@@ -145,7 +145,7 @@ class Review(unittest.TestCase):
         """`local clean` removes the directory tmpdir names and asks the repository repo.path names whether the applied tip is merged; `local list`, verify and
         review apply read the others. A member must not be able to write any of them (a link, a rewritten path, a forged tip)."""
         self.ability("review")
-        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "git", "class", "ability", "profile", "refs.before")
+        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "refs.accepted", "git", "class", "ability", "profile", "refs.before")
         wrong = []
         for name in names:
             p = os.path.join(self.run, name)

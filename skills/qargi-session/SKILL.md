@@ -17,6 +17,7 @@ Run `qargi lead compact-check --advise`: exit 0 means a compact is safe now, 1 l
 re-read afterwards. The stage lines of `feature finish`, the last `feature merge`, `release finish` and `marshal handoff` say the same
 from 40%. `/compact` and a restart are the owner's commands: ask, never run them. Hand off to a fresh session after a skill, agent or
 settings change a running session cannot reload, or when the owner asks.
+Open runs need no clean before the next `qargi feature finish`: verify and clean accept qargi's own moves.
 
 ## The procedure
 

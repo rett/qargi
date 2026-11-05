@@ -62,77 +62,142 @@ merged_tip() {
   [ -n "$(git -C "$1" for-each-ref --contains="$2" --format='%(refname)' -- refs/heads 2>/dev/null | grep -v '^refs/heads/agent/' | head -1)" ]
 }
 
-# journaled REPO NAME OLD NEW -> 0 when the lead's ref journal ($DA_STATE/ref-journal.jsonl) explains the change of the local branch
-# NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch): NEW is reachable from OLD by
-# following entries of this repository and ref with epoch >= JSTART, each from its old value to its new one. Entries that start
-# elsewhere (an earlier creation made in the same second as the run) are not on the path, and an unjournaled hand anywhere
-# breaks it, because no entry starts where the hand left the ref. Trusted only as far as the state directory is (the guard keeps
-# an agent from writing it; same-user code could).
-journaled() {
-  local f=$DA_STATE/ref-journal.jsonl rp
-  [ -n "$1" ] && [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
-  rp=$(readlink -f "$1" 2>/dev/null) || rp=$1
-  jq -sre --arg r "$rp" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
-    [ .[] | select(type == "object" and .repo == $r and .ref == $n and ((.epoch // 0) >= $s)) ] as $e
-    | reduce range(0; ($e | length) + 1) as $i ([$o]; . as $seen | . + [ $e[] | select(.old as $x | $seen | index($x)) | .new ] | unique)
-    | ($w != $o) and (index($w) != null)' "$f" >/dev/null 2>&1
+# journal_steps SIDE NAME OLD NEW -> 0 and the verbs, in order, of the lead's ref journal ($DA_STATE/ref-journal.jsonl) that explain the change
+# of the ref NAME from OLD to NEW (a sha, or 40 zeros for absent) since the run began (JSTART, an epoch); SIDE is local (a branch or tag of
+# the repository CREPO) or remote (a ref of its origin; for the run of a repository URL, the lines of that URL, CURLK). NEW must be reachable
+# from OLD by following lines of this repository, side and ref with epoch >= JSTART, each from its old value to its new one. Lines that
+# start elsewhere (an earlier creation made in the same second as the run) are not on the path, and an unjournaled hand anywhere breaks it,
+# because no line starts where the hand left the ref. A rewrite (qargi ref record --rewrite) is named with the reason the lead gave.
+# Trusted only as far as the state directory is (the guard keeps an agent from writing it; same-user code could).
+journal_steps() {
+  local f=$DA_STATE/ref-journal.jsonl rp='' out
+  [ -f "$f" ] && [ -n "${JSTART:-}" ] || return 1
+  [ -z "${CREPO:-}" ] || { rp=$(readlink -f "$CREPO" 2>/dev/null) || rp=$CREPO; }
+  [ -n "$rp" ] || [ -n "${CURLK:-}" ] || return 1
+  out=$(jq -sre --arg r "$rp" --arg u "${CURLK:-}" --arg side "$1" --arg n "$2" --arg o "$3" --arg w "$4" --argjson s "$JSTART" '
+    def mine: if $side == "remote" then .remote == "origin" and (($r != "" and .repo == $r) or ($u != "" and .url == $u))
+              else (has("remote") | not) and $r != "" and .repo == $r end;
+    [ .[] | select(type == "object" and .ref == $n and ((.epoch // 0) >= $s) and mine) ] as $e
+    | reduce range(0; ($e | length) + 1) as $i ({seen: [$o], used: []};
+        .seen as $seen | [ $e[] | select(.old as $x | $seen | index($x)) ] as $u | {seen: ($seen + ($u | map(.new)) | unique), used: $u})
+    | select($w != $o and (.seen | index($w)) != null)
+    | .used | sort_by(.epoch // 0)
+    | map(if .verb == "ref:rewrite" then "a rewrite (qargi ref record --rewrite: " + ((.why // "") | tostring) + ")" else "qargi " + ((.verb // "?") | tostring | sub(":"; " ")) end)
+    | reduce .[] as $v ([]; if index([$v]) then . else . + [$v] end) | join(", ")' "$f" 2>/dev/null) && [ -n "$out" ] || return 1
+  printf '%s\n' "$out" | LC_ALL=C tr -d '\000-\011\013-\037\177'   # the reason is the lead's text: no control or escape byte reaches the terminal
 }
 
-# compare REPO REF AFTER [strict] -> prints each offending change, returns 1 if there is one. Everything but a local branch
-# (remote refs, refs/remotes, tags, stash, ...) must be identical (except refs/qargi/, see drop_qargi_refs). A local branch may only move
-# forward (old tip is an ancestor of the new one) or be created, and only develop/master and agent|feature|release|hotfix/*: that is what the
-# lead's own merges do; any other branch (a detached long-lived one) may move only as far as the lead's ref journal explains.
-# Used with refs.before while the run has no passing verify, with RUN/verified after one.
+# parking_of REPO -> the parking branch of the stored project of REPO (answers repo.parking_branch), else scratch
+parking_of() {
+  local pj p=''
+  pj=$(project_of "$1" '')
+  [ -z "$pj" ] || p=$(jq -r '.repo.parking_branch // ""' "$DA_CONF/projects/$pj.json" 2>/dev/null) || p=''
+  echo "${p:-scratch}"
+}
+
+# compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
+# the file ACCEPTED, one line each. Refs under refs/qargi/ are not compared (see drop_qargi_refs). A change is accepted, in either phase, when
+#   - the lead's ref journal explains it (journal_steps): a branch or a tag of the repository, or a branch or tag of its origin, moved,
+#     created or deleted by qargi's own verbs (feature finish and park, release and hotfix finish, branch prune, review apply, the
+#     parking branch following develop, a rewrite the lead recorded ...); a peeled tag line of origin (TAG^{}) goes with its tag;
+#   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
+#     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
+#   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi.
+# Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
+# agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
+# or a deletion nobody journaled, a tag or a push made by hand, any other ref, is offending.
 compare() {
-  local repo=$1 ref=$2 aft=$3 strict=${4:-} bad=0 name old new
-  local hd='^local refs/heads/' zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
-  # refs/qargi/ is dropped on both sides
-  if ! diff -u <(grep -v "$hd" "$ref" | drop_qargi_refs) <(grep -v "$hd" "$aft" | drop_qargi_refs); then bad=1; fi
-  if [ -n "$strict" ]; then
-    # strict: a local branch may differ only as far as the lead's ref journal explains it; nothing else (no fast-forward rule)
-    while read -r name; do
-      old=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$ref"); new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
-      [ "$old" != "$new" ] || continue
-      if journaled "$repo" "$name" "${old:-$zero}" "${new:-$zero}"; then continue; fi
-      if [ -z "$new" ]; then echo "branch deleted: $name (was $old)$why"
-      elif [ -z "$old" ]; then echo "branch created: $name $new$why"
-      else echo "branch moved: $name $old -> $new$why"; fi
-      bad=1
-    done < <({ grep "$hd" "$ref"; grep "$hd" "$aft"; } | awk '{print $2}' | sort -u)
-    return $bad
+  local repo=$1 ref=$2 aft=$3 strict=${4:-} acc=${5:-/dev/null} bad=0 k kind name old new steps park='' dev tgt short a b c uo='' un='' hasr=''
+  local zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
+  local -A O=() N=() ACC=()
+  while read -r a b c; do case $a in local) O["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then uo=1; else O["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$ref")
+  while read -r a b c; do case $a in local) N["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then un=1; else N["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$aft")
+  if [ "$uo" != "$un" ]; then
+    echo "origin could not be asked $([ -n "$un" ] && echo "now" || echo "when the snapshot was taken"): its refs cannot be compared"; bad=1
   fi
+  [ -z "$repo" ] || ! git -C "$repo" remote get-url origin >/dev/null 2>&1 || [ -n "$un" ] || hasr=1
+  dev=${N["local refs/heads/develop"]:-}
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
-  while read -r _ name old; do
-    new=$(awk -v n="$name" '$1=="local" && $2==n {print $3}' "$aft")
-    if [ -z "$new" ]; then echo "branch deleted: $name (was $old)"; bad=1
-    elif [ "$new" != "$old" ]; then
-      if ! allowed "$name" && ! journaled "$repo" "$name" "$old" "$new"; then echo "branch moved, not an allowed branch: $name $old -> $new"; bad=1
-      elif ! git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then echo "branch rewritten (not a fast-forward): $name $old -> $new"; bad=1; fi
+  shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
+  while read -r k; do
+    [ -n "$k" ] || continue
+    kind=${k%% *}; name=${k#* }; old=${O[$k]:-}; new=${N[$k]:-}
+    [ "$old" != "$new" ] || continue
+    short=$(shortref "$name"); [ "$kind" = local ] || short="$short on origin"
+    if [ -z "$old" ]; then a=created; elif [ -z "$new" ]; then a=deleted; else a=moved; fi
+    # the lead's ref journal: qargi's own verbs
+    case $name in
+      *'^{}') if [ "$kind" = remote ] && [ -n "${ACC["remote ${name%'^{}'}"]:-}" ]; then ACC[$k]=1; continue; fi;;
+      refs/heads/?*|refs/tags/?*)
+        if steps=$(journal_steps "$kind" "$name" "${old:-$zero}" "${new:-$zero}"); then ACC[$k]=1; echo "$short $a by $steps" >> "$acc"; continue; fi;;
+    esac
+    if [ "$kind" = local ]; then
+      # a remote-tracking ref of origin that says what origin has now, and a tag fetched from origin
+      case $name in
+        refs/remotes/origin/HEAD)
+          tgt=$(git -C "$repo" symbolic-ref -q refs/remotes/origin/HEAD 2>/dev/null) || tgt=''
+          if [ -n "$hasr" ] && [ -n "$tgt" ] && [ "$new" = "${N["local $tgt"]:-}" ]; then ACC[$k]=1; continue; fi;;
+        refs/remotes/origin/?*)
+          if [ -n "$hasr" ] && [ "$new" = "${N["remote refs/heads/${name#refs/remotes/origin/}"]:-}" ]; then ACC[$k]=1; echo "origin/${name#refs/remotes/origin/} $a to what origin has (a fetch or a push)" >> "$acc"; continue; fi;;
+        refs/tags/?*)
+          if [ -n "$hasr" ] && [ -n "$new" ] && [ "$new" = "${N["remote $name"]:-}" ]; then ACC[$k]=1; echo "$short $a as origin has it (fetched)" >> "$acc"; continue; fi;;
+      esac
+      # the parking branch fast-forwarded to develop's tip
+      if [ -n "$old" ] && [ -n "$new" ] && [ "$new" = "$dev" ] && [[ $name == refs/heads/?* ]]; then
+        [ -n "$park" ] || park=$(parking_of "$repo")
+        if [ "$name" = "refs/heads/$park" ] && git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
+          ACC[$k]=1; echo "$short (the parking branch) fast-forwarded to develop" >> "$acc"; continue
+        fi
+      fi
+      # after a passing verify: the lead's fast-forwards and new branches
+      if [ -z "$strict" ] && [[ $name == refs/heads/?* ]]; then
+        if [ -n "$old" ] && [ -n "$new" ] && allowed "$name"; then
+          if git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then ACC[$k]=1; echo "$short fast-forwarded (a lead-side move after the run's passing verify)" >> "$acc"; continue; fi
+          echo "branch rewritten (not a fast-forward): $name $old -> $new$why"; bad=1; continue
+        fi
+        if [ -z "$old" ] && allowed "$name"; then
+          case $name in refs/heads/develop|refs/heads/master) ;; *) ACC[$k]=1; echo "$short created (a lead-side branch after the run's passing verify)" >> "$acc"; continue;; esac
+        fi
+        if [ -z "$new" ]; then echo "branch deleted: $name (was $old)$why"
+        elif [ -z "$old" ]; then echo "branch created, not an allowed branch: $name $new$why"
+        else echo "branch moved, not an allowed branch: $name $old -> $new$why"; fi
+        bad=1; continue
+      fi
     fi
-  done < <(grep "$hd" "$ref")
-  while read -r _ name new; do
-    grep -q "^local $name " "$ref" && continue
-    case $name in refs/heads/develop|refs/heads/master) ;; *) allowed "$name" && continue;; esac
-    echo "branch created, not an allowed branch: $name $new"; bad=1
-  done < <(grep "$hd" "$aft")
+    case $kind:$name in
+      local:refs/heads/*)
+        if [ -z "$new" ]; then echo "branch deleted: $name (was $old)$why"
+        elif [ -z "$old" ]; then echo "branch created: $name $new$why"
+        else echo "branch moved: $name $old -> $new$why"; fi;;
+      local:refs/tags/*) echo "tag $a: $name ${old:-(none)} -> ${new:-(none)}$why";;
+      local:refs/remotes/*) echo "remote-tracking ref $a: $name ${old:-(none)} -> ${new:-(none)} (it does not say what origin has)";;
+      local:*) echo "ref $a: $name ${old:-(none)} -> ${new:-(none)}";;
+      remote:*) echo "ref of origin $a: $name ${old:-(none)} -> ${new:-(none)}$why";;
+    esac
+    bad=1
+  done < <({ printf '%s\n' "${!O[@]}"; printf '%s\n' "${!N[@]}"; } | LC_ALL=C sort -u)
   return $bad
 }
 
-# check RUN -> 0 and records RUN/verified when the refs are as the rule allows; 2 otherwise
+# check RUN -> 0 and records RUN/verified when the refs are as the rule allows (RUN/refs.accepted names the changes it accepted); 2 otherwise;
+# 3 when the registry does not vouch for RUN
 check_run() {
-  local run=$1 repo='' ref strict=1
+  local run=$1 dir=$1 ref strict=1
   run_record "$run" || return 3   # the repository and the credential come from the lead's registry, never from the run directory
-  ref=$run/refs.before
+  ref=$dir/refs.before
   # the run's start (an epoch) bounds the lead's ref journal: prepare records it in RUN/started; with none, no change is journaled
-  JSTART=$(cat "$run/started" 2>/dev/null || true); [[ $JSTART =~ ^[0-9]{1,12}$ ]] || JSTART=''
-  [ ! -f "$run/verified" ] || { ref=$run/verified; strict=''; }
+  JSTART=$(cat "$dir/started" 2>/dev/null || true); [[ $JSTART =~ ^[0-9]{1,12}$ ]] || JSTART=''
+  [ ! -f "$dir/verified" ] || { ref=$dir/verified; strict=''; }
+  CREPO=$RUN_REPO CURLK=''
   if [ -n "$RUN_URL" ]; then
-    snapshot_url "$RUN_URL" "$RUN_CRED" > "$run/refs.after"
+    CURLK=$(url_key "$RUN_URL")
+    snapshot_url "$RUN_URL" "$RUN_CRED" > "$dir/refs.after"
   else
-    repo=$RUN_REPO; snapshot "$repo" > "$run/refs.after"
+    snapshot "$RUN_REPO" > "$dir/refs.after"
   fi
-  if compare "$repo" "$ref" "$run/refs.after" "$strict" > "$run/refs.diff"; then
-    cp "$run/refs.after" "$run/verified"
+  : > "$dir/refs.accepted"
+  if compare "$RUN_REPO" "$ref" "$dir/refs.after" "$strict" "$dir/refs.accepted" > "$dir/refs.diff"; then
+    cp "$dir/refs.after" "$dir/verified"
     return 0
   fi
   return 2
@@ -347,13 +412,16 @@ WRAP
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
     elif [ "$crc" = 0 ]; then
-      if cmp -s "$RUN/refs.before" "$RUN/refs.after"; then echo "refs unchanged: nothing was pushed to the repository or its remote"
-      else echo "refs differ from the snapshot only by lead-side fast-forwards and new branches; nothing was pushed"; fi
+      if [ -s "$RUN/refs.accepted" ]; then
+        echo "refs differ from the snapshot only by the lead's own moves; nothing was pushed by the run:"
+        sed 's/^/  /' "$RUN/refs.accepted"
+      else echo "refs unchanged: nothing was pushed to the repository or its remote"; fi
     else
       echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
       cat "$RUN/refs.diff" >&2
-      [ ! -f "$RUN/verified" ] && echo "(before the run's first passing verify a local branch may differ only as far as the lead's ref journal names it; every other ref must be identical)" >&2 \
-        || echo "(a ref outside the allowed lead-side branch moves changed; the lead's ref journal does not apply after a passing verify)" >&2
+      if [ -s "$RUN/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$RUN/refs.accepted" >&2; fi
+      [ ! -f "$RUN/verified" ] && echo "(before the run's first passing verify a ref may differ only as far as the lead's ref journal names it, a remote-tracking ref follows origin, or the parking branch is fast-forwarded to develop)" >&2 \
+        || echo "(after a passing verify the lead's fast-forwards and new branches are accepted too; nothing else that the lead's ref journal does not name)" >&2
       exit 2
     fi;;
   clean)
@@ -431,6 +499,7 @@ WRAP
       echo "qargi: warning: the refs of the repository changed during this run; dropped on purpose:" >&2
       sed 's/^/  /' <<<"$vout" >&2
     fi
+    acc=''; [ "$vrc" != 0 ] || acc=$(sed -n 's/^  /accepted, the lead'"'"'s own move: /p' <<<"$vout")   # what verify accepted, named again when the run is cleaned
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
     nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
@@ -473,6 +542,7 @@ WRAP
     if [ -z "$rt" ] && [ -n "$t" ]; then echo "qargi: note: left $t alone: it is not a directory prepare makes under /dev/shm, QARGI_RUN_TMP or the run" >&2; fi
     [ -z "$rt" ] || rm -rf --one-file-system -- "$rt"
     rm -rf --one-file-system -- "$RUN"
+    [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist
