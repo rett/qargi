@@ -497,7 +497,8 @@ class Skills(unittest.TestCase):
 
     def test_refuses_setting_the_nested_marker(self):
         for c in ("QARGI_NESTED=1 qargi memory split a b", "env QARGI_NESTED=1 qargi skill list", "export QARGI_NESTED=1", "bash -c 'QARGI_NESTED=1 qargi x'",
-                  "declare -x QARGI_NESTED=1"):
+                  "declare -x QARGI_NESTED=1", "printf -v QARGI_NESTED %s 1", "printf -vQARGI_NESTED %s 1", "printf -v 'QARGI_NESTED' %s 1",
+                  "echo x; printf -v QARGI_NESTED '%s' 'a; b'"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("QARGI_NESTED", r.stderr)
@@ -2173,9 +2174,9 @@ class InPlaceScripts(unittest.TestCase):
 
 class TextIsData(unittest.TestCase):
     """Text inside a quoted argument or a heredoc body that mentions a verb is data when every command of the line only prints, writes or searches (echo,
-    printf, cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
-    text keeps the plain split: another program in the line, a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, an
-    assignment, a group, a keyword. Push, gh and ssh in text are refused as before."""
+    cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
+    text keeps the plain split: another program in the line (printf too: -v assigns a variable), a comment, a backslash, a substitution, $'..', ${..}, a
+    quote or heredoc never closed, an assignment, a group, a keyword. Push, gh and ssh in text are refused as before."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
     maxDiff = None
 
@@ -2245,6 +2246,9 @@ class TextIsData(unittest.TestCase):
         "alias z='x; qargi upgrade'\nz",
         "f() { echo 'x; qargi upgrade'; }; f",
         "for i in 1; do echo 'x; qargi upgrade'; done",
+        "cat <<#E\nqargi upgrade\n#E",
+        "cat << #E\nqargi upgrade\n#E",
+        "cat > n.txt <<#E 'a;b'\nqargi upgrade\n#E",
     )
 
     def verdicts(self, cmds):
@@ -2259,6 +2263,35 @@ class TextIsData(unittest.TestCase):
     def test_text_in_a_line_that_could_run_it_is_read_by_the_plain_split(self):
         wrong = [c for c, r in self.verdicts(self.STILL) if r.returncode != 2]
         self.assertEqual(wrong, [], "allowed, but the text could be run")
+
+    def test_printf_is_no_inert_command_since_its_v_assigns_a_variable(self):
+        """printf -v NAME assigns: an array subscript in NAME is an arithmetic expression that runs a substitution, and a PATH it sets makes a later cat or git
+        run a file the line wrote. A line with printf in it is read by the plain split."""
+        for c in ("printf -v x 'b[%s(true; qargi upgrade)]' $ ; printf -v 'a[x]' %s 1",
+                  "printf -v x 'b[%s(true; qargi upgrade)]' $\nprintf -v 'a[x]' %s 1",
+                  "tee cat > /dev/null <<'E'\n#!/bin/sh\nqargi upgrade\nE\nprintf -v PATH %s .:$PATH\ncat 'a; b'",
+                  "printf -v PATH %s .:$PATH\ngit commit -m 'x; qargi upgrade'",
+                  "printf 'x; qargi upgrade'", "printf -vPATH %s . ; echo 'x; qargi packs seed'"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
+
+    def test_a_quoted_file_name_is_no_data(self):
+        """A quoted string that a redirection or tee names is a file, not text: the mask leaves it to the plain split, and a name that holds a separator
+        and resolves into a protected location is refused as a path (a link `s;` in the clone to a skills directory)."""
+        os.symlink(self.lskill, os.path.join(self.clone, "s;"))
+        for c in ('echo x >"s;/x/SKILL.md"', 'echo x &>"s;/x/SKILL.md"', 'echo x &>>"s;/x/SKILL.md"', 'echo x>"s;/x/SKILL.md"', 'echo x > "s;/x/SKILL.md"',
+                  'echo x {fd}>"s;/x/SKILL.md"', 'echo x 2>> \'s;/x/SKILL.md\'', 'echo x | tee "s;/x/SKILL.md"', "echo x | tee -a 's;/x/SKILL.md'",
+                  "tee 's;/x/SKILL.md' <<'E'\nbody\nE", "cat <<'E' > 's;/x/SKILL.md'\nbody\nE", 'echo x > s\\;/x/SKILL.md', "echo x > 's;'/x/SKILL.md"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 2, c)
+            self.assertIn("a protected location", r.stderr, c)
+        for c in ("echo 'a;b' > out.txt", "echo x | tee 'a;b.txt'", "git commit -m 'x; y'", "echo x > 's;b.txt'"):
+            self.assertEqual(self.bash(c).returncode, 0, c)
+        sys.path.insert(0, LIBDIR)
+        import guard as G
+        for c in ('echo x >"a;b"', 'echo x &>"a;b"', 'echo x &>>"a;b"', 'echo x>"a;b"', 'echo x {fd}>"a;b"', 'echo x &> "a;b"', 'echo x >| "a;b"',
+                  'echo x | tee "a;b"', "tee -a 'a;b' <<'E'\nbody\nE"):
+            self.assertEqual(G.mask_data(c), c, c)
+        self.assertEqual(G.mask_data('echo "a;b" 2>&1 "c;d" > f'), 'echo "a b" 2>&1 "c d" > f')
 
     def test_a_real_verb_next_to_data_is_refused_and_so_is_a_real_write(self):
         for c in ("echo 'a; b'; qargi upgrade", "git commit -m 'a; b' && qargi packs seed", "echo 'a; b' | qargi upgrade", "cat <<'E'\nbody\nE\nqargi upgrade",
@@ -2276,7 +2309,8 @@ class TextIsData(unittest.TestCase):
         for name, c in (("many strings", "".join("echo 'a;b;c'\n" for _ in range(8000))), ("one big string", "echo '" + "a;b " * 60000 + "'"),
                         ("many heredocs", "".join("cat <<'E%d'\nqargi upgrade\nE%d\n" % (i, i) for i in range(3000))),
                         ("a big heredoc", "cat <<'E'\n" + "qargi upgrade\n" * 15000 + "E"), ("many quotes", "echo " + "'a;b' " * 30000),
-                        ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000)):
+                        ("many heredoc starts", "cat " + "<<E " * 20000 + "\nE\n"), ("unclosed quotes", "echo " + "'a;b' \"c;d\" 'e" * 20000),
+                        ("one long word", "echo " + "a';'" * 50000 + "; qargi upgrade")):
             t0 = time.perf_counter()
             r = self.bash(c)
             took = time.perf_counter() - t0
