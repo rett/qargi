@@ -506,7 +506,7 @@ COMMANDS = {
                                "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
                                "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
                                "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
-                         examples=["qargi release site 0.2.1", "qargi release site 0.2.1 --plan TOKEN --approved \"yes, commit the site\""]),
+                         examples=["qargi release site 0.2.2", "qargi release site 0.2.2 --plan TOKEN --approved \"yes, commit the site\""]),
         },
     },
     "env": {
