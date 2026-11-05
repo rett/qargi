@@ -37,7 +37,7 @@ skills/qargi-providers/definition.md 631
 skills/qargi-providers/verify.md 494
 skills/qargi-provision/SKILL.md 396
 skills/qargi-session/SKILL.md 889
-skills/qargi-task/SKILL.md 834
+skills/qargi-task/SKILL.md 832
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 197
 skills/qargi-team/SKILL.md 894

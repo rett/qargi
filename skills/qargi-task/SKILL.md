@@ -39,7 +39,7 @@ SHA, SCOPE (hard limit, optional), OUT (a cloud run's: cloud.md), CLONE, TMP and
 
 ## Profiles
 
-A profile holds a repository's gates, rules and coordinator review steps, in `~/.qargi/config/profiles/<name>.md` (`<name>` is the repository directory's name), never in the project. No command reads it: read the file and inline its text as PROFILE. `--profile` on `send` and `local prepare` is the role's model profile, not this file. No profile is fine; nothing qargi related is added to a project's committed files.
+A profile holds a repository's gates, rules and coordinator review steps, in `~/.qargi/config/profiles/<name>.md` (`<name>` is the repository directory's name), never in the project. Inline its text as PROFILE (`qargi project profile check` lints it). `--profile` on `send` and `local prepare` is the role's model profile, not this file. No profile is fine; nothing qargi related is added to a project's committed files.
 
 ## Local flow
 
