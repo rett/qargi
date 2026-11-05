@@ -2967,6 +2967,14 @@ class Segments(unittest.TestCase):
         why = self.J.judge("git status; " * 25000)
         self.assertIn("cannot be checked", why or "")
 
+    @property
+    def tree(self):
+        """A small tree of the test's own, so that the cost of a glob in every word does not depend on how many directories the machine has."""
+        root = os.path.join(self.tmp, "globtree")
+        for a in range(4):
+            os.makedirs(os.path.join(root, "a%d" % a, "b"), exist_ok=True)
+        return root
+
     def test_hostile_commands_are_judged_in_seconds(self):
         """The hook has 20 seconds and a hook that times out does not block: a command of the size the guard accepts costs a verdict, never a timeout. The
         time budget (BUDGET) refuses what takes longer; this is the whole of judge(). The budget here is READINGS of the clock (budget), which counts the
@@ -2983,7 +2991,7 @@ class Segments(unittest.TestCase):
                   "200 KB of words": "echo " + "word " * 40000,
                   "many redirections": "echo " + "> /tmp/f%d " * 100 % tuple(range(100)),
                   "wide glob": "cat /*/*/*/*/*/*",
-                  "a glob in every word": "cat " + "/*/*/x%d " * 2000 % tuple(range(2000))}
+                  "a glob in every word": "cat " + (self.tree + "/*/*/x%d ") * 2000 % tuple(range(2000))}
         with self.J.budget(READINGS):
             verdicts = dict(zip(shapes, in_parallel(self.J.judge, shapes.values())))
         for name, why in verdicts.items():
