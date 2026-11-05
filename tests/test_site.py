@@ -671,6 +671,76 @@ class Build(unittest.TestCase):
             spit(cfgp, json.dumps(data))
             self.assertEqual(build(os.path.join(t, "o2"), os.path.join(t, "f", "pages"))[0], 2, bad)
 
+    def built_with(self, **fields):
+        """Build the fixture with these fields added to its site.json; returns (rc, out dir, output)."""
+        t = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t, True)
+        shutil.copytree(FIX, os.path.join(t, "f"))
+        cfgp = os.path.join(t, "f", "site.json")
+        data = json.loads(slurp(cfgp))
+        data.update(fields)
+        spit(cfgp, json.dumps(data))
+        o = os.path.join(t, "o")
+        rc, out, err = build(o, os.path.join(t, "f", "pages"))
+        return rc, o, out + err
+
+    PAGES_WITH_FOOTER = ("index.html", "first-project/index.html", "reference/set-up/index.html", "releases/index.html", "404.html")
+
+    def test_copyright_unset_leaves_the_pages_as_they_were(self):
+        for rel in self.PAGES_WITH_FOOTER:
+            self.assertNotIn("copyright", self.page(rel).lower(), rel)
+        rc, o, msg = self.built_with(copyright="(c) 2026 Example Author. MIT licensed.")
+        self.assertEqual(rc, 0, msg)
+        for rel in self.PAGES_WITH_FOOTER:
+            with_it = slurp(os.path.join(o, rel))
+            stripped = re.sub(r'<p class="copyright">.*?</p>\n', "", with_it)
+            self.assertNotEqual(stripped, with_it, rel)
+            self.assertEqual(stripped, self.page(rel), rel)       # nothing else on the page changes
+
+    def test_a_copyright_is_shown_escaped_in_every_footer_including_the_404_page(self):
+        rc, o, msg = self.built_with(copyright='(c) 2026 Example & Co "Author". MIT licensed.')
+        self.assertEqual(rc, 0, msg)
+        want = '<p class="copyright">(c) 2026 Example &amp; Co &quot;Author&quot;. MIT licensed.</p>'
+        for rel in self.PAGES_WITH_FOOTER:
+            page = slurp(os.path.join(o, rel))
+            self.assertIn(want, page, rel)
+            self.assertLess(page.index(want), page.index("</footer>"), rel)
+        self.assertEqual(run("check-output", o)[0], 0)
+        self.assertEqual(run("check-output", o, "--pages", PAGES)[0], 0)
+
+    def test_the_words_mit_licensed_link_to_license_url(self):
+        rc, o, msg = self.built_with(copyright="(c) 2026 Example Author. MIT licensed.", license_url="https://example.org/LICENSE")
+        self.assertEqual(rc, 0, msg)
+        want = '<p class="copyright">(c) 2026 Example Author. <a href="https://example.org/LICENSE">MIT licensed</a>.</p>'
+        for rel in self.PAGES_WITH_FOOTER:
+            self.assertIn(want, slurp(os.path.join(o, rel)), rel)
+        self.assertEqual(run("check-output", o)[0], 0)
+        # without those words the address is not shown, and check says so
+        rc, o, msg = self.built_with(copyright="(c) 2026 Example Author.", license_url="https://example.org/LICENSE")
+        self.assertEqual(rc, 0, msg)
+        self.assertIn("license_url", msg)
+        home = slurp(os.path.join(o, "index.html"))
+        self.assertIn('<p class="copyright">(c) 2026 Example Author.</p>', home)
+        self.assertNotIn("example.org/LICENSE", home)
+
+    def test_a_copyright_with_markup_or_too_long_or_a_bad_address_is_refused(self):
+        for bad in ["(c) <b>Example</b>", "(c) 2026 <script>alert(1)</script>", "line\nbreak", "tab\there", "", "   ", 5, ["x"], "x" * 201]:
+            rc, o, msg = self.built_with(copyright=bad)
+            self.assertEqual(rc, 2, (bad, msg))
+            self.assertIn("copyright", msg)
+            self.assertFalse(os.path.exists(o), bad)
+        self.assertEqual(self.built_with(copyright="x" * 200)[0], 0)
+        for bad in ["http://example.org/LICENSE", "example.org/LICENSE", "javascript:alert(1)", 5, "https://example.org/a b",
+                    "https://user@example.org/", "https://example.org/license?x=1"]:
+            rc, o, msg = self.built_with(copyright="(c) 2026 Example Author. MIT licensed.", license_url=bad)
+            self.assertEqual(rc, 2, (bad, msg))
+            self.assertIn("license_url", msg)
+
+    def test_the_forbidden_words_apply_to_the_copyright(self):
+        rc, o, msg = self.built_with(copyright="(c) 2026 Example Author. MIT licensed.", forbidden=["author"])
+        self.assertEqual(rc, 1, msg)
+        self.assertIn("copyright contains the forbidden word 'author'", msg)
+
     def test_sitemap_robots_and_404(self):
         root = ET.parse(os.path.join(self.out, "sitemap.xml")).getroot()
         ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"

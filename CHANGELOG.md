@@ -7,6 +7,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `site.json` takes an optional `copyright` (one line of plain text, at most 200 characters, no markup; the forbidden words apply) that every page of the
+  site shows, escaped, in its footer, the 404 page included, and an optional `license_url` (an `https://` address) that the words "MIT licensed" in it link
+  to. With `copyright` unset the pages are unchanged. The fields of `site.json` are now listed in the header of `lib/site.py`.
 - `qargi ref note REF...` journals a branch the lead made by hand, or pushed (`origin/NAME` for a branch of origin, whose live value is asked), so
   `qargi local verify` and `local clean` of a run prepared before accept it and name it a ref the lead noted. The journal line starts at an absent ref
   (or at the lead's own earlier note of that ref, as with a second push), so a ref that existed when the run was prepared, and any ref nobody noted,
