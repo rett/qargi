@@ -14,11 +14,9 @@ whose real path differs from that record, run without QARGI_HOME, QARGI_CONF or 
 data in <tool root>/.qargi (git-ignored), so a branch checkout never touches live data. With no record, or the same
 tool root, the run is the installed one and uses ~/.qargi. The "live" locations (live_root, live_conf) are the ones an
 installed run uses; the record is read from there.
-Importing this module never creates anything.
-
-  paths.py banner    in a dev run print the banner to stderr, else nothing; exit 0 (bin/qargi runs it before every command
-                     except help, version, __complete, __guard and the run-event hooks)"""
-import json, os, sys
+Importing this module never creates anything. In a dev run banner() is the line the dispatcher's preamble (lib/help.py
+preamble) prints to stderr before every command except help, version, __complete, __guard and the run-event hooks."""
+import json, os
 
 
 def tool_root():
@@ -73,12 +71,3 @@ def banner():
     if not dev_run():
         return ""
     return "dev run from %s; data in %s (QARGI_HOME=~/.qargi uses live data)" % (tool_root(), os.path.join(tool_root(), ".qargi"))
-
-
-if __name__ == "__main__":
-    if sys.argv[1:] == ["banner"]:
-        if banner():
-            print("qargi: " + banner(), file=sys.stderr)
-        sys.exit(0)
-    print("usage: paths.py banner", file=sys.stderr)
-    sys.exit(2)

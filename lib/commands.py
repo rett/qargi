@@ -18,6 +18,9 @@ INTRO = (
 
 ROLES = ("build", "write", "review", "test", "lead")
 ABILITIES = ROLES[:-1]   # the work roles; each is defined by roles/<role>/ROLE.md
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
 def _provider_models():
     """The model ids and aliases of the shipped runtimes (lib/provider.py, their catalogs followed), for completion."""
     import os, sys
@@ -33,8 +36,13 @@ def _provider_models():
     return tuple(dict.fromkeys(m for m in out if isinstance(m, str)))
 
 
-MODELS = _provider_models()
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+def __getattr__(name):
+    """MODELS is read from the runtime descriptors the first time it is asked for (completion of a model value), not at import:
+    every qargi command imports this table before it runs, and reading the descriptors is the costly part."""
+    if name == "MODELS":
+        globals()["MODELS"] = _provider_models()
+        return globals()["MODELS"]
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))
 
 
 def opt(flag, help, arg=None, type="none"):
@@ -450,7 +458,7 @@ COMMANDS = {
                                 "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
                                 "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
-                         desc=("The full-suite verdict names the command that produced it and when it ran, from the suite record. When release.test_command is set and is not that command, "
+                         desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
                                "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. "

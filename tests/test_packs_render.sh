@@ -51,7 +51,8 @@ jq -e '.schema==1 and .project=="alpha" and .role_scoping=="advisory" and (.pack
 check >/dev/null && ok "check passes on a fresh render" || no "check on fresh render: $(check)"
 
 # --- idempotent re-apply, atomic swap
-gen=$(jq -r .generated "$D/MANIFEST.json"); sleep 1
+gen=$(jq -r .generated "$D/MANIFEST.json")
+until [ "$(date -u +%Y-%m-%dT%H:%M:%SZ)" != "$gen" ]; do sleep 0.05; done   # the second moves on: a rewrite would change the stamp
 out=$(go); grep -q "no change in packs" <<<"$(apply)" && [ "$(jq -r .generated "$D/MANIFEST.json")" = "$gen" ] && [ -z "$(find "$T/s/render" -mindepth 1 -maxdepth 2 -name '.*')" ] && [ "$(find "$T/s/render" -mindepth 1 -maxdepth 1 | wc -l)" = 1 ] && [ "$(find "$T/s/render/alpha" -mindepth 1 -maxdepth 1 | wc -l)" = 1 ] && ok "re-apply is idempotent and leaves no sibling directory" || no "re-apply: $out"
 
 # --- packs_off respected, enablement drift, removal

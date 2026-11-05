@@ -1,0 +1,119 @@
+{
+ "_": "The dispatcher's own output on the paths it owns, byte for byte, as tests/test_startup.py checks it; regenerate with python3 tests/test_startup.py --dump bin/qargi and copy the cases listed in CASES",
+ "cases": [
+  {
+   "argv": [
+    "nosuch"
+   ],
+   "env": {},
+   "name": "unknown command",
+   "rc": 2,
+   "setup": "none",
+   "stderr": "qargi: unknown command 'nosuch'. Try: qargi help\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "role",
+    "nosuchverb"
+   ],
+   "env": {},
+   "name": "unknown verb",
+   "rc": 2,
+   "setup": "none",
+   "stderr": "qargi: usage: qargi role list|show|prompt|check ...\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "feature",
+    "list",
+    "--bogus"
+   ],
+   "env": {},
+   "name": "unknown option",
+   "rc": 2,
+   "setup": "none",
+   "stderr": "qargi: unknown option --bogus\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "role",
+    "show"
+   ],
+   "env": {},
+   "name": "a verb's missing argument",
+   "rc": 2,
+   "setup": "none",
+   "stderr": "qargi: usage: qargi role show NAME\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "lead",
+    "status"
+   ],
+   "env": {},
+   "name": "missing project, none stored",
+   "rc": 2,
+   "setup": "none",
+   "stderr": "qargi: which project? Give its name, run this inside its repository, or set QARGI_PROJECT. No project is stored yet: qargi help project.\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "lead",
+    "status"
+   ],
+   "env": {},
+   "name": "missing project, one stored",
+   "rc": 2,
+   "setup": "project",
+   "stderr": "qargi: which project? Give its name, run this inside its repository, or set QARGI_PROJECT. Projects: alpha\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "feature",
+    "list"
+   ],
+   "env": {},
+   "name": "no repository",
+   "rc": 1,
+   "setup": "inside",
+   "stderr": "qargi: the answers for alpha name no local repository (repo.path)\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "project",
+    "show",
+    "alpha"
+   ],
+   "env": {
+    "ANTHROPIC_PROFILE": "other"
+   },
+   "name": "bad cloud binding",
+   "rc": 1,
+   "setup": "binding",
+   "stderr": "qargi: project alpha uses ant profile qargi (qargi cloud show), but ANTHROPIC_PROFILE is other; unset it or change the binding\n",
+   "stdout": ""
+  },
+  {
+   "argv": [
+    "cloud",
+    "show",
+    "alpha"
+   ],
+   "env": {
+    "ANTHROPIC_PROFILE": "other"
+   },
+   "name": "qargi cloud is exempt from the binding",
+   "rc": 0,
+   "setup": "binding",
+   "stderr": "",
+   "stdout": "alpha: profile qargi, workspace wrkspc_01QargiQargiQargi\n"
+  }
+ ]
+}

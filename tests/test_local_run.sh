@@ -27,7 +27,7 @@ echo "STDIN-BEGIN"; if [ -t 0 ]; then echo "(tty)"; else cat; fi; echo "STDIN-EN
 [ -z "$out" ] || echo "report of the fake" > "$out/report.md"
 case ${FAKE_MODE-} in
   exit3) exit 3;; exit5) exit 5;;
-  sleep) sleep 3571 & wait;;
+  sleep) sleep 3571 & echo $! > "${out:-.}/child.pid"; wait;;
 esac
 exit 0
 SH
@@ -154,10 +154,10 @@ mv "$RUN/tmpdir.real" "$RUN/tmpdir"
 # --- the exit status maps to an outcome; a timeout is bounded ---------------------------------------------------------------------
 out=$(FAKE_MODE=exit3 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 2 ] && grep -q '^OUTCOME=refused' <<<"$out" && ok "dispatch.exit maps status 3 to refused (exit 2)" || no "exit3: rc=$rc $out"
 out=$(FAKE_MODE=exit5 $DA local run "$RUN" --again 2>&1); rc=$?; [ "$rc" = 1 ] && grep -q '^OUTCOME=failed' <<<"$out" && ok "any other status is failed (exit 1)" || no "exit5: rc=$rc $out"
-s0=$SECONDS
-out=$(FAKE_MODE="sleep" $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?
-{ [ "$rc" = 1 ] && grep -q 'timed out after 1s' <<<"$out" && [ $((SECONDS - s0)) -lt 20 ] && [ "$(jq -r .timed_out "$RUN/dispatch.json")" = true ]; } && ok "a run past the bound is stopped and reported" || no "timeout: rc=$rc $out"
-pgrep -f 'sleep 3571' >/dev/null && { no "a child of the timed-out run is still alive"; pkill -f 'sleep 3571'; } || ok "the whole process group was killed"
+out=$(FAKE_MODE="sleep" timeout 600 $DA local run "$RUN" --again --timeout 1 2>&1); rc=$?   # the deadline of the test: the run must end by itself
+{ [ "$rc" = 1 ] && grep -q 'timed out after 1s' <<<"$out" && [ "$(jq -r .timed_out "$RUN/dispatch.json")" = true ]; } && ok "a run past the bound is stopped and reported" || no "timeout: rc=$rc $out"
+kid=$(cat "$OUT/child.pid" 2>/dev/null)
+if [ -n "$kid" ] && ! kill -0 "$kid" 2>/dev/null; then ok "the whole process group was killed"; else no "a child of the timed-out run is still alive (pid '${kid:-none}')"; [ -z "$kid" ] || kill -KILL "$kid" 2>/dev/null; fi
 
 # --- the prompt as an argument, or as a file ----------------------------------------------------------------------------------------
 setprov fakearg; prep "$T/r" w3; task

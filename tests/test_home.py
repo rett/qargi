@@ -168,7 +168,9 @@ class DevRun(Base):
         for argv in (("help",), ("help", "dev"), ("version",), ("__complete", "project"), ("project", "--help"), ("hook", "tool-use")):
             r = self.run_([os.path.join(self.dev, "bin", "qargi"), *argv], input="{}")
             self.assertEqual(r.returncode, 0, argv)
-            self.assertNotIn("qargi: dev run from", r.stderr + r.stdout, argv)
+            # the banner is a line of its own on stderr; the text of `help dev` quotes it inside a sentence, wrapped to the width of the terminal
+            self.assertNotIn("qargi: dev run from", r.stderr, argv)
+            self.assertEqual([l for l in r.stdout.splitlines() if l.startswith("qargi: dev run from")], [], argv)
         r = self.run_([os.path.join(self.dev, "bin", "qargi"), "__guard"], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}))
         self.assertEqual((r.returncode, r.stderr, r.stdout), (0, "", ""))
         self.assertFalse(os.path.exists(self.dev + "/.qargi/config"), "help, the guard or a hook created the sandbox config")

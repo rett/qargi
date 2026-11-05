@@ -270,7 +270,7 @@ echo '{}' > "$S/render/app/agentx/extra.json"; HX
 grep -q "agentx run --render $S/render/app/agentx --extra $S/render/app/agentx/extra.json\$" "$T/o" && ok "another provider: an optional group of the template appears when its file exists" || no "agentx launch extra: $(sect)"
 mkdir -p "$R/.agent"; ln -s "$S/render/app/agentx/.agent/skills" "$R/.agent/skills"; HX
 grep -q "launch: $R/.agent/skills is linked to the render" "$T/o" && ok "another provider: its skills directory is the link that is recognised" || no "agentx linked: $(sect)"
-sect | grep -qi "claude" && no "another provider: the packs section names Claude Code: $(sect)" || ok "another provider: nothing in the packs section names Claude Code"
+sect | sed "s|$T||g" | grep -qi "claude" && no "another provider: the packs section names Claude Code: $(sect)" || ok "another provider: nothing in the packs section names Claude Code"
 HX --json; jq -e '.packs.provider == "agentx" and .packs.render_exists == true and .packs.linked == true and (.packs.launch | startswith("agentx run"))' "$T/o" >/dev/null && ok "another provider: --json carries the provider and the same facts" || no "agentx json: $(cat "$T/o")"
 rm -rf "$R/.agent"
 setprov noskills; HX; rc=$?

@@ -17,6 +17,11 @@ for f in README.md VERSION CHANGELOG.md CONTRIBUTING.md CLAUDE.md .gitignore .gi
 jq -r '.[] | select(.dest=="VERSION") | .content' <<<"$out" | grep -qx 0.3.0 && ok "the version parameter fills VERSION" || no "VERSION: $out"
 jq -r '.[] | select(.dest==".github/workflows/test.yml") | .content' <<<"$out" | grep -q 'run: make check' && ok "the test command fills the CI workflow" || no "workflow"
 jq -r '.[] | select(.dest==".github/workflows/test.yml") | .content' <<<"$out" | grep -qF '${{ github.ref }}' && ok "a template's own {{ }} syntax is left alone" || no "github expression changed"
+wf() { jq -r '.[] | select(.dest==".github/workflows/test.yml") | .content' <<<"$1"; }
+wf "$out" | grep -qx '    timeout-minutes: 30' && ok "the CI job's time limit is the ci_timeout_minutes default" || no "default timeout: $(wf "$out")"
+out2=$($DA methodology files gitflow --param project=acme --param ci_timeout_minutes=45 2>&1)
+wf "$out2" | grep -qx '    timeout-minutes: 45' && ! wf "$out2" | grep -q '{{ci_timeout_minutes}}' && ok "--param ci_timeout_minutes fills the CI job's time limit" || no "timeout 45: $(wf "$out2")"
+for v in 0 abc 3.5 "45 minutes" -5; do $DA methodology files gitflow --param project=acme --param "ci_timeout_minutes=$v" >/dev/null 2>&1 && no "ci_timeout_minutes=$v was accepted" || ok "ci_timeout_minutes=$v is refused (a positive whole number of minutes)"; done
 jq -r '.[] | select(.dest==".gitignore") | .content' <<<"$out" | grep -qx '.claude/worktrees/' && jq -r '.[] | select(.dest==".gitignore") | .content' <<<"$out" | grep -qx '.claude/settings.local.json' && ok "the .gitignore excludes Claude Code's worktrees and local settings, not all of .claude" || no ".gitignore lines"
 jq -r '.[].content' <<<"$out" | grep -qi qargi && no "the scaffold mentions qargi" || ok "the scaffold carries no reference to qargi"
 jq -r '.[].content' <<<"$out" | grep -q '{{[a-z_]*}}' && no "an unfilled placeholder remains" || ok "no declared placeholder is left"
