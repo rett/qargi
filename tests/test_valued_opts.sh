@@ -44,6 +44,7 @@ declare -A SCRIPTS=(
   [provision.sh]="provision plan x|provision apply x"
   [release.sh]="release start|release finish"
   [registry.sh]="instances init|instances list|instances show x"
+  [branch.sh]="branch prune"
   [review.sh]="review apply x"
   [session.sh]="start x|send x|track x|status|stop x|close x"
   [supervise.sh]="supervise nudge x|supervise tick"

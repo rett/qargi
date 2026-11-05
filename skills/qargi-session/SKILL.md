@@ -7,8 +7,8 @@ argument-hint: [NAME]
 # /qargi-session (the lead hands its work to a fresh session)
 
 A new session knows only what is stored. `qargi marshal handoff` prints that state as one note: the repository and HEAD, each open
-feature's tip and whole-suite result, the merged `agent/*` branches, the marshal record, the packs and launch line, the environment check,
-what to read first, what not to assume. It is read only (no lease; no record, ref or audit line changes; nothing is fetched). What only you know is lost
+feature's tip and whole-suite result, the merged `agent/*` branches, the marshal record, the packs and launch line,
+what to read first, what not to assume. It is read only (no lease, no record, ref or audit change, no fetch). What only you know is lost
 unless you add it.
 
 ## When to hand off
@@ -24,8 +24,8 @@ settings change a running session cannot reload, or when the owner asks.
    FILE is a new file in your scratchpad, outside every repository and the qargi directories (the verb refuses an existing
    file and those places). `--json` gives the same facts as one object.
 2. **Read it, then add only what is not stored.** Check it matches what you know (a stale suite line, a branch you
-   expected, an `== environment` check older than HEAD or incomplete: run `qargi env check` before work). Append what only you know (a decision and why, a dead end, what you were about to do) under a heading
-   `Lead's addition (not stored state)`. Put no credential, token, plan token or approval in the note.
+   expected, a stale `== environment` check: run `qargi env check` first). Append what only you know (a decision and why, a dead end, what you were about to do) under a heading
+   `Lead's addition (not stored state)`. Put no credential, token or approval in the note.
 3. **Start the new session with the note as its first message.** If your session has a tool that starts a sibling
    session, use it in the worktree where the work continues, with the launch line from the note's packs section. Otherwise
    give the owner the exact command: that launch line, run in that worktree, with `--continue` or `--resume` when the owner
