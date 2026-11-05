@@ -409,7 +409,7 @@ def cmd_export(args):
         elif a == F("out"): out = args[i + 1]; i += 2
         elif a == F("password-file"): pwfile = args[i + 1]; i += 2
         elif a == F("no-encrypt"): noenc = True; i += 1
-        else: die("unknown option %s (qargi help export)" % a)
+        else: die("unknown option %s (qargi help export)" % a, 2)
     allp = project_files()
     if not allp:
         die("no project is stored yet: qargi help project")
@@ -765,11 +765,11 @@ def cmd_import(args):
         elif a == F("mode"): mode_arg = args[i + 1]; i += 2
         elif a == F("password-file"): pwfile = args[i + 1]; i += 2
         elif a == F("dry-run"): dry = True; i += 1
-        elif a.startswith("-"): die("unknown option %s (qargi help import)" % a)
+        elif a.startswith("-"): die("unknown option %s (qargi help import)" % a, 2)
         elif file is None: file = a; i += 1
         else: die("one archive at a time")
     if not file:
-        die("usage: qargi import FILE [--dry-run] (qargi help import)")
+        die("usage: qargi import FILE [--dry-run] (qargi help import)", 2)
     if mode_arg and mode_arg not in MODES:
         die("--mode is one of: %s" % ", ".join(MODES))
     if not dry and not interactive():

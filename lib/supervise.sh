@@ -18,13 +18,13 @@ case $verb in
     SID='' NOW='' ASKED=''
     while [ $# -gt 0 ]; do
       case $1 in
-        --asked) ASKED=${2:-}; shift 2 || die "--asked needs the request";;
-        --now) NOW=${2:-}; shift 2 || die "--now needs a time";;
-        -*) die "unknown option $1";;
-        *) [ -z "$SID" ] || die "nudge takes one session id"; SID=$1; shift;;
+        --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+        --now) need_val "$1" $#; NOW=$2; shift 2;;
+        -*) usage_die "unknown option $1";;
+        *) [ -z "$SID" ] || usage_die "nudge takes one session id"; SID=$1; shift;;
       esac
     done
-    [ -n "$SID" ] || die "usage: supervise.sh nudge SID --asked \"<the user's request to nudge it>\""
+    [ -n "$SID" ] || usage_die "usage: supervise.sh nudge SID --asked \"<the user's request to nudge it>\""
     nowarg=(); [ -z "$NOW" ] || nowarg=(--now "$NOW")
     export ASKED
     need_asked
@@ -40,5 +40,5 @@ case $verb in
     n=$(py nudge-record "$SID" "${nowarg[@]}")
     AUDIT_ORIGIN=supervisor audit_log "supervise:nudge-sent" "$SID nudge $n of $(jq -r .max <<<"$chk")"
     echo "nudge $n of $(jq -r .max <<<"$chk") sent to $SID (a nudge is not an approval; the next one is allowed after the cooldown)";;
-  *) die "usage: supervise.sh tick|status|nudge|delivered|hooks ...";;
+  *) usage_die "usage: supervise.sh tick|status|nudge|delivered|hooks ...";;
 esac
