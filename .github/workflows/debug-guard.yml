@@ -1,0 +1,15 @@
+name: debug-guard
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  g:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: sudo apt-get install -y -qq jq shellcheck >/dev/null
+      - run: |
+          git config --global user.name ci; git config --global user.email ci@example.invalid
+          python3 -X faulthandler tests/test_guard.py -v > /tmp/g.out 2>&1; echo "rc=$?"; wc -c /tmp/g.out; tail -40 /tmp/g.out
