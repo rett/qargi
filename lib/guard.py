@@ -133,8 +133,8 @@ cat $(echo ...), or by an echo piped to xargs).
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
 or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
 refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
-a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, printf, cat, tee, grep or git commit|log|status|diff|show|add
-(they print, write or search the text and run nothing from it), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
+a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, cat, tee, grep or git commit|log|status|diff|show|add
+(they print, write or search the text and run nothing from it; not printf, whose -v assigns a variable), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
 `git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
 function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or the target of a
 redirection in quotes keeps the plain split. A $( ), <( ), >( ) or backtick substitution, also
@@ -653,7 +653,7 @@ def segments(command):
     return tuple(p.text for _, ps in passes(command) for p in ps)
 
 
-INERT = {"echo", "printf", "cat", "tee", "grep", "egrep", "fgrep"}   # programs that do nothing with the text of an argument or of their input but print, write or search it
+INERT = {"echo", "cat", "tee", "grep", "egrep", "fgrep"}   # programs that do nothing with the text of an argument or of their input but print, write or search it (not printf: -v assigns)
 INERT_GIT = {"commit", "log", "status", "diff", "show", "add"}       # git subcommands that are in the same case (git commit -m TEXT, git commit -F -)
 MASK_BAIL = re.compile(r"[\\`\0\r\x0b\x0c]|\$[\[\x27\"({]|[<>]\(")  # a backslash, a substitution, $'..', $"..", ${..}, $[..], a control character: not read here
 MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.""", re.S)
@@ -669,8 +669,8 @@ def inert_command(words):
 def mask_data(command):
     """The command with its data made harmless to the plain split, or the command itself. The split (segments) cuts a line at every ; | & and newline,
     inside quotes and heredocs too, so `git commit -m "Docs; qargi packs seed"` and a heredoc that a commit message is written from were refused as the
-    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, printf, cat, tee, grep, git commit|log|
-    status|diff|show|add), a quoted string of it cannot run anything, and a heredoc body is the input of such a command: the separators in the quoted
+    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, cat, tee, grep, git commit|log|
+    status|diff|show|add; not printf, whose -v NAME assigns a variable, and an array subscript in NAME runs a substitution), a quoted string of it cannot run anything, and a heredoc body is the input of such a command: the separators in the quoted
     strings become blanks and the heredoc bodies are cut out (the delimiter line stays), and nothing else changes, so a redirection or a path in the
     line is still judged. Any other command in the line (a shell, make, find, a script, a function, an assignment, a keyword, a group), a comment, a
     backslash, a substitution, $'..', ${..}, a quote or heredoc that is never closed, a redirection's own target: the command is returned as it is, and
@@ -2067,7 +2067,7 @@ def bash_skill_refusal(command, here, depth):
         why = lead_refusal(prog, rest, toks[:i + 1])
         if why:
             return why
-        if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
+        if "QARGI_NESTED" in env_names(toks, i):             # export|declare|typeset|readonly|local NAME, printf -v NAME, read NAME
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         for at in dirs:                                      # a cd that may not happen leaves several directories: each is judged
             if (seg, at) in seen:                            # judged already
@@ -2197,7 +2197,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
     in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
-    words = [t for t in rest if not t.startswith("-")]
+    # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
+    # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
+    words = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest if not t.startswith("-")]
     name, script = prog, exe or prog
     if prog not in SCRIPTS:
         if (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
@@ -2665,7 +2667,7 @@ def judge(call):
 
 
 QUOTED = re.compile(r"[\"']|<<")
-TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too (not when every command of the line is echo, printf, cat, tee, grep "
+TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too (not when every command of the line is echo, cat, tee, grep "
              "or git commit|log|status|diff|show|add, with no comment, backslash or substitution): if the verb is only text (a commit message, a note), "
              "write the text to a file with your file tool and commit with git commit -F FILE.")
 
