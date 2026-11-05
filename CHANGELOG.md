@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-05
+
 ### Added
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
