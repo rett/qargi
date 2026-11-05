@@ -14,6 +14,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/durations.txt` holds the recorded duration of every step, from a whole run, for `--shard i/K --durations
   tests/durations.txt`: the four parts of the suite plan within 1.3 times of each other (CONTRIBUTING, Tests, says how to
   regenerate it). `tests/test_ci.py` checks the CI workflow and the shard balance.
+- The methodology parameter `ci_timeout_minutes` (default 30; a positive whole number, a parameter may carry a `pattern`) sets the
+  `timeout-minutes` of the CI job the gitflow scaffold writes, so a project sets it from its own suite budgets.
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the

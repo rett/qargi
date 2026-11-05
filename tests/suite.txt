@@ -49,7 +49,7 @@ full | par | 300 | 39 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 36 | bash tests/test_valued_opts.sh
 fast | par | 300 | 12 | bash tests/test_role.sh | lib/role.sh
 full | par | 300 | 31 | bash tests/test_cloud_bases.sh
-fast | par | 300 | 3 | bash tests/test_methodology.sh | lib/methodology.py
+fast | par | 300 | 3 | bash tests/test_methodology.sh | lib/methodology.py methodologies/*
 fast | par | 300 | 11 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 4 | bash tests/test_new.sh
 full | par | 300 | 18 | bash tests/test_adopt.sh
