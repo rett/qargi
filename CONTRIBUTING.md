@@ -46,7 +46,7 @@ that takes more than 1.5 times its budget is reported, and a budget only shrinks
     bash tests/run.sh                  every step, as many at a time as there are CPUs (-j N; -j 1 is the serial run)
     bash tests/run.sh --tier fast      the fast tier: every area, about a minute
     bash tests/run.sh --only PATTERN   the steps whose command matches PATTERN (extended regular expression)
-    bash tests/run.sh --shard 2/4      the second of four parts, balanced by the budgets (for CI)
+    bash tests/run.sh --shard 2/4 --durations tests/durations.txt   the second of four parts, balanced by the recorded durations (CI)
     bash tests/run.sh --tier fast --changed-from origin/develop     the fast tier plus the steps that cover the files changed since develop
     bash tests/run.sh --shard 2/4 --plan   print the plan of the four parts and the steps of the second, run nothing
     bash tests/run.sh --shuffle SEED --repeat 3   random order and repeats, to find a test that fails now and then
@@ -62,6 +62,20 @@ its budget (the seconds it takes on a loaded eight-CPU machine, measured with `b
 only shrinks, so a step that grew is split) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
 steps whose `covers` match the files it changed (or whose command names a changed file), so a `full` step without `covers` is
 checked only in the whole run.
+
+CI (`.github/workflows/test.yml`) runs the fast tier and the covered steps on a pull request into a branch other than master (the
+label `full-suite` on the pull request runs the whole suite), and the whole suite in four shards on a push to develop, on a pull
+request into master and on a manual run; there is no scheduled run. The time limit of a job is computed from the budgets, as the
+comment in the workflow shows, and `tests/test_ci.py` fails when the limit falls below that, so budgets that grow past it show in
+the same pull request.
+
+`tests/durations.txt` has one line per step, `seconds command`, from a whole run; the CI shards are balanced by it, and
+`tests/test_ci.py` fails when the four parts plan more than 1.3 times apart. Regenerate it when steps were added or their time
+changed much, from a whole run on a machine with eight CPUs, and commit it:
+
+    T=$(mktemp -d); mkdir $T/h; HOME=$T/h TMPDIR=$T bash tests/run.sh -j 8 --save-durations tests/durations.txt
+
+A sharded run ends with `shard i/K: planned Ns, the steps took Ns together`, which shows how far the file is from the runs.
 
 Each step runs in a session of its own with a fresh `HOME`, no standard input and only its output open, and fails when it
 exceeds its timeout or leaves a process running. A step prints one block when it ends, so the output is in completion order and

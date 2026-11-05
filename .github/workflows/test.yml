@@ -1,9 +1,16 @@
-# The whole test suite on pull requests and on pushes to develop. master is not listed: after a release it holds
-# develop's files, and the release is a pull request first.
+# The test suite.
+#   pull request into a branch other than master: the fast tier plus the steps whose `covers` globs match the files the pull
+#     request changed (tests/run.sh --tier fast --changed-from). The label `full-suite` on the pull request runs the whole suite
+#     instead.
+#   push to develop, pull request into master (the release pull request), workflow_dispatch: the whole suite in four shards, each
+#     a job of its own (tests/run.sh --shard i/4, balanced by the recorded durations in tests/durations.txt), and a last job,
+#     `result`, that fails when any part failed. There is no scheduled run.
+# master is not a push trigger: after a release it holds develop's files, and the release is a pull request first.
 name: test
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [develop]
   workflow_dispatch:
@@ -11,28 +18,88 @@ on:
 permissions:
   contents: read
 
+# A pull request replaces its own earlier, superseded run. A push to develop (or a manual run) has a key of its own, its commit,
+# and is never cancelled: every commit of develop gets its verdict.
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The time limit of a job (timeout-minutes), from the time budgets of tests/suite.txt:
+#   a shard plans 825 s of budgets (the sum of the budgets of its steps; the four shards are within a second of each other);
+#   a step over 1.5 times its budget is reported as slow, so a shard that runs its steps one after the other and every one of them
+#     at the slow limit takes 1.5 x 825 s = 1238 s (20.6 min); a shard runs its steps in parallel, so this is a ceiling;
+#   checkout, packages and the git identity take well under 10 min, taken as 10 min;
+#   1238 s + 600 s = 1838 s = 30.6 min, rounded up to the next 5 minutes: 35 min.
+# The pull request job runs at most as much as one shard of the whole suite (the fast tier plus the steps its changed files cover,
+# on a runner with several CPUs), so it has the same 35 min. The first version of this workflow gave the whole suite in one job
+# 30 min, which is less than its budgets add up to (3294 s x 1.5 = 82 min one after the other), and the job was cancelled.
+# tests/test_ci.py recomputes the limit from the manifest and fails when the limit here falls below it.
 jobs:
-  suite:
+  pr:
+    if: >-
+      github.event_name == 'pull_request' && github.base_ref != 'master'
+      && !contains(github.event.pull_request.labels.*.name, 'full-suite')
+    name: fast tier and changed areas
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
-      - name: Tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq jq shellcheck
+      - uses: ./.github/actions/tools
       - name: Git identity for the tests that commit
         run: |
           git config --global user.name ci
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
       - name: Tests
-        run: bash tests/run.sh
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bash tests/run.sh --tier fast --changed-from "origin/$BASE_REF"
+
+  suite:
+    if: >-
+      github.event_name != 'pull_request' || github.base_ref == 'master'
+      || contains(github.event.pull_request.labels.*.name, 'full-suite')
+    name: shard ${{ matrix.shard }} of 4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: ./.github/actions/tools
+      - name: Git identity for the tests that commit
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+      - name: Tests
+        run: bash tests/run.sh --shard ${{ matrix.shard }}/4 --durations tests/durations.txt
+
+  # one verdict for the run: red when a part failed or was cancelled, and when nothing ran at all
+  result:
+    if: always()
+    needs: [pr, suite]
+    name: result
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every part that ran passed
+        env:
+          PR: ${{ needs.pr.result }}
+          SUITE: ${{ needs.suite.result }}
+        run: |
+          echo "fast tier and changed areas: $PR; whole suite (4 shards): $SUITE"
+          for r in "$PR" "$SUITE"; do
+            case $r in failure|cancelled) echo "a part of the suite did not pass"; exit 1;; esac
+          done
+          [ "$PR" = success ] || [ "$SUITE" = success ] || { echo "no part of the suite ran"; exit 1; }
