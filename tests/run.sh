@@ -22,8 +22,10 @@
 # The manifest has one step per line, fields separated by `|`: tier (fast|full), mode (par: may run beside others; serial: runs
 # alone, after the pool), timeout and time budget in seconds, the command, and optionally the `covers` globs (the files the step
 # tests, space separated). A step that takes more than 1.5x its budget is reported (a warning). Budgets only shrink.
-# Every step runs in a session of its own with a fresh HOME, no standard input and no open file but its output; one that takes
-# longer than its timeout, or leaves a process running, fails.
+# Every step runs in a session of its own with a fresh HOME and a TMPDIR of its own, no standard input and no open file but its output;
+# one that takes longer than its timeout, or leaves a process running, fails. The directories at the top level of the suite's TMPDIR
+# are compared before and after every step: one the step removed, or left, is named in its block and in the summary (a warning: with
+# TMPDIR unset that place is /tmp, shared with every other process on the host).
 # Output: one block per step, printed when it ends (so in completion order, never interleaved), then a summary. The log of a
 # failed step is kept in a directory the block names. `FAILED: <command>` marks a failed step and the last line is
 # `total: Ns (passed|FAILED)`; the exit status is 1 on any failure and 2 on a usage error.
@@ -31,6 +33,7 @@ set -u
 # hermetic: nothing of the caller's cloud binding or qargi setup reaches the tests, and HOME is a fresh directory
 # (each test also scrubs itself, see tests/hermetic.sh and tests/hermetic.py)
 for _v in $(compgen -e); do case $_v in ANTHROPIC_*|QARGI_*) unset "$_v";; esac; done
+SUITE_TMP=${TMPDIR:-/tmp}   # the caller's temporary directory: WORK is made in it, and its top level is watched (dirset below)
 WORK=$(mktemp -d) || exit 1
 HOME=$WORK/home; export HOME; mkdir -p "$HOME" "$WORK/out"
 KEEP=
@@ -203,16 +206,30 @@ run_shellcheck() {
   echo "shellcheck: a batch failed (xargs exit status $rc)"
   return 1
 }
+# ---- the shared place a step could touch: the top level of the suite's TMPDIR. Every step's own directory is under WORK, so what is there is
+# the caller's and the steps' neighbours, and nothing of the suite makes or removes one there while the steps run. The set of directories
+# there is taken before and after each step: one that is gone was removed by the step, one that is new was left by it. Both are named in the
+# step's block and in the summary, as a warning: with TMPDIR unset the place is /tmp, shared with every process on the host, and a change can
+# be another's. (/dev/shm is not watched: on a host that dispatches work, the temporary directories of other runs come and go there during a
+# step, and every step running at that moment would be blamed.) The runner's own directory of kept logs is left out of the set.
+dirset() {   # the directories at the top level of the suite's TMPDIR, one path per line, sorted
+  find "$SUITE_TMP" -mindepth 1 -maxdepth 1 -type d ! -name 'qargi-suite-logs.*' 2>/dev/null | LC_ALL=C sort
+}
+dirs_changed() {   # dirs_changed BEFORE AFTER -> a line "removed PATH" per directory gone, then "left PATH" per new one; nothing when the sets are the same
+  LC_ALL=C comm -23 "$1" "$2" | sed 's/^/removed /'
+  LC_ALL=C comm -13 "$1" "$2" | sed 's/^/left /'
+}
 run_one() {
-  local k=$1 i=${it_step[$1]} h=$WORK/home-$1 r pg left
+  local k=$1 i=${it_step[$1]} h=$WORK/home-$1 t=$WORK/tmp-$1 r pg left
   local -a words
-  mkdir -p "$h"
+  mkdir -p "$h" "$t"
   case ${s_cmd[i]} in
     shellcheck\ -x\ -S\ warning\ *) words=(bash -c "$(declare -f run_shellcheck); run_shellcheck \"\$1\"" _ "${s_cmd[i]}");;
     *) read -ra words <<<"${s_cmd[i]}";;
   esac
+  dirset > "$WORK/out/$k.dirs0"
   local s=$SECONDS
-  HOME=$h SC_JOBS=$jobs SC_DIR=$WORK/sc-$k setsid -w bash -c "$(declare -f step_exec); step_exec \"\$@\"" _ "$WORK/out/$k.pgid" "${s_tmo[i]}" "${words[@]}" \
+  HOME=$h TMPDIR=$t SC_JOBS=$jobs SC_DIR=$WORK/sc-$k setsid -w bash -c "$(declare -f step_exec); step_exec \"\$@\"" _ "$WORK/out/$k.pgid" "${s_tmo[i]}" "${words[@]}" \
     </dev/null >"$WORK/out/$k.log" 2>&1
   r=$?
   echo $((SECONDS - s)) > "$WORK/out/$k.sec"
@@ -225,11 +242,13 @@ run_one() {
       kill -KILL -- "-$pg" 2>/dev/null
     fi
   fi
-  rm -rf "$h" "$WORK/sc-$k"
+  dirset > "$WORK/out/$k.dirs1"
+  dirs_changed "$WORK/out/$k.dirs0" "$WORK/out/$k.dirs1" > "$WORK/out/$k.dirs"
+  rm -rf "$h" "$t" "$WORK/sc-$k"
   echo $r > "$WORK/out/$k.rc"
 }
 
-rc=0; failed=(); slow=(); times=(); done_cmd=(); done_sec=()
+rc=0; failed=(); slow=(); dirs=(); times=(); done_cmd=(); done_sec=()
 keep_log() {   # keep_log K: copies the log of a failed step where it stays after the run, and prints where
   cp "$WORK/out/$1.log" "$KEEP/$1-$(tr -c 'A-Za-z0-9._' '_' <<<"${s_cmd[${it_step[$1]}]}" | cut -c1-80).log"
   ls -d "$KEEP/$1-"*
@@ -256,6 +275,10 @@ report() {   # the block of one finished step, printed in one piece
   text+=$'\n'"   (${sec}s)"
   if [ "$over" = 1 ]; then
     text+=$'\n'"   WARN over budget: ${sec}s, budget ${s_bud[i]}s"; slow+=("${sec}s (budget ${s_bud[i]}s) ${s_cmd[i]}")
+  fi
+  if [ -s "$WORK/out/$k.dirs" ]; then
+    text+=$'\n'"   WARN directories outside its own changed: $(paste -sd, "$WORK/out/$k.dirs" | sed 's/,/, /g')"
+    dirs+=("${s_cmd[i]}: $(paste -sd, "$WORK/out/$k.dirs" | sed 's/,/, /g')")
   fi
   times+=("$sec ${s_cmd[i]}"); done_cmd+=("${s_cmd[i]}"); done_sec+=("$sec")
   printf '%s\n' "$text"
@@ -295,6 +318,7 @@ if [ ${#times[@]} -gt 0 ]; then
   printf '%s\n' "${times[@]}" | sort -rn -k1,1 | head -10 | awk '{t = $1; $1 = ""; printf "  %5ss %s\n", t, substr($0, 2)}'
 fi
 if [ ${#slow[@]} -gt 0 ]; then echo "over 1.5x their budget$([ "$enforce" = 1 ] || echo ' (warning)'):"; printf '  %s\n' "${slow[@]}"; fi
+if [ ${#dirs[@]} -gt 0 ]; then echo "directories outside a step's own changed (warning; the top level of $SUITE_TMP):"; printf '  %s\n' "${dirs[@]}"; fi
 [ -z "$KEEP" ] || echo "logs of the failed steps: $KEEP"
 if [ -n "$savefile" ]; then
   for ((k = 0; k < ${#done_cmd[@]}; k++)); do echo "${done_sec[k]} ${done_cmd[k]}"; done > "$savefile"
