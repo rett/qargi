@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "gitflow",
   "version": 1,
-  "description": "Git-flow as described by its author (A successful Git branching model): master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
+  "description": "Git-flow: master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
   "params": {
     "project": {
       "required": true,

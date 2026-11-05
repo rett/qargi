@@ -27,7 +27,34 @@ chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
-chk "bad memory.tiers key"          1 '.memory.tiers={bogus:{path:"/x"}}'
+SIGN='{key:"~/.ssh/relkey",namespace:"relsign",files:["dist/release/SHA256SUMS"],verify_command:["make","release-verify"]}'
+chk "release signing answers"       0 ".release={sign:$SIGN, assets:[\"dist/release/a.tar.gz\"], notes_file:\"dist/NOTES-{version}.md\"}"
+chk "release: unknown key"          1 '.release={sing:{}}'
+chk "release.sign: a public key"    1 ".release={sign:($SIGN|.key=\"~/.ssh/relkey.pub\")}"
+chk "release.sign: a relative key"  1 ".release={sign:($SIGN|.key=\"relkey\")}"
+chk "release.sign: no namespace"    1 ".release={sign:($SIGN|del(.namespace))}"
+chk "release.sign: a file outside"  1 ".release={sign:($SIGN|.files=[\"../SHA256SUMS\"])}"
+chk "release.sign: absolute file"   1 ".release={sign:($SIGN|.files=[\"/etc/passwd\"])}"
+chk "release.sign: verify is text"  1 ".release={sign:($SIGN|.verify_command=\"make release-verify\")}"
+chk "release.assets: a label (#)"   1 '.release={assets:["a.tar.gz#label"]}'
+chk "release.notes_file: absolute"  1 '.release={notes_file:"/tmp/notes.md"}'
+chk "release layout answers"        0 '.release={version_file:"none", changelog:{unreleased:"## {version} (unreleased)", released:"## {version} ({date})"}, man_pages:["docs/acme.1"], test_command:["make","check"], preflight:["make","check-release","{version}"]}'
+chk "release.version_file: a path"  0 '.release={version_file:"conf/version.txt"}'
+chk "release.version_file: outside" 1 '.release={version_file:"../VERSION"}'
+chk "release.changelog: unknown"    1 '.release={changelog:{head:"## x"}}'
+chk "release.changelog: not object" 1 '.release={changelog:"## [Unreleased]"}'
+chk "changelog.unreleased: no head" 1 '.release={changelog:{unreleased:"Unreleased"}}'
+chk "changelog.unreleased: {date}"  1 '.release={changelog:{unreleased:"## Next {date}"}}'
+chk "changelog.released: no version" 1 '.release={changelog:{released:"## Released {date}"}}'
+chk "changelog.released: other {x}" 1 '.release={changelog:{released:"## {version} {when}"}}'
+chk "release.man_pages: not a list" 1 '.release={man_pages:"man/acme.1"}'
+chk "release.man_pages: outside"    1 '.release={man_pages:["../acme.1"]}'
+chk "release.test_command: a line"  0 '.release={test_command:"make check"}'
+chk "release.test_command: empty"   1 '.release={test_command:[]}'
+chk "release.test_command: number"  1 '.release={test_command:5}'
+chk "release.preflight: text"       1 '.release={preflight:"make check"}'
+chk "release.preflight: empty list" 1 '.release={preflight:[]}'
+chk "bad memory.tiers key"        1 '.memory.tiers={bogus:{path:"/x"}}'
 chk "absolute repo tier path"       1 '.memory.tiers={repo:{path:"/abs/mem"}}'
 # profiles: each bad shape is refused with its own message
 chkm() { # name jq-filter expected-message-prefix

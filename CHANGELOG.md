@@ -48,6 +48,37 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi local list [--scratch DIR]` (read-only) lists the local runs, from the directories under DIR that the registry (`state/local-runs.jsonl`) names or, without it, from the registry for those that still exist: role, slug, age (`?` when the run's `started` is not a number), whether the run is applied (`RUN/applied`, written by `review apply`) and whether the applied tip is on a branch other than `agent/*` (merged). `qargi local clean --applied --scratch DIR` cleans every run directly under DIR that the registry names and that is applied and merged (the plain `clean` checks, one run at a time), keeps and names the others, and exits 1 when an applied run was kept; it takes no RUN_DIR and no `--discard`.
 - `qargi local clean --stale DAYS --scratch DIR [--yes]`: lists the finished runs (verified or applied) under DIR that are at least DAYS days old, and with `--yes` cleans each by the rules of `clean RUN`, so a stale run whose work was never applied or merged is kept and named, not dropped. It changes nothing without `--yes` and is refused without `--scratch`.
 - `qargi provider notes [TOPIC] --surface cloud` reads the notes of the project's cloud runtime. The shipped cloud runtime names `output-dir` and `clone-dir` there.
+- Project answers can hold `release.sign` (`key`, `namespace`, `files`, optional `verify_command`), `release.assets` and
+  `release.notes_file`; `project validate`, `init` and `set` refuse a malformed one (a public key, an absolute or
+  `..` file name, a verify command that is not a list of words).
+- `qargi release sign VERSION` (signing is optional, off unless the project answers hold `release.sign`; without it the verb
+  exits 2 and nothing else about releases changes): signs the files of the answer `release.sign.files` with `ssh-keygen -Y sign -f KEY -n NAMESPACE FILE`,
+  run on your own terminal (stdin, stdout and stderr are yours, nothing is captured or logged), so the key's passphrase is typed
+  there and never passes through qargi, a log or an agent; no ssh agent is asked. It runs `release.sign.verify_command` (a list of
+  words, no shell) and records the result, the tag's commit and the hash of every signed file and signature under
+  `state/release/`. Only from the tag (HEAD is the commit of VERSION, on master or detached, no tracked file modified), after
+  `finish` and before `publish`; refused when stdin is no terminal, in a member run and when `QARGI_NESTED` is set (exit 2), and
+  the member guard refuses it.
+- `qargi release publish` attaches assets in the same `gh release create` call: `--asset FILE` (repeatable) and the answer
+  `release.assets`, regular files inside the repository; the plan lists each with its sha256 and the token covers them.
+  `--notes-file FILE` (or the answer `release.notes_file`, `{version}` replaced) gives the notes instead of the changelog section.
+  When `release.sign` is set it refuses until `qargi release sign VERSION` recorded an ok for the tag and none of the signed files
+  or signatures changed since (the plan notes a signed file whose `.sig` is not among the assets).
+- `qargi release status VERSION` says `awaiting signature` for a tag of a project with `release.sign` until `release sign`
+  recorded a signature that still holds (no signed file or signature changed), then `VERSION is ready for signing:
+  qargi release sign VERSION` when the repository is at the tag with the files built, or what stands in the way. It stays
+  silent about signing once GitHub has the release.
+- Release answers that fit a project's own layout, all optional: `release.version_file` (the file `release start` bumps, default `VERSION`;
+  `none` for a project with no version file, where the version is the changelog heading and the tag), `release.changelog.unreleased`
+  and `release.changelog.released` (heading templates with `{version}` and `{date}`, default `## [Unreleased]` and
+  `## [{version}] - {date}`; an unreleased heading that carries the version, such as `## {version} (unreleased)`, is renamed to the
+  released one), `release.man_pages` (the pages whose `.TH` date and version `release start` sets, default the `man/*.1` files),
+  `release.test_command` (what `release verify` runs, a command line or a list of words; default `test_command`) and `release.preflight` (a
+  command as a list of words, `{version}` replaced, run by `release start` and `release push` before they change anything; a non-zero
+  exit refuses and shows the tail of its output). `project validate`, `init` and `set` refuse a malformed one; `project attach` and
+  `adopt` read the changelog heading and the version file by them; `qargi project set` completes the keys.
+- `lib/changelog_section.sh VERSION FILE HEADING` finds the section by a released-heading template; `release publish` passes
+  `release.changelog.released`.
 
 ### Changed
 - Help wording: `agent` speaks of roles (it still said abilities, and an ABILITIES column that `agent list` has no header for); the `provider` help describes one runtime on one surface (not a definition that serves surfaces); `local run` and `local prepare` no longer name one vendor (an in-session runtime is dispatched as `qargi provider notes spawn` says; the render warning names `--target RUNTIME`); `local run` lists its exit statuses 0 to 4 and `review check` its exit 1 on a FAIL line.
@@ -85,6 +116,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi help guard` (and the GUARD section of the manual page) says that the registry of local runs is protected like the ref journal, that nobody copies, extracts or links into the run directory, that a `cd` is followed only when it surely happens (else both directories are judged), and that a check over 5 seconds is refused; the topic stays within its 330 words (the text on the guard's own provider verbs shortened to "the rest read"). The header of `lib/guard.py` describes the cuts of a line and where the shell is in each, the run and its record, and the time budget.
 - The word budget test (`tests/test_skill_budget.sh`) fails a ceiling in `tests/skill-budget.txt` that is above its value at the merge base with `origin/develop` unless its line carries a `# raised: reason` comment (skipped with a notice when there is no such base), and it counts the notes of each runtime definition (`lib/providers/NAME.json:notes`) as one more budgeted text.
 - `qargi team brief` and `qargi collect` no longer hard-code the hosted session's output and clone directories: they ask the notes (`output-dir`, `clone-dir`) of the project's cloud runtime. A brief for a project with no cloud runtime is refused (no runtime is assumed); `collect` finds the project from the session's instance and keeps only the base name of a listed file it cannot place.
+- `release finish` refuses a branch whose manual page has an empty `.TH` date or version, and, when `release.version_file` is `none`, a
+  changelog with no section for the version. `release start` checks that the page it wrote carries both.
 
 ### Fixed
 - `agent` verbs check the `agents.json` records of the project they are about (`--project`, else the project in effect) and not of every project: one hand-broken record no longer stops `agent for` in the others (`agent list` without `--project` still checks them all).
@@ -146,6 +179,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The member guard's tool names are those of the member's matcher: `MultiEdit` and `NotebookRead`, which the hook is never given, are gone from the built-in hook data and from the shipped `claude-code` definition (the test that compares the two keeps them equal). The unused `cmd_tokens` and `MARSHAL_MUTATING` are removed, the five state-directory root functions share one helper, and the module docstring no longer quotes outside documentation.
 - `clear_caches()` of the member guard forgets everything read from the provider library, the environment and the state (the resource directories, the protected roots, the credentials directories, the state directories), so a judge that outlives one call reads them again. The guard tests that time a command have bounds fit for a busy machine (the minutes they guard against are not seconds), and the `MoveBeside` tests skip when `/tmp` or `/dev/shm` is not there.
 - `qargi help guard` and the manual page now say what the member guard refuses beyond the verbs: the memory tiers, the state's `providers/` directory, `~/.config/anthropic`, the lead's git configuration and session files, the lead's run verbs (`local prepare|verify|clean`, `agent remove`, `team run`, `task`, `project new`), `git -c alias.*` and rsync to a host, and the corrected reading rule (a copy into the home directory is no read of the signing key; copying or searching its directory is). The topic stays within 330 words.
+- An archive written by the export verb with the `config` or `credentials` part could not be read back by the import verb: it refused the
+  library's `.pack.json` records (`config/packs/skills/NAME/.pack.json`), so a project's skills and tools could not be moved between
+  hosts. A name in an archive may now begin with a dot (`.` and `..` still do not pass), and a memory note's name is checked with the
+  same segment rule as every other name.
+- The export verb now checks every name it is about to write with the rule the reader applies. A name the reader would refuse (a library
+  file with a space in its name, say) stops the export before anything is written, names the file and says how to go on (rename it, or
+  leave its part out with `--only`), instead of producing an archive that cannot be read back.
+- The export verb says so when it leaves something out: a symbolic link in the pack library (an archive holds regular files only) and a
+  memory note whose name the reader would refuse (an empty or `.` segment, which used to be written and then refused on the way back).
+- A skill's script lost its executable bit on a move between hosts: the import verb wrote every file with mode 600, so a pack's executable
+  files came back as plain files and the pack no longer matched its content (it showed as `drifted` in the skills audit). The archive's
+  manifest now carries a mode for each file (`0600`, or `0700` for an executable file of the pack library), the import verb restores it,
+  and a file that differs only in that bit is a change in the plan. An archive whose manifest holds any other mode, or none (breaking: an
+  archive made by an earlier qargi has none), is refused: export it again.
+- A release no longer leaves a manual page with an empty `.TH` date: `release start` always sets the date and the version of every page
+  (an empty date field is filled), and `release finish` refuses a page that lost them after the start.
 
 ### Removed
 - `qargi credential askpass FILE` (an internal verb nothing called) and the second, unreachable `version)` branch of `bin/qargi`.
@@ -172,6 +221,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A skill or tool pack with a file over 1 MB is refused by its review (`larger than 1000000 bytes`, as for a provider pack). The check skipped such a file unread and only the 2 MB total applied, so a 1-2 MB binary passed. The content hash of a skill pack also covers a link, a pipe, a socket, an empty directory and a file with a second name (`find -type f` saw none of them, so an approved pack could gain one with the hash unchanged); a pack without any of them hashes as before, so no approval is lost.
 - `qargi local prepare` refuses a `--repo-url` that carries a user name or a password (`https://user@host/...`): the URL is recorded and put in commands, and the substitution of the token in front of the host made `https://x-access-token@user@host`. The token goes in `--credential-file`.
 - `qargi project link` (memory) compares the real paths of the project's memory directory and of the memory root, so a link below the root that leads outside it is refused as outside (the paths were compared as written), and a project whose tiers resolve without a project tier is refused with a message instead of a `StopIteration` traceback.
+- `qargi project set` of `release.*`, `test_command` or `env.*` is refused to a member, as `models.*` is: the lead later runs those commands
+  (the preflight, `release verify`, the suite), so a member that set them would run its own command with the lead's rights.
 
 ## [0.2.0] - 2026-11-02
 
