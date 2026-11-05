@@ -3,13 +3,17 @@
 # agents/member.body.md, no word of any runtime); `add` renders it through the renderers.agent data of the project's local runtime (lib/render.py)
 # under the name you choose, with the roles it serves (build, write, review, test and yours; a task block carries the role's text).
 # The members are recorded in ~/.qargi/config/agents.json, keyed by project ({"schema": 2, "projects": {P: {NAME: record}}}), with the hash of the
-# file and of what it was rendered from: `list` and `models` show STALE when the definition, the catalog or the body changed since
-# (qargi agent refresh) and DRIFT when the file was edited by hand. A name is unique within its project, so two projects can each have a worker.
+# file and of what it was rendered from, and the render itself is kept in the configuration directory, config/agents/P/NAME.EXT: the
+# canonical copy, outside every repository, that the runtime's file is written from. `list` and `models` show MISSING when the runtime's
+# file is gone, STALE when the copy is gone or the definition, the catalog or the body changed since the render, and DRIFT when the
+# runtime's file was edited by hand; each names the fix (qargi agent refresh NAME --project P). A name is unique within its project, so
+# two projects can each have a worker.
 #
 #   agent.sh add NAME [--roles build,write,review,test] [--model M] [--effort E] --project P
 #   agent.sh list [--project P]
 #   agent.sh rename OLD NEW [--project P]
-#   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort
+#   agent.sh refresh NAME [--project P]    re-render a member from the current definition, keeping its name, roles, model and effort;
+#                                          writes the copy in config and the runtime's file again (a missing file comes back)
 #
 # NAME in rename, refresh and remove is looked up in --project, else the project in effect (exit 2 when it lacks NAME), else, with none in effect,
 # the one project that has it (two or more: exit 2).
@@ -37,7 +41,9 @@ AGENT_PY=$(cat <<'PYEOF'
 #                                                     the member file the runtime of PROV renders: {runtime, path, content, sha256, inputs_hash, notes, agents}
 #                                                     With a PROJECT the runtime is the one composed with the extensions the project enabled (its
 #                                                     renderer and agents resource, and the extensions in the inputs hash); without, the runtime's own
-#   states MEMBERS_FILE ROLE_CLASSES_JSON             {"PROJECT/NAME": [MISSING | STALE | DRIFT ...]} against what the runtime would render today
+#   states MEMBERS_FILE ROLE_CLASSES_JSON COPIES_DIR  {"PROJECT/NAME": [MISSING | STALE | DRIFT ...]}: the runtime's file against the render on
+#                                                     record, the copy under COPIES_DIR/PROJECT against it, and the record against what the
+#                                                     runtime would render today
 import hashlib
 import json
 import os
@@ -129,7 +135,14 @@ def render_member(prov, name, abilities, cls, model, effort, project=None):
     return out
 
 
-def states(members_file, rc):
+def sha256_of(path):
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def states(members_file, rc, copies):
+    """MISSING: the runtime's file is not there. DRIFT: it is, but not as rendered (edited by hand). STALE: the copy in config is gone or is
+    not the render on record, nothing is on record, or the runtime would render something else today."""
     with open(members_file, encoding="utf-8") as f:
         members = json.load(f)
     out = {}
@@ -139,14 +152,17 @@ def states(members_file, rc):
         if not os.path.isfile(f):
             out[key] = ["MISSING"]
             continue
-        with open(f, "rb") as fh:
-            if isinstance(r, dict) and r.get("hash") and hashlib.sha256(fh.read()).hexdigest() != r["hash"]:
-                st.append("DRIFT")
+        r = r if isinstance(r, dict) else {}
+        if r.get("hash") and sha256_of(f) != r["hash"]:
+            st.append("DRIFT")
         ab = rec.get("roles") or []
         cls = "read-only" if ab and all(rc.get(a) == "read-only" for a in ab) else "write"
         try:
-            if not (isinstance(r, dict) and r.get("inputs_hash")) or not rec.get("provider"):
+            if not (r.get("inputs_hash") and r.get("hash") and r.get("path")) or not rec.get("provider"):
                 raise Fail("no render is recorded")
+            copy = os.path.join(copies, project, r["path"])
+            if not os.path.isfile(copy) or sha256_of(copy) != r["hash"]:
+                raise Fail("the copy in config is gone or changed")
             now = render_member(rec["provider"], name, ab, cls, rec.get("model") or "", rec.get("effort") or "", project)
             if now["inputs_hash"] != r["inputs_hash"]:
                 raise Fail("the inputs changed")
@@ -165,8 +181,8 @@ def main(argv):
             print("\n".join(P.names()))
         elif verb == "render" and len(a) in (6, 7):
             print(json.dumps(render_member(a[0], a[1], [x for x in a[2].split(",") if x], a[3], a[4], a[5], (a[6] if len(a) == 7 else "") or None)))
-        elif verb == "states" and len(a) == 2:
-            print(json.dumps(states(a[0], json.loads(a[1]))))
+        elif verb == "states" and len(a) == 3:
+            print(json.dumps(states(a[0], json.loads(a[1]), a[2])))
         else:
             raise Fail("usage: agent.sh internal call %s" % verb)
     except (Fail, P.ProviderError) as e:
@@ -337,11 +353,33 @@ member_record() { # rendered-json -> what the member's record keeps of it: the p
   jq -c '{path: .path, hash: .sha256, inputs_hash: .inputs_hash}' <<<"$1"
 }
 
-write_member() { # rendered-json file: say what the runtime could not express, then write the file (the old one is replaced whole)
+COPIES=$DA_CONF/agents   # the canonical copy of every member's render: agents/PROJECT/PATH, beside agents.json and outside every repository
+
+copy_of() { # project path -> the copy of that member's render in the configuration directory
+  echo "$COPIES/$1/$2"
+}
+
+put_file() { # rendered-json file: the render's bytes, replacing whatever was there whole
   local r=$1 f=$2
-  jq -r '.notes[] | "qargi: note: " + .' <<<"$r" >&2
   mkdir -p "$(dirname "$f")"
   jq -j .content <<<"$r" > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
+}
+
+drop_copy() { # project path-or-empty: remove the copy of a render (and the project's directory once it is empty)
+  [ -n "$2" ] || return 0
+  rm -f "$(copy_of "$1" "$2")"
+  rmdir "$COPIES/$1" 2>/dev/null || true
+}
+
+write_member() { # project rendered-json file: say what the runtime could not express, then write the copy in config and the runtime's file
+  local p=$1 r=$2 f=$3
+  jq -r '.notes[] | "qargi: note: " + .' <<<"$r" >&2
+  put_file "$r" "$(copy_of "$p" "$(jq -r .path <<<"$r")")"
+  put_file "$r" "$f"
+}
+
+same_bytes() { # file sha256 -> 0 when the file exists and is those bytes
+  [ -f "$1" ] && [ "$(sha256sum < "$1" | cut -d' ' -f1)" = "$2" ]
 }
 
 add() {
@@ -375,7 +413,7 @@ add() {
   r=$(render_member "$n" "$list" "$MODEL" "$EFFORT" "$prov" "$PROJ") || exit 1
   dir=$(agents_dir "$PROJ" "$r") || exit 1; file=$dir/$(jq -r .path <<<"$r")
   [ ! -e "$file" ] && [ ! -L "$file" ] || die "$file exists already; choose another name or remove it first"
-  write_member "$r" "$file"
+  write_member "$PROJ" "$r" "$file"
   [ "$(link_mode "$r")" != none ] || hide_in_git "$(repo_path "$PROJ")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
   seq=$(jq '[(.projects // {})[] | .[] | .seq // 0] | max // 0 | . + 1' "$MEMBERS_FILE")
   json_update "$MEMBERS_FILE" '.schema = 2 | .projects[$p][$n] = {roles: ($a | split(",")), file: $f, model: $m, effort: (if $e == "" then null else $e end),
@@ -434,8 +472,8 @@ pf_json() { # project-or-empty -> the project's stored answers as one object ({}
   if [ -n "$1" ] && [ -f "$f" ]; then jq -c 'if type == "object" then . else {} end' "$f" 2>/dev/null || echo '{}'; else echo '{}'; fi
 }
 
-member_states() { # role-classes-json -> {"PROJECT/NAME": [MISSING | STALE | DRIFT]}: the file and the render on record against what the runtime renders today
-  apy states "$MEMBERS_FILE" "$1"
+member_states() { # role-classes-json -> {"PROJECT/NAME": [MISSING | STALE | DRIFT]}: the file, the copy in config and the render on record against what the runtime renders today
+  apy states "$MEMBERS_FILE" "$1" "$COPIES"
 }
 
 role_classes() { # -> {role: class} for every role (a role without a readable class is left out)
@@ -477,9 +515,9 @@ models() { # the bases, the profiles with the project's own merged in, the escal
          frontier: (((.model // "") == $tiers.frontier) or ((.model // "") == $aliases.frontier)),
          flags: ([if ($bases | has($k) | not) then "not a base (\($bases | keys | join(", "))): dispatch uses only the bases, so nothing starts this member" else empty end,
            if ([$ab[] | select($rc[.] == "read-only")] | length) > 0 and ([$ab[] | select($rc[.] != "read-only")] | length) > 0 then "write class; never serves review" else empty end,
-           if ($st[$sk] // []) | index("MISSING") then "definition file missing" else empty end,
-           if ($st[$sk] // []) | index("STALE") then "STALE: rendered from an older definition, catalog or body, or from none on record (qargi agent refresh \($k))" else empty end,
-           if ($st[$sk] // []) | index("DRIFT") then "DRIFT: the file was edited by hand (qargi agent refresh \($k) replaces it)" else empty end,
+           if ($st[$sk] // []) | index("MISSING") then "MISSING: the file is not there (qargi agent refresh \($k) --project \($mp) writes it again from the copy in config)" else empty end,
+           if ($st[$sk] // []) | index("STALE") then "STALE: the copy in config is gone, or it was rendered from an older definition, catalog or body, or from none on record (qargi agent refresh \($k) --project \($mp))" else empty end,
+           if ($st[$sk] // []) | index("DRIFT") then "DRIFT: the file was edited by hand (qargi agent refresh \($k) --project \($mp) replaces it)" else empty end,
            if (((.model // "") == $tiers.frontier) or ((.model // "") == $aliases.frontier)) and $k != "researcher" then "frontier model outside the researcher" else empty end])}]}
     | .warnings = ([(.bases | to_entries[] | .key as $k | .value.flags[] | {kind: "base", name: $k, message: .}),
         (.profiles[] | .name as $k | .flags[] | {kind: "profile", name: $k, message: .}),
@@ -641,7 +679,7 @@ case $verb in
     st=$(member_states "$(role_classes)") || exit 1
     rows=$(jq -r --argjson st "$st" --arg proj "$PROJ" '[(.projects // {}) | to_entries[] | select($proj == "" or .key == $proj) | .key as $p | .value | to_entries[] | .value + {name: .key, project: $p}]
         | sort_by(.seq // 0)[] | [.project, .name, (.roles | join(",")), (.model // "-") + "/" + (.effort // "default"),
-        (.file + (if ($st[.project + "/" + .name] // []) | length > 0 then " (" + (($st[.project + "/" + .name]) | join(", ")) + ")" else "" end))] | @tsv' "$MEMBERS_FILE")
+        (.file + (if ($st[.project + "/" + .name] // []) | length > 0 then " (" + (($st[.project + "/" + .name]) | join(", ")) + ": qargi agent refresh " + .name + " --project " + .project + ")" else "" end))] | @tsv' "$MEMBERS_FILE")
     if [ -n "$rows" ]; then column -t -s "$(printf '\t')" <<<"$rows"
     else echo "no members${PROJ:+ in project $PROJ} yet: qargi agent add NAME [--roles build,write,review,test] --project ${PROJ:-P}"; fi;;
   rename)
@@ -661,7 +699,8 @@ case $verb in
     [ "$(link_mode "$r")" = none ] || base=$(agents_dir "$mproj" "$r") || exit 1
     nf=$base/$(jq -r .path <<<"$r")
     [ ! -e "$nf" ] || die "$nf exists already"
-    write_member "$r" "$nf"
+    write_member "$mproj" "$r" "$nf"
+    drop_copy "$mproj" "$oldrel"                   # the old copy is qargi's render, never a hand edit: it goes with the name
     # the old file goes unless it was edited by hand (what is on record is the render's hash, as refresh compares it): an edit is kept and named
     kept=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
     if [ -f "$f" ]; then
@@ -681,14 +720,18 @@ case $verb in
     prov=$(provider_for "$mproj" local) || exit $?
     r=$(render_member "$n" "$(jq -r '.roles | join(",")' <<<"$rec")" "$(jq -r --arg d "$(pdesc "$prov" local | jq -r '.aliases.balanced // .tiers.balanced')" '.model // $d' <<<"$rec")" \
       "$(jq -r '.effort // ""' <<<"$rec")" "$prov" "$mproj") || exit 1
-    # the file is the render's bytes: written again unless it is already those (a hand-edited file is replaced, and the output says so)
-    drift=''; want=$(jq -r '.render.hash // ""' <<<"$rec")
-    [ -z "$want" ] || [ ! -f "$f" ] || [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$want" ] || drift=1
-    if [ -f "$f" ] && [ "$(sha256sum < "$f" | cut -d' ' -f1)" = "$(jq -r .sha256 <<<"$r")" ]; then
+    # the file and the copy in config are the render's bytes: written again unless they are already those (a hand-edited file is replaced,
+    # and the output says so; a missing file comes back)
+    drift=''; want=$(jq -r '.render.hash // ""' <<<"$rec"); c=$(copy_of "$mproj" "$(jq -r .path <<<"$r")"); sha=$(jq -r .sha256 <<<"$r")
+    [ -z "$want" ] || [ ! -f "$f" ] || same_bytes "$f" "$want" || drift=1
+    oldp=$(jq -r '.render.path // ""' <<<"$rec"); [ "$oldp" = "$(jq -r .path <<<"$r")" ] || drop_copy "$mproj" "$oldp"   # a copy under another path goes
+    if same_bytes "$f" "$sha"; then
+      same_bytes "$c" "$sha" || put_file "$r" "$c"
       json_update "$MEMBERS_FILE" '.projects[$p][$n] += {provider: $v, surface: "local", render: $r}' --arg p "$mproj" --arg n "$n" --arg v "$prov" --argjson r "$(member_record "$r")"
       echo "member $n is current ($f)"; exit 0
     fi
-    write_member "$r" "$f"
+    write_member "$mproj" "$r" "$f"
+    [ "$(link_mode "$r")" != none ] || hide_in_git "$(repo_path "$mproj")" "$(jq -r '.agents.project_dir + "/" + .path' <<<"$r")"
     json_update "$MEMBERS_FILE" '.projects[$p][$n] += {provider: $v, surface: "local", render: $r}' --arg p "$mproj" --arg n "$n" --arg v "$prov" --argjson r "$(member_record "$r")"
     echo "refreshed member $n ($f); sessions started afterwards use it${drift:+; the edits made to the file by hand are gone}"
     link_note "$mproj" "$r" "$f";;
@@ -698,6 +741,7 @@ case $verb in
     mproj=$(member_project "$n") || exit $?
     rec=$(jq -ce --arg p "$mproj" --arg n "$n" '.projects[$p][$n]' "$MEMBERS_FILE")
     f=$(jq -r .file <<<"$rec"); [ ! -f "$f" ] || rm -f "$f"
+    drop_copy "$mproj" "$(jq -r '.render.path // ""' <<<"$rec")"
     json_update "$MEMBERS_FILE" 'del(.projects[$p][$n]) | if (.projects[$p] | length) == 0 then del(.projects[$p]) else . end' --arg p "$mproj" --arg n "$n"
     echo "removed member $n of project $mproj${f:+ ($f)}"
     case $f in *.agents/*) echo "qargi: note: a worktree that linked it still has a dangling link; qargi project link $mproj --resource agents drops it" >&2;; esac;;

@@ -372,7 +372,7 @@ Log the project's profile in, bound to its workspace (your terminal only).
 .B qargi agent
 Name the members: the local agents that do the work.
 .PP
-A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
+A member is a local agent you name, rendered from the one member definition qargi ships, with the roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory (agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role text (roles/<role>/ROLE.md); there is no skill to load. Review is read\-only as a rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) and writes in the pack library, the credentials directory and install.json, ~/.claude/skills and any .claude/skills directory; it fails closed. Dispatch spawns the member qargi agent for ROLE prints.
 .RS
 .TP
 .BI "add " "NAME"
@@ -397,7 +397,7 @@ effort level, written into the definition and recorded with the member (default 
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
-the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
+the project the member belongs to (required): its models.provider renders it, the render is kept in the configuration directory (agents/PROJECT/) and the runtime's file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied).
 .RE
 .RE
 .RS
@@ -405,7 +405,7 @@ the project the member belongs to (required): its models.provider renders it, an
 .B list
 List the members of every project, their roles and definitions.
 .br
-One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. Members are kept per project, so two projects can each have a worker.
+One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then in brackets MISSING (the runtime's file is gone), STALE (the copy in the configuration directory is gone or changed, or the definition, catalog, renderer or an extension changed since the render) or DRIFT (the file was edited by hand), each followed by the command that fixes it: qargi agent refresh NAME \-\-project P. Members are kept per project, so two projects can each have a worker.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -429,7 +429,7 @@ the project the member belongs to (default: the one in effect when it has the me
 .BI "refresh " "NAME"
 Re\-render a member from the member definition qargi ships now.
 .br
-The project is found as for rename. Keeps its name, roles and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
+The project is found as for rename. Keeps its name, roles and model, and writes the copy in the configuration directory and the runtime's file again: a file that is gone (a cleaned checkout, a fresh clone) comes back, a file edited by hand is replaced (the output says so). Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

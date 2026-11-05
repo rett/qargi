@@ -151,7 +151,9 @@ COMMANDS = {
     "agent": {
         "summary": "Name the members: the local agents that do the work",
         "desc": ("A member is a local agent you name, rendered from the one member definition qargi ships, with the "
-                 "roles it serves: build, write, review, test (all four by default). The task block names the role and carries its role "
+                 "roles it serves: build, write, review, test (all four by default). The render is kept in the configuration directory "
+                 "(agents/PROJECT/NAME.EXT beside agents.json, outside every repository) and written from there to the runtime's agents "
+                 "location; a checkout cleaned or cloned afresh gets it back with agent refresh. The task block names the role and carries its role "
                  "text (roles/<role>/ROLE.md); there is no skill to load. Review is read-only as a "
                  "rule: the guard refuses changes to the clone under that role. Under every role it refuses the verbs that change "
                  "a skill (qargi skill|tool new, import, seal, remove, link, unlink, enable, disable; qargi discover install; qargi packs apply) "
@@ -163,19 +165,21 @@ COMMANDS = {
                         [opt("--roles", "comma-separated roles it serves (default build,write,review,test)", "LIST", ABILITIES),
                          opt("--model", "model alias or id for the definition (default: the project's model for the first role, else the shipped default; see agent models)", "MODEL", "model"),
                          opt("--effort", "effort level, written into the definition and recorded with the member (default as for --model)", "LEVEL", EFFORTS),
-                         opt("--project", "the project the member belongs to (required): its models.provider renders it, and the file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project")],
+                         opt("--project", "the project the member belongs to (required): its models.provider renders it, the render is kept in the configuration directory (agents/PROJECT/) and the runtime's file goes where the runtime links project agents (the checkout, hidden from git, or the project render once `project link` is applied)", "PROJECT", "project")],
                         desc=("A member belongs to a project, and the definition is rendered by the provider of that project. "
                               "Refuses a name that exists, a name that is not kebab-case, the name of a built-in agent type of that provider, no --project (exit 2), and a project with no provider (exit 2: there is no default provider). Nothing is written to a runtime's user-level directory."),
                         examples=["qargi agent add forge --roles build,test --project myproject", "qargi agent add scribe --roles write --model opus --project myproject",
                                   "qargi agent add worker --project myproject    # the write-class base: build, write and test"]),
             "list": verb("List the members of every project, their roles and definitions", [],
                          [opt("--project", "only the members of this project", "PROJECT", "project")],
-                         desc="One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then STALE, DRIFT or MISSING in brackets when the file or the render is out of date. "
-                              "Members are kept per project, so two projects can each have a worker."),
+                         desc="One row per member, with no header line: PROJECT, NAME, ROLES (comma separated), MODEL/EFFORT, FILE, then in brackets MISSING (the runtime's file is gone), "
+                              "STALE (the copy in the configuration directory is gone or changed, or the definition, catalog, renderer or an extension changed since the render) or DRIFT (the file was edited by hand), "
+                              "each followed by the command that fixes it: qargi agent refresh NAME --project P. Members are kept per project, so two projects can each have a worker."),
             "rename": verb("Rename a member and its definition", [("OLD", "member"), ("NEW", "none")], [MEMBER_PROJECT_OPT],
                            desc="Within its project. The project is --project, else the one in effect, else the only project that has a member OLD; a name two or more projects hold, with none named or in effect, is refused (exit 2) and lists them."),
             "refresh": verb("Re-render a member from the member definition qargi ships now", [("NAME", "member")], [MEMBER_PROJECT_OPT],
-                            desc="The project is found as for rename. Keeps its name, roles and model. Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
+                            desc="The project is found as for rename. Keeps its name, roles and model, and writes the copy in the configuration directory and the runtime's file again: a file that is gone (a cleaned checkout, a fresh clone) comes back, a file edited by hand is replaced (the output says so). "
+                                 "Use it after an upgrade changes the definition (for example its hook); an unchanged member is left alone. Sessions started afterwards use the new definition."),
             "models": verb("Show the base members, the profiles with their resolved models and efforts, and each member",
                            [], [PROJECT_OPT,
                                 opt("--json", "machine-readable")],
