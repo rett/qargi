@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Reference: Review and apply · qargi</title>
+<meta name="description" content="Reference for the &quot;Review and apply&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+
+<link rel="canonical" href="https://qargi.rettware.com/reference/review-and-apply/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Reference: Review and apply · qargi">
+<meta property="og:description" content="Reference for the &quot;Review and apply&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<meta property="og:url" content="https://qargi.rettware.com/reference/review-and-apply/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Reference: Review and apply · qargi">
+<meta name="twitter:description" content="Reference for the &quot;Review and apply&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Reference: Review and apply","description":"Reference for the \"Review and apply\" group of qargi commands: every verb with its arguments, options and examples, generated from the release.","url":"https://qargi.rettware.com/reference/review-and-apply/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-05"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Reference","item":"https://qargi.rettware.com/reference/"},{"@type":"ListItem","position":3,"name":"Reference: Review and apply","item":"https://qargi.rettware.com/reference/review-and-apply/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../../">Home</a></li>
+<li><a href="../../install/">Install and update</a></li>
+<li><a href="../../first-project/">Your first project</a></li>
+<li><a href="../../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../../about/">About these docs</a></li>
+<li><a href="../" aria-current="true">Reference</a></li>
+<li><a href="../../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../../">Home</a></li><li><a href="../">Reference</a></li><li aria-current="page">Reference: Review and apply</li></ol></nav>
+<article>
+<h1>Reference: Review and apply</h1>
+<p class="lede">Reference for the &quot;Review and apply&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.</p>
+<p class="dates">Updated <time datetime="2026-11-05">2026-11-05</time></p>
+
+<h2 id="review">qargi review <a class="anchor" href="#review" aria-label="Link to: qargi review">#</a></h2>
+<p class="summary">Check what an agent returned and put it on a task branch.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#review-check"><code>check</code></a></td><td>Check what a run returned: numbered patches, messages, manifest, groups</td></tr><tr><td><a href="#review-apply"><code>apply</code></a></td><td>Apply a collected, checked run to a task branch of the repository</td></tr></tbody></table></div>
+<h3 id="review-check">qargi review check <a class="anchor" href="#review-check" aria-label="Link to: qargi review check">#</a></h3>
+<p class="usage"><code>qargi review check OUT [OPTIONS]</code></p>
+<p>Check what a run returned: numbered patches, messages, manifest, groups.</p>
+<p>OUT is the member&#x27;s output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--allow-empty</code></td><td></td><td>accept a manifest with no commits (a team member that was blocked or had nothing to change)</td></tr></tbody></table></div>
+<h3 id="review-apply">qargi review apply <a class="anchor" href="#review-apply" aria-label="Link to: qargi review apply">#</a></h3>
+<p class="usage"><code>qargi review apply [RUN_DIR] [OPTIONS]</code></p>
+<p>Apply a collected, checked run to a task branch of the repository.</p>
+<p>Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result prints the diff). Creates the branch at the commit the run&#x27;s base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project&#x27;s repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run&#x27;s ref snapshot, so local clean still accepts the run. --from-saved ID applies from &lt;state&gt;/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify --saved ID, the registry&#x27;s repository, slug and base, and the record in the saved copy, so it is applied once.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--branch</code></td><td><code>BRANCH</code></td><td>the branch to create (default agent/&lt;slug&gt; of the run)</td></tr><tr><td><code>--from-saved</code></td><td><code>ID</code></td><td>apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi review apply ./run
+qargi feature merge search agent/fix-names
+qargi local clean ./run</code></pre>
+<h2 id="team">qargi team <a class="anchor" href="#team" aria-label="Link to: qargi team">#</a></h2>
+<p class="summary">Run a task with a lead and role agents (opt-in).</p>
+<p>For a change that affects usage: the build member changes the code, the write member updates the operational docs, the review member judges both. The lead is this Claude Code session, a cloud lead, or a session started in the console; all follow the lead contract. Each member returns its own series against its own base.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#team-brief"><code>brief</code></a></td><td>Print the brief a lead needs for one task</td></tr><tr><td><a href="#team-check"><code>check</code></a></td><td>Check a collected team run: every member and the lead&#x27;s report</td></tr><tr><td><a href="#team-contract"><code>contract</code></a></td><td>Print the lead&#x27;s contract</td></tr></tbody></table></div>
+<h3 id="team-brief">qargi team brief <a class="anchor" href="#team-brief" aria-label="Link to: qargi team brief">#</a></h3>
+<p class="usage"><code>qargi team brief [PROJECT] TEAM [OPTIONS]</code></p>
+<p>Print the brief a lead needs for one task.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--task</code></td><td><code>TEXT</code></td><td>what to do</td></tr><tr><td><code>--done</code></td><td><code>COMMAND</code></td><td>an executable check for the builder&#x27;s part</td></tr><tr><td><code>--base</code></td><td><code>BRANCH</code></td><td>the builder&#x27;s base branch (needed when the project says @dispatcher)</td></tr><tr><td><code>--write-done</code></td><td><code>COMMAND</code></td><td>the writer&#x27;s check</td></tr><tr><td><code>--review-done</code></td><td><code>COMMAND</code></td><td>the reviewer&#x27;s check</td></tr></tbody></table></div>
+<h3 id="team-check">qargi team check <a class="anchor" href="#team-check" aria-label="Link to: qargi team check">#</a></h3>
+<p class="usage"><code>qargi team check RUN_DIR</code></p>
+<p>Check a collected team run: every member and the lead&#x27;s report.</p>
+<h3 id="team-contract">qargi team contract <a class="anchor" href="#team-contract" aria-label="Link to: qargi team contract">#</a></h3>
+<p class="usage"><code>qargi team contract</code></p>
+<p>Print the lead&#x27;s contract.</p>
+<p>The procedure every lead follows, whoever it is.</p>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Freference%2Freview-and-apply%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

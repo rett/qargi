@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Your first project · qargi</title>
+<meta name="description" content="Store a project&#x27;s answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.">
+
+<link rel="canonical" href="https://qargi.rettware.com/first-project/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Your first project · qargi">
+<meta property="og:description" content="Store a project&#x27;s answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.">
+<meta property="og:url" content="https://qargi.rettware.com/first-project/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Your first project · qargi">
+<meta name="twitter:description" content="Store a project&#x27;s answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Your first project","description":"Store a project's answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.","url":"https://qargi.rettware.com/first-project/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-04","datePublished":"2026-11-04"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Your first project","item":"https://qargi.rettware.com/first-project/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../">Home</a></li>
+<li><a href="../install/">Install and update</a></li>
+<li><a href="./" aria-current="page">Your first project</a></li>
+<li><a href="../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../about/">About these docs</a></li>
+<li><a href="../reference/">Reference</a></li>
+<li><a href="../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../">Home</a></li><li aria-current="page">Your first project</li></ol></nav>
+<article>
+<h1>Your first project</h1>
+<p class="lede">Store a project&#x27;s answers once, choose the runtime, name your first members and check that qargi can dispatch to them, using a project called myproject.</p>
+<p class="dates">Published <time datetime="2026-11-04">2026-11-04</time> · Updated <time datetime="2026-11-04">2026-11-04</time></p>
+<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul><li><a href="#1-pick-the-starting-point">1. Pick the starting point</a></li><li><a href="#2-apply-the-plan">2. Apply the plan</a></li><li><a href="#3-close-the-gaps">3. Close the gaps</a></li><li><a href="#4-look-at-what-was-stored">4. Look at what was stored</a></li><li><a href="#5-add-members">5. Add members</a></li><li><a href="#6-check-dispatch">6. Check dispatch</a></li><li><a href="#7-run-a-first-task">7. Run a first task</a></li><li><a href="#8-see-also">8. See also</a></li></ul></details></nav>
+<p>This page sets up a project called <code>myproject</code>, adds two members and checks that qargi can dispatch to them. Every name is an example; use your own. You need qargi <a href="../install/">installed</a>.</p>
+<p>The answers you give are stored under <code>~/.qargi</code>, outside the repository. Nothing qargi related is added to the project&#x27;s committed files.</p>
+<h2 id="1-pick-the-starting-point">1. Pick the starting point <a class="anchor" href="#1-pick-the-starting-point" aria-label="Link to: 1. Pick the starting point">#</a></h2>
+<p>You either have a repository already or you want a new one.</p>
+<p>For an existing repository, run this from inside it. It reads the repository and changes nothing; it prints the answers it would store, the gaps against the git-flow model and a plan token.</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">cd ~/src/myproject
+qargi project attach --name myproject --provider-local claude-code</code></pre>
+<p>For a new project, <code>project new</code> prints a plan for the directory, the branches and the generic files:</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi project new myproject --param test_command=&#x27;make test&#x27; --provider-local claude-code</code></pre>
+<p><code>qargi provider list</code> shows the runtimes you can name. The project names one for the local surface and, if you use cloud agents, one for the cloud surface. qargi never guesses either.</p>
+<h2 id="2-apply-the-plan">2. Apply the plan <a class="anchor" href="#2-apply-the-plan" aria-label="Link to: 2. Apply the plan">#</a></h2>
+<p>Read the plan. If it is what you want, run the same command again with the token it printed and your go-ahead in your own words. The words are written to the audit log.</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi project attach --name myproject --provider-local claude-code --plan TOKEN --approved &quot;store the answers for myproject&quot;</code></pre>
+<p>If the plan changes between the two runs, the token no longer matches and nothing happens. <code>qargi help approvals</code> has the rules.</p>
+<h2 id="3-close-the-gaps">3. Close the gaps <a class="anchor" href="#3-close-the-gaps" aria-label="Link to: 3. Close the gaps">#</a></h2>
+<p>An attached repository may lack the long-lived branches or the methodology files. <code>qargi project adopt</code> creates the missing branches locally and puts the missing files on a branch for you to review. It is a plan and a token as well, and it never pushes.</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi project adopt myproject</code></pre>
+<h2 id="4-look-at-what-was-stored">4. Look at what was stored <a class="anchor" href="#4-look-at-what-was-stored" aria-label="Link to: 4. Look at what was stored">#</a></h2>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi project show myproject
+qargi project list</code></pre>
+<p>The answers hold the repository, its branches, the roles and each role&#x27;s base branch, model and effort, the memory stores and the push policy. To change one, use <code>qargi project set myproject PATH VALUE</code>, for example <code>roles.write.effort high</code>.</p>
+<h2 id="5-add-members">5. Add members <a class="anchor" href="#5-add-members" aria-label="Link to: 5. Add members">#</a></h2>
+<p>A member is a local agent you name. It serves one or more roles: build changes code, write writes documentation, review reads a change and changes no file, test writes and runs tests. Names are yours.</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi agent add forge --roles build,test --project myproject
+qargi agent add scribe --roles write --project myproject
+qargi agent add reader --roles review --project myproject
+qargi agent list --project myproject</code></pre>
+<p><code>agent add</code> refuses when the project has no local runtime, and it prints where it wrote the definition. In a Claude Code session a new member is available once you start a new session.</p>
+<h2 id="6-check-dispatch">6. Check dispatch <a class="anchor" href="#6-check-dispatch" aria-label="Link to: 6. Check dispatch">#</a></h2>
+<p><code>agent for</code> prints what dispatch would use for a role: the member, the model alias and the effort.</p>
+<pre class="code" tabindex="0" role="region" aria-label="bash code"><code class="language-bash">qargi agent for build --project myproject
+qargi agent for review --project myproject</code></pre>
+<p>If no member serves a role, add one. If <code>agent list</code> shows <code>STALE</code> or <code>DRIFT</code>, the definition changed since the member was written or was edited by hand; <code>qargi agent refresh NAME</code> writes it again.</p>
+<h2 id="7-run-a-first-task">7. Run a first task <a class="anchor" href="#7-run-a-first-task" aria-label="Link to: 7. Run a first task">#</a></h2>
+<p>Start with a task that is small and has a check you can run: rename a function, add a test. The loop is in <a href="../lead-loop/">the lead&#x27;s loop</a> and one task in detail is in <a href="../dispatch-and-verify/">dispatch and verify</a>. In short:</p>
+<ol><li><code>qargi feature start first-task --purpose &quot;learn the loop&quot;</code> cuts a feature branch from develop.</li><li>Prepare a run on that base, give the task and its check to the member <code>agent for</code> printed.</li><li>When it reports, <code>qargi local verify RUN</code>, <code>qargi review check RUN/out</code>, <code>qargi review apply RUN</code>, run the check yourself, then merge.</li></ol>
+<h2 id="8-see-also">8. See also <a class="anchor" href="#8-see-also" aria-label="Link to: 8. See also">#</a></h2>
+<ul><li><a href="../install/">Install and update</a></li><li><a href="../lead-loop/">The lead&#x27;s loop</a></li><li><a href="../dispatch-and-verify/">Dispatch and verify</a></li><li><a href="../safety/">Safety</a></li><li><a href="../reference/set-up/#project">project</a> and <a href="../reference/set-up/#agent">agent</a> in the reference</li></ul>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Ffirst-project%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

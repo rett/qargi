@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Reference: Export and import · qargi</title>
+<meta name="description" content="Reference for the &quot;Export and import&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+
+<link rel="canonical" href="https://qargi.rettware.com/reference/export-and-import/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Reference: Export and import · qargi">
+<meta property="og:description" content="Reference for the &quot;Export and import&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<meta property="og:url" content="https://qargi.rettware.com/reference/export-and-import/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Reference: Export and import · qargi">
+<meta name="twitter:description" content="Reference for the &quot;Export and import&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Reference: Export and import","description":"Reference for the \"Export and import\" group of qargi commands: every verb with its arguments, options and examples, generated from the release.","url":"https://qargi.rettware.com/reference/export-and-import/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-05"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Reference","item":"https://qargi.rettware.com/reference/"},{"@type":"ListItem","position":3,"name":"Reference: Export and import","item":"https://qargi.rettware.com/reference/export-and-import/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../../">Home</a></li>
+<li><a href="../../install/">Install and update</a></li>
+<li><a href="../../first-project/">Your first project</a></li>
+<li><a href="../../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../../about/">About these docs</a></li>
+<li><a href="../" aria-current="true">Reference</a></li>
+<li><a href="../../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../../">Home</a></li><li><a href="../">Reference</a></li><li aria-current="page">Reference: Export and import</li></ol></nav>
+<article>
+<h1>Reference: Export and import</h1>
+<p class="lede">Reference for the &quot;Export and import&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.</p>
+<p class="dates">Updated <time datetime="2026-11-05">2026-11-05</time></p>
+
+<h2 id="export">qargi export <a class="anchor" href="#export" aria-label="Link to: qargi export">#</a></h2>
+<p class="summary">Save a project&#x27;s setup, definitions and memories to one file.</p>
+<p>Writes one archive of the parts you select: config (project answers, instances, profiles, the skill and tool library), definitions (the cloud agents, deployments and environment as they are now, secrets removed), memories (every note of the memory and reference stores), state (session tracker, audit log) and credentials (token files; only in an encrypted archive). It asks what to include and for an optional password; with one, the whole archive is encrypted by gpg (AES-256) and the password never goes into a command line. It only reads: nothing is changed or deleted.</p>
+<p class="usage"><code>qargi export [OPTIONS]</code></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>NAMES</code></td><td>only these projects, comma separated (default: ask, or all)</td></tr><tr><td><code>--only</code></td><td><code>PARTS</code></td><td>the parts: config, definitions, memories, state, credentials (default: ask)</td></tr><tr><td><code>--out</code></td><td><code>FILE</code></td><td>the file to write (default: qargi-export-&lt;time&gt;.tar.gz[.gpg] here)</td></tr><tr><td><code>--password-file</code></td><td><code>FILE</code></td><td>encrypt with the first line of this file</td></tr><tr><td><code>--no-encrypt</code></td><td></td><td>write the archive without a password (for scripts)</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi export
+qargi export --project acme --only config,memories --no-encrypt --out acme.tar.gz</code></pre>
+<h2 id="import">qargi import <a class="anchor" href="#import" aria-label="Link to: qargi import">#</a></h2>
+<p class="summary">Restore from an export, choosing what and how.</p>
+<p>Reads an archive made by qargi export (asking for the password when it is encrypted), shows what is inside, asks which parts and projects to import and, for each part, how to treat what already exists: merge (add what is missing), overwrite (also replace what differs) or replace (make it match the archive, removing the rest). It then prints the plan and writes nothing until you confirm; replaced and removed items are saved under the state directory first. The archive is treated as untrusted data: names and checksums are verified. Definitions are restored as files only (rebuild with provision). Memory notes go to the stores named in the project&#x27;s answers. An archive&#x27;s project answers never add or change models.extensions or models.accept_no_barrier (they take a plan token and an approval: qargi provider enable, disable, accept): the stored value stays, or the key is left out, and a note says so. It asks at a terminal; --dry-run shows the plan without one.</p>
+<p class="usage"><code>qargi import FILE [OPTIONS]</code></p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--only</code></td><td><code>PARTS</code></td><td>the parts to import (default: ask)</td></tr><tr><td><code>--project</code></td><td><code>NAMES</code></td><td>only these projects of the archive, comma separated</td></tr><tr><td><code>--mode</code></td><td><code>MODE</code></td><td>merge, overwrite or replace for every part (default: ask for each)</td></tr><tr><td><code>--password-file</code></td><td><code>FILE</code></td><td>the password is the first line of this file</td></tr><tr><td><code>--dry-run</code></td><td></td><td>print the plan and stop; changes nothing</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi import acme.tar.gz.gpg
+qargi import acme.tar.gz --dry-run --only memories</code></pre>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Freference%2Fexport-and-import%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>About these docs · qargi</title>
+<meta name="description" content="The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.">
+
+<link rel="canonical" href="https://qargi.rettware.com/about/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="About these docs · qargi">
+<meta property="og:description" content="The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.">
+<meta property="og:url" content="https://qargi.rettware.com/about/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="About these docs · qargi">
+<meta name="twitter:description" content="The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"About these docs","description":"The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.","url":"https://qargi.rettware.com/about/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-04","datePublished":"2026-11-04"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"About these docs","item":"https://qargi.rettware.com/about/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../">Home</a></li>
+<li><a href="../install/">Install and update</a></li>
+<li><a href="../first-project/">Your first project</a></li>
+<li><a href="../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="./" aria-current="page">About these docs</a></li>
+<li><a href="../reference/">Reference</a></li>
+<li><a href="../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../">Home</a></li><li aria-current="page">About these docs</li></ol></nav>
+<article>
+<h1>About these docs</h1>
+<p class="lede">The licence, the alpha status, what these pages cover and how they are checked, how to see which release they describe and how to report a problem.</p>
+<p class="dates">Published <time datetime="2026-11-04">2026-11-04</time> · Updated <time datetime="2026-11-04">2026-11-04</time></p>
+<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul><li><a href="#1-licence">1. Licence</a></li><li><a href="#2-status">2. Status</a></li><li><a href="#3-what-is-here-and-what-is-not">3. What is here and what is not</a></li><li><a href="#4-how-the-pages-are-checked">4. How the pages are checked</a></li><li><a href="#5-which-release-a-page-describes">5. Which release a page describes</a></li><li><a href="#6-report-a-problem">6. Report a problem</a></li><li><a href="#7-see-also">7. See also</a></li></ul></details></nav>
+<h2 id="1-licence">1. Licence <a class="anchor" href="#1-licence" aria-label="Link to: 1. Licence">#</a></h2>
+<p>qargi is released under the MIT licence. The text is in the <code>LICENSE</code> file of the <a href="https://github.com/rett/qargi">repository</a>. The licence applies to the tool and to these pages.</p>
+<h2 id="2-status">2. Status <a class="anchor" href="#2-status" aria-label="Link to: 2. Status">#</a></h2>
+<p>qargi is alpha. It is versioned with Semantic Versioning and is below 1.0, so a command, an option or a file format can change in any release. The <a href="../releases/">releases</a> page lists every change, and the Changed and Removed sections are the ones to read before you update. Expect rough edges and report them.</p>
+<h2 id="3-what-is-here-and-what-is-not">3. What is here and what is not <a class="anchor" href="#3-what-is-here-and-what-is-not" aria-label="Link to: 3. What is here and what is not">#</a></h2>
+<ul><li>The pages written by hand cover the work of a lead: install, set up, the daily loop, dispatching and verifying a task, and safety.</li><li>The <a href="../reference/">command reference</a> is generated from the same description that <code>qargi help</code> and <code>man qargi</code> print, for the release named in the header and footer of every page.</li><li>The <a href="../releases/">releases</a> page is generated from the changelog.</li><li>The README in the repository is the overview, and <code>man qargi</code> is the complete manual. These pages do not repeat them.</li></ul>
+<h2 id="4-how-the-pages-are-checked">4. How the pages are checked <a class="anchor" href="#4-how-the-pages-are-checked" aria-label="Link to: 4. How the pages are checked">#</a></h2>
+<p>Every <code>qargi</code> command and option that a page names is looked up in the command description of the release. Links and anchors must resolve. A page that names a command that does not exist, or a private name from the list of forbidden words, fails the build and is not published. The check proves that a command exists and takes that option; it does not prove that the advice is right for your project, so read the plan a command prints before you apply it.</p>
+<p>The examples use these names: the project <code>myproject</code>, the members <code>forge</code>, <code>scribe</code> and <code>reader</code>, and the run slug <code>rename-verb</code>. Words in capitals such as <code>NAME</code>, <code>RUN</code> and <code>TOKEN</code> stand for a value you supply.</p>
+<h2 id="5-which-release-a-page-describes">5. Which release a page describes <a class="anchor" href="#5-which-release-a-page-describes" aria-label="Link to: 5. Which release a page describes">#</a></h2>
+<p>The header and the footer of each page name the release it was checked against. When the hand pages are ahead of a release the stamp says so. If you run an older qargi than the stamp, <code>qargi version</code> tells you which one you have, and the <a href="../releases/">releases</a> page tells you what differs.</p>
+<h2 id="6-report-a-problem">6. Report a problem <a class="anchor" href="#6-report-a-problem" aria-label="Link to: 6. Report a problem">#</a></h2>
+<p>Open an issue at <a href="https://github.com/rett/qargi/issues">github.com/rett/qargi/issues</a>. Say which page, what you typed or read, what you expected and what happened, and the output of <code>qargi version</code>. For a problem with a command, include its exit status and the message. Do not paste tokens, credentials or private paths.</p>
+<h2 id="7-see-also">7. See also <a class="anchor" href="#7-see-also" aria-label="Link to: 7. See also">#</a></h2>
+<ul><li><a href="../">Home</a></li><li><a href="../safety/">Safety</a></li><li><a href="../releases/">Releases</a></li><li><a href="../reference/">Command reference</a></li></ul>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Fabout%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

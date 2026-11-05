@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Command reference · qargi</title>
+<meta name="description" content="The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.">
+
+<link rel="canonical" href="https://qargi.rettware.com/reference/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Command reference · qargi">
+<meta property="og:description" content="The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.">
+<meta property="og:url" content="https://qargi.rettware.com/reference/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Command reference · qargi">
+<meta name="twitter:description" content="The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Command reference","description":"The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.","url":"https://qargi.rettware.com/reference/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-05"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Command reference","item":"https://qargi.rettware.com/reference/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../">Home</a></li>
+<li><a href="../install/">Install and update</a></li>
+<li><a href="../first-project/">Your first project</a></li>
+<li><a href="../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../about/">About these docs</a></li>
+<li><a href="./" aria-current="page">Reference</a></li>
+<li><a href="../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../">Home</a></li><li aria-current="page">Command reference</li></ol></nav>
+<article>
+<h1>Command reference</h1>
+<p class="lede">The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.</p>
+<p class="dates">Updated <time datetime="2026-11-05">2026-11-05</time></p>
+<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul><li><a href="#group-set-up">Set up</a></li><li><a href="#group-run-a-task">Run a task</a></li><li><a href="#group-review-and-apply">Review and apply</a></li><li><a href="#group-memory">Memory</a></li><li><a href="#group-lead-and-credentials">Lead and credentials</a></li><li><a href="#group-export-and-import">Export and import</a></li><li><a href="#group-other">Other</a></li><li><a href="#more">Topics, files and environment</a></li><li><a href="#typical-use">Typical use</a></li></ul></details></nav>
+<p>qargi dispatches one-off, task-scoped development tasks to sandboxed agents and takes the work back as reviewable patches. An agent is a member on this machine (local, the default) or a cloud agent (only when you ask for it in that request). Agents work in their own clone and never push. A team adds a lead that coordinates members for build, write and review on one task. Everything qargi stores about you and your projects lives outside every repository. Inside a project&#x27;s repository you can leave out its name.</p>
+<p>A gathering place for agent work: dispatch, review, remember. This reference is generated from the command description of qargi 0.2.1, so it matches that release.</p>
+<h2 id="group-set-up"><a href="set-up/">Set up</a> <a class="anchor" href="#group-set-up" aria-label="Link to: Set up">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="set-up/#project"><code>project</code></a></td><td>Store the answers about a project, once, outside the repository</td></tr><tr><td><a href="set-up/#methodology"><code>methodology</code></a></td><td>List and inspect the development and release methodologies</td></tr><tr><td><a href="set-up/#cloud"><code>cloud</code></a></td><td>Which ant profile and workspace each project uses</td></tr><tr><td><a href="set-up/#agent"><code>agent</code></a></td><td>Name the members: the local agents that do the work</td></tr><tr><td><a href="set-up/#role"><code>role</code></a></td><td>List and check the roles: what a member or cloud agent is for</td></tr><tr><td><a href="set-up/#provider"><code>provider</code></a></td><td>List and check the model providers: tiers, models and what each can do</td></tr><tr><td><a href="set-up/#provision"><code>provision</code></a></td><td>Create the cloud agent, deployment and environment of an instance</td></tr><tr><td><a href="set-up/#env"><code>env</code></a></td><td>What a repository declares about its development environment</td></tr><tr><td><a href="set-up/#instances"><code>instances</code></a></td><td>Register, inspect and manage agent instances</td></tr><tr><td><a href="set-up/#skill"><code>skill</code></a></td><td>Create or import skills and attach them by scope</td></tr><tr><td><a href="set-up/#tool"><code>tool</code></a></td><td>Create or import tools (MCP servers with an allowlist) and attach them by scope</td></tr><tr><td><a href="set-up/#packs"><code>packs</code></a></td><td>Render, load or apply the skills and tools a role gets</td></tr><tr><td><a href="set-up/#discover"><code>discover</code></a></td><td>Find, recommend and install tools for the roles of a project</td></tr></tbody></table></div>
+<h2 id="group-run-a-task"><a href="run-a-task/">Run a task</a> <a class="anchor" href="#group-run-a-task" aria-label="Link to: Run a task">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="run-a-task/#feature"><code>feature</code></a></td><td>Develop on a feature branch; merge it into develop once, when complete</td></tr><tr><td><a href="run-a-task/#marshal"><code>marshal</code></a></td><td>Who leads which open feature: lease, status, goal, plan, handoff</td></tr><tr><td><a href="run-a-task/#release"><code>release</code></a></td><td>Releases and hotfixes by the git-flow rules</td></tr><tr><td><a href="run-a-task/#branch"><code>branch</code></a></td><td>Branch housekeeping: delete the merged agent and feature branches and their worktrees</td></tr><tr><td><a href="run-a-task/#changelog"><code>changelog</code></a></td><td>Numbered changelog items: find duplicate numbers and renumber them</td></tr><tr><td><a href="run-a-task/#upstream"><code>upstream</code></a></td><td>Follow an upstream repository: how far behind, what is new, sync its branch</td></tr><tr><td><a href="run-a-task/#ref"><code>ref</code></a></td><td>Record in the lead&#x27;s ref journal a branch move that no flow verb made</td></tr><tr><td><a href="run-a-task/#start"><code>start</code></a></td><td>Start a standby cloud session for an instance</td></tr><tr><td><a href="run-a-task/#send"><code>send</code></a></td><td>Send a task to an idle cloud session</td></tr><tr><td><a href="run-a-task/#status"><code>status</code></a></td><td>Show tracked cloud sessions, or one session</td></tr><tr><td><a href="run-a-task/#report"><code>report</code></a></td><td>Cost per applied change, what waits for review, what looks stuck</td></tr><tr><td><a href="run-a-task/#noticed"><code>noticed</code></a></td><td>What members noticed and did not act on, and what became of it</td></tr><tr><td><a href="run-a-task/#watch"><code>watch</code></a></td><td>Wait for a cloud session to stop; prints one line when it does</td></tr><tr><td><a href="run-a-task/#collect"><code>collect</code></a></td><td>Download a session&#x27;s output files into a fresh directory</td></tr><tr><td><a href="run-a-task/#stop"><code>stop</code></a></td><td>Interrupt a running cloud session</td></tr><tr><td><a href="run-a-task/#close"><code>close</code></a></td><td>Archive a finished cloud session</td></tr><tr><td><a href="run-a-task/#mark"><code>mark</code></a></td><td>Record what happened to a session&#x27;s work</td></tr><tr><td><a href="run-a-task/#track"><code>track</code></a></td><td>Track a session that was started elsewhere (for example in the console)</td></tr><tr><td><a href="run-a-task/#local"><code>local</code></a></td><td>Prepare, verify, list and clean a local run that has no way to push</td></tr><tr><td><a href="run-a-task/#supervise"><code>supervise</code></a></td><td>Find stalled agent runs: notify, prepare a nudge, never act alone</td></tr></tbody></table></div>
+<h2 id="group-review-and-apply"><a href="review-and-apply/">Review and apply</a> <a class="anchor" href="#group-review-and-apply" aria-label="Link to: Review and apply">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="review-and-apply/#review"><code>review</code></a></td><td>Check what an agent returned and put it on a task branch</td></tr><tr><td><a href="review-and-apply/#team"><code>team</code></a></td><td>Run a task with a lead and role agents (opt-in)</td></tr></tbody></table></div>
+<h2 id="group-memory"><a href="memory/">Memory</a> <a class="anchor" href="#group-memory" aria-label="Link to: Memory">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="memory/#memory"><code>memory</code></a></td><td>Check a memory store, list its tiers, read a note, split, merge or copy stores</td></tr><tr><td><a href="memory/#canon"><code>canon</code></a></td><td>Bring a project&#x27;s two memory stores to the standard layout and keep them there</td></tr></tbody></table></div>
+<h2 id="group-lead-and-credentials"><a href="lead-and-credentials/">Lead and credentials</a> <a class="anchor" href="#group-lead-and-credentials" aria-label="Link to: Lead and credentials">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="lead-and-credentials/#lead"><code>lead</code></a></td><td>The lead session: its context, and the cloud lead&#x27;s right to push</td></tr><tr><td><a href="lead-and-credentials/#credential"><code>credential</code></a></td><td>Check or set up the tokens qargi uses</td></tr><tr><td><a href="lead-and-credentials/#hook"><code>hook</code></a></td><td>Claude Code hooks</td></tr></tbody></table></div>
+<h2 id="group-export-and-import"><a href="export-and-import/">Export and import</a> <a class="anchor" href="#group-export-and-import" aria-label="Link to: Export and import">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="export-and-import/#export"><code>export</code></a></td><td>Save a project&#x27;s setup, definitions and memories to one file</td></tr><tr><td><a href="export-and-import/#import"><code>import</code></a></td><td>Restore from an export, choosing what and how</td></tr></tbody></table></div>
+<h2 id="group-other"><a href="other/">Other</a> <a class="anchor" href="#group-other" aria-label="Link to: Other">#</a></h2>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Command</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="other/#upgrade"><code>upgrade</code></a></td><td>Move the installed tool to a newer branch or tag of its origin</td></tr><tr><td><a href="other/#help"><code>help</code></a></td><td>Show help</td></tr><tr><td><a href="other/#version"><code>version</code></a></td><td>Print the version</td></tr></tbody></table></div>
+<h2 id="more">Topics, files and environment <a class="anchor" href="#more" aria-label="Link to: Topics, files and environment">#</a></h2>
+<ul><li><a href="topics/">Help topics</a>: the ideas behind the commands.</li><li><a href="files/">Files</a>: what qargi stores and where.</li><li><a href="environment/">Environment</a>: the variables it reads.</li></ul>
+<h2 id="typical-use">Typical use <a class="anchor" href="#typical-use" aria-label="Link to: Typical use">#</a></h2>
+<p>Once per project</p>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi project template acme &gt; acme.json   # edit it
+qargi project init acme --answers acme.json
+qargi provision plan acme-build    # then apply it with --plan and --approved</code></pre>
+<p>One task, cloud</p>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi send acme-build &quot;$BRIEF&quot; --label rename-verb --asked &quot;use the cloud builder&quot;
+qargi watch SID    # in the background
+qargi collect SID ./out
+qargi review check ./out</code></pre>
+<p>A team</p>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi team brief acme code-docs --task &quot;rename the verb&quot; --done &quot;make test&quot; --base develop
+qargi lead status acme
+qargi team check ./run</code></pre>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Freference%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>

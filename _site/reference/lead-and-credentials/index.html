@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Reference: Lead and credentials · qargi</title>
+<meta name="description" content="Reference for the &quot;Lead and credentials&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+
+<link rel="canonical" href="https://qargi.rettware.com/reference/lead-and-credentials/">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="../../assets/site.css">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Reference: Lead and credentials · qargi">
+<meta property="og:description" content="Reference for the &quot;Lead and credentials&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<meta property="og:url" content="https://qargi.rettware.com/reference/lead-and-credentials/">
+<meta property="og:site_name" content="qargi">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Reference: Lead and credentials · qargi">
+<meta name="twitter:description" content="Reference for the &quot;Lead and credentials&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.">
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Reference: Lead and credentials","description":"Reference for the \"Lead and credentials\" group of qargi commands: every verb with its arguments, options and examples, generated from the release.","url":"https://qargi.rettware.com/reference/lead-and-credentials/","inLanguage":"en","isPartOf":{"@type":"WebSite","name":"qargi","url":"https://qargi.rettware.com/"},"about":{"@type":"SoftwareApplication","name":"qargi"},"dateModified":"2026-11-05"},{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://qargi.rettware.com/"},{"@type":"ListItem","position":2,"name":"Reference","item":"https://qargi.rettware.com/reference/"},{"@type":"ListItem","position":3,"name":"Reference: Lead and credentials","item":"https://qargi.rettware.com/reference/lead-and-credentials/"}]}]}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+<div class="wrap">
+<a class="brand" href="../../">qargi</a>
+<span class="stamp">qargi 0.2.1</span>
+<nav aria-label="Site">
+<ul>
+<li><a href="../../">Home</a></li>
+<li><a href="../../install/">Install and update</a></li>
+<li><a href="../../first-project/">Your first project</a></li>
+<li><a href="../../lead-loop/">The lead&#x27;s loop</a></li>
+<li><a href="../../dispatch-and-verify/">Dispatch, verify and apply</a></li>
+<li><a href="../../safety/">Safety: what is refused and who decides</a></li>
+<li><a href="../../about/">About these docs</a></li>
+<li><a href="../" aria-current="true">Reference</a></li>
+<li><a href="../../releases/">Releases</a></li>
+</ul>
+</nav>
+</div>
+</header>
+<main id="main" class="wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><ol><li><a href="../../">Home</a></li><li><a href="../">Reference</a></li><li aria-current="page">Reference: Lead and credentials</li></ol></nav>
+<article>
+<h1>Reference: Lead and credentials</h1>
+<p class="lede">Reference for the &quot;Lead and credentials&quot; group of qargi commands: every verb with its arguments, options and examples, generated from the release.</p>
+<p class="dates">Updated <time datetime="2026-11-05">2026-11-05</time></p>
+<nav aria-label="On this page"><details class="toc" open><summary>On this page</summary><ul><li><a href="#lead">qargi lead</a></li><li><a href="#credential">qargi credential</a></li><li><a href="#hook">qargi hook</a></li></ul></details></nav>
+<h2 id="lead">qargi lead <a class="anchor" href="#lead" aria-label="Link to: qargi lead">#</a></h2>
+<p class="summary">The lead session: its context, and the cloud lead&#x27;s right to push.</p>
+<p>usage and compact-check keep the lead&#x27;s own context small: usage says how much of it is in use, compact-check says whether a /compact is safe now and what to re-read after it. Only the lead ever pushes, never a member. With a grant it creates agent/* branches and opens pull requests; every merge is asked of you, and it cannot publish releases. grant and revoke are interactive: each step prints its plan and asks you at the terminal, and your answer is the recorded approval. From Claude Code run them with !.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#lead-usage"><code>usage</code></a></td><td>How much of this session&#x27;s context is in use: tokens of the last turn, percent of the window, transcript size</td></tr><tr><td><a href="#lead-compact-check"><code>compact-check</code></a></td><td>Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it</td></tr><tr><td><a href="#lead-grant"><code>grant</code></a></td><td>Guided: create or rotate the grant in three confirmed steps</td></tr><tr><td><a href="#lead-status"><code>status</code></a></td><td>Show what is in place and what is missing</td></tr><tr><td><a href="#lead-revoke"><code>revoke</code></a></td><td>Take the grant away</td></tr></tbody></table></div>
+<h3 id="lead-usage">qargi lead usage <a class="anchor" href="#lead-usage" aria-label="Link to: qargi lead usage">#</a></h3>
+<p class="usage"><code>qargi lead usage [OPTIONS]</code></p>
+<p>How much of this session&#x27;s context is in use: tokens of the last turn, percent of the window, transcript size.</p>
+<p>The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer lead.context_window (tokens), else the runtime&#x27;s. Read only; a transcript that cannot be found or read prints unknown and exits 0.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--session</code></td><td><code>ID</code></td><td>read the transcript of this session id (default: QARGI_LEAD, else the newest of this directory)</td></tr><tr><td><code>--transcript</code></td><td><code>FILE</code></td><td>read this transcript file</td></tr><tr><td><code>--json</code></td><td></td><td>machine-readable</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi lead usage
+qargi project set acme lead.context_window 1000000</code></pre>
+<h3 id="lead-compact-check">qargi lead compact-check <a class="anchor" href="#lead-compact-check" aria-label="Link to: qargi lead compact-check">#</a></h3>
+<p class="usage"><code>qargi lead compact-check [OPTIONS]</code></p>
+<p>Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it.</p>
+<p>Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older than the last merge; or a release or hotfix branch is open. It prints the restart block: the handoff note, qargi marshal status, qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the lead (or the person) does. feature finish, the last feature merge of a feature&#x27;s runs, release finish and marshal handoff print one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off).</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of the one inferred from here</td></tr><tr><td><code>--advise</code></td><td></td><td>also say whether a compact is advised: from 50% of the window, strongly from 70%</td></tr><tr><td><code>--json</code></td><td></td><td>machine-readable</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi lead compact-check --advise</code></pre>
+<h3 id="lead-grant">qargi lead grant <a class="anchor" href="#lead-grant" aria-label="Link to: qargi lead grant">#</a></h3>
+<p class="usage"><code>qargi lead grant [PROJECT] [OPTIONS]</code></p>
+<p>Guided: create or rotate the grant in three confirmed steps.</p>
+<p>Explains how to create the fine-grained token, checks it, then: token and vault; the GitHub tool; the Push rules. Skips what is in place.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--from-file</code></td><td><code>FILE</code></td><td>read the token from a file instead of asking</td></tr></tbody></table></div>
+<pre class="code" tabindex="0" role="region" aria-label="example commands"><code class="language-bash">qargi lead grant acme</code></pre>
+<h3 id="lead-status">qargi lead status <a class="anchor" href="#lead-status" aria-label="Link to: qargi lead status">#</a></h3>
+<p class="usage"><code>qargi lead status [PROJECT]</code></p>
+<p>Show what is in place and what is missing.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<h3 id="lead-revoke">qargi lead revoke <a class="anchor" href="#lead-revoke" aria-label="Link to: qargi lead revoke">#</a></h3>
+<p class="usage"><code>qargi lead revoke [PROJECT]</code></p>
+<p>Take the grant away.</p>
+<p>Removes the tool and the Push rules, detaches and archives the credential, deletes the token file. Revoke the token on GitHub yourself.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<h2 id="credential">qargi credential <a class="anchor" href="#credential" aria-label="Link to: qargi credential">#</a></h2>
+<p class="summary">Check or set up the tokens qargi uses.</p>
+<p>Tokens live in files only you can read, outside every repository, and never in a command line, the tracker or the audit log.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#credential-check"><code>check</code></a></td><td>Probe the repository token: it must read and should not push</td></tr><tr><td><a href="#credential-setup"><code>setup</code></a></td><td>Set up the cloud lead&#x27;s write token (prefer: qargi lead grant)</td></tr></tbody></table></div>
+<h3 id="credential-check">qargi credential check <a class="anchor" href="#credential-check" aria-label="Link to: qargi credential check">#</a></h3>
+<p class="usage"><code>qargi credential check [PROJECT] [OPTIONS]</code></p>
+<p>Probe the repository token: it must read and should not push.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--allow-write-token</code></td><td></td><td>accept a token that can push, knowingly</td></tr></tbody></table></div>
+<h3 id="credential-setup">qargi credential setup <a class="anchor" href="#credential-setup" aria-label="Link to: qargi credential setup">#</a></h3>
+<p class="usage"><code>qargi credential setup KIND [PROJECT] [OPTIONS]</code></p>
+<p>Set up the cloud lead&#x27;s write token (prefer: qargi lead grant).</p>
+<p>Checks the token itself against GitHub (fine-grained, this repository only, no Administration), stores it mode 600, creates a vault with a bearer credential, attaches it to the lead&#x27;s deployment and records the grant.</p>
+<p>PROJECT can be left out inside the project's repository, or set QARGI_PROJECT.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--from-file</code></td><td><code>FILE</code></td><td>read the token from a file instead of stdin</td></tr><tr><td><code>--allow-more-repos</code></td><td></td><td>accept a token that can also write to other repositories</td></tr><tr><td><code>--asked</code></td><td><code>REQUEST</code></td><td>the request, in your words, that names the cloud instance; recorded in the audit log</td></tr><tr><td><code>--plan</code></td><td><code>TOKEN</code></td><td>the plan token printed by the same command without --approved</td></tr><tr><td><code>--approved</code></td><td><code>WORDS</code></td><td>your go-ahead for exactly that plan, in your words; recorded in the audit log</td></tr></tbody></table></div>
+<h2 id="hook">qargi hook <a class="anchor" href="#hook" aria-label="Link to: qargi hook">#</a></h2>
+<p class="summary">Claude Code hooks.</p>
+<p>session-start loads the lead role&#x27;s READMEs and indexes from both stores (about 4 KB) for the project whose repository the session is in, and the push grant. Register it as a SessionStart hook; it prints nothing outside a registered project.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Verb</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><a href="#hook-session-start"><code>session-start</code></a></td><td>Print the SessionStart hook output for the current project</td></tr><tr><td><a href="#hook-subagent-start"><code>subagent-start</code></a></td><td>Record that a subagent started (SubagentStart hook)</td></tr><tr><td><a href="#hook-subagent-stop"><code>subagent-stop</code></a></td><td>Record that a subagent stopped and how many background tasks it still had (SubagentStop hook)</td></tr><tr><td><a href="#hook-tool-use"><code>tool-use</code></a></td><td>Record a successful tool call: its name and a hash of its input (PostToolUse hook)</td></tr><tr><td><a href="#hook-tool-failure"><code>tool-failure</code></a></td><td>Record a failed tool call: its name, a hash of its input, whether it was an interrupt (PostToolUseFailure hook)</td></tr><tr><td><a href="#hook-notification"><code>notification</code></a></td><td>Record the type of a notification, for example permission_prompt (Notification hook)</td></tr><tr><td><a href="#hook-stop-failure"><code>stop-failure</code></a></td><td>Record the error type a turn ended with, for example rate_limit (StopFailure hook)</td></tr><tr><td><a href="#hook-pre-compact"><code>pre-compact</code></a></td><td>Record that the context is being compacted (PreCompact hook)</td></tr></tbody></table></div>
+<h3 id="hook-session-start">qargi hook session-start <a class="anchor" href="#hook-session-start" aria-label="Link to: qargi hook session-start">#</a></h3>
+<p class="usage"><code>qargi hook session-start [OPTIONS]</code></p>
+<p>Print the SessionStart hook output for the current project.</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Table"><table><thead><tr><th scope="col">Option</th><th scope="col">Argument</th><th scope="col">What it does</th></tr></thead><tbody><tr><td><code>--project</code></td><td><code>PROJECT</code></td><td>the project, instead of finding it from the directory</td></tr><tr><td><code>--role</code></td><td><code>ROLE</code></td><td>the role to load (default lead)</td></tr></tbody></table></div>
+<h3 id="hook-subagent-start">qargi hook subagent-start <a class="anchor" href="#hook-subagent-start" aria-label="Link to: qargi hook subagent-start">#</a></h3>
+<p class="usage"><code>qargi hook subagent-start</code></p>
+<p>Record that a subagent started (SubagentStart hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-subagent-stop">qargi hook subagent-stop <a class="anchor" href="#hook-subagent-stop" aria-label="Link to: qargi hook subagent-stop">#</a></h3>
+<p class="usage"><code>qargi hook subagent-stop</code></p>
+<p>Record that a subagent stopped and how many background tasks it still had (SubagentStop hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-tool-use">qargi hook tool-use <a class="anchor" href="#hook-tool-use" aria-label="Link to: qargi hook tool-use">#</a></h3>
+<p class="usage"><code>qargi hook tool-use</code></p>
+<p>Record a successful tool call: its name and a hash of its input (PostToolUse hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-tool-failure">qargi hook tool-failure <a class="anchor" href="#hook-tool-failure" aria-label="Link to: qargi hook tool-failure">#</a></h3>
+<p class="usage"><code>qargi hook tool-failure</code></p>
+<p>Record a failed tool call: its name, a hash of its input, whether it was an interrupt (PostToolUseFailure hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-notification">qargi hook notification <a class="anchor" href="#hook-notification" aria-label="Link to: qargi hook notification">#</a></h3>
+<p class="usage"><code>qargi hook notification</code></p>
+<p>Record the type of a notification, for example permission_prompt (Notification hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-stop-failure">qargi hook stop-failure <a class="anchor" href="#hook-stop-failure" aria-label="Link to: qargi hook stop-failure">#</a></h3>
+<p class="usage"><code>qargi hook stop-failure</code></p>
+<p>Record the error type a turn ended with, for example rate_limit (StopFailure hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+<h3 id="hook-pre-compact">qargi hook pre-compact <a class="anchor" href="#hook-pre-compact" aria-label="Link to: qargi hook pre-compact">#</a></h3>
+<p class="usage"><code>qargi hook pre-compact</code></p>
+<p>Record that the context is being compacted (PreCompact hook).</p>
+<p>Reads the hook&#x27;s JSON on stdin and appends one small line to the run&#x27;s event file under the state directory (ids, times, names and hashes; never command, message or error text). It always exits 0 at once, even on malformed input, so it cannot block an agent. Register it with qargi supervise hooks.</p>
+</article>
+</main>
+<footer class="site-footer">
+<div class="wrap">
+<p>Checked against qargi 0.2.1.</p>
+<p>Licensed under the MIT License. · <a href="https://github.com/rett/qargi">Source</a> · <a href="https://github.com/rett/qargi/issues/new?title=Docs%3A%20%2Freference%2Flead-and-credentials%2F">Report a problem with this page</a></p>
+</div>
+</footer>
+</body>
+</html>
