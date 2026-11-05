@@ -46,7 +46,7 @@ out=$($DA project adopt alpha --plan "$tok" --approved "go ahead" 2>&1); rc=$?
 ! git -C "$A" rev-parse -q --verify master >/dev/null && ok "no master was created next to main" || no "master created"
 [ "$(git -C "$A" rev-parse agent/adopt-gitflow^)" = "$head0" ] && [ "$(git -C "$A" rev-list --count develop..agent/adopt-gitflow)" = 1 ] && ok "the files are one commit on agent/adopt-gitflow, cut from develop" || no "adopt branch shape"
 files=$(git -C "$A" diff --name-only develop agent/adopt-gitflow | LC_ALL=C sort | tr '\n' ' ')
-[ "$files" = ".github/workflows/test.yml .gitignore CHANGELOG.md CLAUDE.md CONTRIBUTING.md VERSION " ] && ok "only the missing scaffold files are in it" || no "files: $files"
+[ "$files" = ".github/workflows/test.yml .gitignore AGENTS.md CHANGELOG.md CLAUDE.md CONTRIBUTING.md Makefile VERSION " ] && ok "only the missing scaffold files are in it" || no "files: $files"
 [ "$(git -C "$A" show agent/adopt-gitflow:README.md)" = "$(git -C "$A" show main:README.md)" ] && git -C "$A" diff --quiet develop main && ok "the existing README and the long-lived branches are untouched" || no "README changed"
 [ -z "$(git -C "$A" ls-tree -r --name-only develop | grep -v '^README.md$')" ] && ok "nothing was written on develop" || no "develop has the scaffold"
 git -C "$A" log -1 --format=%B agent/adopt-gitflow | grep -q "CHANGELOG.md" && ok "the commit message names the files" || no "commit message"
@@ -113,7 +113,7 @@ grep -q "^    CONTRIBUTING.md$" <<<"$out" && grep -q "^    CLAUDE.md$" <<<"$out"
 grep -qi "CHANGELOG" <<<"$out" && grep -qi "left for you\|left for" <<<"$out" && grep -qi "tag" <<<"$out" && ok "the skipped files and the tag and changelog format are listed as left for a human" || no "left: $out"
 $DA project adopt phi --plan "$tok" --approved go >/dev/null 2>&1 || no "apply phi"
 files=$(git -C "$F" diff --name-only master agent/adopt-gitflow | LC_ALL=C sort | tr '\n' ' ')
-[ "$files" = "CLAUDE.md CONTRIBUTING.md " ] && git -C "$F" show master:CHANGELOG | grep -q "old style" && [ "$(git -C "$F" show agent/adopt-gitflow:.gitignore)" = node_modules ] && ok "only the missing files were written; existing ones are byte-identical" || no "files: $files"
+[ "$files" = "AGENTS.md CLAUDE.md CONTRIBUTING.md Makefile " ] && git -C "$F" show master:CHANGELOG | grep -q "old style" && [ "$(git -C "$F" show agent/adopt-gitflow:.gitignore)" = node_modules ] && ok "only the missing files were written; existing ones are byte-identical" || no "files: $files"
 [ "$(git -C "$F" rev-parse master)" = "$(git -C "$F" rev-parse agent/adopt-gitflow^)" ] && [ -n "$(git -C "$F" rev-parse -q --verify develop)" ] && ok "develop was created from master and the branch is cut from it" || no "develop"
 
 # an existing CHANGELOG.md of its own is not touched either
@@ -131,6 +131,28 @@ out=$($DA project adopt hay 2>&1); echo "$out" | grep -qi "no '## \[Unreleased\]
 jq '.release = {version_file: "none", changelog: {unreleased: "## Next", released: "## {version}"}}' "$T/c/projects/hay.json" > "$T/hay.json" && mv "$T/hay.json" "$T/c/projects/hay.json"
 out=$($DA project adopt hay 2>&1)
 ! grep -qi "format" <<<"$out" && ! grep -q "^    VERSION$" <<<"$out" && grep -q "^    CONTRIBUTING.md$" <<<"$out" && ok "with the answers, the changelog's own heading is found and no VERSION file is planned" || no "template gap: $out"
+# --- H: the development environment. A justfile without the targets, a CLAUDE.md of its own; and a README that already has the section ---
+H=$T/h2; git init -q -b main "$H"; printf 'default:\n    @true\n' > "$H/justfile"; printf '# Mine\n' > "$H/CLAUDE.md"; git -C "$H" add -A; git -C "$H" commit -q -m first
+attach heth "$H"
+out=$($DA project attach "$H" --name heth 2>&1)
+grep -q "^development environment found: section in none; task runner just; bootstrap none; doctor none" <<<"$out" && grep -q "  - env: bootstrap target" <<<"$out" && grep -q "  - env: doctor target" <<<"$out" \
+  && ! grep -q "file: Makefile" <<<"$out" && grep -q "file: AGENTS.md" <<<"$out" && ok "attach reports what environment detection found and lists the missing pieces" || no "attach env: $out"
+out=$($DA project adopt heth 2>&1); tok=$(tokof "$out")
+grep -q "^    AGENTS.md$" <<<"$out" && ! grep -q "^    Makefile$" <<<"$out" && grep -q "env: bootstrap target (not written" <<<"$out" && grep -q "env: doctor target (not written" <<<"$out" \
+  && ok "adopt drafts the section and leaves the targets of an existing runner to the owner" || no "adopt env plan: $out"
+$DA project adopt heth --plan "$tok" --approved go >/dev/null 2>&1 || no "apply heth"
+a=$(git -C "$H" show agent/adopt-gitflow:AGENTS.md)
+grep -q '^## Development environment$' <<<"$a" && grep -q '`just bootstrap`' <<<"$a" && grep -q '`just --dry-run bootstrap`' <<<"$a" && grep -q '`just doctor`' <<<"$a" && ! grep -qi qargi <<<"$a" \
+  && [ "$(git -C "$H" show agent/adopt-gitflow:CLAUDE.md 2>&1)" = "# Mine" ] && ok "the drafted section names the runner's commands, nothing about qargi, and CLAUDE.md is untouched" || no "drafted AGENTS.md: $a"
+I=$T/i; git init -q -b main "$I"; printf '# Iota\n\n## Setup\n\nmake bootstrap\n' > "$I/README.md"; printf 'bootstrap:\n\t@true\ndoctor:\n\t@true\n' > "$I/Makefile"
+git -C "$I" add -A; git -C "$I" commit -q -m first
+attach iota "$I"
+out=$($DA project adopt iota 2>&1)
+! grep -q "^    AGENTS.md$" <<<"$out" && ! grep -q "^    Makefile$" <<<"$out" && ! grep -q "env:" <<<"$out" && ok "a repository that has the section and the targets gets neither file and no gap" || no "adopt iota: $out"
+J=$T/j; git init -q -b main "$J"; printf '# Jot\n' > "$J/AGENTS.md"; printf 'doctor:\n\t@true\n' > "$J/Makefile"; git -C "$J" add -A; git -C "$J" commit -q -m first
+attach jot "$J"
+out=$($DA project adopt jot 2>&1)
+grep -q "env: Development environment section (not written" <<<"$out" && grep -q "env: bootstrap target (not written" <<<"$out" && ! grep -q "env: doctor target" <<<"$out" && ok "an AGENTS.md without the section and a Makefile without bootstrap are listed, not edited" || no "adopt jot: $out"
 
 # the audit line, and a bad methodology
 grep -q '"verb":"project:adopt"' "$T/s/audit.log" && ok "applying leaves an audit line" || no "audit"

@@ -464,7 +464,8 @@ FIELD_VALUES = {"effort": C.EFFORTS, "model": C.MODELS, "local": ("true", "false
 # answers a project may hold that are not there yet, so a key can be typed before it exists
 EXTRA_KEYS = ("lead.model", "lead.effort", "lead.push.local", "lead.push.cloud", "lead.push.branch_pattern", "lead.push.merge",
               "lead.push.release", "budget_cents", "test_command", "release.version_file", "release.changelog.unreleased", "release.changelog.released",
-              "release.man_pages", "release.test_command", "release.preflight") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "skills", "push.mode"))
+              "release.man_pages", "release.test_command", "release.preflight",
+              "env.doctor_command", "env.bootstrap_command", "env.dry_run_command", "env.known_failures") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "skills", "push.mode"))
 
 
 def flatten(d, prefix=""):

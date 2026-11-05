@@ -12,6 +12,22 @@
       "default": "make test",
       "help": "the command that runs the whole test suite"
     },
+    "runner": {
+      "default": "make",
+      "help": "the task runner that holds the bootstrap and doctor targets"
+    },
+    "bootstrap_command": {
+      "default": "make bootstrap",
+      "help": "the command that sets a checkout up"
+    },
+    "dry_run_command": {
+      "default": "make -n bootstrap",
+      "help": "the command that shows what the bootstrap would do, changing nothing"
+    },
+    "doctor_command": {
+      "default": "make doctor",
+      "help": "the command that checks a checkout, one line per item"
+    },
     "version": {
       "default": "0.1.0",
       "help": "the first version"
@@ -88,6 +104,16 @@
     {
       "src": "CONTRIBUTING.md",
       "dest": "CONTRIBUTING.md"
+    },
+    {
+      "src": "AGENTS.md",
+      "dest": "AGENTS.md",
+      "env": "section"
+    },
+    {
+      "src": "Makefile",
+      "dest": "Makefile",
+      "env": "targets"
     },
     {
       "src": "CLAUDE.md",
