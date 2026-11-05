@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `tests/run.sh --changed-from REF` (or `--changed-files FILE`, one path per line) adds to the fast tier the steps whose `covers`
+  globs match a file changed since REF (`git diff REF...HEAD`) and those whose command names a changed file; a step with no `covers`
+  is not added by its globs. `--plan` prints the selection and the shard plan and runs nothing, and a sharded run ends with a
+  `shard i/K: planned Ns, the steps took Ns together` line.
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the

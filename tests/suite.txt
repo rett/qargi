@@ -101,5 +101,5 @@ fast | par | 300 | 3 | bash tests/test_skill_budget.sh | skills/*/SKILL.md tests
 fast | serial | 300 | 3 | bash tests/test_tool_copy.sh | install.sh tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 3 | bash tests/test_hermetic.sh | tests/hermetic.sh tests/hermetic.py
 fast | par | 300 | 11 | bash tests/test_gitflow_detached.sh
-fast | par | 300 | 17 | bash tests/test_runner.sh
+fast | par | 300 | 17 | bash tests/test_runner.sh | tests/run.sh tests/suite.txt
 full | serial | 300 | 25 | shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
