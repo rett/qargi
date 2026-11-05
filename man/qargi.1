@@ -1873,7 +1873,7 @@ use the merge you resolved and committed in the conflict worktree.
 .BI "status " "NAME"
 Show the feature: commits ahead of develop and whether the whole suite passed at its head.
 .br
-It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. Flags worktrees outside the worktree root like list.
+It asks the live origin with git ls\-remote (QARGI_REMOTE_TIMEOUT seconds, default 10) where the branches are, not the last fetch, and says 'remote not checked' when origin cannot be reached. Flags worktrees outside the worktree root like list. When the whole\-suite result is for an older head it says why (the commits on the branch since the run, a merge of a task branch or of develop named as such) and that the next step is qargi feature verify NAME.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"

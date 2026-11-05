@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task
+  branch, a merge of develop, a plain commit) and names the next step, `qargi feature verify NAME`; a feature never verified names it
+  too.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added

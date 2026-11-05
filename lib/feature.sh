@@ -102,6 +102,24 @@ sync_numbers() {
   r=$(changelog_check "$1") || { echo "qargi: warning: $BR has duplicate changelog item numbers (release.changelog.numbered); feature finish refuses until they are renumbered:" >&2; printf '%s\n' "$r" | sed 's/^/  /' >&2; }
 }
 
+# stale_why BRANCH RAN -> why the whole-suite result at RAN no longer stands for BRANCH: the commits on its first-parent line since RAN
+# (a merge of develop is a sync, a merge of another branch is a task merge), oldest first, at most five
+stale_why() {
+  local sha subj n=0 total what
+  if ! g merge-base --is-ancestor "$2" "$1" 2>/dev/null; then echo "  why: the run's commit is not in the history of $1 (the branch was reset or rebuilt since)"; return 0; fi
+  total=$(g rev-list --first-parent --count "$2..$1")
+  echo "  why: $1 moved after that run by $total commit(s):"
+  while read -r sha subj; do
+    case $subj in
+      "Merge branch 'develop' into "*) what="develop was synced in";;
+      "Merge branch '"*) what="a branch was merged in";;
+      *) what="a commit";;
+    esac
+    echo "    $sha $subj ($what)"; n=$((n + 1))
+  done < <(g log --first-parent --reverse --format='%h %s' "$2..$1" | head -5)
+  [ "$total" -le "$n" ] || echo "    ... and $((total - n)) more"
+}
+
 case $verb in
   park)
     # the main checkout rests on the parking branch (answers repo.parking_branch, default scratch), so qargi can move develop under it
@@ -196,7 +214,10 @@ case $verb in
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
     echo "feature $NAME_ARG of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "develop..$BR") commit(s) ahead of develop, $(g rev-list --count "$BR..develop") behind"
     g log --format='  %h %s' "develop..$BR" | head -20
-    v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
+    v=$(verified "$BR"); ran=${v%% *}
+    if [ -z "$v" ]; then echo "full suite: not run on this branch"; echo "  next: qargi feature verify $NAME_ARG"
+    elif [ "$ran" = "$h" ]; then echo "full suite: ${v##* } at this head"
+    else echo "full suite: ${v##* } at an older head ($(g rev-parse --short "$ran" 2>/dev/null || echo "$ran"))"; stale_why "$BR" "$ran"; echo "  next: qargi feature verify $NAME_ARG"; fi
     remote_report "$BR"; remote_report develop
     wt_outside_report
     if mout=$("$(dirname "$0")/marshal.sh" status "$NAME_ARG" --project "$PROJ" 2>/dev/null); then printf '%s\n' "$mout"; fi;;
