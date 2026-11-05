@@ -497,7 +497,8 @@ class Skills(unittest.TestCase):
 
     def test_refuses_setting_the_nested_marker(self):
         for c in ("QARGI_NESTED=1 qargi memory split a b", "env QARGI_NESTED=1 qargi skill list", "export QARGI_NESTED=1", "bash -c 'QARGI_NESTED=1 qargi x'",
-                  "declare -x QARGI_NESTED=1"):
+                  "declare -x QARGI_NESTED=1", "printf -v QARGI_NESTED %s 1", "printf -vQARGI_NESTED %s 1", "printf -v 'QARGI_NESTED' %s 1",
+                  "echo x; printf -v QARGI_NESTED '%s' 'a; b'"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
             self.assertIn("QARGI_NESTED", r.stderr)
@@ -2173,9 +2174,9 @@ class InPlaceScripts(unittest.TestCase):
 
 class TextIsData(unittest.TestCase):
     """Text inside a quoted argument or a heredoc body that mentions a verb is data when every command of the line only prints, writes or searches (echo,
-    printf, cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
-    text keeps the plain split: another program in the line, a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, an
-    assignment, a group, a keyword. Push, gh and ssh in text are refused as before."""
+    cat, tee, grep, git commit|log|status|diff|show|add): the guard no longer cuts such a string at its ; | & and newlines. Anything that could run the
+    text keeps the plain split: another program in the line (printf too: -v assigns a variable), a comment, a backslash, a substitution, $'..', ${..}, a
+    quote or heredoc never closed, an assignment, a group, a keyword. Push, gh and ssh in text are refused as before."""
     setUp, tearDown, bash, call = Skills.setUp, Skills.tearDown, Skills.bash, Skills.call
     maxDiff = None
 
@@ -2259,6 +2260,16 @@ class TextIsData(unittest.TestCase):
     def test_text_in_a_line_that_could_run_it_is_read_by_the_plain_split(self):
         wrong = [c for c, r in self.verdicts(self.STILL) if r.returncode != 2]
         self.assertEqual(wrong, [], "allowed, but the text could be run")
+
+    def test_printf_is_no_inert_command_since_its_v_assigns_a_variable(self):
+        """printf -v NAME assigns: an array subscript in NAME is an arithmetic expression that runs a substitution, and a PATH it sets makes a later cat or git
+        run a file the line wrote. A line with printf in it is read by the plain split."""
+        for c in ("printf -v x 'b[%s(true; qargi upgrade)]' $ ; printf -v 'a[x]' %s 1",
+                  "printf -v x 'b[%s(true; qargi upgrade)]' $\nprintf -v 'a[x]' %s 1",
+                  "tee cat > /dev/null <<'E'\n#!/bin/sh\nqargi upgrade\nE\nprintf -v PATH %s .:$PATH\ncat 'a; b'",
+                  "printf -v PATH %s .:$PATH\ngit commit -m 'x; qargi upgrade'",
+                  "printf 'x; qargi upgrade'", "printf -vPATH %s . ; echo 'x; qargi packs seed'"):
+            self.assertEqual(self.bash(c).returncode, 2, c)
 
     def test_a_real_verb_next_to_data_is_refused_and_so_is_a_real_write(self):
         for c in ("echo 'a; b'; qargi upgrade", "git commit -m 'a; b' && qargi packs seed", "echo 'a; b' | qargi upgrade", "cat <<'E'\nbody\nE\nqargi upgrade",
