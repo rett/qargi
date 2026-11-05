@@ -254,7 +254,9 @@ case $verb in
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
     # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
     if g remote get-url origin >/dev/null 2>&1; then
+      rd0=$(remote_was develop)   # what origin has (fetched above): the journal line of the push starts there
       g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
+      journal_push refs/heads/develop "$rd0" "$MERGED" feature:finish
     fi
     g update-ref refs/heads/develop "$MERGED" "$d0" || die "origin has the merge but develop moved locally meanwhile: git fetch origin, then check develop against origin"
     journal_ref "$REPO" refs/heads/develop "$d0" "$MERGED" feature:finish
@@ -268,7 +270,8 @@ case $verb in
     parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
       if [ -n "$rdel" ]; then
-        g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null && echo "deleted origin/$BR" || echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2
+        if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
+        else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
       fi
       echo "pushed develop"
     fi

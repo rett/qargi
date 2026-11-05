@@ -33,9 +33,9 @@ The rules. The token covers the plan the person saw, and an apply refuses when t
 .SH GUARD
 The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.
 .PP
-It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign and site; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; upstream status, sync; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
+It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; provider new, import, seal, remove, enable, disable, attest, accept, check and adapter\-run (the rest read); release publish, sign and site; marshal claim, set, renew, release, take, takeover, finish, enable, disable, key, signers and resign (handoff only with \-\-write); feature start, finish, verify and park; branch prune; changelog renumber without \-\-check; upstream status, sync; ref record; memory init, move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.
 .PP
-It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.
+It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, the state's render, providers, marshal, feature and saved\-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the lead's git configuration and session files. Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git \-c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.
 .PP
 A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, unless every command is echo, cat, tee, grep or git commit and its kin (then text is data). Commit with git commit \-F FILE. Piped or here\-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.
 .PP
@@ -2610,6 +2610,33 @@ your go\-ahead for exactly that plan, in your words; recorded in the audit log.
 .RE
 .RE
 .TP
+.B qargi ref
+Record in the lead's ref journal a branch move that no flow verb made.
+.PP
+The ref journal ($QARGI_STATE/ref\-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand that verify must still accept: the rewrite of an agent branch that keeps its content.
+.RS
+.TP
+.BI "record " "REF OLD NEW"
+Rewrite an agent branch to a commit with the same tree, and journal the move with the reason.
+.br
+REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev\-parse OLD^{tree} and NEW^{tree} are the same, and REF unless it is at OLD now; the move is then a compare\-and\-swap (git update\-ref REF NEW OLD), so nothing moves when REF changed meanwhile. The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; local clean and local list follow the applied tip of a run to NEW. No working tree, other ref or origin is touched. Not available in a member run.
+.RS
+.TP
+.B \-\-rewrite
+the kind of move: REF goes from OLD to NEW, whose trees must be identical.
+.RE
+.RS
+.TP
+.BI "\-\-why " "TEXT"
+the reason, journaled and named by local verify.
+.RE
+.RS
+.TP
+.BI "\-\-project " "PROJECT"
+the project, instead of the one inferred from here.
+.RE
+.RE
+.TP
 .B qargi start
 Start a standby cloud session for an instance.
 .PP
@@ -2882,6 +2909,7 @@ Make the clone and the wrapper for a local agent.
 .br
 Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless \-\-profile), MEMBER, MODEL and EFFORT (only with \-\-profile), CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime\-addenda.md) and, when the role declares submodules (roles.ROLE.tools, kind submodule) and the clone got them, SUBMODULES=path,... Each declared submodule is checked out in the clone from the lead's copy of its objects (the checkout at REPO/PATH, else the modules directory), offline: a mirror with no remote under RUN/sub and git submodule update from it, push URL disabled. A commit the lead's copy lacks, a submodule not initialised there, or a run made with \-\-repo\-url, is a note on stderr; nothing is fetched. Then a blank line and a TASK\-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK\-BLOCK MEMORY block. A caller that evals the output must stop at the blank line.
 When the project (found by matching the repository against the stored answers) has a render for its local runtime (packs apply \-\-target RUNTIME) that has drifted, prepare also prints a WARNING block to stderr with the findings and the fix, packs apply \-\-target RUNTIME PROJECT. The run goes on, and stdout and the TASK\-BLOCK PATHS block are unchanged.
+A \-\-scratch on a tmpfs (/dev/shm, often /tmp) is warned about on stderr: a reboot empties it and loses the run (its clone, commits and output); prefer a directory on disk, such as ~/.cache/qargi\-runs.
 .RS
 .TP
 .BI "\-\-repo " "DIR"
@@ -2925,17 +2953,22 @@ the profile to dispatch under (for example advisor or auditor for review); resol
 .RE
 .RS
 .TP
-.BI "verify " "RUN_DIR"
+.BI "verify " "[RUN_DIR]"
 Compare the repository's refs with the snapshot taken by prepare.
 .br
-Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with RUN/verified: your own fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.
+Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ from it (the repository and the credential come from the registry; a member can write the run directory). It accepts the lead's own moves and names each one ("develop moved by qargi feature finish"): what the lead's ref journal records (the branches and tags that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, the parking branch following develop, a rewrite recorded with qargi ref record \-\-rewrite), a remote\-tracking ref of origin that says what origin has (a fetch), and the parking branch (repo.parking_branch, default scratch) fast\-forwarded to develop's tip, by hand too. After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept your fast\-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot that emptied a tmpfs) can still be applied: qargi review apply \-\-from\-saved ID. \-\-saved ID compares the refs against that copy's snapshots.
+.RS
+.TP
+.BI "\-\-saved " "ID"
+verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX).
+.RE
 .RE
 .RS
 .TP
 .BI "clean " "[RUN_DIR]"
 Remove a collected, verified run and its temporary directory.
 .br
-Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); \-\-applied takes no RUN_DIR and no \-\-discard. A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. \-\-stale DAYS \-\-scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with \-\-yes each is cleaned exactly as clean RUN would, so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without \-\-scratch, takes no RUN_DIR, no \-\-applied and no \-\-discard, and \-\-yes is for \-\-stale only.
+Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi\-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts (a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so finished work is not deleted by mistake. \-\-discard is the deliberate way past all of these; it still refuses anything that prepare did not make. A run cleaned with \-\-applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); \-\-applied takes no RUN_DIR and no \-\-discard. A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. \-\-stale DAYS \-\-scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with \-\-yes each is cleaned exactly as clean RUN would, so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without \-\-scratch, takes no RUN_DIR, no \-\-applied and no \-\-discard, and \-\-yes is for \-\-stale only. A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once the saved work is applied and merged, and refuses otherwise; clean RUN \-\-discard drops them whatever they hold. \-\-stale counts such a run by the start time of its record, and with \-\-yes drops it unless its saved copy holds work that was never applied (kept and named). A clean marks the run's record cleaned and removes its saved copy.
 .RS
 .TP
 .B \-\-discard
@@ -2967,7 +3000,7 @@ with \-\-applied or \-\-stale: the directory the runs were prepared in; only the
 .B list
 List the local runs: role, slug, age, whether applied and merged.
 .br
-Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number.
+Read\-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. It is the list that qargi local clean \-\-applied \-\-scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove is listed after the others as directory gone, with its saved copy and the review apply \-\-from\-saved command that applies it.
 .RS
 .TP
 .BI "\-\-scratch " "DIR"
@@ -3070,10 +3103,10 @@ accept a manifest with no commits (a team member that was blocked or had nothing
 .RE
 .RS
 .TP
-.BI "apply " "RUN_DIR"
+.BI "apply " "[RUN_DIR]"
 Apply a collected, checked run to a task branch of the repository.
 .br
-Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run.
+Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs\-changed result prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so local clean still accepts the run. \-\-from\-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check of the saved OUT, local verify \-\-saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -3083,6 +3116,11 @@ the project, instead of the one inferred from here.
 .TP
 .BI "\-\-branch " "BRANCH"
 the branch to create (default agent/<slug> of the run).
+.RE
+.RS
+.TP
+.BI "\-\-from\-saved " "ID"
+apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks.
 .RE
 .RE
 .TP

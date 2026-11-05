@@ -237,6 +237,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The guard refuses a member `upstream status` (its fetch changes the remote-tracking refs of the lead's repository, which
   `local verify` compares) and `upstream sync`, and `project set` of any `upstream` answer; `review` stays allowed.
   `tests/test_upstream.sh` runs the verbs against a local bare repository acting as upstream.
+- `qargi ref record --rewrite REF OLD NEW --why "TEXT"`: the lead rewrites an `agent/*` branch to a commit with the same tree
+  (`git rev-parse OLD^{tree}` must equal NEW's) while REF is at OLD, and the move is journaled with the reason, so `local verify`
+  and `local clean` of a run prepared before it accept it and name it as a rewrite, and `local clean` and `local list` count the
+  run's applied tip as merged when the commit it was rewritten to is. Refused to a member.
+- Local runs survive a reboot. `local prepare` warns on stderr when `--scratch` is on a tmpfs (a reboot loses the run; use a
+  directory on disk). A passing `local verify` copies OUT, a run bundle beside it and the run's snapshots to
+  `<state>/runs/<run id>/`; `qargi review apply --from-saved ID` applies from that copy with the same checks as a normal apply
+  (review check, `local verify --saved ID`, the registry's repository, slug and base, applied once), and the guard keeps a member
+  out of `<state>/runs/`. `local list` and `qargi report` show a run whose directory is gone as `directory gone`, with its saved
+  copy; `local clean RUN --discard` drops the registry entry (and the saved copy) of such a run, and `clean RUN` does once its
+  saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
@@ -349,6 +360,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of its own says so, so the pass is not read as the release gate. A record made by another command is shown, not reported as "not run".
 - `qargi release start VERSION` lists, after it creates the branch, the features merged into develop since the previous tag (the
   `--no-ff` merges whose message is "Merge branch 'feature/...'"), one per line with the short sha, or says there are none.
+- `local verify` and `local clean` accept qargi's own moves and name them (`develop moved by qargi feature finish`), so a run no
+  longer has to be cleaned before the next `feature finish`. The ref journal also records the pushes, the deletions on origin and
+  the tags of `feature finish`, `release finish` (and hotfix), `release push`, `branch prune --remote` and the pushes of
+  `branches.push_features` (lines with `remote: "origin"` and the origin URL); verify accepts a remote-tracking ref of origin that
+  says what origin has (a fetch), a tag fetched from origin, the parking branch fast-forwarded to develop's tip (by hand too), and
+  every journaled move after a passing verify as well as before (a journaled deletion failed there).
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.
@@ -389,6 +406,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   project uses no project packs: the check passes with no render, and fails when a pack is linked to a role of the project. The
   section of the skills a session would load, the unmanaged ones in `~/.claude/skills` included, is printed in every case.
 - `qargi project set P PATH false` stored the string `false`; it stores the JSON value, like `true` and numbers.
+- `local clean --stale DAYS --scratch DIR` reported 0 runs when the run directories were gone (a reboot that emptied a tmpfs): it
+  now plans and, with `--yes`, drops the records of such runs older than DAYS, keeping the one whose saved copy holds work that was
+  never applied; a scratch directory that is gone itself is still read from the registry (`local list --scratch` too).
 - `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
   hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
 - The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.

@@ -63,6 +63,7 @@ case $area in
   branch) exec "$lib/branch.sh" "$@";;
   changelog) exec "$lib/changelog.sh" "$@";;
   upstream) exec "$lib/upstream.sh" "$@";;
+  ref) exec "$lib/ref.sh" "$@";;
   methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;

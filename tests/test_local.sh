@@ -145,6 +145,8 @@ echo '{}' > "$P1/out/manifest.json"
 # a remote change fails even after a passing verify
 git -C "$T/r3" remote add origin "$T/remote.git"; out=$(mk p3); P3=$(runof <<<"$out")
 [ "$(rc "$P3")" = 0 ] && ok "verify passes with a remote" || no "p3 verify"
+git -C "$T/r3" fetch -q origin; out=$(./bin/qargi local verify "$P3" 2>&1); r=$?
+[ $r = 0 ] && grep -q "origin/main created to what origin has" <<<"$out" && ok "a fetch (remote-tracking refs that say what origin has) is accepted and named" || no "fetch: $r $out"
 git --git-dir="$T/remote.git" update-ref refs/heads/elsewhere "$(git --git-dir="$T/remote.git" rev-parse main)"
 [ "$(rc "$P3")" = 2 ] && ok "a remote ref change fails with exit 2 after a passing verify" || no "remote change accepted"
 git --git-dir="$T/remote.git" update-ref -d refs/heads/elsewhere
@@ -423,7 +425,9 @@ mkdir -p "$T/c/projects"
 jq -n --arg p "$T/r4" '{schema:1,project:"alpha",repo:{url:"https://github.com/example/x",path:$p,long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
   models:{provider:"claude-code"},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/alpha.json"
-mk4() { ./bin/qargi local prepare --repo "$T/r4" --base main --slug "$1" --scratch "$T" 2>"$T/err"; }
+mk4() { # stderr in $T/err, without the tmpfs warning (checked on its own below): $T may be on a tmpfs
+  local rc=0; ./bin/qargi local prepare --repo "$T/r4" --base main --slug "$1" --scratch "$T" 2>"$T/err.all" || rc=$?
+  grep -v 'is on a tmpfs: a reboot loses the run' "$T/err.all" > "$T/err"; return $rc; }
 tokof() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 out=$(mk4 w0); [ ! -s "$T/err" ] && ok "no render: prepare prints no warning" || no "no render: $(cat "$T/err")"
 Q=./bin/qargi
@@ -496,4 +500,73 @@ out=$($Q local prepare --repo "$T/r" --base main --slug pf2 --scratch "$T" --rol
 out=$($Q local prepare --repo "$T/r" --base main --slug pf3 --scratch "$T" --role build 2>&1); P3=$(sed -n '1,/^$/s/^RUN=//p' <<<"$out")
 grep -qx 'PROFILE=build' <<<"$out" && ! grep -q '^MODEL=' <<<"$out" && [ ! -e "$P3/profile" ] && [ "$(jq -r 'select(.slug=="pf3") | .profile' "$T/s/local-runs.jsonl")" = build ] \
   && ok "without --profile: PROFILE=<role> and nothing else changes" || no "no profile: $out"
+
+# --- runs that survive a reboot
+# a --scratch on a tmpfs is warned about (the risk and a disk directory); one that is not, is not
+git init -q -b main "$T/r7" && $LC -C "$T/r7" commit -q --allow-empty -m one
+if [ "$(stat -f -c %T /dev/shm 2>/dev/null)" = tmpfs ]; then
+  SHMS=$(mktemp -d -p /dev/shm qargi-test-scratch.XXXXXX)
+  out=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug tf1 --scratch "$SHMS" 2>&1 >/dev/null); rcw=$?
+  { [ $rcw = 0 ] && grep -q "warning: --scratch $SHMS is on a tmpfs: a reboot loses the run" <<<"$out" && grep -q "directory on disk" <<<"$out"; } \
+    && ok "prepare warns that a --scratch on a tmpfs is lost on a reboot, and suggests a disk directory" || no "tmpfs warning (rc=$rcw): $out"
+  for d in "$SHMS"/qargi.??????; do ./bin/qargi local clean "$d" --discard >/dev/null 2>&1; done; rm -rf "$SHMS"
+else ok "(no tmpfs at /dev/shm: the tmpfs warning is not checked here)"; fi
+out=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug tf2 --scratch "$T" 2>&1 >/dev/null)
+if [ "$(stat -f -c %T "$T")" = tmpfs ]; then grep -q "is on a tmpfs" <<<"$out" && ok "(the test directory is a tmpfs: warned too)" || no "tmpfs \$T not warned: $out"
+else ! grep -q "is on a tmpfs" <<<"$out" && ok "a --scratch on disk is not warned about" || no "disk scratch warned: $out"; fi
+# a passing verify saves OUT, the bundle and the snapshots in the state; the copy outlives the run directory
+mkdir -p "$T/rb"
+rbrun() { # slug -> a run under $T/rb with one commit, a manifest, a bundle beside OUT, and a passing verify (its output in $T/vout)
+  local o r g c
+  o=$(./bin/qargi local prepare --repo "$T/r7" --base main --slug "$1" --scratch "$T/rb" 2>/dev/null) || return 1
+  r=$(sed -n '1,/^$/s/^RUN=//p' <<<"$o"); g=$(sed -n '1,/^$/s/^GIT=//p' <<<"$o"); c=$(sed -n '1,/^$/s/^CLONE=//p' <<<"$o")
+  echo "$1" > "$c/f-$1"; "$g" -C "$c" add "f-$1"; "$g" -C "$c" commit -q -m "work $1"; echo '{"status":"DONE"}' > "$r/out/manifest.json"
+  "$g" -C "$c" bundle create -q "$r/run.bundle" main..HEAD 2>/dev/null
+  ./bin/qargi local verify "$r" > "$T/vout" 2>&1; echo "$r"
+}
+RB1=$(rbrun rb1); ID1=$(basename "$RB1"); SV1=$T/s/runs/$ID1
+{ [ -f "$SV1/out/manifest.json" ] && [ -f "$SV1/run.bundle" ] && [ -f "$SV1/refs.before" ] && [ -f "$SV1/verified" ] && [ -f "$SV1/started" ] && [ "$(cat "$SV1/class")" = write ] \
+  && [ "$(jq -r .slug "$SV1/record.json")" = rb1 ] && grep -q "saved a copy of the run's output in $SV1" "$T/vout"; } \
+  && ok "a passing verify copies OUT, the run bundle, the snapshots and the registry's record to <state>/runs/<run id>/" || no "saved copy: $(ls -A "$SV1" 2>&1); $(cat "$T/vout")"
+ln -s /etc/hostname "$RB1/out/link-out"; ./bin/qargi local verify "$RB1" >/dev/null 2>&1
+[ -L "$SV1/out/link-out" ] && ok "a link in OUT is copied as a link, never followed" || no "link in OUT: $(ls -l "$SV1/out")"
+# the directory vanishes (a reboot that emptied a tmpfs): list and report say so and name the saved copy; clean keeps the work
+TRB1=$(jq -r --arg r "$RB1" 'select(.run == $r) | .tmpdir' "$T/s/local-runs.jsonl"); rm -rf "$RB1" "$TRB1"
+out=$(./bin/qargi local list); outs=$(./bin/qargi local list --scratch "$T/rb")
+{ grep -q "^build .*rb1 .*$RB1  directory gone, saved copy $SV1 (qargi review apply --from-saved $ID1)" <<<"$out" && grep -q "$RB1  directory gone" <<<"$outs"; } \
+  && ok "list (the registry's and --scratch) shows a vanished run as directory gone, with its saved copy" || no "list gone: $out / $outs"
+out=$(./bin/qargi report 2>&1); grep -q "directory gone [1-9]" <<<"$out" && grep -q "review apply --from-saved $ID1" <<<"$out" && ok "report counts it as directory gone and names the saved copy" || no "report gone: $out"
+out=$(./bin/qargi local clean "$RB1" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "never applied" <<<"$out" && grep -q "from-saved $ID1" <<<"$out" && [ -d "$SV1" ] && grep -q "$RB1" "$T/s/local-runs.jsonl" \
+  && ok "clean of a vanished run whose saved work was never applied keeps the record and the copy, and says how to apply it" || no "clean gone, unapplied (rc=$rc): $out"
+out=$(./bin/qargi local clean "$RB1" --discard 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "dropped the record of $RB1 (directory gone) and its saved copy" <<<"$out" && [ ! -e "$SV1" ] && ! grep -q "$RB1" "$T/s/local-runs.jsonl" \
+  && [ "$(stat -c %a "$T/s/local-runs.jsonl")" = 600 ] && ! grep -q "$RB1" <<<"$(./bin/qargi local list)"; } \
+  && ok "clean --discard of a vanished run drops its registry entry and its saved copy (the registry stays mode 600)" || no "discard gone (rc=$rc): $out"
+./bin/qargi local clean "$RB1" --discard >/dev/null 2>&1 && no "a run dropped from the registry was cleaned again" || ok "and then the run is unknown"
+# a clean marks the registry's line cleaned and removes the saved copy: the run is not listed as gone afterwards
+RB2=$(rbrun rb2); SV2=$T/s/runs/$(basename "$RB2")
+./bin/qargi local clean "$RB2" --discard >/dev/null 2>&1
+{ [ ! -e "$RB2" ] && [ ! -e "$SV2" ] && [ -n "$(jq -r --arg r "$RB2" 'select(.run == $r) | .cleaned // empty' "$T/s/local-runs.jsonl")" ] && ! grep -q "$RB2" <<<"$(./bin/qargi local list)"; } \
+  && ok "clean marks the run cleaned in the registry and removes its saved copy; list does not show it as gone" || no "clean marks: $(grep rb2 "$T/s/local-runs.jsonl")"
+# clean --stale: vanished runs older than DAYS are cleaned too (they were left at 0 before), a saved copy that was never applied is kept
+RB3=$(rbrun rb3); RB4=$(rbrun rb4); RB5=$(rbrun rb5); SV5=$T/s/runs/$(basename "$RB5")
+rm -rf "$T/s/runs/$(basename "$RB3")"                                         # nothing saved of rb3
+A5=$($LC -C "$T/r7" commit-tree -p main -m "applied rb5" "$(git -C "$T/r7" rev-parse 'main^{tree}')"); git -C "$T/r7" update-ref refs/heads/feature/rb5 "$A5"
+printf 'agent/rb5 %s now\n' "$A5" > "$SV5/applied"                            # applied (from the saved copy) and merged
+old=$(date -u -d '20 days ago' +%Y-%m-%dT%H:%M:%SZ)
+for r in "$RB3" "$RB4" "$RB5"; do jq -c --arg r "$r" --arg t "$old" 'if .run == $r then .started = $t else . end' "$T/s/local-runs.jsonl" > "$T/s/lr.new" && mv "$T/s/lr.new" "$T/s/local-runs.jsonl"; rm -rf "$r"; done
+chmod 600 "$T/s/local-runs.jsonl"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" 2>&1); rcs=$?
+{ [ $rcs = 0 ] && grep -q "^would drop the record of $RB3 (directory gone, 20d old)" <<<"$out" && grep -q "^would drop the record of $RB4 (directory gone, saved copy" <<<"$out" \
+  && grep -q "^plan: 3 " <<<"$out" && grep -q "$RB3" "$T/s/local-runs.jsonl"; } && ok "clean --stale plans the vanished runs older than DAYS, and changes nothing" || no "stale gone plan (rc=$rcs): $out"
+out=$(./bin/qargi local clean --stale 7 --scratch "$T/rb" --yes 2>&1); rcs=$?
+{ [ $rcs = 1 ] && grep -q "dropped the record of $RB3" <<<"$out" && grep -q "dropped the record of $RB5 (directory gone) and its saved copy" <<<"$out" \
+  && grep -q "kept $RB4: directory gone, and its saved copy .* never applied" <<<"$out" && grep -q '^cleaned 2 run(s), kept 1' <<<"$out" \
+  && ! grep -q "$RB3\|$RB5" "$T/s/local-runs.jsonl" && grep -q "$RB4" "$T/s/local-runs.jsonl"; } \
+  && ok "clean --stale --yes drops the vanished runs (none saved, or applied and merged) and keeps the one whose saved work was never applied" || no "stale gone --yes (rc=$rcs): $out"
+rm -rf "$T/rb"
+out=$(./bin/qargi local list --scratch "$T/rb" 2>&1); rcl=$?
+[ $rcl = 0 ] && grep -q "$RB4  directory gone" <<<"$out" && ok "a scratch directory that is gone itself is still listed from the registry" || no "list of a gone scratch (rc=$rcl): $out"
+./bin/qargi local clean "$RB4" --discard >/dev/null 2>&1
 exit $fail
