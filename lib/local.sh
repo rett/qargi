@@ -660,7 +660,7 @@ WRAP
     rrun=$(readlink -f -- "$RUN" 2>/dev/null) || rrun=$RUN   # the registry's name of the run, taken while the directory is there
     rm -rf --one-file-system -- "$RUN"
     sv=$(saved_of "$RUN"); [ -z "$sv" ] || rm -rf --one-file-system -- "$sv"   # the copy verify saved: the work is merged, or dropped on purpose
-    reg_edit "$RUN" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
+    reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
   list)
