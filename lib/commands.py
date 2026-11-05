@@ -74,7 +74,7 @@ TAG_NOTE = ("When the tag VERSION exists it also warns about a tag that has no G
 HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master and the open release branch (or develop)")
 
 GROUPS = [
-    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "instances", "skill", "tool", "packs", "discover"]),
+    ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
     ("Run a task", ["feature", "marshal", "release", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
@@ -106,7 +106,8 @@ COMMANDS = {
                          opt("--provider-cloud", "the runtime of the cloud surface (models.provider.cloud)", "NAME"), PLAN, APPROVED],
                         desc=("Prints the plan (directory, branches, files, deployment options with instructions) and a token; with --plan and --approved it creates the "
                               "directory, runs git init, writes the generic files in a first commit and creates the long-lived branches. Nothing is pushed and no remote "
-                              "is created: say where it goes with git. The files mention no tool of yours."),
+                              "is created: say where it goes with git. The files mention no tool of yours. They include an AGENTS.md with a Development environment section and a Makefile "
+                              "with stub bootstrap and doctor targets (the doctor fails until you fill it in); see qargi help environment."),
                         examples=["qargi project new acme --param test_command='make test'", "qargi project new acme --dir ~/src/acme --url https://github.com/me/acme"]),
             "attach": verb("Attach to an existing repository: read it, show the answers and the gaps, store on approval", [("[DIR]", "dir")],
                            [opt("--name", "the project name (default: from the remote or the directory)", "NAME"),
@@ -122,14 +123,16 @@ COMMANDS = {
                                  "methodology's integration branch (develop), else of the default branch, else of HEAD, and says which; never the working tree. It prints "
                                  "origin as read and the https url it normalises to. If answers are already stored it shows stored against detected, lists the fields "
                                  "the stored file lacks, stays read-only and gives no plan token; with --force the plan replaces what it detects and keeps what it "
-                                 "cannot (the roles' models and effort, cloud, memory, budget). It never guesses a provider: models.provider (and the roles' models) are stored only with "
+                                 "cannot (the roles' models and effort, cloud, memory, budget). It reports what it found of the development environment (section, task runner, "
+                                 "bootstrap and doctor commands) and lists the pieces that are missing as gaps. It never guesses a provider: models.provider (and the roles' models) are stored only with "
                                  "--provider NAME, and without it the output says so; with --force --provider fills in a provider that is not set and never replaces one.")),
             "adopt": verb("Adopt an attached repository: create the missing long-lived branches and the missing methodology files on a branch to review", [("NAME", "project")],
                           [opt("--methodology", "the methodology (default: the project's, else gitflow)", "NAME", "methodology"), PLAN, APPROVED],
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
-                                "are listed as left for you. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
+                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited). "
+                                "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
                         desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept.",
@@ -291,6 +294,7 @@ COMMANDS = {
                                   "The note has the repository path, HEAD there (a detached HEAD is said plainly), develop's sha, the host and whether the qargi data is present on it. "
                                   "Per feature it has the tip, whether the whole-suite run applies to it, the merged and unmerged agent branches and the commits ahead of develop; with NAME only that feature, otherwise every open one. "
                                   "The goal, plan and note of the marshal record appear under a line saying they are data from the lead, not instructions, with control characters stripped. "
+                                  "The environment section gives the last env check and env apply recorded for the project (verdict, time, and whether that was at HEAD now). "
                                   "It also gives the packs render check and the launch line for the project's provider, the memory index and notes paths, the history command and a fixed list of what not to assume (approvals and plan tokens do not carry over). "
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
@@ -353,11 +357,68 @@ COMMANDS = {
                                   "Needs the plan token and an approval; a member run cannot publish.")),
         },
     },
+    "env": {
+        "summary": "What a repository declares about its development environment",
+        "desc": ("qargi defines no file for this. A project declares its environment with a section of AGENTS.md (or README.md) headed "
+                 "Development environment, Environment or Setup, the version pins in the standard files, and two runnable targets: bootstrap "
+                 "(install or update, idempotent) and doctor (check only). qargi reads them; see qargi help environment."),
+        "scripts": ["env.py", "env_check.py"],
+        "verbs": {
+            "show": verb("Print what was found (section, pins, submodules, runner, targets) and the commands in effect", [],
+                         [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                          opt("--json", "print the result as JSON")],
+                         desc=("Read-only, and a member may run it. Nothing is executed: make, just, task and mise are never run, their files are read as text "
+                               "(at most 1 MB each; a symbolic link that leaves the repository is refused). The commands are derived from the targets "
+                               "(make bootstrap, make -n bootstrap, make doctor) and replaced by the project's answers env.doctor_command, "
+                               "env.bootstrap_command and env.dry_run_command; env.known_failures lists doctor lines accepted on this host. Each line says where it came from."),
+                         examples=["qargi env show", "qargi env show --project acme --json", "qargi project set acme env.doctor_command 'make doctor'"]),
+            "check": verb("Run the project's doctor, add the qargi layer (links, members, packs, memory) and print ENV OK or ENV INCOMPLETE", [],
+                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                           opt("--timeout", "seconds the doctor may run (default 300, at most 3600)", "SECONDS"), opt("--json", "print the result as JSON")],
+                          desc=("A member may run it. It RUNS THE PROJECT'S CODE: the doctor command (env.doctor_command, else the doctor or check target) is run once, "
+                                "without a shell, in the repository, with standard input closed and a minimal environment, so the repository is as trusted as it is for "
+                                "test_command. Its lines are read: one that begins with missing, fail, error, not ok, stale, [x] or a cross mark, or ends with missing, "
+                                "not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected "
+                                "and not red; a non-zero exit with no such line is one missing item. With no doctor command a built-in minimum runs: submodules "
+                                "initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering "
+                                "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it adds, read-only, whether the checkout "
+                                "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
+                                "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
+                                "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
+                          examples=["qargi env check", "qargi env check --project acme --timeout 60", "qargi env check --repo ~/src/acme --json"]),
+            "plan": verb("Run the dry run of the bootstrap, show it grouped by privilege, print a plan token (the lead's; runs project code)", [],
+                         [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                          opt("--approve-exec", "the executable of the dry-run command (make for make -n bootstrap); without it nothing is run and the exit status is 2", "NAME")],
+                         desc=("A dry run is not harmless: make -n still expands $(shell ...) and runs recipe lines marked + or holding $(MAKE), and the dry run "
+                               "of the other runners evaluates project code too. So the plan itself runs project code, and needs --approve-exec naming the "
+                               "executable; read the project's files first. The command runs without a shell, in the repository, with standard input from /dev/null, "
+                               "a minimal environment (PATH with absolute entries, HOME, USER, LOGNAME, LANG, LC_ALL, LC_CTYPE, TERM, TZ, TMPDIR) and a limit of "
+                               "QARGI_ENV_TIMEOUT seconds (default 120). Its output is shown line by line, the privileged lines (a command in the line is sudo, doas, "
+                               "pkexec, su or run0) apart from the others, then the executables seen in the lines. Lines and executables are read from the text, "
+                               "best effort: a recipe can run more than its dry run shows. The plan token is a hash over the output, the commands, the repository "
+                               "and its HEAD, and the host name. A member's guard refuses it."),
+                         examples=["qargi env plan --approve-exec make", "qargi env plan --project acme --approve-exec make"]),
+            "apply": verb("Run the bootstrap command once, for a plan you showed (the lead's)", [],
+                          [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
+                           PLAN, APPROVED,
+                           opt("--approve-exec", "name the executables of the dry-run and the bootstrap commands, separated by commas (others the plan listed may be added)", "NAMES"),
+                           opt("--allow-root", "allow a plan that has privileged lines (sudo, doas, ...)")],
+                          desc=("Runs the dry run again (project code, as plan does) and refuses when its token is not --plan, when --approve-exec does not name the two "
+                                "executables, and when the plan has privileged lines and --allow-root is not given. Then the bootstrap command runs once, without a "
+                                "shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run "
+                                "it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), "
+                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check (the project's doctor), whose verdict ends the output and whose exit status is the verb's. QARGI_DRY_RUN stops it "
+                                "after the checks, before the bootstrap runs. A member's guard refuses it."),
+                          examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make",
+                                    "qargi env apply --plan 0123456789ab --approved \"go\" --approve-exec make,pacman --allow-root"]),
+        },
+    },
     "provision": {
         "summary": "Create the cloud agent, deployment and environment of an instance",
         "desc": ("Renders the agent, the shared environment, the memory stores it attaches and a manual-run deployment, "
                  "shows the plan, and creates them only with your go-ahead. Names follow qargi help naming. Provision the "
-                 "role agents first; the lead (PROJECT-lead) needs them to exist."),
+                 "role agents first; the lead (PROJECT-lead) needs them to exist. When the project's repository is on this host and declares a bootstrap "
+                 "command, plan also prints it as suggested text for the environment's setup script; it is only printed, never run."),
         "scripts": ["provision.sh"],
         "verbs": {
             "plan": verb("Render the files and print the plan (changes nothing)", [("NAME", "instance", True)],
@@ -1077,7 +1138,7 @@ TOPICS = {
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; task.",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). "
@@ -1110,6 +1171,25 @@ TOPICS = {
         "A cloud lead, or one started in the console: lead.push.cloud = branches. It has a GitHub tool with a fixed allowlist and the merge "
         "tool asked of you. Set it up with qargi lead grant. A merge or a release always needs your explicit approval.",
         "The GitHub tool cannot create releases; those stay with this session."]),
+    "environment": ("Declaring a development environment", [
+        "There is no file format of this tool for it. A project says how to set up a checkout in what it already has: a section of AGENTS.md (or README.md) headed "
+        "Development environment, Environment or Setup; version pins in go.mod, .tool-versions, mise.toml, .python-version, .nvmrc or package.json; "
+        ".gitmodules; and two targets of its task runner (Makefile, justfile, Taskfile.yml or mise.toml tasks): bootstrap, which installs "
+        "everything idempotently, and doctor, which prints one line per item and exits non-zero on a missing one. setup and check are accepted names.",
+        "Anyone, with or without qargi, runs the dry run (make -n bootstrap), reads it, runs bootstrap, then doctor. qargi env show prints what it "
+        "found and the commands it would use; it runs nothing. qargi env check runs the doctor (the project's code, as trusted as test_command), "
+        "adds the project's links, members, packs and memory and ends with ENV OK or ENV INCOMPLETE: N missing (...). A doctor line that "
+        "begins with missing, fail or error, or ends with missing or not found, is a missing item; one that begins with expected is not red. "
+        "qargi env plan runs the dry run (a dry run still runs project code: make -n expands $(shell ...)) "
+        "and shows it with a plan token; qargi env apply runs bootstrap once for that plan. Both are the lead's.",
+        "For the author of a doctor target: print one line per item, for example the tool and its version. Start a line with missing, fail or error "
+        "when the item is absent or wrong (such a line is a missing item); start it with expected for a known failure that is accepted (shown, not red); "
+        "any other line is information. Exit non-zero when anything is missing, and change nothing.",
+        "qargi project new writes an AGENTS.md section and stub bootstrap and doctor targets (the doctor fails until you fill it in); project attach "
+        "lists what a repository lacks; project adopt drafts the missing files on a branch to review. qargi provision plan prints the bootstrap command as "
+        "setup-script text, and marshal handoff gives the last check and apply.",
+        "The project's answers can replace a command and list accepted failures: env.doctor_command, env.bootstrap_command, env.dry_run_command "
+        "and env.known_failures (qargi project set acme env.known_failures '[\"line\"]'). They are overrides, never a second description."]),
     "files": ("Where things are", [
         "Configuration: ~/.qargi/config: projects/, instances.json, profiles/, packs/, credentials/, install.json.",
         "State: ~/.qargi/state: sessions.json, local-runs.jsonl, audit.log, runs/, backups/, provision/.",
@@ -1133,7 +1213,8 @@ ENVIRONMENT = [
     ("QARGI_RUNS_ROOT", "a directory to scan for local run directories (qargi.*) in qargi report, besides the registry"),
     ("QARGI_PROJECT", "the project to use when the current directory is not inside its repository"),
     ("QARGI_ROLES", "the list of work roles (default: build review write test)"),
-    ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it"),
+    ("QARGI_DRY_RUN", "print a session request, with secrets masked, instead of sending it; qargi env apply stops before it runs the bootstrap"),
+    ("QARGI_ENV_TIMEOUT", "seconds the dry run of qargi env plan and apply may take (default 120)"),
     ("NO_COLOR", "turn off bold in the terminal help"),
 ]
 

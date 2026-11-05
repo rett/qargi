@@ -12,7 +12,9 @@ unique across both places. This module only reads: `qargi project new|adopt` wri
   methodology.py deployment NAME [ID]            the deployment options, or one option's instructions
 
 A template's {{name}} is replaced by the parameter of that name; a {{...}} that is not a declared parameter is left
-alone (it may belong to the file's own language), but a declared parameter with no value is an error.
+alone (it may belong to the file's own language), but a declared parameter with no value is an error. A scaffold entry may say
+"env": "section" (the file holds the Development environment section) or "targets" (the file holds the bootstrap and doctor targets of
+a task runner): project attach and adopt then treat the entry as present when the repository already has the piece in another file.
 """
 import json, os, re, sys, datetime
 
@@ -100,6 +102,8 @@ def problems(name):
         if not src or not dest or dest.startswith("/") or ".." in dest.split("/") or src.startswith("/") or ".." in src.split("/"):
             bad.append("%s: scaffold entry %r needs a relative src and dest" % (name, item))
             continue
+        if item.get("env") not in (None, "section", "targets"):
+            bad.append("%s: scaffold entry %s: env is section (the Development environment section) or targets (the bootstrap and doctor targets)" % (name, dest))
         if dest in seen:
             bad.append("%s: scaffold writes %s twice" % (name, dest))
         seen.add(dest)
@@ -138,8 +142,9 @@ def render(name, given):
         raise SystemExit("qargi: unknown parameter %s (this methodology has: %s)" % (", ".join(unknown), ", ".join(params)))
     if not re.fullmatch(r"[a-z][a-z0-9]{0,23}", params.get("project", "")):
         raise SystemExit("qargi: project: one lower-case token (letters, digits)")
-    if "\n" in params.get("test_command", "") or "\r" in params.get("test_command", ""):
-        raise SystemExit("qargi: test_command is one line")
+    for k, v in params.items():
+        if "\n" in v or "\r" in v:
+            raise SystemExit("qargi: %s is one line" % k)
     out = []
     for item in m.get("scaffold") or []:
         text = open(os.path.join(d, "scaffold", item["src"]), encoding="utf-8").read()

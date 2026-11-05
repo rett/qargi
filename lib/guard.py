@@ -36,7 +36,8 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
     `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
-    verbs call: packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
+    verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
+    found like linker.py, so env show stays open), packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
@@ -187,11 +188,11 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
-OWN_ONLY = ("linker.py", "render.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+OWN_ONLY = ("linker.py", "render.py", "env.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
@@ -202,6 +203,7 @@ MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                       
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
+ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
 LEAD_VERBS = {("local", "clean"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
@@ -2053,6 +2055,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["packs", "link"]
     if name == "render.py":
         return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
+    if name == "env.py":                                 # qargi env: show reads; plan and apply are refused below
+        words = ["env"] + words
+    if name == "env_apply.py":                           # the library of env plan and apply: any use of it is the verb
+        words = ["env", "apply"]
     if name == "discover.py":
         words = ["discover"] + words
     if name == "cloud.py":
@@ -2128,6 +2134,11 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
     if area == "release" and any(w == "sign" for w in words[1:4]):
         return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
+    # qargi env: show only reads files, so a member may run it. plan runs the project's dry-run command (make -n still runs $(shell ...) and + lines) and
+    # apply runs its bootstrap: both run project code, with the lead's rights and terminal, and are the lead's. A verb held in a variable could be either
+    if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
+        return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
+                "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
     if area == "feature" and verb not in FEATURE_OPEN:

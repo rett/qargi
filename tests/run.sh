@@ -35,6 +35,8 @@ run bash tests/test_session.sh
 run bash tests/test_session_profiles.sh
 run python3 tests/test_report.py
 run python3 tests/test_noticed.py
+run python3 tests/test_env.py
+run python3 tests/test_env_apply.py
 run python3 tests/test_cloud.py
 run python3 tests/test_upgrade.py
 run python3 tests/test_supervise.py
