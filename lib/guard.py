@@ -93,7 +93,10 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
     `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
     and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
-    lead's too, and are refused with wording of their own;
+    lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
+    the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
+    that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
+    variable; `qargi upstream review` only reads the last fetch and stays allowed;
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
@@ -183,7 +186,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "env")      # the answers the lead later runs or passes to a process: a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream")      # the answers the lead later runs, passes to a process or fetches from: a member may not set them (project set)
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
@@ -201,7 +204,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "upstream.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -223,6 +226,7 @@ MARSHAL_READ = ("status", "check", "handoff")                # handoff only read
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
+UPSTREAM_OPEN = ("", "review")                               # the upstream verbs that only read: status fetches into the lead's repository and sync moves a branch (the rest is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
 KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
@@ -2270,6 +2274,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["feature"] + words
     if name == "branch.sh":
         words = ["branch"] + words
+    if name == "upstream.sh":
+        words = ["upstream"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
@@ -2307,6 +2313,11 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
+    if area == "upstream" and verb not in UPSTREAM_OPEN:
+        return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
+                         "report in your task output that the upstream line needs looking at"
+                         % (verb or "(no verb)", "fetches into the lead's repository, which changes the remote-tracking refs that qargi local verify compares" if verb == "status"
+                            else "fast-forwards the branch that carries the upstream line (and journals the move), from a plan and a token,"))
     if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
         return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
@@ -2327,7 +2338,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
-            return "qargi project set of %s changes a command or an environment the lead later runs (the release answers, test_command, env) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes a command or an environment the lead later runs, or the remote it fetches from (the release answers, test_command, env, upstream) and is not available to an agent: propose the value in your report" % path
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "provider" and verb == "check":
