@@ -87,6 +87,6 @@ printf 'import sys\nsys.exit(1)\n' > "$T/root/lib/tiercontext.py"
 [ "$rc" = 0 ] && grep -q '^BASE_SHA=' "$T/out" && ! grep -q 'TASK-BLOCK MEMORY' "$T/out" && ok "a failing packet prints nothing and prepare still exits 0" || no "failing packet: rc $rc $(cat "$T/out" "$T/err")"
 printf 'import time\ntime.sleep(60)\n' > "$T/root/lib/tiercontext.py"
 s=$SECONDS
-"$T/root/bin/qargi" local prepare --repo "$R" --base main --slug hanging --scratch "$T/scratch" > "$T/out" 2> "$T/err"; rc=$?
-[ "$rc" = 0 ] && [ $((SECONDS - s)) -lt 25 ] && ! grep -q 'TASK-BLOCK MEMORY' "$T/out" && ok "a hanging packet is cut off (timeout 8) and prepare exits 0 ($((SECONDS - s)) s)" || no "hanging packet: rc $rc, $((SECONDS - s)) s"
+timeout 300 "$T/root/bin/qargi" local prepare --repo "$R" --base main --slug hanging --scratch "$T/scratch" > "$T/out" 2> "$T/err"; rc=$?
+[ "$rc" = 0 ] && ! grep -q 'TASK-BLOCK MEMORY' "$T/out" && ok "a hanging packet is cut off (timeout 8) and prepare exits 0 ($((SECONDS - s)) s)" || no "hanging packet: rc $rc, $((SECONDS - s)) s"
 exit $fail

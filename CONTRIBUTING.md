@@ -54,6 +54,8 @@ exceeds its timeout or leaves a process running. A step prints one block when it
 never interleaved; the end of the output has the failed steps, the slowest ten and `total: Ns (passed|FAILED)`, and
 `--enforce-budgets` makes a step over budget fail. The linter step runs shellcheck through `xargs`, all CPUs at once.
 
+A test is safe to run next to other tests and next to another whole suite: it sources `tests/hermetic.sh` (a python test imports `hermetic`), which gives it a fresh HOME, TMPDIR, config and state, a fixed locale, time zone and umask, and git without the host's configuration, and it works only under `mktemp` directories, starts nothing it does not stop by pid (`spawn_bg`, `kill_bg`), waits for a condition with a deadline and not with a bare `sleep`, and binds port 0. `tests/test_hermetic.sh` runs `tests/hermetic_lint.py` over the tests and fails on a file that breaks one of these rules; a justified case carries `hermetic: allow RULE (reason)` on its line.
+
 Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 
 ## Changing the canon

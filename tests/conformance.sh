@@ -5,4 +5,5 @@
 # tests and CONTRIBUTING use.
 #
 # Usage: tests/conformance.sh NAME [--stub DIR] [--tool DIR]      (the arguments are run.sh's; see its header for the cases)
+# hermetic: allow-file source (a wrapper that execs the suite of lib/conformance/run.sh, which makes its own environment: tests/test_conformance_selftest.sh)
 CONFORMANCE_PROG=tests/conformance.sh exec bash "$(dirname "${BASH_SOURCE[0]}")/../lib/conformance/run.sh" "$@"

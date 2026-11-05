@@ -2,8 +2,10 @@
 # lib/changelog_section.sh: the notes of one version, and a loud failure when there are none.
 set -u
 cd "$(dirname "$0")/.." || exit 1
+# shellcheck source=hermetic.sh
+. tests/hermetic.sh
 S=lib/changelog_section.sh
-T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d); trap 'rm -rf "$T" "$HERMETIC"' EXIT
 fail=0; ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 cat > "$T/c.md" <<'MD'
 # Changelog
