@@ -47,7 +47,21 @@ that takes more than 1.5 times its budget is reported, and a budget only shrinks
     bash tests/run.sh --tier fast      the fast tier: every area, about a minute
     bash tests/run.sh --only PATTERN   the steps whose command matches PATTERN (extended regular expression)
     bash tests/run.sh --shard 2/4      the second of four parts, balanced by the budgets (for CI)
+    bash tests/run.sh --tier fast --changed-from origin/develop     the fast tier plus the steps that cover the files changed since develop
+    bash tests/run.sh --shard 2/4 --plan   print the plan of the four parts and the steps of the second, run nothing
     bash tests/run.sh --shuffle SEED --repeat 3   random order and repeats, to find a test that fails now and then
+
+Tiers: `fast` is a quick run that has every area in it (about a minute); `full` steps run only in the whole run. `-j N` sets how many
+steps run at once (default: the CPUs); the verdict is the same at every `-j`, and `-j 1` is the serial run. A step marked `serial` runs
+alone after the others. A shard is one of K parts of the selected steps, dealt longest first to the least loaded part by the recorded
+duration of a step (`--durations FILE`) or else its budget.
+
+Adding a step: put the test in `tests/`, add a line to `tests/suite.txt` with its tier (`fast` only for a step of a few seconds
+that covers an area the other fast steps do not), `par` unless it cannot run beside others, a timeout (several times the budget),
+its budget (the seconds it takes on a loaded eight-CPU machine, measured with `bash tests/run.sh --only 'tests/test_x.sh'`; a budget
+only shrinks, so a step that grew is split) and the `covers` globs of the files it tests. A pull request runs the fast tier and the
+steps whose `covers` match the files it changed (or whose command names a changed file), so a `full` step without `covers` is
+checked only in the whole run.
 
 Each step runs in a session of its own with a fresh `HOME`, no standard input and only its output open, and fails when it
 exceeds its timeout or leaves a process running. A step prints one block when it ends, so the output is in completion order and
