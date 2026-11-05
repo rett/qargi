@@ -1260,7 +1260,7 @@ TOPICS = {
         "prompt is the person's real control. A member never applies: it reports the plan and its token, and the lead shows them to the person "
         "(what the member's guard refuses: qargi help guard)."]),
     "guard": ("What a member's guard refuses", [
-        "qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.",
+        "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
@@ -1269,13 +1269,12 @@ TOPICS = {
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
-        "lead's git configuration and session files (~/.gitconfig, ~/.claude/settings.json). "
-        "Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home "
-        "directory is not. It refuses git push, git remote changes, git -c alias.*, gh, ssh, scp, sftp and rsync to a host.",
-        "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
-        "on the command line, unless every command is echo, cat, tee, grep or git commit and its kin (then text is data). "
-        "Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
-        "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through "
+        "lead's git configuration and session files. "
+        "Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
+        "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, "
+        "unless every command is echo, cat, tee, grep or git commit and its kin (then text is data). "
+        "Commit with git commit -F FILE. Piped or here-string shell programs are read; curl | sh and bash < f are refused. A cd it cannot read refuses relative writes.",
+        "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, and a write through "
         "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
         "A refusal is a result: report it; do not work around it."]),
