@@ -250,6 +250,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
+- Every command starts faster: what `bin/qargi` does before a verb runs (the dev-run banner, the arguments filled in from the
+  current directory, the project's cloud binding) is one python process, `lib/help.py preamble`, instead of three, and the model
+  list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
+  takes about half the time it did. `tests/test_startup.py` keeps the count at one process and the time under the shrink-only
+  ceiling of `tests/startup-budget.txt`.
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
   packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
   they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
