@@ -105,6 +105,8 @@ git -C "$R" cat-file -e gh-pages:_site/index.html && git -C "$R" cat-file -e gh-
 [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .release)" = 0.6.0 ] && [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .url)" = "https://docs.example.org/qargi/" ] \
   && ok "site.json records release 0.6.0 and keeps its other answers" || no "site.json: $(git -C "$R" show gh-pages:site/site.json)"
 git -C "$R" show gh-pages:_site/releases/index.html | grep -q "a second thing" && ok "the releases page is built from the tag's changelog" || no "releases page"
+git -C "$R" cat-file -e gh-pages:_site/assets/search.js && git -C "$R" show gh-pages:_site/assets/search-index.json | jq -e '.entries | map(select(.p == "releases/")) | length == 1' >/dev/null \
+  && git -C "$R" show gh-pages:_site/releases/index.html | grep -q 'id="sidebar"' && ok "the built site has the sidebar, the search script and its index" || no "sidebar and search files"
 grep -q "^push it with: git -C .* push origin gh-pages" "$T/o" && no "a push command without an origin" || { grep -q "nothing was pushed" "$T/o" && grep -q "no origin remote" "$T/o" && ok "nothing is pushed; without origin it says so" || no "apply output: $(cat "$T/o")"; }
 [ "$(git -C "$R" branch --show-current)" = scratch ] && [ -z "$(git -C "$R" status --porcelain)" ] && [ ! -e "$R/_site" ] && [ "$(wts)" = 1 ] \
   && ok "the main checkout is untouched and no worktree is left" || no "main checkout: $(git -C "$R" status --porcelain) $(git -C "$R" worktree list)"
