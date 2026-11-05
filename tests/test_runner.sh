@@ -96,6 +96,20 @@ for _ in $(seq 50); do { [ -n "$lp" ] && kill -0 "$lp" 2>/dev/null; } || { gone=
 out=$(R -j 2 --only slow); grep -q 'WARN over budget: [0-9]*s, budget 1s' <<<"$out" && grep -q 'over 1.5x their budget (warning)' <<<"$out" && ! grep -q '^FAILED' <<<"$out" && grep -q '(passed)$' <<<"$out" && ok "over 1.5x its budget: a warning, the run passes" || no "budget warn: $out"
 out=$(R -j 2 --only slow --enforce-budgets); rc=$?; [ "$rc" = 1 ] && grep -q '^OVER BUDGET: ' <<<"$out" && grep -q '^FAILED: sh tests/test_slow.sh$' <<<"$out" && ok "--enforce-budgets fails it" || no "enforce: rc=$rc $out"
 
+# the shared place: the top level of the suite's TMPDIR. A step that removes a directory there it did not make, or leaves a new one, is named
+# with the directories in its block and in the summary, as a warning. A step runs with a TMPDIR of its own, not the suite's.
+SIB=$TMPDIR/sibling; LEFT=$TMPDIR/leftover; mkdir "$SIB"
+printf '#!/bin/sh\nrm -rf "%s"\nmkdir "%s"\necho "ok   dirs"\n' "$SIB" "$LEFT" > "$S/tests/test_dirs.sh"
+printf '#!/bin/sh\n[ "$TMPDIR" != "%s" ] && [ -w "$TMPDIR" ] && echo "own tmpdir: ${TMPDIR##*/}"\n' "$TMPDIR" > "$S/tests/test_tmp.sh"
+printf 'full | par | 60 | 1 | sh tests/test_dirs.sh\nfull | par | 60 | 1 | sh tests/test_tmp.sh\n' >> "$S/tests/suite.txt"
+out=$(R -j 2 --only dirs); rc=$?
+grep -q "^   WARN directories outside its own changed: removed $SIB, left $LEFT\$" <<<"$out" && grep -q "^directories outside a step's own changed (warning; the top level of $TMPDIR):\$" <<<"$out" \
+  && grep -q "^  sh tests/test_dirs.sh: removed $SIB, left $LEFT\$" <<<"$out" && ok "a step that removes a directory it did not make at the top level of the suite's TMPDIR, or leaves one, is named with them in its block and in the summary" || no "dirs: $out"
+[ "$rc" = 0 ] && ! grep -q '^FAILED' <<<"$out" && grep -q '(passed)$' <<<"$out" && [ ! -e "$SIB" ] && [ -d "$LEFT" ] && ok "it is a warning: the run passes (and the runner itself puts nothing back and removes nothing)" || no "dirs rc=$rc: $out"
+out=$(R -j 2 --only 'tmp|a1'); rc=$?
+[ "$rc" = 0 ] && grep -q '^own tmpdir: tmp-[0-9]*$' <<<"$out" && ! grep -q 'directories outside' <<<"$out" && ok "a step has a TMPDIR of its own under the runner's directory, and a step that changes nothing is not named" || no "own tmpdir rc=$rc: $out"
+rmdir "$LEFT"; rm -f "$S/tests/test_dirs.sh" "$S/tests/test_tmp.sh"
+
 # the inventory
 printf 'full | par | 60 | 1 | sh tests/test_a1.sh\n' > "$S/tests/suite.txt"
 out=$(R -j 2); rc=$?
