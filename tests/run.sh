@@ -81,6 +81,7 @@ run python3 tests/test_marshal_sign_unit.py
 run bash tests/test_marshal_forget.sh
 run bash tests/test_marshal_hook.sh
 run bash tests/test_journal.sh
+run bash tests/test_upstream.sh
 run bash tests/test_team.sh
 run bash tests/test_leadcred.sh
 run bash tests/test_lead.sh
