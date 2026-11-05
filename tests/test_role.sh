@@ -20,6 +20,7 @@ grep -q "^review .*read-only .*built-in" <<<"$out" && grep -q "^build .*write .*
 $DA role check >/dev/null 2>&1 && ok "the built-in roles check out" || no "check: $($DA role check 2>&1)"
 $DA role show review 2>&1 | grep -q "^class: read-only" && ok "show prints the class" || no "show"
 [ "$($DA role prompt build)" = "$(cat roles/build/ROLE.md)" ] && ok "prompt prints the role text as it is" || no "prompt"
+$DA role prompt write | tr '\n' ' ' | tr -s ' ' | grep -q "Documentation follows the code: when the brief and the code disagree, follow the code and report the disagreement\." && ok "the write role says documentation follows the code and a disagreement is reported" || no "write role lacks the documentation-follows-the-code line"
 
 # your own roles
 mkdir -p "$T/c/roles/audit" "$T/c/roles/probe"

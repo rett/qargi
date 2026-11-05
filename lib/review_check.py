@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Checks that an agent's output is a series of change-specific patches with their context,
 not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
-OUT is the member's output directory (RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
+OUT is the member's output directory (RUN/out; given RUN, whose out directory exists, it checks RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
 A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
 import glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
@@ -17,6 +17,10 @@ fails, warns, notes = [], [], []
 F = lambda m: fails.append("FAIL " + m)
 W = lambda m: warns.append("WARN " + m)
 N = lambda m: notes.append("NOTE " + m)
+# a run directory (RUN_DIR) was given where OUT (RUN_DIR/out) is meant: use its out directory, unless the directory is an OUT itself
+if os.path.isdir(os.path.join(run, "out")) and not os.path.isdir(os.path.join(run, "patches")) and not os.path.exists(os.path.join(run, "manifest.json")):
+    run = os.path.join(run, "out")
+    N("checked %s (a run directory was given; the output directory is RUN_DIR/out)" % run)
 
 patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")))
 if not patches:

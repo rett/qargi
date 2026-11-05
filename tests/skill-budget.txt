@@ -10,8 +10,8 @@ lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
 packs/skills/docs-site-member/SKILL.md 121
-packs/skills/gitflow-member/SKILL.md 267
-packs/skills/keep-a-changelog/SKILL.md 317
+packs/skills/gitflow-member/SKILL.md 285 # raised: one line: parallel tasks use unnumbered bullets and the lead renumbers at merge; for the lead's review
+packs/skills/keep-a-changelog/SKILL.md 355 # raised: one line on numbered items (unnumbered bullet, the lead renumbers); for the lead's review
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
@@ -21,7 +21,7 @@ provision/templates/cloud-preamble.md 139
 roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
-roles/write/ROLE.md 167
+roles/write/ROLE.md 186 # raised: the line that documentation follows the code and a disagreement is reported; for the lead's review
 skills/qargi-flow/SKILL.md 944
 skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898

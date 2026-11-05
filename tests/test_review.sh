@@ -53,6 +53,13 @@ mkdir -p "$T/flat"; cp "$T/good/patches/"*.patch "$T/flat/"; cp "$T/good/manifes
 out=$($DA review check "$T/flat" 2>&1); [ $? = 1 ] && echo "$out" | grep -q "no patches found" && ok "patches loose in OUT (not in OUT/patches) are not accepted" || no "flat patches: $out"
 out=$($DA review check "$T/good" --alow-empty 2>&1); rc=$?; [ $rc = 2 ] && echo "$out" | grep -q "unknown option --alow-empty" && ok "a misspelled option is an error" || no "unknown option: rc=$rc $out"
 out=$($DA review check "$T/good" "$T/flat" 2>&1); rc=$?; [ $rc = 2 ] && ok "two directories are an error" || no "two args: rc=$rc $out"
+# RUN_DIR instead of OUT: a directory with an out directory is read through its out
+mkdir -p "$T/rundir"; cp -r "$T/good" "$T/rundir/out"
+out=$($DA review check "$T/rundir" 2>&1); rc=$?; [ $rc = 0 ] && echo "$out" | grep -q "NOTE checked $T/rundir/out" && echo "$out" | grep -q "0 fail" && ok "a run directory is checked as its out directory, with a note" || no "run dir: rc=$rc $out"
+cp -r "$T/mono/patches" "$T/rundir/out/patches.bad"; rm -rf "$T/rundir/out/patches"; mv "$T/rundir/out/patches.bad" "$T/rundir/out/patches"; cp "$T/mono/manifest.json" "$T/rundir/out/manifest.json"
+$DA review check "$T/rundir" >/dev/null 2>&1; [ $? = 1 ] && ok "a run directory's out directory that fails is refused" || no "run dir with a bad out"
+mkdir -p "$T/outwins/out"; cp -r "$T/good/." "$T/outwins/"
+out=$($DA review check "$T/outwins" 2>&1); rc=$?; [ $rc = 0 ] && ! echo "$out" | grep -q "NOTE checked" && ok "a directory that holds patches itself is checked as it is, even with a subdirectory named out" || no "out wins: rc=$rc $out"
 # a review run returns a report instead of patches
 mkdir -p "$T/rep"; out=$($DA review check "$T/rep" 2>&1); [ $? = 1 ] && ok "a run with neither patches nor a report is refused" || no "empty run: $out"
 printf '# Review\n\n## Findings\n\nnone\n' > "$T/rep/report.md"
