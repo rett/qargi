@@ -6,6 +6,610 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-05
+
+### Added
+- `tests/run.sh --changed-from REF` (or `--changed-files FILE`, one path per line) adds to the fast tier the steps whose `covers`
+  globs match a file changed since REF (`git diff REF...HEAD`) and those whose command names a changed file; a step with no `covers`
+  is not added by its globs. `--plan` prints the selection and the shard plan and runs nothing, and a sharded run ends with a
+  `shard i/K: planned Ns, the steps took Ns together` line.
+- `tests/durations.txt` holds the recorded duration of every step, from a whole run, for `--shard i/K --durations
+  tests/durations.txt`: the four parts of the suite plan within 1.3 times of each other (CONTRIBUTING, Tests, says how to
+  regenerate it). `tests/test_ci.py` checks the CI workflow and the shard balance.
+- The methodology parameter `ci_timeout_minutes` (default 30; a positive whole number, a parameter may carry a `pattern`) sets the
+  `timeout-minutes` of the CI job the gitflow scaffold writes, so a project sets it from its own suite budgets.
+- `qargi release status` shows, in the suite record's verdict, how long the run took and the mode its command names (`-j N`,
+  `shard I/K`): `pass at this head (command: C; ran AT; took 412s; -j 8)`. `release verify` and `feature verify` record both; a
+  record made before shows the command and the time only.
+- Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
+  `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
+  `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
+  shipped catalog against the schema of its kind.
+- `qargi project profile check [NAME] [--profile FILE]` (read only, so a member may run it) reads a repository's profile
+  (`~/.qargi/config/profiles/<repository>.md`, the repository being the project's directory name, or FILE). It exits 1 while the
+  profile still carries the shipped example's title or "Copy to" line, and warns (exit 0) of each backticked command in the
+  profile's Gates section that is in none of the repository's `CLAUDE.md`, `AGENTS.md` and Makefile targets. No profile is fine.
+  `project validate` prints the header finding as a `WARN:` line.
+- `roles.ROLE.tools`: the tools a role needs beyond its apt packages, declared once in the project's answers as a list of
+  `{kind, name, ...}` entries. `go` (a package path and a tagged version: `go install NAME@VERSION`), `binary` (a file name, version,
+  the URL of the file and its sha256: downloaded to `~/.local/bin` and kept only when the hash matches) and `submodule` (a name and
+  the path of a submodule of the repository). `project validate` checks each kind's keys and that two roles do not pin one tool
+  differently. `qargi env plan` lists every tool with its state here (ok, missing, wrong, path) and the token covers the list;
+  `qargi env apply` installs the go tools (go must be in `--approve-exec`) and binaries that are missing or wrong, after the
+  bootstrap, and records them; `qargi env check` reports a tool that is not installed, is another version (`go version -m`) or
+  another file (sha256), sits in a directory PATH lacks, or a declared submodule that is not initialised or at another commit.
+  `qargi local prepare` checks the role's declared submodules out in the member's clone from the lead's copy of their objects,
+  offline (a mirror with no remote under `RUN/sub`, push URL disabled) and prints `SUBMODULES=path,...`; a commit the lead's copy
+  lacks, a submodule not initialised there, or a run made with `--repo-url`, is a note and nothing is fetched (`lib/tools.py`).
+- Providers as data, one runtime per surface. Claude ships as two runtimes of one family, `claude-code` (local) and
+  `claude-platform` (cloud), with a shared model catalog. The family name `claude` resolves per surface (a notice says so) in a
+  project's `models.provider` and in `provider of`; every `provider` verb that takes a NAME takes a runtime name (there is no
+  runtime named `claude`). Definitions follow `schema-2.json`: tiers with the date and source each model was verified, effort
+  levels, a capability matrix, a `layout` (skills, agents, settings, memory, transcripts, render target, launch line; a verb that
+  needs a facility the runtime lacks says `provider NAME has no FACILITY`, exit 3), a renderer for the member file, a dispatch
+  (in-session or a command), a barrier and `notes`.
+- `models.provider` per surface: `qargi project set P models.provider.local|cloud NAME` (a runtime that does not serve that
+  surface is refused, exit 2), and `project new|attach` take `--provider NAME` or `--provider-local` and `--provider-cloud`;
+  nothing is guessed. `project validate`, `init`, `attach` and `new` print `finding: models.provider is not set` (exit status
+  unchanged); a verb that needs a surface the answers leave out exits 2 and says which.
+- Provider notes: a definition's `notes` (up to 16 topics, one line each, plain text) say what the skills would otherwise have to
+  say about the runtime. `qargi provider notes [TOPIC] [--project P] [--surface cloud]` prints one of the project's runtime (exit 1
+  for a topic it lacks, exit 2 for a project with no runtime or one that cannot be used as it stands). `provider check` fails a bad
+  note and warns when an in-session local runtime has no `spawn` note; an extension cannot add notes. `claude-code` ships `spawn`,
+  `session-model`, `exploration`, `skills-dir`, `identity` and `commands`; `claude-platform` ships `output-dir` and `clone-dir`.
+- Contract addenda: a definition lists `resources.contract_addenda`, text files of its own directory (16 KB each, no control or
+  format characters) that are added to a member's contract, so the neutral contract never names a surface. `claude-platform`
+  carries `cloud-run.md` (the detached-gate recipe, the no-wrapper git case, `/workspace/<repo>`, `/mnt/session/outputs`);
+  `claude-code` carries `local-run.md` (background commands, `Monitor`, no foreground `sleep`). `qargi provider addenda NAME
+  SURFACE` prints them. A cloud agent's prompt is the contract, the output format and the addenda of the project's cloud runtime
+  (the prompt hash covers them); `local prepare` copies the local runtime's into the run's `CONTRACT` directory as
+  `runtime-addenda.md`. `instances refresh-prompt` stops with `could not render the system prompt` when an addendum cannot be read.
+- Provider packs in the library: `qargi provider new|import|seal|remove|enable|disable|attest` for provider, catalog and extension
+  packs, each a plan, a token and your approval, with `--approve-exec` naming every executable. A pack holds text only (binaries,
+  archives, links and secrets are refused). A pack counts only while it is what you sealed, and a capability counts only with a
+  `verified.json` record bound to the definition's hash, written by `provider check` (hermetic cases) or `provider attest` (asked
+  each time; it never runs or spends anything). A name defined both shipped and in the library is refused. The conformance harness
+  is `lib/conformance/` (`tests/conformance.sh` still runs it).
+- Extensions: a project's `models.extensions` compose onto its runtime; two that provide the same thing, or one that collides with
+  the runtime, are refused, and an extension's capability counts only after `provider check` or `attest` of it passes.
+  `provider show|check|layout|require-skills|launch --project P` and `provider effective ... --project P` show the composed view,
+  and `agent for`, `provider accept`, `session` and `provision` read it. A member whose text depends on an extension shows `STALE`
+  until `qargi agent refresh`.
+- `qargi provider adapter-run NAME SURFACE VERB [--check]` runs a verb of a runtime's adapter (a library adapter only as a sealed
+  private copy; a verb the definition does not list exits 3), and `qargi provider model NAME SURFACE TIER` prints a tier's model.
+- `qargi local run RUN [--dry-run]` runs a task through a runtime whose dispatch is a command (a vendor CLI): the argv comes from
+  the definition, with no shell and a scrubbed environment (only the names in `dispatch.env_pass`, shown in the review), and the
+  output goes to `OUT/transcript`. It builds from the project's composed definition; a read-only run is refused when the barrier
+  comes from an extension, or the runtime's own barrier is a hook or adapter, unless the project recorded `provider accept`. A
+  runtime that works inside the session is refused.
+- `qargi project link|unlink PROJECT [--resource skills,agents,memory]`: one plan and token links the project's skills, agents and
+  memory into the work tree, each as the runtime's definition says (a directory link, one link per entry, or a copy; the memory
+  directory becomes a link into `~/.qargi/memory/projects/PROJECT`). A real directory in the way moves to `NAME.qargi-backup`.
+- `qargi packs link|unlink PROJECT`: the project's skills directory in the repository becomes a link to the render of `packs apply
+  --target`, so a session in the checkout loads the packs without `--add-dir`. The plan lists what a real directory there holds
+  (same as the library, differs, or new); apply moves it to `skills.qargi-backup`, `unlink` moves it back (also when the link is
+  already gone); nothing is deleted. A foreign link, a symlinked parent, files tracked by git and a missing render are refused.
+- `qargi packs check --target` ends with the skills a session would load, each `qargi`, `accepted`, `drifted`, `excluded` or
+  `unmanaged` (only `drifted` changes the exit status), says when the checkout is not linked, and reads the exclusion from the
+  runtime's settings in every form. `qargi skill accept|unaccept PROJECT NAME [--user]` records a skill qargi does not manage, by
+  name and content hash. `project attach` hints when the repository has its own skills.
+- Members are rendered from one neutral definition (`agents/member.json`, `member.body.md`) through the runtime's renderer.
+  `agent list` and `agent models` show `STALE` (definition, catalog, renderer or an enabled extension changed) and `DRIFT` (file
+  edited by hand).
+- The render of a member is kept in the configuration directory, `~/.qargi/config/agents/PROJECT/NAME.EXT` (beside `agents.json`,
+  outside every repository), and the runtime's file is written from it: `agent add`, `rename` and `refresh` write both, `remove`
+  deletes both. A checkout that is cleaned or cloned afresh gets its members back with `qargi agent refresh NAME --project P`, which
+  also hides the file from git again. `agent list` and `agent models` show `MISSING` (the runtime's file is gone), `STALE` (the copy
+  in config is gone or changed, or the inputs of the render did) or `DRIFT` (the file was edited by hand), each with that command.
+  `env check` reads the new form.
+- Every skill and tool pack declares `compatible_providers` (runtime names, family names or `any`) as part of its content hash:
+  `skill|tool new|import --compatible LIST` and `seal --compatible`. A project's runtime skips a pack it is not on, with a note in
+  `effective`, `check`, `packs apply|check|link` and `discover install [--compatible]`.
+- The member guard takes its hook protocol and protected directories from the provider definitions (`qargi __guard --provider
+  NAME`).
+- `qargi help guard` says in one place what a local member's guard refuses and what it allows, and `qargi help approvals` says that
+  a token covers the plan seen, that `--approved` is recorded and not verified, that gated verbs are never allow-listed and that a
+  member never applies. The manual page has a GUARD section.
+- `qargi project validate` prints a `WARN:` line for each pack linked to a role of the project that is not in the pack library.
+  `packs check --target` and `skill|tool check PROJECT ROLE` print `no pack is linked to any role of PROJECT` when none is.
+- `qargi marshal handoff [NAME] [--write FILE] [--json]`: a read-only note for a fresh session, built from stored facts only
+  (repository, HEAD, base, host, features, the marshal record, the packs check and launch line, the last `env check` and `env
+  apply`), with the lead-only `qargi-session` skill.
+- `qargi marshal claim NAME --as-successor-of ID`: a lead session that was restarted continues as the lead, without the owner's
+  takeover, when the record's lead is ID, its lease is stale and the host, OS user and work tree are the same. Anything else stays
+  the owner's `takeover`. `feature start` continues the same way, and `marshal status`, `marshal check` and `marshal handoff` name
+  the command.
+- `qargi lead usage [--project P] [--session ID | --transcript FILE] [--json]` says how much of the lead session's context is in
+  use. `qargi lead compact-check [--advise] [--json]` says whether a `/compact` is safe now (exit 0) or not (exit 1) with every
+  reason (an open local run, a merge waiting in the conflicts directory, a whole-suite run in progress, a handoff note older than
+  the last merge, an open release or hotfix branch) and prints what to re-read after it. The window is the project answer
+  `lead.context_window` (default: the runtime's `resources.transcripts`, which `claude-code` ships). qargi cannot run `/compact`.
+- `feature finish`, the `feature merge` that closes a feature's last open run, `release finish` and `marshal handoff` end with
+  `lead: N% context; compact is safe now: run /compact` (or why not) at or above the answer `lead.compact_advice_pct` (default 40;
+  0 turns it off). They never fail or wait for it.
+- `qargi env show [--project P] [--repo DIR] [--json]` prints what a repository declares about its development environment, read as
+  text from files it already has: the `AGENTS.md` or `README.md` section headed Development environment, Environment or Setup;
+  version pins (`go.mod`, `.tool-versions`, `mise.toml`, `.python-version`, `.nvmrc`, `package.json` `engines`); `.gitmodules`; the
+  `bootstrap` and `doctor` targets of a Makefile, justfile, Taskfile or mise tasks; a devcontainer. It derives the doctor,
+  bootstrap and dry-run commands. The project answers `env.doctor_command`, `env.bootstrap_command`, `env.dry_run_command` and
+  `env.known_failures` override them. A member may run it. See `qargi help environment`.
+- `qargi env check [--project P] [--repo DIR] [--timeout SECONDS] [--json]` says whether a checkout is set up the way its project
+  declares and ends with `ENV OK` or `ENV INCOMPLETE: N missing (...)` (exit 0, 1, or 2 for usage). It runs the doctor command once
+  (no shell, standard input closed, a minimal environment, a time limit of 300 s by default), so it runs the project's code. A
+  doctor line that begins with `missing`, `fail`, `error`, `not ok`, `stale` or `[x]`, or ends with `missing`, `not found` or `not
+  installed`, is a missing item; one that begins with `expected` or holds an `env.known_failures` entry is accepted. With no doctor
+  command a built-in minimum runs (submodules, tags, pinned tools on `PATH`); for a stored project it adds whether skills, agents
+  and memory are linked, `STALE` and `DRIFT` members, `packs check` and `memory check`. The verdict is recorded in
+  `state/env/PROJECT.json`. A member may run it.
+- `qargi env plan [--project P] [--repo DIR] --approve-exec NAME` and `qargi env apply --plan TOKEN --approved WORDS --approve-exec
+  NAMES [--allow-root]` (the lead's) look at, then run, a project's bootstrap. The plan runs the dry-run command (which can run
+  project code, so it exits 2 without `--approve-exec` naming its executable), shows its output with privileged lines (`sudo`,
+  `doas`, `pkexec`, `su`, `run0`) apart, and prints a token. Apply runs the dry run again, refuses when the token or the approved
+  executables differ or when privileged lines are present without `--allow-root`, then runs the bootstrap on your terminal and ends
+  with `env check`, so a bootstrap that leaves the environment incomplete exits 1. The member guard refuses both.
+- `qargi project attach` prints a `development environment found:` line and lists `env` gaps (no Development environment section in
+  `AGENTS.md` or `README.md`, no bootstrap or doctor target). `qargi project adopt` writes a missing `AGENTS.md` and, when there is
+  no task runner, a Makefile with stub targets; it never edits an existing file. `qargi project new` (the gitflow scaffold) writes
+  the same `AGENTS.md` and Makefile stubs, and the scaffold's `CLAUDE.md` starts with `@AGENTS.md`. `qargi provision plan` prints the
+  bootstrap command as a suggested setup script for the cloud environment. `qargi help environment` states the doctor line
+  convention. This repository declares its own environment the same way (`make -n bootstrap`, `make bootstrap`, `make doctor`).
+- Release publishing: pushing a tag `X.Y.Z` runs `.github/workflows/release.yml`, which creates the GitHub release with the
+  version's changelog section as notes and the source archive and its SHA-256 as files (a tag not on `master`, or an existing
+  release, is left alone; it can be run by hand for an earlier tag). `qargi release publish TAG` does the same through `gh`
+  (`QARGI_GH`) with a plan and token. `release status|verify` warn about a tag with no release and a commit without the workflow.
+  `lib/changelog_section.sh VERSION [FILE [HEADING]]` prints a section.
+- Release signing is optional and off unless the project answers hold `release.sign` (`key`, `namespace`, `files`, optional
+  `verify_command`). `qargi release sign VERSION` signs the listed files with `ssh-keygen -Y sign` on your own terminal (the
+  passphrase never passes through qargi, a log or an agent; no ssh agent is asked), runs `verify_command` and records the result
+  under `state/release/`. It runs only from the tag after `finish` and before `publish`, and is refused without a terminal, in a
+  member run and under `QARGI_NESTED`. `release publish` attaches assets in the same call (`--asset FILE`, repeatable, and
+  `release.assets`; `--notes-file FILE` or `release.notes_file` replaces the changelog notes) and, with `release.sign` set, refuses
+  until a signature that still holds is recorded. `release status` says `awaiting signature` or `VERSION is ready for signing:
+  qargi release sign VERSION`.
+- Release answers that fit a project's own layout, all optional and checked by `project validate`, `init` and `set`:
+  `release.version_file` (default `VERSION`; `none` for a project with no version file), `release.changelog.unreleased` and
+  `release.changelog.released` (heading templates with `{version}` and `{date}`), `release.man_pages`, `release.test_command` and
+  `release.preflight` (a command, `{version}` replaced, run by `release start` and `release push` before they change anything).
+  `project attach` and `adopt` read the changelog heading and version file by them.
+- Detached long-lived branches: the answer `repo.detached` lists branches (a documentation site, say) that never meet develop,
+  master, release, hotfix or feature branches. qargi refuses every merge between them by name and by history. Tasks are cut from
+  such a branch as from any base, and `qargi feature merge BRANCH agent/SLUG` with the detached branch as NAME merges a finished
+  task into it (plan and token, local only).
+- Parking branch: the answer `repo.parking_branch` (default `scratch`) names the branch the main checkout rests on while qargi moves
+  develop; a refusal because develop is checked out suggests `git -C DIR switch -c scratch develop`. `qargi feature park [--project
+  P]` refreshes it (a dirty tree, or a parking branch with commits develop lacks, is refused). After `feature finish` and `release
+  finish` a clean main checkout on the parking branch is fast-forwarded to develop. The parking branch is never pushed or merged.
+- Branch lifecycle answers: `branches.push_features` (`never`, `when-shared`, `always`; default `never`) decides whether `feature
+  start|merge|sync` push the feature branch, and `branches.delete_merged` (`local`, `local+remote`; default `local`) decides
+  whether `feature finish` also deletes it on origin (the plan shows it, and a branch with commits the feature lacks is kept).
+- Worktree root: the answer `worktrees.root` (default `<state>/worktrees/PROJECT`) is where qargi makes worktrees, at
+  `ROOT/<branch>`. `qargi feature start NAME --worktree` creates `ROOT/feature/NAME`; `feature merge|sync` update a clean worktree
+  of the feature, and `feature finish` removes it. `feature list|status` flag other worktrees of the project with the `git worktree
+  move` that fixes it.
+- `qargi branch prune [--project P] [--remote]`: a plan and token for the merged `agent/*` and `feature/*` branches (with `--remote`
+  also on origin, as a lease on the tip the plan showed) and the worktrees qargi made for them; `--plan T --approved WORDS` deletes
+  them. A branch counts as merged only when it was merged with `--no-ff`; long-lived and detached branches, the parking branch,
+  unmerged branches and branches checked out in a worktree qargi did not make are never touched, and each kept branch is listed
+  with its reason. The member guard refuses it and `feature park` with sentences of their own.
+- `lib/site.py`, a documentation site generator (Python 3.11 or later, standard library only; `python3 -I lib/site.py`).
+  `build --release X.Y.Z --source DIR --out DIR [--pages DIR] [--url URL]` writes a static site: a command reference generated from
+  `lib/commands.py` (one page per command group, plus the help topics, files and environment variables), a releases page from
+  `CHANGELOG.md`, the hand pages of `--pages` (Markdown with `title` and `description` front matter, converted by a strict subset
+  converter that refuses what it does not support with the line number), `sitemap.xml` (dates from the last commit, never the build
+  time), `robots.txt`, `404.html` and `.nojekyll`. Each page has a title, description, canonical address, social-preview tags and
+  structured data that describes only what the page shows; the stylesheet follows the reader's light or dark setting and needs no
+  JavaScript. `check` validates the hand pages against the source (every `qargi` command and option they name exists in
+  `lib/commands.py`, links and anchors resolve, the description is 120 to 155 characters), `check-output DIR` validates a built tree
+  (well-formed HTML, unique ids, links, sitemap, no scripts, frames, forms or unsafe link schemes) and `diff OLD NEW --source-old
+  DIR --source-new DIR` lists the commands, verbs and options that changed and the hand pages that still name what is gone. The
+  build refuses paths outside the source tree, symbolic links, an `--out` that is not new or empty and a config or `static/` folder
+  other users can write; it reads the source's `lib/commands.py` in a boxed child process, so give it only a source you trust.
+- `qargi release site VERSION` regenerates the documentation site when a release ships: it builds the site of the tag VERSION with
+  `lib/site.py` (the tag's tree is the source; the hand pages and `site.json` are those of the detached site branch) in a temporary
+  worktree of that branch and commits it there as `Site: built from release VERSION` (`site.json` records the release, `_site/`
+  holds the built site), behind a plan token and an approval, touching no working tree. It never pushes and prints the
+  `git push` command instead; a build error refuses with the generator's report. The answers are `site.enabled`, `site.branch`
+  (default `gh-pages` when `repo.detached` lists it) and `site.config` (default `site/site.json`, the hand pages in `pages/`
+  beside it). With `site.enabled`, `release finish` ends with `next: qargi release site VERSION` (the new `after_release` step
+  of the gitflow methodology, checked by `methodology check` and shown by `methodology show`) and `release status` says
+  `site: not built for VERSION`, `site: built at SHA, not pushed` or `site: pushed`. The member guard refuses it.
+- `qargi local list [--scratch DIR]` lists the local runs the registry names, with role, slug, age, applied and merged. `qargi local
+  clean --applied --scratch DIR` cleans every applied and merged run and keeps the rest (exit 1 when one was kept); `local clean
+  --stale DAYS --scratch DIR [--yes]` lists finished runs older than DAYS and, with `--yes`, cleans each by the rules of `clean RUN`.
+- `qargi provision plan|apply --force` passes `ant apply --force` for a resource changed on the server; the token covers the flag.
+- Four baseline packs, each `compatible_providers: ["any"]`: `review-findings`, `secrets-scan`, `docs-site-member` and
+  `qargi-contributing`. The `qargi-providers` skill ships with the others, and `install.sh` refuses a python3 older than 3.11.
+- `python3 lib/help.py man --keep-date FILE` keeps the `.TH` date of `man/qargi.1`, so regenerating the page after `release start`
+  no longer undoes the date.
+- Tests: `tests/test_skill_budget.sh` holds every text a member or lead loads to an exact word ceiling (`tests/skill-budget.txt`; a
+  ceiling raised above its value at the merge base needs a `# raised:` comment), forbids a 12-word sentence in two texts
+  (`tests/skill-dup-allowlist.txt`), requires every `qargi X Y` example to name a real verb, and requires every reference file under
+  `skills/*/` to start with `Load when ...` and to be sent to ("load `FILE`") by its `SKILL.md`; a runtime's `notes` count as one
+  text. `tests/test_neutral.sh` fails a vendor, model family or cloud CLI name in `skills/`, `roles/`, `agents/`, `contract/`,
+  `packs/skills/`, `provision/templates/*.md` and `methodologies/` beyond the counts in `tests/vendor-words-allowlist.txt`, which can
+  only shrink. `tests/test_tool_copy.sh` keeps `install.sh --copy`'s `tool_dirs`, the tests' `TOOL_DIRS` (one `copy_tool` helper in
+  `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
+- Numbered changelog items, opt-in with the answer `release.changelog.numbered: true`. Under the unreleased heading
+  (`release.changelog.unreleased`, default `## [Unreleased]`) an item is a line that starts `N. ` or `- N. `; the lines up to the
+  next item belong to it. `qargi changelog renumber [--project P] [--check]` finds duplicate item numbers (two branches that each
+  added an item 5), numbers the items again in file order from the first one's number and rewrites the `(item N)` cross-references
+  (with a duplicated N, to the nearest item numbered N at or before the reference, else the nearest after it). It works on the
+  `CHANGELOG.md` of the work tree around the current directory and leaves the change uncommitted; `--check` only reports and exits 1
+  on a duplicate. `feature sync` warns about duplicates after the merge, and `feature finish` refuses (exit 1, nothing changed)
+  until they are renumbered, committed and verified. A member may run only `--check`; `renumber` without it is refused by the guard.
+- `qargi upstream status|review|sync` for a project that is a fork of an upstream repository and keeps its own changes, the
+  overlay, on top of it. The answers name the remote (`upstream.remote`), the branch it follows (`upstream.branch`) and the
+  local branch that carries the upstream line and nothing else (`upstream.into`, default `upstream`); `upstream.overlay_check`,
+  optional, is a command array. `status` fetches that one branch of that remote (no tags, the only verb that reaches the
+  network) and reports how far the branch is behind and ahead with the newest upstream commits; `review [--limit N]` lists
+  the upstream commits not yet in the branch with the files each touches and marks the ones that touch a file develop changed
+  since it parted from the upstream line; `sync` fast-forwards the branch to the fetched tip from a plan and a token
+  (`--plan`, `--approved`), creates it at the tip when it does not exist, journals the move, refuses a branch with commits of
+  its own, pushes nothing and never merges into develop (the next step, `feature start upstream-X` then `feature merge`, is
+  printed); with `upstream.overlay_check` it then runs the command on a trial merge of the branch into develop in a temporary
+  worktree (exit 1 on a failure or a conflict; the fast-forward stands). `project validate` checks the `upstream` answers.
+  The guard refuses a member `upstream status` (its fetch changes the remote-tracking refs of the lead's repository, which
+  `local verify` compares) and `upstream sync`, and `project set` of any `upstream` answer; `review` stays allowed.
+  `tests/test_upstream.sh` runs the verbs against a local bare repository acting as upstream.
+- `qargi ref record --rewrite REF OLD NEW --why "TEXT"`: the lead rewrites an `agent/*` branch to a commit with the same tree
+  (`git rev-parse OLD^{tree}` must equal NEW's) while REF is at OLD, and the move is journaled with the reason, so `local verify`
+  and `local clean` of a run prepared before it accept it and name it as a rewrite, and `local clean` and `local list` count the
+  run's applied tip as merged when the commit it was rewritten to is. Refused to a member.
+- Local runs survive a reboot. `local prepare` warns on stderr when `--scratch` is on a tmpfs (a reboot loses the run; use a
+  directory on disk). A passing `local verify` copies OUT, a run bundle beside it and the run's snapshots to
+  `<state>/runs/<run id>/`; `qargi review apply --from-saved ID` applies from that copy with the same checks as a normal apply
+  (review check, `local verify --saved ID`, the registry's repository, slug and base, applied once), and the guard keeps a member
+  out of `<state>/runs/`. `local list` and `qargi report` show a run whose directory is gone as `directory gone`, with its saved
+  copy; `local clean RUN --discard` drops the registry entry (and the saved copy) of such a run, and `clean RUN` does once its
+  saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
+
+### Changed
+- The CI workflow `.github/workflows/test.yml` (no scheduled run): a pull request into a branch other than master runs the fast
+  tier and the steps its changed files cover, or the whole suite when it carries the label `full-suite`; a push to develop, a pull
+  request into master (the release pull request) and a manual run run the whole suite in four shards, balanced by
+  `tests/durations.txt`, and a last job, `result`, is red when any shard failed. A pull request replaces its own earlier run, a push
+  to develop is never cancelled. Each job has a time limit computed from the manifest's budgets (35 minutes; the former 30 minutes for
+  the whole suite in one job was less than the budgets add up to, and the job was cancelled), the packages jq and shellcheck come
+  from a cache keyed by their list (`.github/actions/tools`), and every action is pinned to a full commit SHA.
+- `tests/run.sh` reads its steps from the manifest `tests/suite.txt` (tier, parallel-safe or serial, timeout, time budget, optional
+  `covers` globs) and runs them `-j N` at a time (default: the CPUs, at most the cgroup quota; `-j 1` is the former serial run).
+  `--tier fast` runs a fast tier of about a minute that covers every area, `--only PATTERN` selects steps, `--shard i/K` deals
+  them to K parts by recorded duration or budget, `--shuffle SEED` and `--repeat N` look for a test that fails now and then, and
+  `--enforce-budgets` fails a step over 1.5 times its budget (otherwise a warning). Each step has its own session, `HOME`, no
+  standard input and a timeout, and fails when it leaves a process running; its output is printed as one block when it ends,
+  and the summary lists the failed steps and the slowest ten before the `total:` line. The linter runs through `xargs -P`.
+  The runner fails when a `tests/test_*` file is not in the manifest or a listed file does not exist; `tests/test_gitflow_detached.sh`,
+  which no list ran, is now listed. `tests/test_runner.sh` tests the runner.
+- `tests/run.sh` gives every step a `TMPDIR` of its own under the runner's directory, and compares the set of directories at the top
+  level of the suite's `TMPDIR` before and after each step: a step that removed one it did not make, or left a new one, is named
+  with the directories in its block (`WARN directories outside its own changed: removed ..., left ...`) and in a summary section.
+  It is a warning, never a failure: with `TMPDIR` unset that place is `/tmp`, which every process on the host shares.
+- Every command starts faster: what `bin/qargi` does before a verb runs (the dev-run banner, the arguments filled in from the
+  current directory, the project's cloud binding) is one python process, `lib/help.py preamble`, instead of three, and the model
+  list behind the completion of a model value is read from the runtime descriptors only then, not on every start. `qargi role list`
+  takes about half the time it did. `tests/test_startup.py` keeps the count at one process and the time under the shrink-only
+  ceiling of `tests/startup-budget.txt`.
+- The tests are hermetic and safe to run concurrently with each other and with another whole suite: `tests/hermetic.sh` and
+  `tests/hermetic.py` build one environment (fresh HOME, TMPDIR, config and state under one directory, UTC, C.UTF-8, umask 022, git
+  without the host's configuration, no bytecode, no colour), and a lint (`tests/hermetic_lint.py`, run by `tests/test_hermetic.sh`)
+  fails on a test that does not source it, names a literal `/tmp`, `/dev/shm` or `/run` path, kills by pattern, waits with a bare
+  `sleep`, removes a directory it did not make, binds a fixed port, keeps a lock outside its directory or compares a wall-clock
+  difference with a constant.
+- `QARGI_WATCH_INTERVAL` sets the poll interval of `qargi watch` in seconds (default 30), so a test of the watch runs in two seconds
+  and not in a minute.
+- `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
+  packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
+  they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
+- Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local
+  claude-code` and `models.provider.cloud claude-platform`, or `models.provider claude` for the family). `agent`, `provision`,
+  `local prepare`, `local run`, session starts, `project validate`, `packs apply|check|link|unlink`, `skill accept` and `marshal
+  handoff` take the runtime from the project and exit 2 with `set one with qargi project set P models.provider NAME` when it is
+  unset; a name that is not a project says `no such project`; `--target` must be the runtime's `layout.render_target`.
+- Breaking: members belong to a project. `~/.qargi/config/agents.json` is `{schema: 2, projects: {P: {NAME: record}}}` and any other
+  shape makes every `agent` verb exit 2 without touching the file (`qargi upgrade` warns): move it aside and add the members again
+  with `qargi agent add NAME --project P`. `--user` is gone from `agent add|refresh|rename` and nothing is written to a runtime's
+  user-level directory. Two projects can each have a `worker`. `agent list` shows PROJECT, NAME, ROLES, MODEL/EFFORT, FILE;
+  `agent remove NAME --project P` is new; `rename`, `refresh` and `remove` take `--project` (else the project in effect, set by
+  `QARGI_PROJECT` or the checkout) and act only on that project's member; `agent models` needs a project and says `roles`, not
+  `abilities`, in `--json`. A member that an earlier `agent refresh` wrote into the checkout is not moved: remove it and add it
+  again.
+- Breaking: the packs render lives in `~/.qargi/state/render/PROJECT/RUNTIME/` (it was `state/claude/PROJECT`; nothing converts the
+  old directory: render again with `qargi packs apply --target RUNTIME PROJECT`, then `qargi packs link PROJECT` so a session in the
+  checkout loads it, and remove the old directory by hand). `lib/packs_render.py` takes the skills directory, MCP file and settings
+  from the runtime's definition. The link engine behind `packs link` handles a directory link, one link per entry, or a copy.
+- Breaking: library skill and tool packs need `compatible_providers`: `qargi skill seal NAME --compatible any` (or a list); `packs
+  seed` declares it on the baseline packs. Skill content hashes are stricter (symlinks, the executable bit and nested files count),
+  so an accepted skill shows `drifted` once: `qargi skill accept` it again. Members show `STALE` until `qargi agent refresh NAME`,
+  and cloud agents' prompts are stale: `qargi instances refresh-prompt NAME --if-stale`.
+- Breaking: a usage error exits 2, as the manual page says (an unknown option, a usage line, a missing NAME, RUN or project, options
+  that need each other); it was 1 in every shell verb and in `discover`, `export`, `import` and `methodology`. A refusal that depends
+  on state or on an approval is still exit 1. A valued option given as the last word (`qargi agent for build --surface`, `upgrade
+  --branch`, `project new --dir`) now ends with exit 2 and `OPT needs a value`.
+- Breaking: the marshal lease length is the project answer `marshal.lease_minutes` (it was `marshal.ttl`; set the new key and drop
+  the old one), a whole number of minutes from 1 to 1440, default 15. `project set` and `project validate` refuse any other value.
+- Breaking: `feature finish` no longer deletes the feature branch on origin by default (it did whenever a tracking ref existed). Set
+  `branches.delete_merged` to `local+remote` for that.
+- Breaking: `models.extensions` and `models.accept_no_barrier` change only through `provider enable|disable` and `provider accept`.
+  `project set` refuses them with exit 2 (it was 1), and `project init|attach|new` and `qargi import` refuse a file that adds or
+  changes an entry (dropping one is allowed; restore a project by `project init`, then `provider enable`).
+- Breaking: `install.sh --uninstall` removes exactly the paths an install recorded in `install.manifest` beside `install.json`
+  (links, copied files, created directories; a directory that still holds a file you added is kept and said). With no manifest
+  (an install made before this release) it removes nothing and says so, and `--uninstall --force` removes only the fixed paths the
+  script writes. The directories come from the runtime definition's layout, and `--runtime NAME` chooses the runtime (default
+  `claude-code`; an unknown one, or one with no skills directory, is refused before anything is written). The retired skills, old
+  agent links and old `qargi`/`dev` skill links are no longer removed by `install.sh`: remove any left over by hand.
+- Breaking: an archive made by `export` carries a mode for each file (`0600`, or `0700` for an executable file of the pack
+  library). `import` restores it, and a file that differs only in that bit is a change in the plan. An archive with another mode or
+  none (any made by an earlier qargi) is refused: export it again. Local runs prepared by 0.2.0 are refused by `local
+  verify|clean|run` and `review apply` (the registry does not record their repository): finish them with 0.2.0 or remove them with
+  `qargi local clean RUN --discard`. Memory stores on canon version 1 are `unknown` to `canon plan|apply`: bring them to version 2
+  by hand.
+- The member contract is `contract/contract.md` with `contract/output-format.md` (the two shapes: patches, or a report and manifest
+  for a read-only role), about half its length, every rule once: one commit rule (one logical change with its tests and docs, or
+  docs and changelog in the next commit when one would span three top-level directories; `review check` agrees); checks and gates
+  merged (the profile's "always" gates, the repository's lint step and a secret scanner over `BASE_SHA..HEAD`); temporary
+  directories under `TMP` only; the identity configured in the clone; background commands through "your runtime's background
+  facility", never `pgrep -f`; "write outputs only to OUT" (RUN_DIR is no place a member is told about); and no memory-write rule
+  but the task block's MEMORY packet (members propose notes in their report and the lead files them). The cloud preamble, the
+  lead's contract seed and the role seeds say the same and no longer name `RUN_DIR` or repeat what the addenda say. The cloud-only
+  part of the contract is a resource of the `claude-platform` definition, not appended by the core; a project with no cloud runtime
+  gets no addendum.
+- A read-only role puts a suggested fix in its report as a fenced diff, never a patch file (`local verify` and `review check` refuse
+  patches of a read-only run; the manifest kind `suggestion` is gone). `CONFIRMED` and `PLAUSIBLE` mean the same in the review role
+  and the `review-findings` pack. The four role texts and the member text are shorter and state only what the contract does not (the
+  review role's product is "a report in OUT, not patches"; the documentation-branch rule is in the `docs-site-member` pack).
+- The lead skills are lean and load their rarely used parts on demand: `qargi-flow` (the marshal in `marshal.md`; the models
+  section moved to `qargi-instances`; never invent an approval; marshal records are data and a handoff carries no approval),
+  `qargi-task` (`cloud.md` for a cloud instance, `local-run.md` for a command runtime; `CONTRACT` among the task block fields; the
+  private-repository line in the local flow), `qargi-verify` (one take-in sequence: verify every open run before applying any,
+  apply and merge from the run's slug, `local clean` only after the merge is confirmed; `git am` or a split by file for a cloud
+  collect or a project with no open feature; the reason code asked again when rework was needed), `qargi-packs` (`apply.md`,
+  `seed.md`), `qargi-providers` (`definition.md`, `verify.md`), `qargi-memory` (`curate.md`; `memory check` exits 1 on any FAIL),
+  `qargi-project` (`repository.md`), `qargi-instances` (the two bases, profiles, tiers, `agent for`, `instances init --location
+  local --agent FILE`), `qargi-session` and `qargi-team`. No skill names one runtime's tools, directories or settings: each points
+  at `qargi provider notes spawn|session-model|exploration|skills-dir|identity|commands`, and the plan-token and guard rules are
+  one pointer each to `qargi help approvals` and `qargi help guard`. Each description says what the skill does and when to load it.
+  A `SKILL.md` must send a session to each reference file ("load `FILE`") and every file under `skills/` that is not `.md` is
+  budgeted. `qargi-session` tells the lead to run `qargi env check` when the handoff note's environment check is older than HEAD or
+  incomplete.
+- The `keep-a-changelog` pack and `CONTRIBUTING.md` state the contract's commit rule; the pack says the member never dates the
+  changelog or cuts a release (`release start` does). The `qargi-contributing` pack names no tool of one runtime. The shipped
+  `shellcheck-gate` pack has two more lines: a disable for a newly introduced shellcheck code names the version that introduced it,
+  and a lint severity the project configures itself beats `-S warning` (`packs seed` offers the update).
+- `qargi local prepare` gives the run its own copy of the contract and prints `CONTRACT=` in the first, eval-able block and in the
+  TASK-BLOCK PATHS block; it records a relative `--repo` and `--scratch` as real paths and `tmpdir` in the registry. Its help lists
+  every key it prints.
+- `qargi team brief` and `qargi collect` read the hosted output and clone directories from the cloud runtime's notes (`output-dir`,
+  `clone-dir`); a brief for a project with no cloud runtime is refused. `collect` finds the project from the session's instance.
+- `provider check` is no longer on the member guard's read-only list (it records a result); `provider model` and `provider
+  notes|addenda` are allowed to a member (they only print). `provider check` runs adapters with a fixed environment.
+- The member guard reads the text of a quoted argument or heredoc body as data when every command of the line is `echo`, `cat`,
+  `tee`, `grep` or `git commit|log|status|diff|show|add`, so a commit message that mentions a refused verb is no longer refused.
+  Any other program, a comment, a backslash, a substitution, `$'..'`, `${..}`, an unclosed quote or an assignment keeps the plain
+  split, and `git push`, `gh` and `ssh` in text are refused as before. Under the read-only class a Bash command may write OUT and
+  the run's temporary directory, as the Write tool does, and `git tag` with no argument or with `-l`/`--list` lists tags.
+- `qargi project set P deployment VALUE` says only what was set for a methodology option. `skill import` prints `note: the source's
+  top-level .pack.json ...` when the source holds a record of its own.
+- Help and manual wording: `agent`, `concepts` and `roles` speak of roles, not abilities; `provider` describes one runtime on one
+  surface; `local run`, `local prepare` and the render warning name no vendor and say `--target RUNTIME`; `local run` lists its exit
+  statuses 0 to 4 and `review check` its exit 1; a refusal of the read-only class says "under the read-only class"; the manual
+  page's SEE ALSO lists every shipped skill (a copy without `skills/` names them generically). `qargi help guard` names every verb the guard refuses, the protected files and
+  directories (the pack library, credentials, `install.json`, `state/render`, the memory tiers, the state's `providers/`, the ref
+  journal and the run registry, the marshal and feature directories, the runtimes' skills, agents and plugin directories, the
+  lead's git configuration and session files), the rules for `cd`, the 5-second budget and the `git commit -F FILE` advice, within
+  330 words; `tests/test_help.py` fails when a refused verb is in neither the topic nor a documented exemption, and compares the
+  manual page's APPROVALS and GUARD sections with the topics.
+- `qargi feature finish NAME` refuses a feature that is behind develop when both sides changed the same files since their merge
+  base (exit 1, nothing changed). It lists those files and says to run `qargi feature sync NAME` first. A feature behind develop
+  with no file in common is refused as before, without the list.
+- `qargi release status VERSION` shows, next to the full-suite verdict, the command that produced it and when it ran (from the suite
+  record). When `release.test_command` is set and is not that command, or the project's `test_command` changed since the run, a line
+  of its own says so, so the pass is not read as the release gate. A record made by another command is shown, not reported as "not run".
+- `qargi release start VERSION` lists, after it creates the branch, the features merged into develop since the previous tag (the
+  `--no-ff` merges whose message is "Merge branch 'feature/...'"), one per line with the short sha, or says there are none.
+- `local verify` and `local clean` accept qargi's own moves and name them (`develop moved by qargi feature finish`), so a run no
+  longer has to be cleaned before the next `feature finish`. The ref journal also records the pushes, the deletions on origin and
+  the tags of `feature finish`, `release finish` (and hotfix), `release push`, `branch prune --remote` and the pushes of
+  `branches.push_features` (lines with `remote: "origin"` and the origin URL); verify accepts a remote-tracking ref of origin that
+  says what origin has (a fetch), a tag fetched from origin, the parking branch fast-forwarded to develop's tip (by hand too), and
+  every journaled move after a passing verify as well as before (a journaled deletion failed there).
+
+### Removed
+- Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.
+  `claude` is a family, not a runtime (`unknown provider 'claude'` from the verbs that take a runtime name). `project template`
+  reads no Claude file: roles carry `model: null` until a runtime is set.
+- `qargi migrate` (`roles` and `home`), the refusal that told you to run it, the import of archives made with the old role names,
+  and `lib/roles.py`; the guard no longer protects `~/.config/qargi`.
+- `qargi canon import` (`--map docs-v0`), the `imports` list of `canon/layout.json` and the canon section that described it: move
+  the notes of such a store into the layout by hand. Canon chains older than version 2 (`canon plan|apply --default-role`,
+  `provision/canon-seed/v1/`, `tests/canon_sim.py`); setting up an empty store has its own step.
+- `qargi review prune [--yes]` (use `qargi branch prune`, which shows a plan and a token, also clears merged `feature/*` branches
+  and the worktrees qargi made, and checks that a branch was merged with `--no-ff`; `review prune` deleted any `agent/*` branch
+  that was an ancestor of develop or a feature).
+- `agent add --abilities` (use `--roles`), `local prepare --ability` (use `--role`) and the `ABILITY=` line of `local prepare`.
+- The one-per-role fallback: `agent for ROLE` resolves only the project's `worker` or `reviewer` (exit 1 with the `agent add`
+  command when the base is missing; `--json` has no `legacy`; `agent models` says `not a base`), on the cloud surface too
+  (`agent for ROLE --surface cloud --project P` prints the base or refuses: exit 1 unregistered, exit 2 overrides not verified). An
+  instance of one role still works by name (`qargi send <project>-build ...`).
+- The judgement of a local run made before `RUN/class` and `RUN/started` existed: no `class` counts as read-only, no `started` has
+  no ref-journal entry and no age (`local list` shows `?`, `--stale` names it as skipped).
+- `qargi credential askpass FILE` (internal, nothing called it) and the unreachable second `version)` branch of `bin/qargi`.
+- From the role texts and the contract: the paragraphs that repeated the contract, the "Before DONE" tail, the build role's
+  "Return numbered patches" line, the review role's enforcement note, the PDF-skill sentence and the memory-store bullets.
+
+### Fixed
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
+- The memory packet `local prepare` prints keeps to its cap of 3000 characters also when it ends with the line that says rows were left out
+  (it could exceed it by up to 33 characters, more or fewer depending on the paths in the rows).
+- `marshal status`, `marshal handoff` and `feature status` list an unmerged agent branch only under the feature its run was
+  prepared against (`local prepare --base feature/NAME`, the base the registry of local runs records), not under every feature;
+  the agent branches of no open feature are said once, on one `unattributed agent branches` line. The handoff note lists only the
+  agent branches merged since the feature was cut from develop, not every merged branch in the history (the `(and 51 more)` tail).
+- Task lines tell the truth: `marshal status`, `marshal handoff` and `feature status` said `not verified` of a run that had passed
+  `local verify`, been applied, merged and cleaned. A passing `local verify` marks the run's line in the registry of local runs
+  verified and `local clean` marks it cleaned (the line stays, one per run, rewritten under the registry's lock); a task reads
+  `verified`, `applied` or `not verified` as the registry and the run directory say, and a cleaned run is listed only on a
+  `cleaned:` line, never as an open task. `feature merge` of an agent branch whose run exists and has no passing verify warns.
+- `packs check --target T PROJECT` no longer reports `manifest missing` for a project that was never applied, which looked like a
+  broken render. It prints `not applied: ... (qargi packs apply ...)` and exits 0, and a render directory without its manifest still
+  fails. The answer `packs.none: true` (`qargi project set P packs.none true`; `project set` of `packs` is refused to a member) says the
+  project uses no project packs: the check passes with no render, and fails when a pack is linked to a role of the project. The
+  section of the skills a session would load, the unmanaged ones in `~/.claude/skills` included, is printed in every case.
+- `qargi project set P PATH false` stored the string `false`; it stores the JSON value, like `true` and numbers.
+- `local clean --stale DAYS --scratch DIR` reported 0 runs when the run directories were gone (a reboot that emptied a tmpfs): it
+  now plans and, with `--yes`, drops the records of such runs older than DAYS, keeping the one whose saved copy holds work that was
+  never applied; a scratch directory that is gone itself is still read from the registry (`local list --scratch` too).
+- `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
+  hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
+- The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.
+- The git authentication helper is a fixed script, `lib/askpass.sh`, reading the file in `QARGI_ASKPASS_FILE`; it left a
+  `qargi-askpass.*` file in the temporary directory on every call.
+- `qargi release`: `finish` names the repository without `.git` and reaches GitHub only through `$QARGI_GH`; `start` refuses a
+  version whose tag exists; the pull request is titled `PROJECT VERSION`; `publish` shares the one exit handler. `release start`
+  always sets the date and version of every manual page (an empty `.TH` date is filled) and `release finish` refuses a page that
+  lost them, and, when `release.version_file` is `none`, a changelog with no section for the version.
+- `qargi review check OUT` reads the patches from `OUT/patches/*.patch` only (it also took `OUT/*.patch`, which `review apply`
+  never read), accepts a read-only run's report under an `OUT_PREFIX`, says `OUT` where it said `RUN_DIR`, and refuses an unknown
+  option or a second directory with exit 2. `review apply` takes the patch files as a list (a space in a name is one patch) and
+  finds the run by its real path. The `qargi-verify` skill and the README say `review check` takes the output directory.
+- `qargi local clean`: refuses a run whose commits were never applied or whose applied branch is merged into no branch but
+  `agent/*` (`--discard` drops them on purpose and says how many); `--discard` also removes a run whose refs changed (verify's
+  outcome is a warning). It removes the temporary directory the lead's registry names for the run (only a real path directly under
+  `/dev/shm`, `QARGI_RUN_TMP` or the run, never through a link or a trailing slash; a run prepared before this has none, so its
+  directory is left), and only `RUN/tmp` when the registry has no line. `local list|clean` check the second word of `applied`
+  before giving it to git, and `local list` prints the role, slug and path without control bytes. `local run` takes `TMPDIR` from
+  the registry too. `local verify` and `local clean` no longer refuse the move that `feature merge DETACHED BRANCH` made to a
+  detached branch.
+- `qargi memory check` reports a half-initialised tier as `INFO ... (qargi memory init NAME finishes it)` instead of asking you to
+  correct the path; an interrupted set-up of a store or tier can be finished by running it again.
+- `export` and `import` can move a project between hosts: a name in an archive may begin with a dot (so the library's `.pack.json`
+  records pass; `.` and `..` do not), a memory note's name is checked with the same rule as every other name, `export` checks
+  every name before it writes and stops, naming the file and how to go on (rename it, or `--only`), and says when it leaves out a
+  symbolic link or a note whose name the reader would refuse. A script in a skill keeps its executable bit.
+- Importing a pack directory that carries qargi's own record follows one rule shared by import, review, content hash, render and
+  audit: the top-level `.pack.json` is qargi's metadata and is ignored and not copied; a deeper one is skill content, so the review
+  fails it and the hash counts it.
+- `install.sh --user --copy` copied the tool without `canon/` and `catalog/`; it copies from one list (`tool_dirs`), and
+  `tests/test_install.sh` runs `qargi help` and `qargi discover search` from the copy.
+- A cloud agent's prompt and `local prepare` stop with the reason when the project's runtime is set but does not resolve, instead
+  of leaving the addenda out; `instances refresh-prompt` records no hash for a prompt that failed to render, so `instances show`
+  says `unknown`. No project, a project not stored, or no runtime for the surface still means no addendum.
+- `packs check --target claude-code` no longer reports "shadowing" for every rendered skill once the checkout's skills directory is
+  the link made by `packs link`. `packs link|unlink` work through no-follow descriptors and say where your skills are when something
+  fails; names in offers are quoted and control characters stripped; an unusual name is `skipped: unusual name`.
+- The member guard no longer refuses valid work: a file write because one provider definition in the library is broken (it skips it
+  with one note); `qargi provider model`; `tee OUT/report.md < r.md`; `$OUT` and `${OUT}` in a write (they mean `RUN/out` unless the
+  command could give `OUT` a value); `git commit -m push`, `git log -S push`, `git grep push` and `git branch push` (it looks only
+  at the git subcommand); a copy into the home directory (`cp src/a.go ~/`, `rsync -a build/ ~/`, `grep -r TODO ~`, `find ~`),
+  which is no read of the signing key (copying or searching the credentials directory itself still is); an `mv` into a directory
+  that only lies above a protected place; a trimming expansion such as `${f%%:*}`; the script of `sed -i -e`, `sed -i -f` and `perl
+  -pi -e`; `cd ../../out && echo "$(date)" > report.md`; and a build member editing the repository's own `docs/tmpdir`. A directory
+  of the clone that holds a file named like the run's record is not taken for the run. Its tool names are the member's matcher's
+  (`MultiEdit` and `NotebookRead` are gone from the hook data and the shipped definition).
+- The member guard stays within the hook's time: a command it cannot check within 5 seconds is refused (a killed hook does not
+  block), and two quadratic regular expressions (a long run of blanks; many `marshal handoff` or `project set` words) are gone. A
+  brace expression is expanded whole or the call is refused (more than 256 words for one word or 20000 for the command).
+- The guard's refusals to a read-only member say the report goes to `OUT` (they said `RUN_DIR`), and the refusal of a skill change
+  says to propose it in the report.
+- `qargi env check` printed `packs: no drift` for a project whose packs were never applied, since `packs check` passes then; it prints
+  `packs: not applied (qargi packs apply --target T PROJECT)`, a note and not a missing item.
+- `qargi env check` counted a `STALE`, `DRIFT` or `MISSING` member as current when the path of its file made the `agent list` line
+  longer than 160 characters: the line was cut before its state was read.
+- `install.sh --project DIR --uninstall` (and `--user --uninstall`) left an empty `~/.qargi/config` behind. The install records the
+  config directory and the parents it had to create, and the uninstall removes them once nothing else is left in them.
+
+### Security
+- A member's `qargi project set` of `roles.ROLE.tools` (or of a whole role, or of `roles`) is refused, as `env.*`, `release.*` and
+  `test_command` are: the list names what `env apply` installs and runs with the lead's rights and what `local prepare` checks out.
+- The member guard refuses more of what runs a refused verb or `git push`, and allows nothing the earlier guard refused:
+  - It cuts a Bash command at every `;`, `&&`, `||`, `|`, `&` and newline, inside quotes, comments and heredocs too (write a commit
+    message to a file and `git commit -F FILE`), reads a command substitution as a command of its own wherever it sits, a verb
+    after `then`, `do`, `!`, `(`, `{`, a case pattern, a redirection or a function definition, `git push` and `gh` inside `sh -c`,
+    `$'...'` and `$"..."` quoting as the plain string, a subcommand or verb that a variable or substitution builds, and the command
+    after `find -exec` or in `parallel`'s operands. It refuses `git send-pack`, `http-push`, `svn dcommit`, an rsync operand of the
+    form `host:path`, `git -c` with an alias or program key, `--config-env`, `--exec-path` and the `GIT_CONFIG_*`, `GIT_EXEC_PATH`
+    and `GIT_SSH_COMMAND` variables.
+  - A command with a NUL byte, over 262144 characters, nested more than 40 substitutions deep, with a glob that needs more than 4000
+    directory entries, with more than 24 directories at once, or taking over 5 seconds to check is refused, because a hook killed
+    at its timeout does not block.
+  - Redirections before the program or standing alone, `>|`, `<>`, `>&FILE`, `git log|diff|show --output`, `format-patch -o`,
+    `archive -o`, `bundle create`, `sort -o`, `uniq IN OUT`, `cp|mv|install|ln -t`, `dd of=`, `sed -i`, `tee`, `tar`, `unzip`,
+    `curl`, `wget`, `patch`, `git apply --directory`, `git clone|init|worktree add DIR`, `awk -i inplace`, `ex|vi|vim|nvim|ed`,
+    `rename`, `sqlite3`, `setfacl`, `mkfifo`, `find -delete|-exec rm`, `ln` of a protected location, and the git subcommands that
+    write objects or the index are writes to their target; the Edit and Write tools are held to the same. A target built by a
+    glob, a variable or a substitution is refused when it could be a file of the run's record or hide it, as is a file name with a
+    `;`, `|`, `&` or newline that leads into a protected location.
+  - A `cd` is followed only when it surely happens (a plain top-level command, or a chain of cds after `&&`); otherwise the
+    commands after it are judged from every directory the shell may be in. After a `cd` it cannot read (`cd "$d"`, `env -C`,
+    `CDPATH`) a relative write is refused until an absolute `cd`. `git --work-tree=DIR` and `GIT_WORK_TREE` count like `-C DIR`.
+    `${NAME...}` forms are read by the environment's value.
+  - A line with `printf -v` (and `read` or `local`) is no longer read as text only, since it assigns a variable; a heredoc
+    delimiter that starts with `#` is left to the plain split.
+  - The run's record (`ability`, `class`, `profile`, `refs.before`, `refs.before.new`, `applied`, `repo.path`, `repo.url`,
+    `cred.path`, `dispatch.json`, `task.md`, `tmpdir`, `started`, `verified`, `refs.after`, `refs.diff`, `git`) cannot be written,
+    moved, removed, copied, linked or truncated, nor the run directory itself used as a destination (`cp -r Y/. ../..`, `tar -C
+    ../.. -xf`, `unzip -d ../..`); `notes`, `out/`, `clone/` and `tmp/` stay writable. The read-only class holds when its hook
+    passes `--class read-only` even if `ability` and `refs.before` were moved away, and refuses `git bisect`, `symbolic-ref` with a
+    value, `reflog expire|delete`, `hash-object -w`, `unpack-objects`, `git lfs` writes, a `git tag` that makes, replaces or
+    deletes a tag (options read as git reads them, abbreviations included) and setting `PATH`, `GIT_*`, `PAGER`, `BASH_ENV`,
+    `RIPGREP_CONFIG_PATH`, `LD_*`.
+  - For every member: the lead's git configuration (`~/.gitconfig`, `~/.config/git`, `git config --global|--system|--file`
+    outside the clone, `git init` of the home directory), session settings and startup files (`~/.claude/settings.json`,
+    `settings.local.json`, `CLAUDE.md`, `commands/`, `hooks/`, `~/.claude.json`, `~/.bashrc` and the other shell startup files,
+    `~/.ssh/config`, `authorized_keys`), the run registry and its lock, the lead's run and agent verbs (`local prepare|verify|
+    clean`, `agent remove`, `project new`, `team run`, `task`, also through `local.sh`, `agent.sh`, `team.sh`), `project set|init|
+    link|unlink` whenever its words cannot be read statically, `provider check` and `provider adapter-run`, and the link and
+    render scripts of the tool itself. Every read of the signing key is refused, also through a leading or numbered redirection
+    (`<KEY cat`, `exec 3<KEY`), and `mv -T` into a protected place is too.
+- `local verify|clean|run`, `local list`, `review apply` and `clean --applied|--stale` act only on runs the lead's registry
+  (`state/local-runs.jsonl`) names, and take the run's repository (`repo`, or `url` and `cred`, the path of the credential file and
+  never a token), slug, base and temporary directory from it, not from files in the run directory that a member can write. A
+  repository a member chose ran its own `.git/config` in the lead's shell, and a `repo.url` with a `cred.path` sent any readable
+  file as a token to a host of the member's choice. A run whose files differ from the registry is refused with the difference
+  named; a run the registry does not name, or names with no repository, is refused too, and `clean --discard` still removes it.
+  `local list` reads `started` as a number and prints `?` for anything else (the text was used in shell arithmetic).
+- `qargi local run` writes `OUT/transcript`, `OUT/transcript.err` and `RUN/dispatch.json` only as a new or a regular file with no
+  second name, opened without following a link or waiting for a reader, and checks `dispatch.json` before it starts the process;
+  `OUT` must be a directory of the run. It reads `RUN/task.md`, `profile` and `ability` the same way, and a run with no `ability`
+  is refused with a message. `qargi review apply` writes the run's `applied` record and `refs.before` snapshot in the lead's state
+  directory and renames them into the run (`mv -T`), and an `applied` that is a link or not a plain file refuses the apply.
+- A runtime's adapter (`provider adapter-run`, so `agent for --surface cloud` and the session verbs) ran with the caller's whole
+  environment, forge tokens and ssh agent included. It gets the small environment a pack gets plus `dispatch.env_pass`, which also
+  refuses `HOME`, `PATH`, `LD_*`, `GH_*`, `SSH_*`, `JDK_JAVA_OPTIONS`, `FPATH`, `ZDOTDIR`, `KSH_ENV`, `LUA_*`, `LESSOPEN`,
+  `GLIBC_TUNABLES`, `NPM_CONFIG_*`, `GOFLAGS`, `GOENV`, `INPUTRC`, `TERMINFO` and `SUDO_ASKPASS`. A member's command also gets
+  `LC_ALL` and `TZ`.
+- A library provider pack with no record (placed by hand) is not loaded, run, checked or attested: seal or import it. Skill and tool
+  packs are held to the text-only policy of provider packs (no binaries, archives, links, special files or file over 1 MB; scripts
+  stay allowed and listed); the review refuses control and bidi characters, also as JSON escapes, and prints everything escaped. The
+  content hash of a skill pack also covers a link, a pipe, a socket, an empty directory and a file with a second name; a pack
+  without any of them hashes as before, so no approval is lost.
+- A runtime that claims `read_only_barrier` with barrier kind `none` and no read-only arguments fails `provider check` and import
+  and reads as no barrier, as does a barrier hook whose refusal cannot be told from an allow (equal exit codes, or an empty stdout
+  object); a `local run` of a read-only member is refused for it unless the project ran `provider accept`.
+- `qargi local prepare` refuses a `--repo-url` that carries a user name or a password; the token goes in `--credential-file`.
+- `qargi project link` (memory) compares real paths, so a link below the memory root that leads outside it is refused, and a project
+  whose tiers resolve without a project tier is refused with a message, not a traceback.
+- `qargi project set` of `release.*`, `test_command`, `env.*` or `site.*` is refused to a member, as `models.*` is: the lead later runs
+  those commands, or builds and commits the documentation site from `site.*` (`qargi release site`), so a member that set them would
+  run its own command with the lead's rights.
+- The member guard refuses `git config` that writes a key which makes git run a program, read another configuration file or give a command or a remote
+  another name, as it refused the one-shot `git -c` form: `git config core.fsmonitor ...`, `git config alias.x '!...'`, `git config include.path ...`,
+  `git config core.hooksPath ...` and `git config alias.p push` (then `git p` pushed) were allowed since 0.2.0. Both forms share one list (core.fsmonitor, hooksPath,
+  sshCommand, editor, pager, askPass, gitProxy, include.path, `includeIf.*.path`, `alias.*`, filter, diff, merge and tool drivers, credential, sequence.editor, gpg,
+  uploadpack, receivepack, `remote.*.url|pushurl|uploadpack|receivepack`, `url.*.insteadOf`, `submodule.*.update`, protocol.ext.allow), read in any case, in every scope
+  and file, after `-C`, in the `git config set` syntax; `--edit`, a renamed section and a key that a variable or xargs brings are refused too. `user.name`,
+  `user.email` and the other plain settings stay allowed, and `GIT_CONFIG=FILE` in front of `git config` names the file it writes, so a protected one is refused.
+- On a line that also runs git, the member guard also refuses a write under `.git/modules/`, `.git/worktrees/` or to a `config.worktree` (the configuration and
+  hooks of a submodule or a worktree), as it did for `.git/config` and `.git/hooks`.
+- The member guard reads the program a shell takes from its standard input: `echo "qargi upgrade" | bash`, `bash <<< "qargi upgrade"`, `sh -s <<< ...`,
+  `. /dev/stdin <<< ...`, `echo ... | source /dev/stdin`, `echo ... | xargs -0 sh -c`, `printf '%s' ... | bash` and `echo ... > f; sh f` ran the verb unseen since 0.2.0.
+  The text the line shows (a here-string, an echo or printf piped in or written to the file the shell runs) is now read as `sh -c` text is, and a program it cannot see
+  (`cat file | bash`, `curl ... | sh`, `bash < file`, a process substitution, a file `cp` writes in the same command) is refused: write the script with the file tool
+  and run `bash FILE`.
+- The member guard finds the lead identity `QARGI_LEAD` among the names a command sets the way it finds `QARGI_NESTED`: `printf -vQARGI_LEAD x` (the name
+  glued to `-v`), `mapfile` and `readarray` into it, and `env -uQARGI_LEAD` were not refused.
+
 ## [0.2.0] - 2026-11-02
 
 ### Added

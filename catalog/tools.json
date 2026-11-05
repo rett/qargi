@@ -313,6 +313,166 @@
    "scope_hint": "project-role"
   },
   {
+   "id": "pkg-golangci-lint",
+   "kind": "package",
+   "name": "golangci-lint",
+   "summary": "Run many Go linters in one pass",
+   "tags": [
+    "go",
+    "lint"
+   ],
+   "roles": {
+    "build": "recommended",
+    "test": "optional",
+    "review": "optional"
+   },
+   "stack": [
+    "go"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "golangci-lint"
+    ]
+   },
+   "scope_hint": "project-role",
+   "verify": "upstream name; Debian and Ubuntu carry it only from recent releases, so confirm it with apt-cache policy before provisioning"
+  },
+  {
+   "id": "pkg-bats",
+   "kind": "package",
+   "name": "bats",
+   "summary": "Test shell scripts and command-line tools (Bash Automated Testing System)",
+   "tags": [
+    "bash",
+    "testing",
+    "shell"
+   ],
+   "roles": {
+    "build": "recommended",
+    "test": "recommended"
+   },
+   "stack": [
+    "bats",
+    "shell"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "bats"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-podman",
+   "kind": "package",
+   "name": "podman",
+   "summary": "Build and run containers without a daemon or root",
+   "tags": [
+    "containers",
+    "rootless",
+    "oci"
+   ],
+   "roles": {
+    "build": "optional",
+    "test": "recommended"
+   },
+   "stack": [
+    "containers"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "podman"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-mandoc",
+   "kind": "package",
+   "name": "mandoc",
+   "summary": "Lint and render manual pages (mandoc -T lint)",
+   "tags": [
+    "man",
+    "lint",
+    "manual"
+   ],
+   "roles": {
+    "build": "recommended",
+    "test": "optional",
+    "review": "optional"
+   },
+   "stack": [
+    "man"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "mandoc"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-golang",
+   "kind": "package",
+   "name": "golang",
+   "summary": "Go toolchain for go test, with a C compiler so that -race works",
+   "tags": [
+    "go",
+    "testing",
+    "race"
+   ],
+   "roles": {
+    "build": "recommended",
+    "test": "recommended"
+   },
+   "stack": [
+    "go"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "golang-go",
+     "gcc"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
+   "id": "pkg-gh",
+   "kind": "package",
+   "name": "gh",
+   "summary": "GitHub command line: create, list, view and download releases (gh release)",
+   "tags": [
+    "github",
+    "release",
+    "cli"
+   ],
+   "roles": {
+    "build": "optional",
+    "lead": "optional"
+   },
+   "stack": [
+    "actions"
+   ],
+   "risk": "low",
+   "install": {
+    "manager": "apt",
+    "packages": [
+     "gh"
+    ]
+   },
+   "scope_hint": "project-role"
+  },
+  {
    "id": "agent-monitor",
    "kind": "agent-tool",
    "name": "Monitor",

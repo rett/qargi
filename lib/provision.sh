@@ -2,8 +2,8 @@
 # Provision the cloud resources for a qargi instance with `ant apply`:
 # environment, agent, memory store and deployment, then register the instance.
 #
-#   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited]
-#   provision.sh apply NAME --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
+#   provision.sh plan  NAME [--model M] [--effort E] [--apt "pkg pkg"] [--networking unrestricted|limited] [--force]
+#   provision.sh apply NAME [--force] --asked "<request naming the cloud instance>" --approved "<the user's go-ahead for this plan>"
 #
 # NAME is <project>-<role> (--project P --role R, role defaults to build; roles come
 # from a fixed list). The agent and the deployment are named <project>-<role>
@@ -12,6 +12,8 @@
 # The memory stores belong to the project: <project>-memory (recipes) and <project>-reference. Existing ones are
 # attached, not duplicated; --memory-store ID and --reference-store ID name them.
 # Options also include --budget CENTS (default 500, set on the deployment).
+# --force (plan and apply) passes `ant apply --force`, which overwrites the server's copy of a resource that changed
+# outside this config since the last apply; the plan token covers it, so plan and apply must both give it.
 # `plan` renders the files and prints the `ant apply --dry-run` plan; it
 # changes nothing. `apply` creates the resources only with --approved (the
 # user's go-ahead after seeing the plan), brings new memory stores to the canon
@@ -28,28 +30,29 @@ TPL=$here/../provision/templates
 verb=${1:-}; shift || true
 NAME='' PROJECT='' ROLE=build
 if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then NAME=$1; shift; fi
-PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS=''
+PLAN_ARG='' MODEL='' EFFORT='' APT='' APT_SET='' NETWORKING=unrestricted APPROVED='' BUDGET='' MEMORY_STORE='' REFERENCE_STORE='' SKILLS='' FORCE=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
-    --apt) APT=$2; APT_SET=1; shift 2;;
-    --networking) NETWORKING=$2; shift 2;;
-    --asked) ASKED=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --budget) BUDGET=$2; shift 2;;
-    --project) PROJECT=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --memory-store) MEMORY_STORE=$2; shift 2;;
-    --reference-store) REFERENCE_STORE=$2; shift 2;;
-    *) die "unknown option $1";;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
+    --apt) need_val "$1" $#; APT=$2; APT_SET=1; shift 2;;
+    --networking) need_val "$1" $#; NETWORKING=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --force) FORCE=1; shift;;
+    --budget) need_val "$1" $#; BUDGET=$2; shift 2;;
+    --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --memory-store) need_val "$1" $#; MEMORY_STORE=$2; shift 2;;
+    --reference-store) need_val "$1" $#; REFERENCE_STORE=$2; shift 2;;
+    *) usage_die "unknown option $1";;
   esac
 done
 
 export PLAN_ARG
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
-[ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
+[ -n "$NAME" ] || usage_die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
 # The project's stored answers (qargi project init) give the defaults; flags win.
 PCFG=$DA_CONF/projects/$PROJECT.json
@@ -78,7 +81,7 @@ elif [ -f "$PCFG" ] && is_base "$ROLE"; then
 elif [ -f "$PCFG" ]; then
   jq -e --arg r "$ROLE" '.roles[$r]' "$PCFG" >/dev/null || die "role '$ROLE' is not enabled for project $PROJECT (qargi project show $PROJECT)"
   cfg() { jq -r --arg r "$ROLE" "$1" "$PCFG"; }
-  MODEL=${MODEL:-$(cfg '.roles[$r].model')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
+  MODEL=${MODEL:-$(cfg '.roles[$r].model // ""')}; EFFORT=${EFFORT:-$(cfg '.roles[$r].effort')}
   [ -n "$APT_SET" ] || APT=$(cfg '.roles[$r].apt | join(" ")')
   BUDGET=${BUDGET:-$(cfg '.budget_cents')}; SKILLS=$(cfg '.roles[$r].skills | join(" ")')
   MEMORY_STORE=${MEMORY_STORE:-$(cfg '.memory.memory_store // ""')}; REFERENCE_STORE=${REFERENCE_STORE:-$(cfg '.memory.reference_store // ""')}
@@ -89,12 +92,11 @@ ENV_APT=$APT
 ENV_PIP='' ENV_GO=''
 TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
-  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
+  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].tools[]? | select(.kind == "go") | .name + "@" + .version] | unique | join(" ")' "$PCFG")
 fi
-if [ -z "$MODEL" ]; then   # the balanced model of the project's provider (models.provider, default claude)
-  _prov=claude; [ ! -f "$PCFG" ] || _prov=$(jq -r '.models.provider // "claude" | tostring' "$PCFG" 2>/dev/null) || _prov=claude
-  printf '%s' "$_prov" | grep -Eq '^[a-z][a-z0-9-]*$' && [ -f "$here/providers/$_prov.json" ] || die "models.provider '$_prov' has no descriptor under lib/providers/"
-  MODEL=$(jq -r '.tiers.balanced' "$here/providers/$_prov.json")
+if [ -z "$MODEL" ]; then   # the balanced model of the project's provider on the cloud surface (models.provider; no default, a project with none for it is refused with exit 2)
+  _prov=$(project_provider "$PROJECT" cloud) || exit $?
+  MODEL=$(python3 -I "$here/provider.py" model "$_prov" cloud balanced) || die "models.provider '$_prov' has no descriptor (qargi provider list), or none for the cloud surface"
 fi
 if is_base "$ROLE"; then EFFORT=${EFFORT:-medium}; fi   # a base runs the balanced tier at medium effort until a session overrides it
 EFFORT=${EFFORT:-high}; BUDGET=${BUDGET:-500}
@@ -190,7 +192,20 @@ FILES=(agents/"$NAME"/deployment-standby.yaml)
 
 # What apply would create: the rendered files, the stores it attaches, the budget.
 plan_hash() {
-  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME" "$ENV_REF" "$ENV_APT"; } | plan_token
+  { find "$D" -type f -print0 | sort -z | xargs -0 cat; printf '%s|%s|%s|%s|%s|%s\n' "$MEMID" "$REFID" "$BUDGET" "$NAME" "$ENV_REF" "$ENV_APT"
+    # a forced plan has its own token: only when set, so the tokens of plain plans are unchanged
+    [ -z "$FORCE" ] || printf 'force\n'; } | plan_token
+}
+
+# The project's bootstrap command (qargi env show), printed as text for the owner to paste into the environment's setup script. It is
+# only printed: the setup script lives with the cloud runtime, runs there before a session, and nothing here runs the command.
+setup_note() {
+  local cmd
+  [ -f "$PCFG" ] && [ "$ROLE" != lead ] || return 0
+  cmd=$(python3 -I "$here/env.py" show --project "$PROJECT" --json 2>/dev/null </dev/null | jq -r '.commands.bootstrap_command.command // empty' 2>/dev/null) || return 0
+  [ -n "$cmd" ] || return 0
+  echo "suggested setup script for the cloud environment (qargi does not run it; paste it into the environment's setup script yourself, after reading qargi env plan --project $PROJECT):"
+  echo "    $cmd"
 }
 
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
@@ -216,13 +231,23 @@ case $verb in
     store_note memory "$PROJECT-memory" "$MEMID"
     store_note reference "$PROJECT-reference" "$REFID"
     echo "plan token: $(plan_hash)   (apply with: --plan <token> --approved \"...\")"
-    (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}");;
+    setup_note
+    if [ -n "$FORCE" ]; then
+      echo "--force: the server's copy of any resource changed outside this config will be overwritten with this config"
+      (cd "$W" && ant apply --dry-run -v --force --lock-file "$LOCK" "${FILES[@]}")
+    else
+      (cd "$W" && ant apply --dry-run -v --lock-file "$LOCK" "${FILES[@]}")
+    fi;;
   apply)
     need_asked
     [ -n "$APPROVED" ] || die "apply needs --approved \"<the user's go-ahead for the plan shown by: plan $NAME>\""
     render
-    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME"
-    (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    need_plan "$(plan_hash)"; audit_log provision-apply "$NAME${FORCE:+ force}"
+    if [ -n "$FORCE" ]; then
+      (cd "$W" && ant apply --yes --force --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    else
+      (cd "$W" && ant apply --yes --lock-file "$LOCK" "${FILES[@]}") || die "ant apply failed"
+    fi
     key() { jq -r --arg k "$1" '.resources | to_entries[] | select(.key|test($k)) | .value.id' "$LOCK" | head -1; }
     if [ -n "$ENVID" ]; then   # the shared environment holds the packages of every enabled role
       cur=$(ant beta:environments retrieve --environment-id "$ENVID" </dev/null 2>/dev/null | jq -c '.config') || die "cannot read the shared environment $ENVID"
@@ -271,5 +296,5 @@ case $verb in
     json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
     store=''; canonise
     echo "reference store $refstore ($PROJECT-reference) created, brought to the canon and attached read-only to $dep (approved: $APPROVED)";;
-  *) die "usage: provision.sh plan|apply NAME [options]";;
+  *) usage_die "usage: provision.sh plan|apply NAME [options]";;
 esac

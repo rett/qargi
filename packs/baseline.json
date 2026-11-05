@@ -4,17 +4,44 @@
     {
       "kind": "skill",
       "name": "shellcheck-gate",
-      "propose": "tracked *.sh"
+      "propose": "tracked *.sh",
+      "compatible_providers": ["any"]
     },
     {
       "kind": "skill",
       "name": "keep-a-changelog",
-      "propose": "changelog keepachangelog"
+      "propose": "changelog keepachangelog",
+      "compatible_providers": ["any"]
     },
     {
       "kind": "skill",
       "name": "gitflow-member",
-      "propose": "methodology gitflow"
+      "propose": "methodology gitflow",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "review-findings",
+      "propose": "role review",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "secrets-scan",
+      "propose": "role build",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "docs-site-member",
+      "propose": "branch orphan",
+      "compatible_providers": ["any"]
+    },
+    {
+      "kind": "skill",
+      "name": "qargi-contributing",
+      "propose": "tracked tests/skill-budget.txt",
+      "compatible_providers": ["any"]
     }
   ]
 }

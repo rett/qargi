@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "kind": "member",
+  "description": "A qargi member for one task at a time (roles: {abilities}). Works in its own clone and returns patches or a report. Dispatched only by /qargi-task or /qargi-team; never pushes.",
+  "body": "member.body.md",
+  "tools": {
+    "required": ["shell", "read", "edit", "write"],
+    "optional": ["search_text", "search_files", "monitor", "stop_task", "tool_search", "skill"]
+  }
+}

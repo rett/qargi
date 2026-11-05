@@ -149,7 +149,7 @@ class Hooks(Base):
                 r = self.hook(verb, None, raw=raw)
                 self.assertEqual(r.returncode, 0, "%s %r: %s" % (verb, raw[:20], r.stderr))
                 self.assertEqual(r.stdout, "", "a hook must print nothing the harness could read as a decision")
-                self.assertLess(time.time() - t, 5)
+                self.assertLess(time.time() - t, 5)   # hermetic: allow clock (a hook must never block: the bound is a hang, ten times a normal call)
 
     def test_every_layer_exits_zero_on_its_own(self):
         py = os.path.join(ROOT, "lib", "supervise.py")
@@ -459,7 +459,7 @@ class Tick(Base):
         with open(os.path.join(self.state, "runs.json.lock"), "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             p = subprocess.Popen([BIN, "supervise", "tick", "--now", at(3)], stdout=subprocess.PIPE, text=True, env=self.env)
-            time.sleep(1.0)
+            time.sleep(1.0)   # hermetic: allow sleep (a negative check: the tick had time to finish if the lock did not hold it)
             self.assertIsNone(p.poll(), "the tick must wait while another writer holds the lock")
             self.assertFalse(os.path.exists(os.path.join(self.state, "runs.json")))
             fcntl.flock(lock, fcntl.LOCK_UN)

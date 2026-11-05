@@ -1,0 +1,58 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "failopen",
+  "family": null,
+  "surface": "local",
+  "description": "A made-up command-line runtime whose definition claims a read-only barrier that nothing provides: barrier kind none, no class arguments in the dispatch. A fail-open, and it must be refused",
+  "models": {
+    "pattern": "^fo-[a-z0-9.-]+$",
+    "tiers": {
+      "*": {
+        "model": "fo-main",
+        "alias": null,
+        "verified_on": null,
+        "source": "fixture"
+      }
+    },
+    "effort": {
+      "low": "l",
+      "medium": "m",
+      "high": "h",
+      "xhigh": null,
+      "max": null
+    }
+  },
+  "capabilities": {
+    "read_only_barrier": {
+      "value": "yes",
+      "verified_on": "2026-11-02",
+      "source": "fixture",
+      "note": "claimed, but there is nothing behind it"
+    }
+  },
+  "dispatch": {
+    "mode": "command",
+    "argv": [
+      "failopen-bin",
+      "run",
+      "--cd",
+      "{clone}"
+    ],
+    "prompt": {
+      "via": "stdin"
+    },
+    "cwd": "{clone}",
+    "timeout_s": 60,
+    "output": {
+      "format": "text"
+    },
+    "exit": {
+      "0": "ok",
+      "*": "failed"
+    }
+  },
+  "barrier": {
+    "kind": "none"
+  }
+}

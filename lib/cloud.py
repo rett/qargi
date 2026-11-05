@@ -15,8 +15,9 @@ Usage: cloud.py list
        cloud.py check [PROJECT]          the profile exists and reaches the workspace (local; one `ant profile` read)
        cloud.py login PROJECT            log the project's profile in, bound to its workspace (needs a terminal)
        cloud.py workspace PROFILE        the workspace the profile's login reaches (the dispatcher's check uses it)
-       cloud.py for-args WORDS...        (dispatcher) prints project, profile, workspace id, one per line"""
-import glob, json, os, re, subprocess, sys
+       cloud.py for-args WORDS...        prints project, profile, workspace id, one per line (what the dispatcher's preamble,
+                                         lib/help.py, exports before a command)"""
+import json, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402
@@ -36,7 +37,8 @@ def pfile(project):
 
 
 def projects():
-    return sorted(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(P.conf(), "projects", "*.json")))
+    import help as H  # noqa: E402
+    return [os.path.basename(f)[:-5] for f in H.project_files()]
 
 
 def load(project):
@@ -60,6 +62,15 @@ def binding(project):
     return None
 
 
+def role_names():
+    """The names an instance can end in after PROJECT-: the roles (built-in ones, yours under the configuration's roles/, and lead) and the two bases.
+    project_of adds the roles of the project's own answers."""
+    import commands as C  # noqa: E402
+    mine = os.path.join(P.conf(), "roles")
+    own = [n for n in (os.listdir(mine) if os.path.isdir(mine) else []) if os.path.isfile(os.path.join(mine, n, "role.json"))]
+    return set(C.ROLES) | set(own) | {"worker", "reviewer"}
+
+
 def project_of(words):
     """The project a command is about: QARGI_PROJECT, else a stored project or an instance PROJECT-ROLE named in the words,
     else the one whose repository contains the current directory."""
@@ -70,15 +81,17 @@ def project_of(words):
     for w in words:
         if w in have:
             return w
+    roles = role_names()
     for w in words:
         for p in have:
-            if w.startswith(p + "-") and w[len(p) + 1:] in ("build", "write", "review", "test", "lead"):
+            if w.startswith(p + "-") and w[len(p) + 1:] in roles | set(_json(pfile(p)).get("roles") or {}):
                 return p
     import help as H  # noqa: E402
     return H.infer_project()
 
 
 def ant(args, **kw):
+    import subprocess
     try:
         return subprocess.run(["ant"] + args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60, **kw)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -109,10 +122,6 @@ def workspaces_of(profile):
     login = _json(cpath).get("workspace_id") or None
     conf = cfg.get("workspace_id") or None
     return (login or conf), conf, login
-
-
-def live_workspace(profile):
-    return workspaces_of(profile)[0]
 
 
 def check(project, quiet=False):
@@ -216,6 +225,7 @@ def main(argv):
                 die("%s has no cloud binding: qargi cloud set %s --profile NAME --workspace-id ID" % (proj, proj))
             if not (sys.stdin.isatty() and sys.stdout.isatty()):
                 die("login needs your own terminal: run `qargi cloud login %s` yourself (a member or a script cannot)" % proj)
+            import subprocess
             return subprocess.call(["ant", "auth", "login", "--profile", b["profile"], "--workspace-id", b["workspace_id"], ANT_NO_BROWSER])
     die("usage: qargi cloud list|show|set|unset|check|login ...", 2)
 

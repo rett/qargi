@@ -26,13 +26,13 @@ esac
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-[ "$verb" = session-start ] || die "usage: hook.sh session-start [--project P] [--role lead]"
+[ "$verb" = session-start ] || usage_die "usage: hook.sh session-start [--project P] [--role lead]"
 PRJ='' HROLE=lead
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) PRJ=$2; shift 2;;
-    --role) HROLE=$2; shift 2;;
-    *) die "unknown option $1";;
+    --project) need_val "$1" $#; PRJ=$2; shift 2;;
+    --role) need_val "$1" $#; HROLE=$2; shift 2;;
+    *) usage_die "unknown option $1";;
   esac
 done
 

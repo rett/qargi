@@ -22,6 +22,8 @@ printf '%s\n' "$*" >> "$FAKE/ant.log"
 case $1 in
   beta:deployments) if [ "${2:-}" = run ]; then echo '{"session_id":"sesn_1"}'; else echo '{}'; fi;;
   beta:sessions) echo '{"status":"idle","budget":{"max_list_cost":{"amount":"500"}}}';;
+  apply) while [ $# -gt 0 ]; do [ "$1" = --lock-file ] && lock=$2; shift; done   # a real apply records what it created
+         case " $* " in *' --dry-run '*) ;; *) [ -z "${lock:-}" ] || echo '{"resources":{"deployment-standby":{"id":"depl_P"}}}' > "$lock";; esac;;
 esac
 exit 0
 EOS
@@ -81,8 +83,10 @@ rm -rf "$T/c/roles/worker" "$T/c/roles/reviewer"
 
 # --- the barrier guard fires for <project>-reviewer (claude has no read-only barrier on cloud)
 refused() { # name rc output project
-  [ "$2" = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
+  [ "$2" = 2 ] && grep -q "qargi provider accept claude-platform --surface cloud --no-barrier --project $4 --asked" <<<"$3" && ok "$1" || no "$1 (rc=$2: $3)"
 }
+# delta names its provider (there is no default one to fall back to when a project has none)
+jq -n '{schema:1,project:"delta",repo:{url:"https://github.com/example/delta",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}},review:{base:"main",push:{mode:"none"}}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/delta.json"
 out=$($DA provision plan --project delta --role reviewer 2>&1); rc=$?
 refused "provision plan: the reviewer base is refused where cloud has no barrier" "$rc" "$out" delta
 out=$($DA provision apply --project delta --role reviewer --asked x --approved y --plan z 2>&1); rc=$?
@@ -91,7 +95,7 @@ $DA provision plan --project delta --role worker >/dev/null 2>&1 && ok "the work
 $DA provision plan --project delta --role review >/dev/null 2>&1; [ $? = 2 ] && ok "legacy review is still refused" || no "legacy review plan"
 
 git init -q -b main "$T/repo" && git -C "$T/repo" -c user.name=t -c user.email=t@example.net commit -q --allow-empty -m one
-$DA project template gamma | jq --arg r "$T/repo" '.repo.url = "https://github.com/example/\(.project)" | .repo.path = $r | .models.provider = "claude"' > "$T/gamma.json"
+$DA project template gamma | jq --arg r "$T/repo" '.repo.url = "https://github.com/example/\(.project)" | .repo.path = $r | .models.provider = {local: "claude-code", cloud: "claude-platform"}' > "$T/gamma.json"
 $DA project init gamma --answers "$T/gamma.json" --force >/dev/null 2>&1 || no "init gamma"
 jq -n '{"gamma-reviewer":{location:"cloud",deployment_id:"depl_R",environment_id:"env_1",agent:{id:"agent_R",version_pinned:1}},
   "gamma-worker":{location:"cloud",deployment_id:"depl_W",environment_id:"env_1",agent:{id:"agent_W",version_pinned:1}}}' > "$T/c/instances.json"
@@ -112,8 +116,8 @@ out=$($DA provision apply gamma-reviewer --asked x --approved y --plan z 2>&1); 
 refused "provision apply with stored answers: the reviewer base is refused too" "$rc" "$out" gamma
 grep -q 'apply --yes' "$FAKE/ant.log" && no "ant apply ran for a refused reviewer" || ok "and ant apply never ran"
 $DA start gamma-worker --asked "build" >/dev/null 2>&1; grep -q 'deployments run --deployment-id depl_W' "$FAKE/ant.log" && ok "the worker base starts as before" || no "worker start"
-tok=$($DA provider accept claude --surface cloud --no-barrier --project gamma --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
-$DA provider accept claude --surface cloud --no-barrier --project gamma --asked "I accept it" --plan "$tok" --approved go >/dev/null 2>&1 || no "accept"
+tok=$($DA provider accept claude-platform --surface cloud --no-barrier --project gamma --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+$DA provider accept claude-platform --surface cloud --no-barrier --project gamma --asked "I accept it" --plan "$tok" --approved go >/dev/null 2>&1 || no "accept"
 : > "$FAKE/ant.log"
 $DA start gamma-reviewer --asked "start the review" >/dev/null 2>&1; grep -q 'deployments run --deployment-id depl_R' "$FAKE/ant.log" && ok "after the project accepts, the reviewer base starts" || no "reviewer start after accept"
 
@@ -169,14 +173,20 @@ $DA provision plan gamma-build 2>&1 | grep -q '^plan token: [0-9a-f]\{12\}' && o
 sealit() { local t; t=$($DA skill seal "$1" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA skill seal "$1" --plan "$t" --approved test >/dev/null; }
 for pair in sk-build:build sk-write:write sk-review:review sk-audit:audit; do
   n=${pair%%:*}; r=${pair##*:}
-  $DA skill new "$n" >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
+  $DA skill new "$n" --compatible any >/dev/null; sed -i "s/^description: .*/description: Use for the $r ability./" "$T/c/packs/skills/$n/SKILL.md"; sealit "$n"
   $DA skill link "$n" --scope user-role --role "$r" >/dev/null 2>&1 || no "link $n"
 done
 
 # --- <project>-worker: write class, with the web tools off only
-BAL=$(jq -r .tiers.balanced lib/providers/claude.json)
+BAL=$(jq -r .tiers.balanced.model lib/providers/catalogs/claude.json)
 out=$($DA provision plan --project gamma --role worker 2>&1); rc=$?
 [ $rc = 0 ] && grep -q '^plan token: [0-9a-f]\{12\}' <<<"$out" && ok "provision plan gamma-worker succeeds with stored answers and no roles.worker" || no "worker plan (rc=$rc): $(tail -3 <<<"$out")"
+# the project's bootstrap command is printed as setup-script text, never run (no repository, no text)
+grep -q "suggested setup script" <<<"$out" && no "a setup script was suggested for a project with no repository" || ok "no setup script is suggested when the project's repository is not there"
+mkdir -p "$T/gammarepo"; printf '.PHONY: bootstrap\nbootstrap:\n\ttouch %s/ran\n' "$T" > "$T/gammarepo/Makefile"
+$DA project set gamma repo.path "$T/gammarepo" >/dev/null 2>&1 || no "set gamma repo.path"
+out=$($DA provision plan --project gamma --role worker 2>&1)
+grep -q "^suggested setup script for the cloud environment" <<<"$out" && grep -qx "    make bootstrap" <<<"$out" && [ ! -e "$T/ran" ] && ok "provision plan prints the bootstrap command as suggested setup-script text and does not run it" || no "setup note: $out"
 A=$PD/gamma-worker/agents/gamma-worker
 f=$(front "$A/agent.md")
 grep -q '^name: gamma-worker$' <<<"$f" && ok "the agent is named gamma-worker" || no "worker name"
@@ -207,5 +217,50 @@ $DA provision plan --project gamma --role build >/dev/null 2>&1; [ "$(ls "$PD/ga
 out=$($DA provision apply gamma-worker --asked "provision the worker" --approved go --plan 000000000000 2>&1); rc=$?
 grep -qi 'plan' <<<"$out" && ! grep -q 'not enabled' <<<"$out" && [ $rc != 0 ] && ok "apply of a base reaches the plan-token check (a wrong token is refused)" || no "worker apply: rc=$rc $out"
 grep -q 'apply --yes' "$FAKE/ant.log" && no "ant apply ran on a wrong token" || ok "and nothing was created"
+
+# --- provision --force: ant apply --force overwrites what changed outside the config; the plan token covers it
+PA=(--memory-store mem_1 --reference-store ref_1)
+: > "$FAKE/ant.log"
+out=$($DA provision plan gamma-worker "${PA[@]}" 2>&1); rc=$?
+tok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+[ $rc = 0 ] && [ -n "$tok" ] && ok "force: a plan without --force prints a token" || no "plain plan (rc=$rc): $out"
+grep -q 'apply --dry-run' "$FAKE/ant.log" && ! grep -q -- '--force' "$FAKE/ant.log" && ! grep -q -- '--force' <<<"$out" && ok "force: without --force the plan says nothing of it and ant never sees it" || no "plain plan shows force: $(cat "$FAKE/ant.log")"
+: > "$FAKE/ant.log"
+out=$($DA provision plan gamma-worker "${PA[@]}" --force 2>&1); rc=$?
+ftok=$(sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p' <<<"$out")
+[ $rc = 0 ] && grep -q 'apply --dry-run -v --force ' "$FAKE/ant.log" && ok "force: plan --force passes --force to ant apply --dry-run" || no "force plan (rc=$rc): $(cat "$FAKE/ant.log")"
+grep -qF -- "--force: the server's copy of any resource changed outside this config will be overwritten with this config" <<<"$out" && ok "force: the plan says what --force does" || no "force plan line: $out"
+[ -n "$ftok" ] && [ "$ftok" != "$tok" ] && ok "force: the token of a forced plan differs from the plain one" || no "tokens: '$tok' '$ftok'"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go --plan "$tok" 2>&1); rc=$?
+[ $rc != 0 ] && grep -qi 'plan' <<<"$out" && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force refuses the token of a plan without --force" || no "force apply with a plain token (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --asked "provision the worker" --approved go --plan "$ftok" 2>&1); rc=$?
+[ $rc != 0 ] && grep -qi 'plan' <<<"$out" && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply without --force refuses the token of a forced plan" || no "plain apply with a force token (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force still needs --plan" || no "force apply without a plan (rc=$rc): $out"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --plan "$ftok" 2>&1); rc=$?
+[ $rc != 0 ] && ! grep -q 'apply --yes' "$FAKE/ant.log" && ok "force: apply --force still needs --approved" || no "force apply without approval (rc=$rc): $out"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --force --asked "provision the worker" --approved go --plan "$ftok" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'apply --yes --force ' "$FAKE/ant.log" && ok "force: the right token is accepted and ant apply gets --force" || no "force apply (rc=$rc): $out $(cat "$FAKE/ant.log")"
+grep -q 'provision-apply' "$T/s/audit.log" && [ "$(jq -r 'select(.verb=="provision-apply") | .detail' "$T/s/audit.log" | tail -1)" = "gamma-worker force" ] && ok "force: the audit line says force" || no "audit: $(grep provision-apply "$T/s/audit.log" | tail -1)"
+: > "$FAKE/ant.log"
+out=$($DA provision apply gamma-worker "${PA[@]}" --asked "provision the worker" --approved go --plan "$tok" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q 'apply --yes ' "$FAKE/ant.log" && ! grep -q -- '--force' "$FAKE/ant.log" && ok "force: without --force apply is as before and ant never sees it" || no "plain apply (rc=$rc): $out $(cat "$FAKE/ant.log")"
+[ "$(jq -r 'select(.verb=="provision-apply") | .detail' "$T/s/audit.log" | tail -1)" = "gamma-worker" ] && ok "force: and the audit line is unchanged" || no "plain audit line"
+
+# --- a runtime of the pack library on the cloud surface (a definition and no file in lib/providers): provision plans a base on its balanced model
+mkdir -p "$T/ext/fc"
+printf '#!/bin/sh\necho "{}"\n' > "$T/ext/fc/adapter"; chmod 755 "$T/ext/fc/adapter"
+jq -n '{schema:2,kind:"provider",provider:"fakecloud",family:null,surface:"cloud",
+  models:{pattern:"^fake-.+$",tiers:{fast:{model:"fake-cloud-s",alias:null,verified_on:null,source:"test"},"*":{model:"fake-cloud-m",alias:null,verified_on:null,source:"test"}},effort:{low:"l",medium:"m",high:"h",xhigh:null,max:null}},
+  capabilities:{},agents:null,resources:{},barrier:{kind:"none"},dispatch:{mode:"adapter"},adapter:"adapter",adapter_verbs:["start-session"]}' > "$T/ext/fc/definition.json"
+t=$($DA provider import "$T/ext/fc" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); $DA provider import "$T/ext/fc" --plan "$t" --approved test --approve-exec adapter >/dev/null 2>&1 || no "import fakecloud"
+jq -n --arg r "$T/repo" '{schema:1,project:"libc",repo:{url:"https://github.com/example/libc",path:$r,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"fakecloud"}},memory:{},budget_cents:500}' > "$T/c/projects/libc.json"
+out=$($DA provision plan --project libc --role worker 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(front "$PD/libc-worker/agents/libc-worker/agent.md" | sed -n 's/^  id: //p')" = fake-cloud-m ]; } && ok "library runtime: the plan of a base takes the balanced model of the loader's definition (no lib/providers file)" || no "library provision (rc=$rc): $out"
+jq -n --arg r "$T/repo" '{schema:1,project:"nocl",repo:{url:"https://github.com/example/nocl",path:$r,long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"nosuchrt"}},memory:{},budget_cents:500}' > "$T/c/projects/nocl.json"
+out=$($DA provision plan --project nocl --role worker 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "nosuchrt" <<<"$out"; } && ok "a cloud runtime that has no definition is refused, naming it" || no "unknown cloud runtime (rc=$rc): $out"
 
 [ $fail = 0 ] && echo "cloud bases tests passed" || { echo "cloud bases tests FAILED"; exit 1; }

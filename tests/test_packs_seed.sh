@@ -21,14 +21,16 @@ SK=$T/tool/packs/skills
 NAMES="alpha-pack beta-pack gamma-pack"
 mkpack() { mkdir -p "$SK/$1"; printf -- '---\nname: %s\ndescription: Use when testing %s.\n---\n# %s\n%s\n' "$1" "$1" "$1" "$2" > "$SK/$1/SKILL.md"; }
 manifest() { # names of the shipped packs
-  local n; for n in "$@"; do jq -n --arg n "$n" '{kind:"skill",name:$n,propose:"tracked *.sh"}'; done | jq -s '{schema:1,packs:.}' > "$T/tool/packs/baseline.json"; }
+  local n; for n in "$@"; do jq -n --arg n "$n" '{kind:"skill",name:$n,propose:"tracked *.sh",compatible_providers:["any"]}'; done | jq -s '{schema:1,packs:.}' > "$T/tool/packs/baseline.json"; }
 shipped() { rm -rf "${SK:?}"/*; local n; for n in $NAMES; do mkpack "$n" "first text of $n"; done; manifest $NAMES; }
-hash_of() { (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
+files_hash() { (cd "$1" && find . -type f ! -name .pack.json -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
+# the content hash covers the declaration: every pack here declares ["any"]
+hash_of() { printf '%s\ncompatible_providers=%s\n' "$(files_hash "$1")" '["any"]' | sha256sum | cut -c1-16; }
 tok_of() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 fresh() { rm -rf "$T/c" "$T/s"; export QARGI_CONF=$T/c QARGI_STATE=$T/s; mkdir -p "$T/c/projects" "$T/s"; LIB=$T/c/packs; shipped; }
 proj() { jq -n --arg p "$1" '{schema:1,project:$p,repo:{url:"https://github.com/example/x",path:"",long_lived:["main"]},
   roles:{build:{base:"@dispatcher",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},
-  memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
+  models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{memory_store:"",reference_store:""},budget_cents:500}' > "$T/c/projects/$1.json"; }
 seal() { local tok; tok=$($DA skill seal "$1" | tok_of); $DA skill seal "$1" --plan "$tok" --approved test >/dev/null; }
 # plan, then apply with the token it printed; OUT holds the output of the last seed call, RC its exit status
 plan() { OUT=$($DA packs seed 2>&1); RC=$?; TOK=$(tok_of <<<"$OUT"); }
@@ -44,6 +46,7 @@ plan
 H_A=$(hash_of "$SK/alpha-pack"); H_B=$(hash_of "$SK/beta-pack"); H_G=$(hash_of "$SK/gamma-pack")
 if [ "$RC" = 0 ] && has "add +skill alpha-pack \(content $H_A\)" && has "add +skill beta-pack \(content $H_B\)" && has "add +skill gamma-pack \(content $H_G\)"; then
   ok "the plan adds every shipped pack, with its content hash"; else no "plan lines (rc=$RC)"; shown; fi
+has "add +skill alpha-pack \(content $H_A\)  compatible_providers any" && ok "each plan line shows the declaration it will store" || { no "plan lines carry no compatible_providers"; shown; }
 [ -n "$TOK" ] && ok "the plan prints a token" || no "no plan token"
 empty_lib && ok "planning stores nothing" || no "planning stored: $(ls -A "$LIB/skills")"
 [ "$fail" = 0 ] || { echo "stopping: the cases that follow need a working plan"; exit 1; }
@@ -108,7 +111,7 @@ apply
 
 # --- 8. a pack the user created or imported under a baseline name belongs to the user
 fresh
-$DA skill new alpha-pack >/dev/null
+$DA skill new alpha-pack --compatible any >/dev/null
 mine=$(hash_of "$LIB/skills/alpha-pack")
 plan
 { has "kept +skill alpha-pack: the name belongs to a pack you created or imported" && has "add +skill beta-pack" && [ "$(hash_of "$LIB/skills/alpha-pack")" = "$mine" ]; } \
@@ -116,14 +119,14 @@ plan
 apply
 { [ "$(hash_of "$LIB/skills/alpha-pack")" = "$mine" ] && [ "$(rec alpha-pack .source)" != "qargi-baseline $VER" ]; } && ok "and it stays the user's after the apply" || no "created pack overwritten"
 fresh; mkdir -p "$T/imp/beta-pack"; printf -- '---\nname: beta-pack\ndescription: Use when importing.\n---\nbody\n' > "$T/imp/beta-pack/SKILL.md"
-itok=$($DA skill import "$T/imp/beta-pack" | tok_of); $DA skill import "$T/imp/beta-pack" --plan "$itok" --approved test >/dev/null 2>&1
+itok=$($DA skill import "$T/imp/beta-pack" --compatible any | tok_of); $DA skill import "$T/imp/beta-pack" --compatible any --plan "$itok" --approved test >/dev/null 2>&1
 plan
 has "kept +skill beta-pack: the name belongs to a pack you created or imported" && ok "an imported pack under a baseline name is kept" || { no "imported-pack plan"; shown; }
 
 # --- 9. a tool under a baseline name is not replaced either
 fresh
 printf '%s' '{"name":"gamma-pack","url":"https://mcp.example.net/","tools":{"list_things":"always_allow"}}' > "$T/tool.json"
-ttok=$($DA tool import "$T/tool.json" | tok_of); $DA tool import "$T/tool.json" --plan "$ttok" --approved test >/dev/null 2>&1
+ttok=$($DA tool import "$T/tool.json" --compatible any | tok_of); $DA tool import "$T/tool.json" --compatible any --plan "$ttok" --approved test >/dev/null 2>&1
 [ -f "$LIB/tools/gamma-pack.json" ] || no "setup: the fixture tool was not stored"
 plan
 { has "kept +skill gamma-pack: the name belongs to a pack you created or imported" && has "add +skill alpha-pack"; } && ok "a tool with a baseline name keeps the name" || { no "tool-name plan (rc=$RC)"; shown; }
@@ -166,8 +169,22 @@ PK=$ROOT/packs
 if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
   jq -e '.schema==1 and (.packs|length)>0 and all(.packs[]; .kind=="skill" and (.name|test("^[a-z0-9-]+$")) and (.propose|length>0))' "$PK/baseline.json" >/dev/null \
     && ok "baseline.json is well formed" || no "baseline.json shape"
+  jq -e 'all(.packs[]; .compatible_providers == ["any"])' "$PK/baseline.json" >/dev/null && ok "every shipped baseline pack declares compatible_providers [\"any\"]" || no "baseline.json compatible_providers"
+  fresh; out=$($ROOT/bin/qargi packs seed --install 2>&1); rc=$?
+  { [ "$rc" = 0 ] && [ "$(ls "$LIB/skills" | wc -l)" = "$(jq '.packs|length' "$PK/baseline.json")" ] \
+    && [ -z "$(for f in "$LIB"/skills/*/.pack.json; do jq -e '.compatible_providers == ["any"]' "$f" >/dev/null || echo bad; done)" ]; } \
+    && ok "the shipped baseline seeds into a library, every record declaring [\"any\"]" || { no "seeding the shipped baseline (rc=$rc)"; echo "$out" | sed 's/^/       | /'; }
   listed=$(jq -r '.packs[].name' "$PK/baseline.json" | sort); present=$(ls "$PK/skills" | sort)
   [ "$listed" = "$present" ] && ok "every packs/skills directory is listed in baseline.json and the reverse" || no "listed [$listed] vs present [$present]"
+  # the seven shipped packs: three process packs and four member practice packs, each text-only (a SKILL.md and nothing else)
+  want=$(printf '%s\n' docs-site-member gitflow-member keep-a-changelog qargi-contributing review-findings secrets-scan shellcheck-gate)
+  [ "$listed" = "$want" ] && ok "the baseline ships exactly the seven expected packs (count $(wc -l <<<"$listed"))" || no "baseline packs are [$listed], expected [$want]"
+  textonly=1; for d in "$PK"/skills/*/; do [ "$(find "$d" -type f | wc -l)" = 1 ] && [ -f "${d}SKILL.md" ] || { textonly=0; echo "       | not text-only: $d"; }; done
+  [ "$textonly" = 1 ] && ok "every shipped pack is a single SKILL.md" || no "a shipped pack holds more than SKILL.md"
+  for n in review-findings secrets-scan docs-site-member qargi-contributing; do
+    jq -e --arg n "$n" '.packs[] | select(.name==$n) | .kind=="skill" and (.propose|length>0) and .compatible_providers==["any"]' "$PK/baseline.json" >/dev/null \
+      && ok "baseline.json lists $n with a propose value and [\"any\"]" || no "baseline.json entry for $n"
+  done
   for d in "$PK"/skills/*/; do
     n=$(basename "$d"); f=${d}SKILL.md; bad=""
     [ -f "$f" ] || { no "$n: no SKILL.md"; continue; }
@@ -180,14 +197,31 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
     grep -Eq 'qargi (skill|tool|packs|project|local|memory|discover|review|feature)' "$f" && bad="$bad names-a-qargi-verb"
     [ -z "$(find "$d" -type l)" ] || bad="$bad symlink"
     [ -z "$bad" ] && ok "shipped pack $n: front matter, name and wording" || no "shipped pack $n:$bad"
-    fresh; out=$($DA skill import "$d" 2>&1); rc=$?
+    fresh; out=$($DA skill import "$d" --compatible any 2>&1); rc=$?
     { [ "$rc" = 0 ] && ! grep -q FAIL <<<"$out" && ! grep -q "network commands mentioned" <<<"$out"; } && ok "shipped pack $n passes the library review" || { no "shipped pack $n review (rc=$rc)"; echo "$out" | grep -E 'FAIL|network' | sed 's/^/       | /'; }
   done
 else
   no "this repository ships no packs/ directory with baseline.json and skills/"
 fi
 
-# --- 14. a missing packs directory is an error that names the place
+# --- 14. a baseline pack seeded before packs declared compatible_providers is updated by the next seed (its record gets the field)
+fresh; apply
+for n in $NAMES; do
+  lh=$(files_hash "$LIB/skills/$n")
+  jq --arg h "$lh" 'del(.compatible_providers) | .sha256 = $h | .shipped = $h' "$LIB/skills/$n/.pack.json" > "$T/rec.tmp" && cp "$T/rec.tmp" "$LIB/skills/$n/.pack.json"
+done
+plan
+{ has "update +skill alpha-pack \(content [0-9a-f]+ -> $(hash_of "$SK/alpha-pack"); links: none\)  compatible_providers any" && [ -n "$TOK" ]; } && ok "an unedited pack with no declaration is an update that brings it" || { no "legacy update plan (rc=$RC)"; shown; }
+apply
+{ [ "$RC" = 0 ] && [ "$(rec alpha-pack .compatible_providers)" != null ] && [ "$(rec alpha-pack .sha256)" = "$(hash_of "$LIB/skills/alpha-pack")" ] && [ "$(rec alpha-pack .shipped)" = "$(rec alpha-pack .sha256)" ]; } \
+  && ok "after it the record declares [\"any\"], and the hash is the shipped one" || { no "legacy update (rc=$RC)"; shown; }
+plan; has "nothing to seed" && ok "and the next run has nothing to do" || { no "rerun after the legacy update"; shown; }
+# a baseline manifest entry with no valid declaration is refused, naming the pack
+jq 'del(.packs[0].compatible_providers)' "$T/tool/packs/baseline.json" > "$T/bl.tmp" && cp "$T/bl.tmp" "$T/tool/packs/baseline.json"
+plan; { [ "$RC" != 0 ] && has "gives the pack alpha-pack no valid compatible_providers"; } && ok "a baseline entry without compatible_providers is refused" || { no "manifest without declaration (rc=$RC)"; shown; }
+manifest $NAMES
+
+# --- 15. a missing packs directory is an error that names the place
 fresh; mv "$T/tool/packs" "$T/tool/packs.away"
 OUT=$($DA packs seed 2>&1); RC=$?
 { [ "$RC" != 0 ] && has "no baseline packs shipped at $T/tool/packs"; } && ok "without packs/ the seed dies naming the directory" || { no "missing packs (rc=$RC)"; shown; }

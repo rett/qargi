@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Where qargi keeps its data: the resolver (lib/paths.py and lib/lib.sh), the legacy refusal, installed and dev runs, and
+"""Where qargi keeps its data: the resolver (lib/paths.py and lib/lib.sh), installed and dev runs, and
 the install record install.sh writes. Every run uses a temporary HOME; nothing here touches the real directories."""
 import hermetic  # noqa: F401  (first: scrubs the caller's environment)
 import json, os, shutil, stat, subprocess, sys, tempfile, unittest
@@ -7,6 +7,11 @@ import json, os, shutil, stat, subprocess, sys, tempfile, unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLEAN = ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "QARGI_PROJECT", "QARGI_NESTED")
 BANNER = "qargi: dev run from %s; data in %s/.qargi (QARGI_HOME=~/.qargi uses live data)"
+
+
+def slurp(path):
+    with open(path) as f:
+        return f.read()
 
 
 class Base(unittest.TestCase):
@@ -86,66 +91,12 @@ class Resolver(Base):
         self.assertTrue(os.path.isfile(self.live + "/config/instances.json"))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config")), "the XDG location was used")
 
-
-class Legacy(Base):
-    def old(self, xdg=False):
-        c = os.path.join(self.t, "xc", "qargi") if xdg else os.path.join(self.home, ".config", "qargi")
-        s = os.path.join(self.t, "xs", "qargi") if xdg else os.path.join(self.home, ".local", "state", "qargi")
-        os.makedirs(c), os.makedirs(s)
-        with open(os.path.join(c, "instances.json"), "w") as f:
-            f.write("{}")
-        return dict(XDG_CONFIG_HOME=os.path.join(self.t, "xc"), XDG_STATE_HOME=os.path.join(self.t, "xs")) if xdg else {}
-
-    def test_every_other_command_stops_and_creates_nothing(self):
-        env = self.old()
-        for argv in (("project", "list"), ("instances", "list"), ("report",), ("migrate", "roles"), ("credential", "list")):
-            r = self.q(ROOT, *argv, **env)
-            self.assertNotEqual(r.returncode, 0, argv)
-            self.assertIn("qargi migrate home", r.stderr, argv)
-            self.assertEqual(r.stdout, "", argv)
-        self.assertFalse(os.path.lexists(self.live), "an empty new root was created next to the old data")
-
-    def test_the_old_directories_are_found_through_the_xdg_variables(self):
-        env = self.old(xdg=True)
-        r = self.q(ROOT, "project", "list", **env)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("qargi migrate home", r.stderr)
-        self.assertFalse(os.path.lexists(self.live))
-
-    def test_the_shell_library_refuses_too_when_run_without_the_command(self):
-        self.old()
-        r = self.run_(["bash", "-c", '. "$1"; echo reached', "bash", os.path.join(ROOT, "lib", "lib.sh")])
-        self.assertNotEqual(r.returncode, 0)
-        self.assertNotIn("reached", r.stdout)
-        self.assertFalse(os.path.lexists(self.live))
-
-    def test_help_version_completion_guard_and_hooks_still_work(self):
-        env = self.old()
-        self.assertEqual(self.q(ROOT, "help", **env).returncode, 0)
-        self.assertEqual(self.q(ROOT, "help", "migrate", **env).returncode, 0)
-        r = self.q(ROOT, "version", **env)
-        self.assertEqual((r.returncode, r.stdout.strip()), (0, open(os.path.join(ROOT, "VERSION")).read().strip()))
-        self.assertEqual(self.q(ROOT, "__complete", "migrate", **env).returncode, 0)
-        r = self.run_([os.path.join(ROOT, "bin", "qargi"), "__guard"], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}), **env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        for verb in ("tool-use", "subagent-start", "subagent-stop", "tool-failure", "notification", "stop-failure", "pre-compact"):
-            r = self.run_([os.path.join(ROOT, "bin", "qargi"), "hook", verb], input=json.dumps({"agent_id": "a1", "cwd": self.t, "tool_name": "Bash"}), **env)
-            self.assertEqual(r.returncode, 0, verb)
-            self.assertEqual((r.stdout, r.stderr), ("", ""), verb)
-        self.assertEqual(self.q(ROOT, "migrate", "home", **env).returncode, 0)
-        self.assertFalse(os.path.lexists(self.live), "an exempt command created the new root")
-
-    def test_an_explicit_location_or_an_existing_root_is_not_held_back(self):
-        env = self.old()
-        qh = os.path.join(self.t, "qh")
-        self.assertEqual(self.q(ROOT, "project", "list", QARGI_HOME=qh, **env).returncode, 0)
-        self.assertEqual(self.q(ROOT, "project", "list", QARGI_CONF=os.path.join(self.t, "c"), QARGI_STATE=os.path.join(self.t, "s"), **env).returncode, 0)
-        os.makedirs(self.live)                                        # the new root exists (even empty): no legacy state any more
-        self.assertEqual(self.q(ROOT, "project", "list", **env).returncode, 0)
-
-    def test_neither_layout_creates_the_new_root_on_first_use(self):
-        self.assertEqual(self.q(ROOT, "project", "list").returncode, 0)
-        self.assertTrue(os.path.isdir(self.live + "/config"))
+    def test_xdg_directories_that_exist_are_not_data(self):
+        os.makedirs(os.path.join(self.home, ".config", "qargi"))
+        os.makedirs(os.path.join(self.home, ".local", "state", "qargi"))
+        r = self.q(ROOT, "project", "list")
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertTrue(os.path.isdir(self.live + "/config"), "the new root was not created beside them")
 
 
 class DevRun(Base):
@@ -214,10 +165,12 @@ class DevRun(Base):
         self.assertEqual((r.returncode, r.stderr), (0, ""))
 
     def test_no_banner_for_help_version_completion_guard_and_hooks(self):
-        for argv in (("help",), ("help", "dev"), ("version",), ("__complete", "migrate"), ("migrate", "--help"), ("hook", "tool-use")):
+        for argv in (("help",), ("help", "dev"), ("version",), ("__complete", "project"), ("project", "--help"), ("hook", "tool-use")):
             r = self.run_([os.path.join(self.dev, "bin", "qargi"), *argv], input="{}")
             self.assertEqual(r.returncode, 0, argv)
-            self.assertNotIn("qargi: dev run from", r.stderr + r.stdout, argv)
+            # the banner is a line of its own on stderr; the text of `help dev` quotes it inside a sentence, wrapped to the width of the terminal
+            self.assertNotIn("qargi: dev run from", r.stderr, argv)
+            self.assertEqual([l for l in r.stdout.splitlines() if l.startswith("qargi: dev run from")], [], argv)
         r = self.run_([os.path.join(self.dev, "bin", "qargi"), "__guard"], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}}))
         self.assertEqual((r.returncode, r.stderr, r.stdout), (0, "", ""))
         self.assertFalse(os.path.exists(self.dev + "/.qargi/config"), "help, the guard or a hook created the sandbox config")
@@ -228,22 +181,6 @@ class DevRun(Base):
             r = self.run_([os.path.join(self.dev, "bin", "qargi"), "__guard"], input=json.dumps(
                 {"tool_name": "Write", "tool_input": {"file_path": lib + "/links.json"}, "cwd": self.t}))
             self.assertEqual(r.returncode, 2, (lib, r.stderr))
-
-    def test_migrate_home_refuses_in_a_dev_run_unless_a_location_is_named(self):
-        old = os.path.join(self.home, ".config", "qargi")
-        os.makedirs(old)
-        r = self.q(self.dev, "migrate", "home")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("dev run", r.stderr)
-        self.assertNotIn("plan token", r.stdout)
-        r = self.q(self.dev, "migrate", "home", QARGI_HOME=os.path.join(self.t, "dest"))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("plan token", r.stdout)
-
-    def test_the_legacy_refusal_does_not_apply_to_a_dev_run(self):
-        os.makedirs(os.path.join(self.home, ".config", "qargi"))
-        r = self.q(self.dev, "project", "list")
-        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_the_sandbox_is_ignored_by_version_control(self):
         with open(os.path.join(ROOT, ".gitignore")) as f:
@@ -263,7 +200,7 @@ class Install(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         rec = self.record()
         self.assertEqual(rec["tool_root"], ROOT)
-        self.assertEqual(rec["version"], open(os.path.join(ROOT, "VERSION")).read().strip())
+        self.assertEqual(rec["version"], slurp(os.path.join(ROOT, "VERSION")).strip())
         self.assertRegex(rec["installed_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual(stat.S_IMODE(os.stat(self.live + "/config/install.json").st_mode), 0o600)
         self.assertEqual(self.where_installed(), False)
@@ -288,16 +225,23 @@ class Install(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(self.live + "/config/install.json"))
 
-    def test_a_project_install_writes_nothing(self):
+    def test_a_project_install_writes_only_its_manifest(self):
+        # the live location gets the project's install manifest and nothing else: no install.json, so no run turns into a dev run
         proj = os.path.join(self.t, "proj")
         os.makedirs(proj)
         r = self.install("--project", proj)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse(os.path.lexists(self.live))
-        self.install("--user")
-        before = open(self.live + "/config/install.json").read()
+        written = [os.path.relpath(os.path.join(d, f), self.live) for d, _, fs in os.walk(self.live) for f in fs]
+        self.assertEqual(len(written), 1, written)
+        self.assertRegex(written[0], r"^config/project-\d+\.manifest$")
+        self.assertEqual(self.where_installed(), False)
         self.assertEqual(self.install("--project", proj, "--uninstall").returncode, 0)
-        self.assertEqual(open(self.live + "/config/install.json").read(), before)
+        self.assertFalse(os.path.exists(os.path.join(self.live, written[0])), "the project uninstall removes its manifest")
+        self.install("--project", proj)
+        self.install("--user")
+        before = slurp(self.live + "/config/install.json")
+        self.assertEqual(self.install("--project", proj, "--uninstall").returncode, 0)
+        self.assertEqual(slurp(self.live + "/config/install.json"), before)
 
     def test_the_record_goes_to_the_live_location_that_is_named(self):
         qh = os.path.join(self.t, "qh")
@@ -308,12 +252,11 @@ class Install(Base):
         self.assertEqual(self.install("--user", QARGI_CONF=c).returncode, 0)
         self.assertTrue(os.path.isfile(c + "/install.json"))
 
-    def test_while_the_data_is_still_in_the_earlier_directories_nothing_is_recorded(self):
+    def test_the_earlier_xdg_directories_do_not_hold_the_record_back(self):
         os.makedirs(os.path.join(self.home, ".config", "qargi"))
         r = self.install("--user")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("qargi migrate home", r.stderr)
-        self.assertFalse(os.path.lexists(self.live), "install.sh created the new root beside the old data")
+        self.assertEqual(self.record()["tool_root"], ROOT)
 
 
 if __name__ == "__main__":

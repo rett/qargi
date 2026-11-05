@@ -3,14 +3,14 @@
 # Written from the SPEC of the wiring, not from its code. Fixtures and conventions follow tests/test_marshal.sh (identity from
 # QARGI_LEAD) and tests/test_flow.sh (a project with a bare origin and a fake gh). The leases are real (the default ttl is 15
 # minutes, so no lead goes stale during the run); only the verify tests take real time (a suite of about 3 seconds with
-# QARGI_MARSHAL_RENEW_SEC=1 and marshal.ttl 1 minute).
+# QARGI_MARSHAL_RENEW_SEC=1 and marshal.lease_minutes 1 minute).
 # Run: tests/test_marshal_flow.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
-trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T"' EXIT
+trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
@@ -42,7 +42,7 @@ mkfeat() { # NAME LEAD: branch feature/NAME and, for a LEAD, a record led by it,
   git -C "$R" branch "feature/$1" develop
   if [ -n "$2" ]; then "$DA" marshal claim "$1" --as "$2" >/dev/null 2>&1; fi
 }
-ttl() { jq --argjson n "$1" '.marshal.ttl = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
+ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tc() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
@@ -105,6 +105,7 @@ run $F verify $V1; rc=$?
 r1=$(j $V1 .renewed_at)
 [ $rc = 0 ] && ok "verify: the suite passes" || no "verify rc=$rc $(out)"
 [ "$r0" != "$r1" ] && [ "$r1" != null ] && ok "verify: renewed_at advanced while the 3 s suite ran" || no "SPEC verify renews: renewed_at stayed $r0"
+# hermetic: allow pgrep (the pattern holds $V1, unique to this process)
 pgrep -f "feature verify $V1" >/dev/null && no "SPEC verify: a renewer of the run is still alive: $(pgrep -af "feature verify $V1")" || ok "verify: no renewer of the run remains"
 run $F status $V1
 grep -q "full suite: pass at this head" "$T/o" && ok "verify: the verified record exists (status reports it)" || no "verify record: $(out)"
@@ -115,6 +116,7 @@ run $F verify $V2; rc=$?
 r1=$(j $V2 .renewed_at)
 [ $rc = 1 ] && ok "verify: a failing suite fails the verb" || no "verify failing rc=$rc"
 [ "$r0" != "$r1" ] && ok "verify: the lease was renewed during a suite that failed" || no "SPEC verify (failing) renews: renewed_at stayed $r0"
+# hermetic: allow pgrep (the pattern holds $V2, unique to this process)
 pgrep -f "feature verify $V2" >/dev/null && no "SPEC verify: a renewer remains after a failing suite: $(pgrep -af "feature verify $V2")" || ok "verify: a failing suite stops the renewer"
 # refused: another LIVE lead holds the feature, the suite does not run
 mkfeat v3 alice; commit_on feature/v3 v3.txt
@@ -159,7 +161,7 @@ run $F merge held1 agent/t3; rc=$?
 git -C "$R" worktree remove --force "$T/held-wt"
 
 # --- a marshal that is missing or fails is never a reason to stop a verb
-cp_tree() { rm -rf "$1"; mkdir -p "$1"; cp -r "$TOOL/bin" "$TOOL/lib" "$TOOL/VERSION" "$1/"; for d in canon roles methodologies; do [ ! -d "$TOOL/$d" ] || cp -r "$TOOL/$d" "$1/"; done; }
+cp_tree() { rm -rf "$1"; copy_tool "$TOOL" "$1"; }
 for kind in absent exit2; do
   cp_tree "$T/tree-$kind"
   if [ $kind = absent ]; then rm -f "$T/tree-$kind/lib/marshal.sh"
