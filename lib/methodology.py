@@ -12,9 +12,10 @@ unique across both places. This module only reads: `qargi project new|adopt` wri
   methodology.py deployment NAME [ID]            the deployment options, or one option's instructions
 
 A template's {{name}} is replaced by the parameter of that name; a {{...}} that is not a declared parameter is left
-alone (it may belong to the file's own language), but a declared parameter with no value is an error. A scaffold entry may say
-"env": "section" (the file holds the Development environment section) or "targets" (the file holds the bootstrap and doctor targets of
-a task runner): project attach and adopt then treat the entry as present when the repository already has the piece in another file.
+alone (it may belong to the file's own language), but a declared parameter with no value is an error. A parameter may carry a
+"pattern" (a regular expression the whole value must match). A scaffold entry may say "env": "section" (the file holds the
+Development environment section) or "targets" (the file holds the bootstrap and doctor targets of a task runner): project attach
+and adopt then treat the entry as present when the repository already has the piece in another file.
 The optional after_release list names the steps that follow a release, each {id, when, next, help}: `qargi release finish` ends with
 "next: NEXT" ({version} replaced) for each step whose `when`, a dotted project answer such as site.enabled, is true.
 """
@@ -164,6 +165,8 @@ def render(name, given):
         if v in (None, "") and spec.get("required"):
             raise SystemExit("qargi: --param %s=VALUE is required (%s)" % (k, spec.get("help", "")))
         params[k] = "" if v is None else str(v)
+        if spec.get("pattern") and not re.fullmatch(spec["pattern"], params[k]):
+            raise SystemExit("qargi: --param %s=%s: not of the form %s (%s)" % (k, params[k], spec["pattern"], spec.get("help", "")))
     unknown = sorted(set(given) - set(params))
     if unknown:
         raise SystemExit("qargi: unknown parameter %s (this methodology has: %s)" % (", ".join(unknown), ", ".join(params)))

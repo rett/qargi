@@ -12,6 +12,11 @@
       "default": "make test",
       "help": "the command that runs the whole test suite"
     },
+    "ci_timeout_minutes": {
+      "default": "30",
+      "pattern": "[1-9][0-9]*",
+      "help": "the time limit in minutes of the CI job that runs the whole suite; derive it from the suite's own time budgets (the sum of the budgets of the steps one job runs, times 1.5, plus the setup), because a limit below the suite's real time cancels every run"
+    },
     "runner": {
       "default": "make",
       "help": "the task runner that holds the bootstrap and doctor targets"
