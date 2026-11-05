@@ -176,7 +176,10 @@ refusal changes nothing.
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the
-   parking branch fast-forwarded to develop), so a run need not be cleaned before the next `feature finish`. Keep `--scratch` on
+   parking branch fast-forwarded to develop), so a run whose work is merged need not be cleaned before the next `feature finish`. A branch you make or push yourself
+   while a run is out is accepted once you journal it with `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained), and the harness's own
+   `worktree-bridge-*` branches are left out. `feature finish` is refused while a run of the feature is open (the message lists it and the way to close it); a run whose
+   patches you applied by hand (`git am`) is closed with `qargi local close RUN --applied-by-am`. Keep `--scratch` on
    disk (prepare warns about a tmpfs, which a reboot empties); a passing verify also saves the run's output in `<state>/runs/`, and
    `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.

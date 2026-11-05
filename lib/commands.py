@@ -281,7 +281,9 @@ COMMANDS = {
                                  "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the "
                                  "worktree root is detached and removed after the merge, when the branch is deleted. " + REMOTE_NOTE + " A merge that conflicts changes "
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
-                                 "and the same command with --resolved applies exactly that merge.")),
+                                 "and the same command with --resolved applies exactly that merge. It is refused first (exit 1, nothing changed) while a run prepared against feature/NAME is open, and lists "
+                                 "each one: prepared and not verified, verified and not applied, or applied and not merged. A run that was cleaned, discarded (local clean --discard), closed "
+                                 "(local close --applied-by-am) or applied and merged is not open.")),
         },
     },
     "marshal": {

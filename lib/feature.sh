@@ -20,7 +20,8 @@
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
 #                                                  origin exists. Needs a passing run at the feature's head. A feature behind develop is refused; when
-#                                                  both sides changed the same files, the message lists them and says to sync first.
+#                                                  both sides changed the same files, the message lists them and says to sync first. Refused, with
+#                                                  the runs listed, while a run of the feature is open (not cleaned, discarded, closed or merged).
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
 # (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
 # your lease alive while they run, finish marks the record finished, and list and status show the lead.
@@ -94,6 +95,20 @@ run_warning() {
     [ -z "$(jq -r '.verified // ""' <<<"$line" 2>/dev/null)" ] && [ ! -f "$d/verified" ] || continue
     echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
   done
+}
+# open_run_gate NAME -> dies, listing them, when a run of feature/NAME is open: prepared and not verified, verified and not applied, or applied and not
+# merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a discarded one (clean --discard), a closed one (local close
+# --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
+open_run_gate() {
+  local out rc=0 d sl ro st n=0 lines=''
+  out=$(python3 -I "$(dirname "$0")/lead_usage.py" open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
+  [ "$rc" != 0 ] || return 0
+  [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
+  while IFS=$'\t' read -r d sl ro st; do
+    [ -n "$d" ] || continue
+    n=$((n + 1)); lines+="  $d ($ro $sl): $st"$'\n'
+  done <<<"$out"
+  die "feature $1 has $n open run(s); finish it when they are taken in or dropped:"$'\n'"${lines%$'\n'}"$'\n'"close each one: qargi local clean RUN (after its work is applied and merged; --discard drops it on purpose), or qargi local close RUN --applied-by-am when you applied its patches by hand (git am). Nothing was changed."
 }
 # sync_numbers REF: with the answer release.changelog.numbered, a warning when the changelog at REF has duplicate item numbers (the sync is done either way;
 # feature finish refuses until they are renumbered)
@@ -215,6 +230,7 @@ case $verb in
   finish)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
+    open_run_gate "$NAME_ARG"
     # behind develop, with files both sides changed since they parted: a sync is due, and the files are named. A feature behind develop
     # with no such file is not refused here: the check on develop below says the same without the list.
     if branch_exists develop && ! g merge-base --is-ancestor develop "$BR"; then

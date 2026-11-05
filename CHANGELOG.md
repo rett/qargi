@@ -17,6 +17,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   without asking for an applied tip. `review apply` refuses a closed run.
 
 ### Changed
+- `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
+  close it (`local clean`, or `local close --applied-by-am`). A run that was cleaned, discarded, closed, or applied and merged does not block.
 - The member text says that DONE of a write role requires `ls OUT/patches`.
 
 ### Fixed

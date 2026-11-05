@@ -4,6 +4,7 @@
   lead_usage.py usage         [--project P] [--session ID | --transcript FILE] [--json]
   lead_usage.py compact-check [--project P] [--advise] [--json]
   lead_usage.py advice        [--project P] [--feature NAME]        (the one line the stage verbs print)
+  lead_usage.py open-runs     [--project P] --feature NAME          (the open runs of feature/NAME, one per line: run, slug, role, state; exit 1 when there are some)
 
 The lead's own context is the cost the owner cares about most, so qargi measures it and says when a compact (the owner's /compact; no
 hook can run it) is safe. Where the transcripts are and how to read the context in use from one come from the project's local runtime
@@ -482,6 +483,17 @@ def cmd_check(a, conf, state):
     return 0 if c["safe"] else 1
 
 
+def cmd_open_runs(a, conf, state):
+    """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE" each; exit 1 when there are some."""
+    answers = answers_of(conf, a.project or "")
+    repo = repo_of(answers)
+    url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
+    found = [r for r in open_runs(state, repo, url) if r[3] == "feature/" + a.feature]
+    for d, slug, role, base, what in found:
+        print("%s\t%s\t%s\t%s" % (d, slug, role, what))
+    return 1 if found else 0
+
+
 def cmd_advice(a, conf, state):
     """The one line of a stage verb. Never fails, prints nothing when there is nothing to say."""
     try:
@@ -513,7 +525,7 @@ def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
     # describe; --state, --conf, --cwd and --feature are only passed by lib/lead.sh and the stage verbs
     p = argparse.ArgumentParser(prog="lead_usage.py", allow_abbrev=False)
-    p.add_argument("verb", choices=["usage", "compact-check", "advice"])
+    p.add_argument("verb", choices=["usage", "compact-check", "advice", "open-runs"])
     p.add_argument('--state', required=True)
     p.add_argument('--conf', required=True)
     p.add_argument('--project', default="")
@@ -525,7 +537,7 @@ def main(argv):
     p.add_argument("--advise", action="store_true")
     a = p.parse_args(argv)
     try:
-        return {"usage": cmd_usage, "compact-check": cmd_check, "advice": cmd_advice}[a.verb](a, a.conf, a.state)
+        return {"usage": cmd_usage, "compact-check": cmd_check, "advice": cmd_advice, "open-runs": cmd_open_runs}[a.verb](a, a.conf, a.state)
     except Soft as e:
         print("context: unknown (%s)" % e)
         return 0 if a.verb != "compact-check" else 1

@@ -164,5 +164,40 @@ out=$($DA local close "$R2" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "read-only run" <<<"$out" && ok "close refuses a read-only run" || no "close read-only: rc=$rc $out"
 $DA local clean "$R2" --discard >/dev/null 2>&1
 
+# --- 4. feature finish is refused while a run of the feature is open
+$F start fn >/dev/null 2>&1
+R=$(mkrun fin-run feature/fn); commits "$R" c1.go; collect "$R"
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "feature fn has 1 open run(s)" <<<"$out" && grep -q "$R (build fin-run): prepared, not verified" <<<"$out" && ok "a prepared run is open: feature finish is refused" || no "prepared open: rc=$rc $out"
+verify "$R" >/dev/null
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "feature fn has 1 open run(s)" <<<"$out" && grep -q "$R (build fin-run): verified, not applied" <<<"$out" && grep -q "qargi local close RUN --applied-by-am" <<<"$out" && grep -q "qargi local clean RUN" <<<"$out" && grep -q "Nothing was changed" <<<"$out" \
+  && ok "feature finish is refused, with the open run listed and the way to close it" || no "finish with open run: rc=$rc $out"
+$F start ot >/dev/null 2>&1
+out=$($F finish ot 2>&1); grep -q "open run" <<<"$out" && no "a run of feature/fn blocks another feature: $out" || ok "an open run of one feature does not block another"
+w=$(mktemp -d "$T/w.XXXXXX"); git -C "$A" worktree add -q --detach "$w" feature/fn
+git -C "$w" am -q "$R"/out/patches/*.patch && git -C "$A" update-ref refs/heads/feature/fn "$(git -C "$w" rev-parse HEAD)"; git -C "$A" worktree remove --force "$w"
+$DA local close "$R" --applied-by-am >/dev/null 2>&1
+out=$($F finish fn 2>&1)
+grep -q "open run" <<<"$out" && no "a closed run still blocks finish: $out" || ok "a run closed with --applied-by-am does not block finish"
+R2=$(mkrun disc-run feature/fn)
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "1 open run(s)" <<<"$out" || no "(setup) a new run is open: rc=$rc $out"
+$DA local clean "$R2" --discard >/dev/null 2>&1
+out=$($F finish fn 2>&1)
+grep -q "open run" <<<"$out" && no "a discarded run still blocks finish: $out" || ok "a discarded run does not block finish"
+R3=$(mkrun applied-run feature/fn); commits "$R3" c2.go; collect "$R3"; verify "$R3" >/dev/null
+$DA review apply "$R3" >/dev/null 2>&1
+out=$($F finish fn 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "applied, not merged" <<<"$out" && ok "an applied run whose branch is not merged is open" || no "applied not merged: rc=$rc $out"
+$F merge fn agent/applied-run >/dev/null 2>&1
+out=$($F finish fn 2>&1)
+grep -q "open run" <<<"$out" && no "an applied and merged run blocks finish: $out" || ok "an applied and merged run does not block finish"
+$DA local clean "$R3" >/dev/null 2>&1
+out=$($DA local clean "$R" 2>&1)
+$F verify fn >/dev/null 2>&1; out=$($F finish fn 2>&1)
+grep -q "^plan token:" <<<"$out" && ok "with no run open, feature finish goes on to its plan" || no "finish plan: $out"
+
+
 rm -rf "$T"
 exit $fail
