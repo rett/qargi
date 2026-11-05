@@ -92,7 +92,7 @@ ENV_APT=$APT
 ENV_PIP='' ENV_GO=''
 TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
-  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
+  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].tools[]? | select(.kind == "go") | .name + "@" + .version] | unique | join(" ")' "$PCFG")
 fi
 if [ -z "$MODEL" ]; then   # the balanced model of the project's provider on the cloud surface (models.provider; no default, a project with none for it is refused with exit 2)
   _prov=$(project_provider "$PROJECT" cloud) || exit $?

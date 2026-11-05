@@ -4,6 +4,8 @@
 # compares every ref of the real repository (and of its remote) before and after.
 #
 #   local.sh prepare (--repo DIR | --repo-url URL [--credential-file FILE]) --base BRANCH --slug SLUG --scratch DIR [--role R] [--profile NAME]
+#                                        (the submodules the role declares in roles.R.tools are checked out in the clone from the lead's
+#                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
 #   local.sh verify RUN_DIR
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
@@ -286,6 +288,14 @@ case $verb in
     git -C "$RUN/clone" remote set-url --push origin DISABLED
     git -C "$RUN/clone" rev-parse --verify -q "origin/$BASE" >/dev/null || die "no branch $BASE in the repository"
     git -C "$RUN/clone" checkout -q -b "agent/$SLUG" "origin/$BASE"
+    # the submodules the role declares (roles.ROLE.tools, kind submodule) are checked out in the clone from the lead's copy of their objects,
+    # offline (lib/tools.py checkout): a commit that is not on this host, or a run cloned from a URL, is a note on stderr and nothing is fetched
+    SUBS='' SPROJ=$(project_of "$REPO" "$URL")
+    if [ -n "$SPROJ" ]; then
+      sargs=(checkout --answers "$DA_CONF/projects/$SPROJ.json" --role "$ROLE" --clone "$RUN/clone" --copies "$RUN/sub")
+      [ -z "$REPO" ] || sargs+=(--source "$REPO")
+      SUBS=$(python3 -I "$(dirname "$0")/tools.py" "${sargs[@]}" </dev/null) || SUBS=''
+    fi
     cat > "$RUN/git" <<WRAP
 #!/usr/bin/env bash
 # git without credentials: no home, no global config, no ssh, no prompts.
@@ -315,6 +325,7 @@ WRAP
     BSHA=$(git -C "$RUN/clone" rev-parse "origin/$BASE")
     echo "BASE_SHA=$BSHA"
     echo "CONTRACT=$RUN/contract"
+    [ -z "$SUBS" ] || echo "$SUBS"
     echo
     echo "TASK-BLOCK PATHS"
     echo "RUN_DIR=$RUN"
