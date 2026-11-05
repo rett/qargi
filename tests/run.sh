@@ -309,6 +309,7 @@ report() {   # the block of one finished step, printed in one piece
   else
     text+=$'\n'$(grep -E -A6 "^FAIL|Error|error:" "$WORK/out/$k.log" | head -60)
     text+=$'\n'$(tail -20 "$WORK/out/$k.log")
+    text+=$'\n'"exit status $r, $(wc -c <"$WORK/out/$k.log") bytes of output"
     if [ "$r" = 124 ] || [ "$r" = 137 ]; then text+=$'\n'"TIMEOUT: ${s_cmd[i]} was stopped after ${s_tmo[i]}s"; fi
     if [ -e "$WORK/out/$k.left" ]; then text+=$'\n'"LEFT RUNNING after ${s_cmd[i]} (killed):"$'\n'"$(cat "$WORK/out/$k.left")"; fi
     if [ "$r" = 0 ] && [ ! -e "$WORK/out/$k.left" ]; then text+=$'\n'"OVER BUDGET: ${sec}s, budget ${s_bud[i]}s (--enforce-budgets)"; fi
