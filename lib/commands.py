@@ -135,8 +135,13 @@ COMMANDS = {
                                 "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
-                        desc="PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. packs.none true says the project uses no project packs: qargi packs check passes with no render (see qargi help packs). A member's guard refuses packs.*.",
-                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true"]),
+                        desc=("PATH is dotted (budget_cents, roles.write.effort, lead.push); VALUE is JSON or a plain string. models.extensions and models.accept_no_barrier are refused here: they change only through qargi provider enable|disable and qargi provider accept. "
+                              "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
+                              "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
+                              "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command and env.*."),
+                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true",
+                                  "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
             "validate": verb("Check an answers file without storing it (a WARN line for each pack linked to a role that is not in the pack library, and for a profile that still carries the shipped template header)", [("FILE", "file")]),
@@ -439,7 +444,9 @@ COMMANDS = {
                                 "not found or not installed, is a missing item; one that begins with expected or contains an env.known_failures entry is expected "
                                 "and not red; a non-zero exit with no such line is one missing item. With no doctor command a built-in minimum runs: submodules "
                                 "initialised, tags present when the repository has a remote and releases, and every tool a pin file names found on PATH, answering "
-                                "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it adds, read-only, whether the checkout "
+                                "--version and matching the pin's major.minor (this runs TOOL --version). For a stored project it then checks the tools the roles declare (roles.ROLE.tools): "
+                                "a go tool or a binary that is not installed, is another version (go version -m) or another file (sha256) or sits in a directory PATH lacks, and a declared "
+                                "submodule that is not initialised or at another commit, are missing items. It adds, read-only, whether the checkout "
                                 "loads the project's skills, agents and memory, whether the members are current (STALE, DRIFT), packs check and memory check. "
                                 "The last line is ENV OK or ENV INCOMPLETE: N missing (...); exit status 0, 1 or 2 (usage, no such project, no repository). "
                                 "The verdict, HEAD, time and commands are recorded under check in state/env/PROJECT.json (mode 600, the other keys are kept); no command output is."),
@@ -453,21 +460,25 @@ COMMANDS = {
                                "a minimal environment (PATH with absolute entries, HOME, USER, LOGNAME, LANG, LC_ALL, LC_CTYPE, TERM, TZ, TMPDIR) and a limit of "
                                "QARGI_ENV_TIMEOUT seconds (default 120). Its output is shown line by line, the privileged lines (a command in the line is sudo, doas, "
                                "pkexec, su or run0) apart from the others, then the executables seen in the lines. Lines and executables are read from the text, "
-                               "best effort: a recipe can run more than its dry run shows. The plan token is a hash over the output, the commands, the repository "
+                               "best effort: a recipe can run more than its dry run shows. Then the tools the roles declare (roles.ROLE.tools), each with its state here "
+                               "(ok, missing, wrong, path: in a directory PATH lacks); apply installs the go tools and binaries that are missing or wrong, so the token line "
+                               "names go in --approve-exec when a go tool is among them. The plan token is a hash over the output, the commands, the tools, the repository "
                                "and its HEAD, and the host name. A member's guard refuses it."),
                          examples=["qargi env plan --approve-exec make", "qargi env plan --project acme --approve-exec make"]),
             "apply": verb("Run the bootstrap command once, for a plan you showed (the lead's)", [],
                           [PROJECT_OPT, opt("--repo", "the repository directory (default: the project's repo.path, else the repository around here)", "DIR", "dir"),
                            PLAN, APPROVED,
-                           opt("--approve-exec", "name the executables of the dry-run and the bootstrap commands, separated by commas (others the plan listed may be added)", "NAMES"),
+                           opt("--approve-exec", "name the executables of the dry-run and the bootstrap commands, and go when the plan installs a go tool, separated by commas (others the plan listed may be added)", "NAMES"),
                            opt("--allow-root", "allow a plan that has privileged lines (sudo, doas, ...)")],
                           desc=("Runs the dry run again (project code, as plan does) and refuses when its token is not --plan, when --approve-exec does not name the two "
                                 "executables, and when the plan has privileged lines and --allow-root is not given. Then the bootstrap command runs once, without a "
                                 "shell, with the minimal environment of plan and with standard input, output and error inherited, so sudo can ask on your terminal: run "
                                 "it in a terminal you are at. No password is read or kept. Apply writes two lines to the audit log (start and result, with your words), "
-                                "records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check (the project's doctor), whose verdict ends the output and whose exit status is the verb's. QARGI_DRY_RUN stops it "
+                                "then installs the declared tools the plan showed as missing or wrong: go install NAME@VERSION for a go tool, and for a binary the file at its URL, downloaded to a temporary name, "
+                                "kept only when its sha256 is the declared one, made executable and moved to ~/.local/bin/NAME (a failed tool is named, the others still run, exit 1). "
+                                "It records the run in ~/.qargi/state/env/NAME.json (mode 600) and then runs qargi env check (the project's doctor), whose verdict ends the output and whose exit status is the verb's. QARGI_DRY_RUN stops it "
                                 "after the checks, before the bootstrap runs. A member's guard refuses it."),
-                          examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make",
+                          examples=["qargi env apply --plan 0123456789ab --approved \"install the tools\" --approve-exec make,go",
                                     "qargi env apply --plan 0123456789ab --approved \"go\" --approve-exec make,pacman --allow-root"]),
         },
     },
@@ -824,7 +835,10 @@ COMMANDS = {
                              opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
                             desc=("Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless --profile), MEMBER, MODEL and EFFORT (only with --profile), CLONE, OUT, TMP, GIT, "
-                                  "BASE_SHA and CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md). "
+                                  "BASE_SHA, CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md) and, when the role declares "
+                                  "submodules (roles.ROLE.tools, kind submodule) and the clone got them, SUBMODULES=path,... Each declared submodule is checked out in the clone from the lead's copy of its objects "
+                                  "(the checkout at REPO/PATH, else the modules directory), offline: a mirror with no remote under RUN/sub and git submodule update from it, push URL disabled. A commit "
+                                  "the lead's copy lacks, a submodule not initialised there, or a run made with --repo-url, is a note on stderr; nothing is fetched. "
                                   "Then a blank line and a TASK-BLOCK PATHS block (RUN_DIR, CLONE, OUT, TMP, GIT, BASE_SHA, CONTRACT) to copy into the task, and in a stored project a TASK-BLOCK MEMORY block. "
                                   "A caller that evals the output must stop at the blank line.\n"
                                   "When the project (found by matching the repository against the stored answers) has a render for its local runtime "
@@ -1207,7 +1221,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; memory init, "
@@ -1256,6 +1270,10 @@ TOPICS = {
         "begins with missing, fail or error, or ends with missing or not found, is a missing item; one that begins with expected is not red. "
         "qargi env plan runs the dry run (a dry run still runs project code: make -n expands $(shell ...)) "
         "and shows it with a plan token; qargi env apply runs bootstrap once for that plan. Both are the lead's.",
+        "A tool a role needs that the bootstrap does not provide (a pinned linter from go install, a downloaded binary, a vendored test framework "
+        "that is a submodule) is declared once in the project's answers, roles.ROLE.tools (qargi help project set): env plan shows each with its state, "
+        "env apply installs the go tools and binaries (the binary's sha256 must match), env check reports one that is missing or wrong, and "
+        "qargi local prepare checks the submodules out in every member clone from the lead's copy, offline. Plain apt packages stay in roles.ROLE.apt.",
         "For the author of a doctor target: print one line per item, for example the tool and its version. Start a line with missing, fail or error "
         "when the item is absent or wrong (such a line is a missing item); start it with expected for a known failure that is accepted (shown, not red); "
         "any other line is information. Exit non-zero when anything is missing, and change nothing.",

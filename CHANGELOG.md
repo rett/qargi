@@ -16,6 +16,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   profile still carries the shipped example's title or "Copy to" line, and warns (exit 0) of each backticked command in the
   profile's Gates section that is in none of the repository's `CLAUDE.md`, `AGENTS.md` and Makefile targets. No profile is fine.
   `project validate` prints the header finding as a `WARN:` line.
+- `roles.ROLE.tools`: the tools a role needs beyond its apt packages, declared once in the project's answers as a list of
+  `{kind, name, ...}` entries. `go` (a package path and a tagged version: `go install NAME@VERSION`), `binary` (a file name, version,
+  the URL of the file and its sha256: downloaded to `~/.local/bin` and kept only when the hash matches) and `submodule` (a name and
+  the path of a submodule of the repository). `project validate` checks each kind's keys and that two roles do not pin one tool
+  differently. `qargi env plan` lists every tool with its state here (ok, missing, wrong, path) and the token covers the list;
+  `qargi env apply` installs the go tools (go must be in `--approve-exec`) and binaries that are missing or wrong, after the
+  bootstrap, and records them; `qargi env check` reports a tool that is not installed, is another version (`go version -m`) or
+  another file (sha256), sits in a directory PATH lacks, or a declared submodule that is not initialised or at another commit.
+  `qargi local prepare` checks the role's declared submodules out in the member's clone from the lead's copy of their objects,
+  offline (a mirror with no remote under `RUN/sub`, push URL disabled) and prints `SUBMODULES=path,...`; a commit the lead's copy
+  lacks, a submodule not initialised there, or a run made with `--repo-url`, is a note and nothing is fetched (`lib/tools.py`).
 - Providers as data, one runtime per surface. Claude ships as two runtimes of one family, `claude-code` (local) and
   `claude-platform` (cloud), with a shared model catalog. The family name `claude` resolves per surface (a notice says so) in a
   project's `models.provider` and in `provider of`; every `provider` verb that takes a NAME takes a runtime name (there is no
@@ -197,6 +208,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
 
 ### Changed
+- `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
+  packages from there (`NAME@VERSION`). `project validate` refuses the old key and says so. `roles.ROLE.apt` and `.pip` stay as
+  they are: plain package lists of the cloud environment, with nothing pinned or hashed in them.
 - Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local
   claude-code` and `models.provider.cloud claude-platform`, or `models.provider claude` for the family). `agent`, `provision`,
   `local prepare`, `local run`, session starts, `project validate`, `packs apply|check|link|unlink`, `skill accept` and `marshal
@@ -390,6 +404,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   says to propose it in the report.
 
 ### Security
+- A member's `qargi project set` of `roles.ROLE.tools` (or of a whole role, or of `roles`) is refused, as `env.*`, `release.*` and
+  `test_command` are: the list names what `env apply` installs and runs with the lead's rights and what `local prepare` checks out.
 - The member guard refuses more of what runs a refused verb or `git push`, and allows nothing the earlier guard refused:
   - It cuts a Bash command at every `;`, `&&`, `||`, `|`, `&` and newline, inside quotes, comments and heredocs too (write a commit
     message to a file and `git commit -F FILE`), reads a command substitution as a command of its own wherever it sits, a verb

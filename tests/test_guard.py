@@ -346,6 +346,21 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_project_set_of_a_roles_tools_to_a_member(self):
+        """roles.<role>.tools names what env apply installs (go install, a download) and local prepare checks out, so a member may not set it,
+        nor a whole role or all roles, which hold it. A role's other answers (effort, model, apt) stay open."""
+        for path in ("roles", "roles.build", "roles.build.tools", "roles.build.tools.0", "roles.test.tools.1.sha256"):
+            for form in ("qargi project set p %s v", "sudo qargi project set p %s v", "bash -c 'qargi project set p %s v'", "echo $(qargi project set p %s v)",
+                         "./lib/project.sh set p %s v"):
+                c = form % path
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi project set of %s changes the tools the lead later installs and checks out" % path, r.stderr, c)
+        for c in ("qargi project set p roles.build.effort high", "qargi project set p roles.build.apt '[\"jq\"]'", "qargi project set p roles.build.model x",
+                  "qargi project set p rolestools x", "qargi project show p", "echo qargi project set p roles.build.tools x"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
         the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a

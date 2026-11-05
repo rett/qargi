@@ -14,6 +14,10 @@ time limit (--timeout, default 300 s). Its lines are read:
 A doctor that exits non-zero without reporting a missing item is itself one missing item. Running the doctor runs the project's code, as
 test_command does: it is as trusted as the repository.
 
+The tools the roles declare (roles.<role>.tools, lib/tools.py) are checked after it, for a stored project: a go tool or a binary that is
+not installed, is another version (go version -m) or another file (sha256), or sits in a directory PATH lacks, and a declared submodule that
+is not initialised or at another commit, are missing items.
+
 With no doctor command a built-in minimum runs instead: every submodule of .gitmodules is initialised; tags are present when the
 repository has a remote and releases (a VERSION file or a numbered changelog heading); every tool a pin file names is on PATH, answers
 `--version` (`go version`) and, where the pin is a version number, matches its major.minor (a go.mod `go` line and a `>=` range are minimums).
@@ -32,6 +36,7 @@ import contextlib, io, json, os, re, shlex, shutil, signal, subprocess, sys, tem
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import env as E  # noqa: E402
 import paths as P  # noqa: E402
+import tools as T  # noqa: E402
 
 TIMEOUT = 300
 MAX_TIMEOUT = 3600
@@ -275,6 +280,25 @@ def _read(repo, rel):
         return ""
 
 
+# ---- the tools the roles declare ---------------------------------------------------------------------------------------------
+
+def declared_tools(answers, repo):
+    """{rows, items, notes} for roles.<role>.tools: one row, and a missing item for each tool that is not there, not the declared one, or off PATH."""
+    rows, items, notes, counts = [], [], [], {"ok": 0}
+    entries = T.declared(answers)
+    if not entries:
+        return {"rows": [], "items": [], "notes": []}
+    for t in entries:
+        state, text = T.status(t, repo)
+        counts[state] = counts.get(state, 0) + 1
+        if state == "note":
+            notes.append(text)
+        elif state != "ok":
+            items.append(("missing", text))
+    rows.append(("tools", "%d declared (roles.<role>.tools): %s" % (len(entries), ", ".join("%d %s" % (n, k) for k, n in counts.items() if n))))
+    return {"rows": rows, "items": items, "notes": notes}
+
+
 # ---- the qargi layer ---------------------------------------------------------------------------------------------------
 
 def sub(args):
@@ -511,6 +535,10 @@ def check(argv):
         doctor_json = {"command": None, "builtin": b["checked"]}
     layer = None
     if project is not None:
+        tl = declared_tools(answers, repo)
+        rows += tl["rows"]
+        items += tl["items"]
+        notes += tl["notes"]
         layer = qargi_layer(project, answers, repo)
         items += layer["items"]
     # an item that matches an accepted failure is expected, whichever part found it
