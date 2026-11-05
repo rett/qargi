@@ -206,6 +206,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `packs/skills/`, `provision/templates/*.md` and `methodologies/` beyond the counts in `tests/vendor-words-allowlist.txt`, which can
   only shrink. `tests/test_tool_copy.sh` keeps `install.sh --copy`'s `tool_dirs`, the tests' `TOOL_DIRS` (one `copy_tool` helper in
   `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
+- Numbered changelog items, opt-in with the answer `release.changelog.numbered: true`. Under the unreleased heading
+  (`release.changelog.unreleased`, default `## [Unreleased]`) an item is a line that starts `N. ` or `- N. `; the lines up to the
+  next item belong to it. `qargi changelog renumber [--project P] [--check]` finds duplicate item numbers (two branches that each
+  added an item 5), numbers the items again in file order from the first one's number and rewrites the `(item N)` cross-references
+  (with a duplicated N, to the nearest item numbered N at or before the reference, else the nearest after it). It works on the
+  `CHANGELOG.md` of the work tree around the current directory and leaves the change uncommitted; `--check` only reports and exits 1
+  on a duplicate. `feature sync` warns about duplicates after the merge, and `feature finish` refuses (exit 1, nothing changed)
+  until they are renumbered, committed and verified. A member may run only `--check`; `renumber` without it is refused by the guard.
 
 ### Changed
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
@@ -310,6 +318,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   lead's git configuration and session files), the rules for `cd`, the 5-second budget and the `git commit -F FILE` advice, within
   330 words; `tests/test_help.py` fails when a refused verb is in neither the topic nor a documented exemption, and compares the
   manual page's APPROVALS and GUARD sections with the topics.
+- `qargi feature finish NAME` refuses a feature that is behind develop when both sides changed the same files since their merge
+  base (exit 1, nothing changed). It lists those files and says to run `qargi feature sync NAME` first. A feature behind develop
+  with no file in common is refused as before, without the list.
+- `qargi release status VERSION` shows, next to the full-suite verdict, the command that produced it and when it ran (from the suite
+  record). When `release.test_command` is set and is not that command, or the project's `test_command` changed since the run, a line
+  of its own says so, so the pass is not read as the release gate. A record made by another command is shown, not reported as "not run".
+- `qargi release start VERSION` lists, after it creates the branch, the features merged into develop since the previous tag (the
+  `--no-ff` merges whose message is "Merge branch 'feature/...'"), one per line with the short sha, or says there are none.
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.

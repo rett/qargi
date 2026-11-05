@@ -47,7 +47,7 @@ refuses "a changelog without an Unreleased section refuses" "no '## \[Unreleased
 mk plain; seal
 $REL start 0.2.0 >/dev/null 2>&1 && ok "a project with neither man page nor changelog is not checked" || no "plain: $($REL start 0.2.0 2>&1)"
 # the generated manual page keeps the date `release start` set: regenerating it after the start must not empty the date again
-mk regen; cp -r "$SRC/lib" "$R/lib"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
+mk regen; cp -r "$SRC/lib" "$SRC/skills" "$R/"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
 (cd "$R" && python3 lib/help.py man > man/qargi.1)
 [ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "" "qargi 0.1.0"' ] && ok "a first generation (no page yet) writes an empty date" || no "first generation: $(head -1 "$R/man/qargi.1")"
 seal
@@ -110,6 +110,34 @@ $REL verify 0.2.0 >/dev/null 2>&1 && no "verify without release.test_command pas
 rel '{"test_command":"echo release-check && true"}'; out=$($REL verify 0.2.0 2>&1) && grep -q "release-check" <<<"$out" && ok "verify runs release.test_command (a command line) instead of test_command" || no "release.test_command line: $out"
 rel '{"test_command":["sh","-c","exit 0"]}'; $REL verify 0.2.0 >/dev/null 2>&1 && ok "release.test_command as a list of words" || no "release.test_command list"
 rel '{"test_command":["sh","-c","exit 1"]}'; $REL verify 0.2.0 >/dev/null 2>&1 && no "a failing release.test_command passed" || ok "a failing release.test_command fails verify"
+
+# release status says what the full-suite verdict is: the command that produced it and when it ran; a release.test_command that is not that
+# command gets a line of its own, so the pass is not read as the release gate
+mk stat; seal
+out=$($REL status 0.2.0 2>&1)
+grep -Eq '^no release/0.2.0 yet. develop is at [0-9a-f]+, full suite: pass at this head \(command: true; ran [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z\)$' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "status names the command and the time of the suite record, and says nothing more when release.test_command is not set" || no "status verdict: $out"
+rel '{"test_command":"echo gate"}'; out=$($REL status 0.2.0 2>&1)
+grep -q 'full suite: pass at this head (command: true; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "a release.test_command that differs from the recorded command is named on its own line" || no "status note: $out"
+$REL verify 0.2.0 >/dev/null 2>&1; $REL start 0.2.0 --date 2026-03-04 >/dev/null 2>&1; $REL verify 0.2.0 >/dev/null 2>&1; out=$($REL status 0.2.0 2>&1)
+grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && ! grep -q "note:" <<<"$out" && ok "after the release's own verify the branch status shows that command and no note" || no "branch status: $out"
+rel '{"test_command":"echo gate2"}'; out=$($REL status 0.2.0 2>&1)
+grep -q '^full suite: pass at this head (command: echo gate; ran ' <<<"$out" && grep -qx '  note: release.test_command is "echo gate2", not the command of that run: it is not the release gate (qargi release verify 0.2.0 runs it)' <<<"$out" && ok "the note shows on the release branch status too" || no "branch note: $out"
+
+# release start lists the features merged into develop since the previous tag: the --no-ff merges "Merge branch 'feature/...'", one per line with the short sha
+mergedev() { # BRANCH: a --no-ff merge of it into develop, with git's own message
+  git -C "$R" worktree add -q --detach "$T/wt" develop && git -C "$T/wt" merge -q --no-ff "$1" -m "Merge branch '$1' into develop" && git -C "$R" update-ref refs/heads/develop "$(git -C "$T/wt" rev-parse HEAD)"
+  git -C "$R" worktree remove --force "$T/wt"
+}
+mk feats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -q -m one; git -C "$R" branch -f develop
+git -C "$R" branch feature/old develop; onbranch feature/old "echo x > old.txt"; mergedev feature/old
+git -C "$R" tag 0.1.0 develop
+for n in feature/alpha feature/beta agent/task; do git -C "$R" branch "$n" develop; onbranch "$n" "echo x > $(basename "$n").txt"; mergedev "$n"; done
+$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+a=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/alpha'" develop); b=$(git -C "$R" log -1 --format=%h --grep "Merge branch 'feature/beta'" develop)
+grep -qx 'features merged into develop since 0.1.0 (2):' <<<"$out" && grep -qx "  $a feature/alpha" <<<"$out" && grep -qx "  $b feature/beta" <<<"$out" && ! grep -q "feature/old\|agent/task" <<<"$out" && ok "release start lists the features merged since the previous tag, one per line with the short sha, and not older features or task merges" || no "feature list: $out"
+mk nofeats; printf "$CL" > "$R/CHANGELOG.md"; git -C "$R" add -A; git -C "$R" commit -q -m one; git -C "$R" branch -f develop; git -C "$R" tag 0.1.0 develop
+$REL verify 0.2.0 >/dev/null 2>&1; out=$($REL start 0.2.0 --date 2026-03-04 2>&1)
+grep -qx 'no feature was merged into develop since 0.1.0' <<<"$out" && ok "and says so when there is none" || no "no features: $out"
 
 # release.preflight: run by start and by push before anything changes; a non-zero exit refuses with the tail of its output
 printf '#!/usr/bin/env bash\necho "$1" >> "%s/pre.log"\nif [ -f "%s/pre.fail" ]; then echo "preflight boom"; exit 3; fi\n' "$T" "$T" > "$T/pre.sh"

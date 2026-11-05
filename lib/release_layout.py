@@ -7,6 +7,8 @@ Answers, under `release` in the project's answers file (every one optional; the 
   release.changelog.unreleased the heading of the section of the changes to come (default "## [Unreleased]"). It may carry the version:
                                "## {version} (unreleased)" is then renamed by the release, not kept
   release.changelog.released   the heading of a released section (default "## [{version}] - {date}"); {version} is required, {date} is optional
+  release.changelog.numbered   true when the items under the unreleased heading are numbered ("12. text" or "- 12. text"; default false): feature sync and
+                               feature finish then check them for duplicates (lib/changelog_numbers.py, qargi changelog renumber)
   release.man_pages            the manual pages whose .TH date and version the release sets (default: the man/*.1 files of the repository)
   release.test_command         the command of `release verify` (a command line, or a list of words; default: the answer test_command)
   release.preflight            a command as a list of words, {version} replaced, run by `release start` and `release push` before they change
@@ -26,7 +28,7 @@ import sys
 DEFAULT_UNRELEASED = "## [Unreleased]"
 DEFAULT_RELEASED = "## [{version}] - {date}"
 LAYOUT_KEYS = ("version_file", "changelog", "man_pages", "test_command", "preflight")
-CHANGELOG_KEYS = ("unreleased", "released")
+CHANGELOG_KEYS = ("unreleased", "released", "numbered")
 CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
@@ -72,6 +74,8 @@ def problems(rel):
                 p = template_problem("release.changelog.unreleased", c["unreleased"], ("version",), DEFAULT_UNRELEASED)
                 if p:
                     out.append(p)
+            if "numbered" in c and not isinstance(c["numbered"], bool):
+                out.append("release.changelog.numbered: true or false (true: the items under the unreleased heading are numbered; see qargi changelog)")
             if "released" in c:
                 p = template_problem("release.changelog.released", c["released"], ("version", "date"), DEFAULT_RELEASED, ("version",))
                 if p:
