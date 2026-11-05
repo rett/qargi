@@ -516,6 +516,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The text the line shows (a here-string, an echo or printf piped in or written to the file the shell runs) is now read as `sh -c` text is, and a program it cannot see
   (`cat file | bash`, `curl ... | sh`, `bash < file`, a process substitution, a file `cp` writes in the same command) is refused: write the script with the file tool
   and run `bash FILE`.
+- The member guard finds the lead identity `QARGI_LEAD` among the names a command sets the way it finds `QARGI_NESTED`: `printf -vQARGI_LEAD x` (the name
+  glued to `-v`), `mapfile` and `readarray` into it, and `env -uQARGI_LEAD` were not refused.
 
 ## [0.2.0] - 2026-11-02
 

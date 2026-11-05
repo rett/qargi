@@ -1150,6 +1150,16 @@ class Marshal(unittest.TestCase):
                       "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
                       "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
 
+    def test_the_lead_identity_is_found_as_env_names_finds_a_name(self):
+        """lead_refusal reads the names a segment sets through env_names(), as the QARGI_NESTED check does: printf -v with the name glued to the option,
+        read, mapfile and readarray into it are refused too, and env -u glued to the name unsets it."""
+        self.refused(["printf -vQARGI_LEAD x", "printf -v QARGI_LEAD x", "printf -vQARGI_LEAD '%s' me; qargi marshal status", "read QARGI_LEAD <<< me",
+                      "read -r QARGI_LEAD < f", "mapfile QARGI_LEAD < f", "readarray -t QARGI_LEAD < f", "env -uQARGI_LEAD qargi marshal status",
+                      "bash -c 'printf -vQARGI_LEAD x'"])
+        for c in ("printf -vQARGI_LEADER x", "printf -vX y", "env -uQARGI_LEAD_X ls"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_other_variables_are_not_the_lead(self):
         for c in ("export QARGI_LEADER=me", "QARGI_LEAD_X=1 ls", "export MY_QARGI_LEAD=1", "unset QARGI_STATE_X", "echo QARGI_LEAD=1"):
             res = self.bash(c)
