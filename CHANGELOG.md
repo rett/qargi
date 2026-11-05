@@ -180,6 +180,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `packs/skills/`, `provision/templates/*.md` and `methodologies/` beyond the counts in `tests/vendor-words-allowlist.txt`, which can
   only shrink. `tests/test_tool_copy.sh` keeps `install.sh --copy`'s `tool_dirs`, the tests' `TOOL_DIRS` (one `copy_tool` helper in
   `tests/hermetic.sh`) and the top-level directories in step. `tests/test_valued_opts.sh` covers every option parser.
+- `qargi upstream status|review|sync` for a project that is a fork of an upstream repository and keeps its own changes, the
+  overlay, on top of it. The answers name the remote (`upstream.remote`), the branch it follows (`upstream.branch`) and the
+  local branch that carries the upstream line and nothing else (`upstream.into`, default `upstream`); `upstream.overlay_check`,
+  optional, is a command array. `status` fetches that one branch of that remote (no tags, the only verb that reaches the
+  network) and reports how far the branch is behind and ahead with the newest upstream commits; `review [--limit N]` lists
+  the upstream commits not yet in the branch with the files each touches and marks the ones that touch a file develop changed
+  since it parted from the upstream line; `sync` fast-forwards the branch to the fetched tip from a plan and a token
+  (`--plan`, `--approved`), creates it at the tip when it does not exist, journals the move, refuses a branch with commits of
+  its own, pushes nothing and never merges into develop (the next step, `feature start upstream-X` then `feature merge`, is
+  printed); with `upstream.overlay_check` it then runs the command on a trial merge of the branch into develop in a temporary
+  worktree (exit 1 on a failure or a conflict; the fast-forward stands). `project validate` checks the `upstream` answers.
+  The guard refuses a member `upstream status` (its fetch changes the remote-tracking refs of the lead's repository, which
+  `local verify` compares) and `upstream sync`, and `project set` of any `upstream` answer; `review` stays allowed.
+  `tests/test_upstream.sh` runs the verbs against a local bare repository acting as upstream.
 
 ### Changed
 - Breaking: nothing assumes Claude any more. Set a runtime per surface for every project (`qargi project set P models.provider.local
