@@ -53,11 +53,11 @@ fast | par | 300 | 3 | bash tests/test_methodology.sh | lib/methodology.py metho
 fast | par | 300 | 11 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 4 | bash tests/test_new.sh
 full | par | 300 | 18 | bash tests/test_adopt.sh
-full | par | 480 | 80 | bash tests/test_flow.sh
+full | par | 480 | 80 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh
 fast | par | 300 | 3 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 7 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 3 | bash tests/test_verify_env.sh
-full | par | 300 | 31 | bash tests/test_release_preflight.sh | lib/release*.sh lib/release*.py
+full | par | 300 | 31 | bash tests/test_release_preflight.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 20 | bash tests/test_release_publish.sh | lib/release*.sh lib/release*.py
 fast | par | 300 | 12 | bash tests/test_release_gh.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 19 | bash tests/test_release_site.sh | lib/release*.sh lib/release*.py

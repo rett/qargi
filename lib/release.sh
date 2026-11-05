@@ -12,7 +12,7 @@
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
 #                                           A release (not a hotfix) then lists the features merged into develop since the previous tag.
-#   release.sh status VERSION [--hotfix]    the full-suite verdict names the command that produced it and when it ran (the suite record); a
+#   release.sh status VERSION [--hotfix]    the full-suite verdict names the command that produced it, when it ran, how long it took and its mode (-j N, shard I/K) (the suite record); a
 #                                           release.test_command that is not that command gets a line of its own: the pass is not the release gate.
 #                                           For an existing tag also warns: no GitHub release for it (gh release view, through
 #                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
@@ -131,12 +131,13 @@ open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPRE
 # suite_verdict BRANCH -> SV_TEXT, the last whole-suite run recorded for the branch ("pass at this head (command: C; ran AT)"; empty when none was
 # recorded), and SV_NOTE, set when release.test_command is set and is not the command of that run: the run is then not the release gate.
 suite_verdict() {
-  local f cur res at cmd
+  local f cur res at cmd took mode
   SV_TEXT='' SV_NOTE=''
   f=$(rec "$1"); [ -f "$f" ] || return 0
   cur=$(jq -r '.sha // empty' "$f" 2>/dev/null) || return 0; [ -n "$cur" ] || return 0
   res=$(jq -r '.result // "?"' "$f"); at=$(jq -r '.at // "an unknown time"' "$f"); cmd=$(jq -r '.command // "an unknown command"' "$f")
-  SV_TEXT="$res at $([ "$cur" = "$(sha_of "$1")" ] && echo 'this head' || echo 'an older head') (command: $cmd; ran $at)"
+  took=$(jq -r 'if (.seconds | type) == "number" then "took \(.seconds)s" else empty end' "$f"); mode=$(jq -r '.mode // empty' "$f")
+  SV_TEXT="$res at $([ "$cur" = "$(sha_of "$1")" ] && echo 'this head' || echo 'an older head') (command: $cmd; ran $at${took:+; $took}${mode:+; $mode})"
   if [ -n "$RTC" ] && [ "$RTC" != "$cmd" ]; then
     SV_NOTE="  note: release.test_command is \"$RTC\", not the command of that run: it is not the release gate (qargi release verify $VER runs it)"
   elif [ -n "$TESTCMD" ] && [ "$TESTCMD" != "$cmd" ]; then
@@ -304,9 +305,10 @@ case $verb in
     worktree "$h"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
     busy_begin release-verify "$VER"
+    t0=$SECONDS
     if run_suite; then res=pass; else res=fail; fi
     busy_end
-    jq -nc --arg s "$h" --arg r "$res" --arg t "$(now)" --arg c "$TESTCMD" '{sha:$s, result:$r, at:$t, command:$c}' > "$(rec "$on")"
+    record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")"
     tag_checks
     [ "$res" = pass ];;

@@ -16,6 +16,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regenerate it). `tests/test_ci.py` checks the CI workflow and the shard balance.
 - The methodology parameter `ci_timeout_minutes` (default 30; a positive whole number, a parameter may carry a `pattern`) sets the
   `timeout-minutes` of the CI job the gitflow scaffold writes, so a project sets it from its own suite budgets.
+- `qargi release status` shows, in the suite record's verdict, how long the run took and the mode its command names (`-j N`,
+  `shard I/K`): `pass at this head (command: C; ran AT; took 412s; -j 8)`. `release verify` and `feature verify` record both; a
+  record made before shows the command and the time only.
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
