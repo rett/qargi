@@ -62,6 +62,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Members are rendered from one neutral definition (`agents/member.json`, `member.body.md`) through the runtime's renderer.
   `agent list` and `agent models` show `STALE` (definition, catalog, renderer or an enabled extension changed) and `DRIFT` (file
   edited by hand).
+- The render of a member is kept in the configuration directory, `~/.qargi/config/agents/PROJECT/NAME.EXT` (beside `agents.json`,
+  outside every repository), and the runtime's file is written from it: `agent add`, `rename` and `refresh` write both, `remove`
+  deletes both. A checkout that is cleaned or cloned afresh gets its members back with `qargi agent refresh NAME --project P`, which
+  also hides the file from git again. `agent list` and `agent models` show `MISSING` (the runtime's file is gone), `STALE` (the copy
+  in config is gone or changed, or the inputs of the render did) or `DRIFT` (the file was edited by hand), each with that command.
+  `env check` reads the new form.
 - Every skill and tool pack declares `compatible_providers` (runtime names, family names or `any`) as part of its content hash:
   `skill|tool new|import --compatible LIST` and `seal --compatible`. A project's runtime skips a pack it is not on, with a note in
   `effective`, `check`, `packs apply|check|link` and `discover install [--compatible]`.
