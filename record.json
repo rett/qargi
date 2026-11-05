@@ -4,19 +4,13 @@
  "goal": "The changelog carries the unreleased 0.2.1 entries as unreleased, so the next release is 0.2.2 with all of them; examples in help use a later version",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "lead",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-05T16:37:29Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-05T16:52:51Z",
- "finished_at": null,
+ "finished_at": "2026-11-05T16:56:44Z",
  "updated_by": "lead",
- "rev": 3,
- "updated_at": "2026-11-05T16:52:51Z",
+ "rev": 4,
+ "updated_at": "2026-11-05T16:56:44Z",
  "feature": "fold-0-2-1",
  "project": "qargi"
 }
