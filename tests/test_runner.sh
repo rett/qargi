@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/run.sh and tests/suite.txt: the manifest and its inventory check, --only, --tier, --shard, --shuffle, --repeat, -j (the
+# tests/run.sh and tests/suite.txt: the manifest and its inventory check, --only, --tier, --shard, --changed-files/--changed-from, --plan, --shuffle, --repeat, -j (the
 # same verdict at -j 1 and -j 4), the timeout, a process left running, the budget warning and --enforce-budgets, the usage
 # errors. The runner is run on a scratch copy with small steps of its own, and once on the real manifest to prove its inventory.
 # Run: tests/test_runner.sh
@@ -64,6 +64,35 @@ d=$(( $1 > $2 ? $1 - $2 : $2 - $1 )); [ "$d" -le 9 ] && ok "and the two parts ar
 printf '4 sh tests/test_a2.sh\n1 sh tests/test_a1.sh\n' > "$T/durs"
 out=$(R -j 1 --shard 1/2 --durations "$T/durs"); grep -q ' 1/2=[0-9]*s' <<<"$out" && ok "--durations is read (a step with no duration counts as its budget)" || no "durations: $out"
 out=$(R -j 1 --save-durations "$T/saved" >/dev/null; cat "$T/saved"); [ "$(wc -l <<<"$out")" = 7 ] && grep -q '^[0-9]* sh tests/test_a1.sh$' <<<"$out" && ok "--save-durations writes seconds and command" || no "save: $out"
+
+# --changed-files / --changed-from: the fast tier plus the steps whose covers globs match a changed file (or whose command names it);
+# a step with no covers is not added by its globs; --plan prints the selection and runs nothing
+cat > "$T/cov.txt" <<'XEOF'
+fast | par | 60 | 1 | sh tests/test_a1.sh | lib/a.sh
+full | par | 60 | 1 | sh tests/test_a2.sh | lib/b*.sh docs/*
+full | par | 60 | 1 | sh tests/test_a3.sh | lib/c.sh
+full | par | 60 | 1 | sh tests/test_a4.sh
+full | par | 60 | 1 | sh tests/test_a5.sh
+full | par | 60 | 1 | sh tests/test_a6.sh | lib/zzz
+full | par | 60 | 1 | sh tests/test_bad.sh
+XEOF
+printf 'lib/bx.sh\nREADME.md\ntests/test_a5.sh\n' > "$T/changed"
+plan() { (cd "$S" && bash tests/run.sh --manifest "$T/cov.txt" --plan "$@" 2>&1 | sed 's/^[0-9]* //' | sort | tr '\n' ' '); }
+[ "$(plan --tier fast)" = "sh tests/test_a1.sh " ] && ok "--tier fast alone selects the fast steps" || no "fast plan: $(plan --tier fast)"
+[ "$(plan --tier fast --changed-files "$T/changed")" = "sh tests/test_a1.sh sh tests/test_a2.sh sh tests/test_a5.sh " ] && ok "--changed-files adds a step by its covers glob (lib/b*.sh) and one whose command names the changed file, and not one without covers" || no "changed plan: $(plan --tier fast --changed-files "$T/changed")"
+printf 'docs/x/y.md\n' > "$T/changed2"
+[ "$(plan --tier fast --changed-files "$T/changed2")" = "sh tests/test_a1.sh sh tests/test_a2.sh " ] && ok "a glob's * crosses a directory (docs/*)" || no "glob: $(plan --tier fast --changed-files "$T/changed2")"
+: > "$T/changed3"
+[ "$(plan --tier fast --changed-files "$T/changed3")" = "sh tests/test_a1.sh " ] && ok "no changed file adds nothing" || no "empty: $(plan --tier fast --changed-files "$T/changed3")"
+out=$(R -j 1 --tier fast --changed-files "$T/changed" --manifest "$T/cov.txt" --only 'test_a[25]'); grep -q '^== summary: 2 of 7 steps, 3 changed files;' <<<"$out" && grep -q '^== sh tests/test_a5.sh$' <<<"$out" && ok "a selected step runs, and the summary counts the changed files" || no "changed run: $out"
+G=$T/g; mkdir -p "$G/tests"; cp tests/run.sh "$G/tests/"; cp "$S"/tests/test_a*.sh "$S/tests/test_bad.sh" "$G/tests/"; cp "$T/cov.txt" "$G/tests/suite.txt"
+git -C "$G" init -q -b main && git -C "$G" add -A && git -C "$G" -c user.name=t -c user.email=t@example.invalid commit -q -m base && git -C "$G" tag base
+mkdir -p "$G/lib"; echo x > "$G/lib/c.sh"; git -C "$G" add -A && git -C "$G" -c user.name=t -c user.email=t@example.invalid commit -q -m change
+out=$(cd "$G" && bash tests/run.sh --tier fast --changed-from base --plan 2>&1 | sed 's/^[0-9]* //' | sort | tr '\n' ' ')
+[ "$out" = "sh tests/test_a1.sh sh tests/test_a3.sh " ] && ok "--changed-from REF reads the files changed since REF from git" || no "changed-from: $out"
+out=$(cd "$G" && bash tests/run.sh --tier fast --changed-from nosuchref --plan 2>&1); rc=$?
+[ "$rc" = 2 ] && ok "--changed-from with an unknown revision is a usage error" || no "changed-from bad: rc=$rc $out"
+out=$(R -j 1 --shard 1/2 --only 'test_a[12]\.sh'); grep -qE '^shard 1/2: planned [0-9]+s, the steps took [0-9]+s together$' <<<"$out" && ok "a shard's summary says what was planned and what the steps took" || no "shard line: $out"
 
 # shuffle and repeat
 a=$(steps "$(R -j 1 --shuffle 5)" | tr '\n' ' '); b=$(steps "$(R -j 1 --shuffle 5)" | tr '\n' ' '); c=$(steps "$(R -j 1 --shuffle 6)" | tr '\n' ' ')

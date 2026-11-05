@@ -7,6 +7,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `tests/run.sh --changed-from REF` (or `--changed-files FILE`, one path per line) adds to the fast tier the steps whose `covers`
+  globs match a file changed since REF (`git diff REF...HEAD`) and those whose command names a changed file; a step with no `covers`
+  is not added by its globs. `--plan` prints the selection and the shard plan and runs nothing, and a sharded run ends with a
+  `shard i/K: planned Ns, the steps took Ns together` line.
+- `tests/durations.txt` holds the recorded duration of every step, from a whole run, for `--shard i/K --durations
+  tests/durations.txt`: the four parts of the suite plan within 1.3 times of each other (CONTRIBUTING, Tests, says how to
+  regenerate it). `tests/test_ci.py` checks the CI workflow and the shard balance.
+- The methodology parameter `ci_timeout_minutes` (default 30; a positive whole number, a parameter may carry a `pattern`) sets the
+  `timeout-minutes` of the CI job the gitflow scaffold writes, so a project sets it from its own suite budgets.
+- `qargi release status` shows, in the suite record's verdict, how long the run took and the mode its command names (`-j N`,
+  `shard I/K`): `pass at this head (command: C; ran AT; took 412s; -j 8)`. `release verify` and `feature verify` record both; a
+  record made before shows the command and the time only.
 - Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
@@ -250,6 +262,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   saved work is applied and merged. A clean marks the run cleaned in the registry and removes its saved copy.
 
 ### Changed
+- The CI workflow `.github/workflows/test.yml` (no scheduled run): a pull request into a branch other than master runs the fast
+  tier and the steps its changed files cover, or the whole suite when it carries the label `full-suite`; a push to develop, a pull
+  request into master (the release pull request) and a manual run run the whole suite in four shards, balanced by
+  `tests/durations.txt`, and a last job, `result`, is red when any shard failed. A pull request replaces its own earlier run, a push
+  to develop is never cancelled. Each job has a time limit computed from the manifest's budgets (35 minutes; the former 30 minutes for
+  the whole suite in one job was less than the budgets add up to, and the job was cancelled), the packages jq and shellcheck come
+  from a cache keyed by their list (`.github/actions/tools`), and every action is pinned to a full commit SHA.
 - `tests/run.sh` reads its steps from the manifest `tests/suite.txt` (tier, parallel-safe or serial, timeout, time budget, optional
   `covers` globs) and runs them `-j N` at a time (default: the CPUs, at most the cgroup quota; `-j 1` is the former serial run).
   `--tier fast` runs a fast tier of about a minute that covers every area, `--only PATTERN` selects steps, `--shard i/K` deals
