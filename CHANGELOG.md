@@ -50,6 +50,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   merge with `qargi changelog renumber` (a member may only run it with `--check`), which `/qargi-verify` now names.
 - The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
   reports the disagreement.
+- The `docs-site-member` pack tells a member that no line may start with a less-than sign (keep a code span that holds a placeholder on one line, or put the
+  placeholder after other text) and to run the render check, not only the Markdown checks, before reporting.
 
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree

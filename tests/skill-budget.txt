@@ -9,7 +9,7 @@ lib/providers/claude-code.json:notes 262
 lib/providers/claude-code/local-run.md 33
 lib/providers/claude-platform.json:notes 2
 lib/providers/claude-platform/cloud-run.md 61
-packs/skills/docs-site-member/SKILL.md 121
+packs/skills/docs-site-member/SKILL.md 176 # raised: two rules: no line starts with <, and run the render check before reporting; for the lead's review
 packs/skills/gitflow-member/SKILL.md 285 # raised: one line: parallel tasks use unnumbered bullets and the lead renumbers at merge; for the lead's review
 packs/skills/keep-a-changelog/SKILL.md 355 # raised: one line on numbered items (unnumbered bullet, the lead renumbers); for the lead's review
 packs/skills/qargi-contributing/SKILL.md 115
