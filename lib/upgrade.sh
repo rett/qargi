@@ -23,11 +23,11 @@ while [ $# -gt 0 ]; do
     --tag) need_val "$1" $#; TAG=$2; shift 2;;
     --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
-    *) die "usage: qargi upgrade [--branch B | --tag T] [--plan TOKEN --approved \"...\"]";;
+    *) usage_die "usage: qargi upgrade [--branch B | --tag T] [--plan TOKEN --approved \"...\"]";;
   esac
 done
 PLAN_ARG=${PLAN_ARG:-}; APPROVED=${APPROVED:-}
-[ -z "$BRANCH" ] || [ -z "$TAG" ] || die "give --branch or --tag, not both"
+[ -z "$BRANCH" ] || [ -z "$TAG" ] || usage_die "give --branch or --tag, not both"
 for v in "$BRANCH" "$TAG"; do
   [ -n "$v" ] || continue
   printf '%s' "$v" | grep -Eq '^[A-Za-z0-9._/-]*$' && [ "${v#-}" = "$v" ] || die "a branch or tag name: letters, digits, . _ / - only"

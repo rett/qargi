@@ -32,8 +32,9 @@
 #                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
 #                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
 #                                         the same links and puts back what they replaced
-#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
-#                                         change the exit status, so storing and the flows after it work as before)
+#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
+#                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
+#                                         status, so storing and the flows after it work as before)
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
 # pushes. The "coordinator" and "agent" policies below are designed but not built, so
@@ -141,6 +142,12 @@ if cf:
         inside = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
         if inside.returncode == 0 and inside.stdout.strip() == "true":
             bad.append("repo.credential_file: %s is inside a git working tree; keep it outside every repository" % cf)
+mz = c.get("marshal")
+if mz is not None:
+    need(isinstance(mz, dict), "marshal: an object (the only answer in it is lease_minutes)")
+    ls = mz.get("lease_minutes") if isinstance(mz, dict) else None
+    if ls is not None:
+        need(isinstance(ls, int) and not isinstance(ls, bool) and 1 <= ls <= 1440, "marshal.lease_minutes: a whole number of minutes from 1 to 1440 (default 15)")
 cl = c.get("cloud")
 if cl is not None:
     need(isinstance(cl, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", str(cl.get("profile", ""))) and re.fullmatch(r"wrkspc_[A-Za-z0-9]{10,}", str(cl.get("workspace_id", ""))),
@@ -289,6 +296,23 @@ sys.exit(1 if bad else 0)
 EOF
 }
 
+# pack_warn FILE: a `WARN:` line for each pack linked at a scope that reaches a role of the project but is not in the pack library (one
+# removed or never imported: the role loses it, or fails its check, at the next render). Never an error: validate still exits 0.
+pack_warn() {
+  local f=$1 prj links pack rs kind n
+  links=$DA_CONF/packs/links.json; [ -f "$links" ] || return 0
+  prj=$(jq -r '.project // empty' "$f" 2>/dev/null); [ -n "$prj" ] || return 0
+  while IFS=$'\t' read -r pack rs; do
+    [ -n "$pack" ] || continue; kind=${pack%%:*}; n=${pack#*:}
+    if [ "$kind" = skill ]; then [ -e "$DA_CONF/packs/skills/$n" ] && continue; else [ -e "$DA_CONF/packs/tools/$n.json" ] && continue; fi
+    echo "WARN: $pack is linked to $rs of $prj but is not in the pack library (qargi $kind list); import it, or unlink it: qargi $kind unlink $n"
+  done < <(jq -r --arg p "$prj" --slurpfile c "$f" '
+    ($c[0].roles // {} | keys - ["lead"]) as $rs
+    | [.links[] | select(.scope == "user" or .scope == "user-role" or .project == $p) | . as $l
+       | $rs[] | select($l.scope == "user" or $l.scope == "project" or $l.role == .) | [$l.pack, .]]
+    | group_by(.[0])[] | .[0][0] + "\t" + (map(.[1]) | unique | join(", "))' "$links" 2>/dev/null)
+}
+
 # no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
 # object, or blank: the same rule as provider.py project_provider), or leave a surface without one (the object form), or name one that
 # has no definition, or a name that serves only one surface, or a single name resolved through its family (the notice of
@@ -369,7 +393,7 @@ gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file wou
 
 case $verb in
   template)
-    n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
+    n=${1:-}; valid_project "$n" || usage_die "template needs a project name (lower-case letters and digits)"
     # no model and no provider: the template names no vendor. A role's model is its provider's tier (project set models.provider.local NAME)
     # until you give one; the efforts are the table's, the same for every provider
     jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
@@ -384,10 +408,10 @@ case $verb in
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
   init)
-    n=${1:-}; shift || true; valid_project "$n" || die "init needs a project name"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "init needs a project name"
     ans='' force=''
-    while [ $# -gt 0 ]; do case $1 in --answers) need_val "$1" $#; ans=$2; shift 2;; --force) force=1; shift;; *) die "unknown option $1";; esac; done
-    [ -f "$ans" ] || die "init needs --answers FILE (see: project template $n)"
+    while [ $# -gt 0 ]; do case $1 in --answers) need_val "$1" $#; ans=$2; shift 2;; --force) force=1; shift;; *) usage_die "unknown option $1";; esac; done
+    [ -f "$ans" ] || usage_die "init needs --answers FILE (see: project template $n)"
     out=$(validate "$ans") || { echo "$out" >&2; die "the answers are not valid; nothing stored"; }
     [ "$(jq -r .project "$ans")" = "$n" ] || die "the answers are for project '$(jq -r .project "$ans")', not '$n'"
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
@@ -399,12 +423,12 @@ case $verb in
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model // "provider tier")/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
-    n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "new needs a project name (lower-case letters and digits)"
     meth=gitflow dir='' url='' dep='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED='' PARAMS=()
     while [ $# -gt 0 ]; do
       case $1 in --methodology) need_val "$1" $#; meth=$2; shift 2;; --dir) need_val "$1" $#; dir=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --deployment) need_val "$1" $#; dep=$2; shift 2;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
         --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
-        --param) need_val "$1" $#; PARAMS+=(--param "$2"); shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
+        --param) need_val "$1" $#; PARAMS+=(--param "$2"); shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -471,7 +495,7 @@ PY
     while [ $# -gt 0 ]; do
       case $1 in --name) need_val "$1" $#; name=$2; shift 2;; --methodology) need_val "$1" $#; meth=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --force) force=1; shift;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
         --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
-        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
+        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; -*) usage_die "unknown option $1";; *) dir=$1; shift;; esac
     done
     export PLAN_ARG   # need_plan reads it
     PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
@@ -568,10 +592,10 @@ PY
     no_provider "$sf" || true;;
   adopt)
     # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
-    n=${1:-}; shift || true; valid_project "$n" || die "adopt needs the name of an attached project (qargi project list)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "adopt needs the name of an attached project (qargi project list)"
     meth='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -613,10 +637,10 @@ PY
   set)
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
-    [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
+    [ -n "$path" ] && [ -n "$val" ] || usage_die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
-    case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
+    case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
     jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
@@ -665,11 +689,11 @@ PY
   link|unlink)
     # the project's resources, linked from where qargi keeps them: the plan first (one token for all), the change only for that plan. A link
     # changes what a session loads, so the token is always needed (an approved caller has not approved this plan) and a member never applies
-    n=${1:-}; shift || true; valid_project "$n" || die "$verb needs a project name (lower-case letters and digits)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "$verb needs a project name (lower-case letters and digits)"
     res='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
-        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --resource) need_val "$1" $#; res=${2// /}; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG; unset QARGI_NESTED
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
@@ -686,6 +710,6 @@ PY
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
-  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
-  *) die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
+  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; };;
+  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
 esac

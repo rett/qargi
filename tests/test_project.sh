@@ -117,6 +117,18 @@ fnd "validate: models without a provider is a finding"       '.models={}'       
 fnd "validate: a blank provider is a finding"                '.models.provider="  "'     yes
 fnd "validate: a provider that is not a string is a finding" '.models.provider=3'        yes
 fnd "validate: a provider named is no finding"               '.models.provider={local:"claude-code",cloud:"claude-platform"}' no
+# a pack linked to a role of the project that the library does not hold is a WARN line; validate still exits 0
+mkdir -p "$T/c/packs/skills/present" "$T/c/packs/tools"
+jq -n '{links:[{pack:"skill:present",scope:"user"},{pack:"skill:gone",scope:"project",project:"demo"},{pack:"tool:lost",scope:"project-role",project:"demo",role:"write"},
+  {pack:"skill:other",scope:"project",project:"elsewhere"},{pack:"skill:norole",scope:"user-role",role:"fresh"},{pack:"skill:gone-all",scope:"user"}]}' > "$T/c/packs/links.json"
+jq '.models.provider={local:"claude-code",cloud:"claude-platform"}' <<<"$base" > "$T/a.json"
+out=$($DA project validate "$T/a.json" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qE '^WARN: skill:gone is linked to .*build.* of demo but is not in the pack library' <<<"$out" && grep -qE '^WARN: tool:lost is linked to write of demo ' <<<"$out" \
+  && grep -qE '^WARN: skill:gone-all is linked to ' <<<"$out" && [ "$(grep -c '^WARN:' <<<"$out")" = 3 ] && grep -qx ok <<<"$out"; } \
+  && echo "ok   validate warns of a linked pack the library does not hold (once per pack, with its roles) and still exits 0" || { echo "FAIL pack WARN (exit $rc): $out"; fail=1; }
+mkdir -p "$T/c/packs/skills/gone" "$T/c/packs/skills/gone-all"; echo '{}' > "$T/c/packs/tools/lost.json"
+out=$($DA project validate "$T/a.json" 2>&1); [ "$?" = 0 ] && ! grep -q '^WARN:' <<<"$out" && echo "ok   with the packs in the library the warnings are gone" || { echo "FAIL pack WARN gone: $out"; fail=1; }
+rm -rf "$T/c/packs"
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
@@ -132,10 +144,14 @@ done
 msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
-# marshal.ttl is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
-$DA project set demo marshal.ttl 20 >/dev/null 2>&1 && [ "$(jq .marshal.ttl $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.ttl" || { echo "FAIL set marshal.ttl"; fail=1; }
+# marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
+$DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1 && [ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.lease_minutes" || { echo "FAIL set marshal.lease_minutes"; fail=1; }
+for bad in 0 -3 1441 abc 2.5 '"15"'; do
+  $DA project set demo marshal.lease_minutes "$bad" >/dev/null 2>&1 && { echo "FAIL set marshal.lease_minutes $bad accepted"; fail=1; } || echo "ok   set refuses marshal.lease_minutes $bad"
+done
+[ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   refused lease values changed nothing" || { echo "FAIL a refused lease value changed the file"; fail=1; }
 cp $T/c/projects/demo.json $T/before.json
-for k in marshal.backend marshal.ttl.x marshal; do
+for k in marshal.backend marshal.lease_minutes.x marshal; do
   v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
   msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
 done

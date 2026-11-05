@@ -15,7 +15,7 @@ packs/skills/keep-a-changelog/SKILL.md 317
 packs/skills/qargi-contributing/SKILL.md 115
 packs/skills/review-findings/SKILL.md 136
 packs/skills/secrets-scan/SKILL.md 93
-packs/skills/shellcheck-gate/SKILL.md 335
+packs/skills/shellcheck-gate/SKILL.md 358 # raised: two lines of guidance (a disable names the shellcheck version that introduced the code; the project's own lint severity wins); for the lead's review
 provision/templates/base-system.md 89
 provision/templates/cloud-preamble.md 139
 roles/build/ROLE.md 144
@@ -23,7 +23,7 @@ roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 167
 skills/qargi-flow/SKILL.md 944
-skills/qargi-flow/marshal.md 435
+skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933
 skills/qargi-memory/curate.md 292
@@ -41,4 +41,4 @@ skills/qargi-task/SKILL.md 834
 skills/qargi-task/cloud.md 760
 skills/qargi-task/local-run.md 197
 skills/qargi-team/SKILL.md 894
-skills/qargi-verify/SKILL.md 640
+skills/qargi-verify/SKILL.md 637

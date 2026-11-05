@@ -46,13 +46,13 @@ while [ $# -gt 0 ]; do
     --role) need_val "$1" $#; ROLE=$2; shift 2;;
     --memory-store) need_val "$1" $#; MEMORY_STORE=$2; shift 2;;
     --reference-store) need_val "$1" $#; REFERENCE_STORE=$2; shift 2;;
-    *) die "unknown option $1";;
+    *) usage_die "unknown option $1";;
   esac
 done
 
 export PLAN_ARG
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
-[ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
+[ -n "$NAME" ] || usage_die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
 # The project's stored answers (qargi project init) give the defaults; flags win.
 PCFG=$DA_CONF/projects/$PROJECT.json
@@ -296,5 +296,5 @@ case $verb in
     json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
     store=''; canonise
     echo "reference store $refstore ($PROJECT-reference) created, brought to the canon and attached read-only to $dep (approved: $APPROVED)";;
-  *) die "usage: provision.sh plan|apply NAME [options]";;
+  *) usage_die "usage: provision.sh plan|apply NAME [options]";;
 esac
