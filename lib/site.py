@@ -10,7 +10,8 @@
 LICENSE are read from it. The reference pages (/reference/) and the releases page (/releases/) are generated from
 commands.py and CHANGELOG.md; every other page is a hand page, a Markdown file in --pages (front matter: title,
 description) converted by lib/site_md.py. `check` validates the hand pages against the source and writes nothing;
-`build` runs the same checks and then writes the site; `check-output` validates a built tree; `diff` lists what
+`build` runs the same checks and then writes the site (with a sidebar on every page but the 404 page, and assets/search.js with
+assets/search-index.json for the search box); `check-output` validates a built tree; `diff` lists what
 changed in the command line between two sources and which hand pages still name what is gone.
 
 Trust: reading the command line IMPORTS lib/commands.py of --source (and --source-old/--source-new for `diff`), which runs
@@ -43,7 +44,13 @@ from html.parser import HTMLParser
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES = os.path.join(HERE, "site", "templates")
 CSS_FILE = os.path.join(HERE, "site", "site.css")
+JS_FILE = os.path.join(HERE, "site", "search.js")
 CSS_WARN_BYTES = 15 * 1024
+JS_WARN_BYTES = 12 * 1024
+INDEX_FILE = "assets/search-index.json"
+INDEX_MAX_BYTES = 256 * 1024         # the search index is fetched whole by the reader's browser: keep it small
+INDEX_PAGE_TEXT = 320                # characters of text kept for a page
+INDEX_SECTION_TEXT = 200             # characters of text kept for a section of a page
 MAX_PAGE_BYTES = 512 * 1024
 MAX_STATIC_BYTES = 5 * 1024 * 1024
 SITEMAP_NS = "http://www.sitemaps.org/schemas/sitemap/0.9"
@@ -500,6 +507,8 @@ class Page:
         self.lastmod = None
         self.published = None
         self.toc = True
+        self.sub = []                     # (label, anchor) entries the sidebar lists under a command group page
+        self.group = False                # a page of one group of commands (the sidebar folds its commands under it)
         self.links = []                   # (line, url) of links to resolve, for pages that are not hand pages
 
     @property
@@ -734,7 +743,9 @@ def generated_pages(src, rep, repo=None):
             heads += h
         desc = ('Reference for the "%s" group of qargi commands: every verb with its arguments, options and examples, generated from the release.' % title)
         group_pages.append((title, slug, names))
-        pages.append(Page("reference/%s/" % slug, "reference", "Reference: " + title, desc, "\n".join(body), heads, ref_crumb + [("Reference: " + title, "reference/%s/" % slug)]))
+        gp = Page("reference/%s/" % slug, "reference", "Reference: " + title, desc, "\n".join(body), heads, ref_crumb + [("Reference: " + title, "reference/%s/" % slug)])
+        gp.nav, gp.group, gp.sub = title, True, [(n, n) for n in names]
+        pages.append(gp)
     # topics
     body, heads = [], []
     body.append("<p>Each topic is also printed by <code>qargi help TOPIC</code>.</p>")
@@ -746,6 +757,7 @@ def generated_pages(src, rep, repo=None):
     pages.append(Page("reference/topics/", "reference", "Reference: help topics",
                       "The qargi help topics: the ideas behind the commands, such as roles, approvals, the guard, naming, memory and who may push, as qargi help prints them.",
                       "\n".join(body), heads, ref_crumb + [("Reference: help topics", "reference/topics/")]))
+    pages[-1].nav = "Help topics"
     # files
     rows = [["<code>%s</code>" % esc(p), esc(d)] for p, d in c.files]
     pages.append(Page("reference/files/", "reference", "Reference: files",
@@ -753,11 +765,13 @@ def generated_pages(src, rep, repo=None):
                       table(["Path", "What it holds"], rows) + '\n<p>Nothing is stored in a repository. See also <a href="/reference/topics/#topic-files">Where things are</a>.</p>',
                       [], ref_crumb + [("Reference: files", "reference/files/")]))
     pages[-1].toc = False
+    pages[-1].nav = "Files"
     rows = [["<code>%s</code>" % esc(k), esc(d)] for k, d in c.environment]
     pages.append(Page("reference/environment/", "reference", "Reference: environment",
                       "The environment variables qargi reads, such as QARGI_HOME, QARGI_CONF, QARGI_STATE and QARGI_PROJECT, with what each one changes and its default.",
                       table(["Variable", "What it changes"], rows), [], ref_crumb + [("Reference: environment", "reference/environment/")]))
     pages[-1].toc = False
+    pages[-1].nav = "Environment"
     # the index
     body, heads = [], []
     body.append("<p>%s</p>" % esc(c.intro))
@@ -781,6 +795,7 @@ def generated_pages(src, rep, repo=None):
     pages.append(Page("reference/", "reference", "Command reference",
                       "The qargi command reference: every command, verb, argument and option, the help topics, files and environment variables, from the release it names.",
                       "\n".join(body), heads, ref_crumb[:1] + [("Command reference", "reference/")]))
+    pages[-1].nav = "Overview"
     # releases
     body, heads, ids, links = [], [], set(PAGE_IDS), []
     released = [s for s in src.sections if s[0].lower() != "unreleased"]
@@ -811,6 +826,7 @@ def generated_pages(src, rep, repo=None):
     pages.append(Page("releases/", "releases", "Releases",
                       "Release notes for qargi, from %s back to %s: what was added, changed, removed, fixed and secured in each version, from the changelog." % (first_v, last_v),
                       "\n".join(body), heads, [("Home", ""), ("Releases", "releases/")]))
+    pages[-1].nav = "Release notes"
     pages[-1].links = links
     return pages
 
@@ -879,6 +895,7 @@ def build_model(args, rep):
             p.lastmod = src.release_date
     pages["404"] = Page("404", "notfound", "Page not found", "The page you asked for is not part of the qargi documentation. Use the links below to reach the home page, the reference or the releases.", "")
     validate(site, hand, rep)
+    site.index = search_index(site, rep)
     return site
 
 
@@ -902,6 +919,7 @@ class Site:
         self.pages = {}
         self.hand_order = []
         self.static = {}     # relative path -> real path
+        self.index = b""     # the search index (JSON)
 
     @property
     def name(self):
@@ -1143,7 +1161,7 @@ def validate(site, hand, rep):
     cmds = site.src.cmds
     cfg = site.cfg
     pages = site.pages
-    files = {"sitemap.xml", "robots.txt", "assets/site.css", ".nojekyll"}
+    files = {"sitemap.xml", "robots.txt", "assets/site.css", "assets/search.js", INDEX_FILE, ".nojekyll"}
     gen = files | {p.file for p in pages.values()}
     gen_dirs = {"/".join(f.split("/")[:k]) for f in gen for k in range(1, f.count("/") + 1)}
     gen_lower = {g.lower() for g in gen | gen_dirs}
@@ -1225,6 +1243,65 @@ def validate(site, hand, rep):
         rep.warn("site.json", "og_image needs a url")
 
 
+# ------------------------------------------------------------------ the search index
+ANCHOR_LINK = re.compile(r'<a class="anchor"[^>]*>#</a>')
+BLOCK_TAG = re.compile(r"</?(?:p|li|ul|ol|tr|td|th|table|thead|tbody|h[1-6]|div|pre|br|hr|details|summary|blockquote|nav|article)\b[^>]*>")
+SECTION_HEAD = re.compile(r'<h([2-4]) id="([^"]+)">(.*?)</h\1>', re.S)
+
+
+def plain_text(markup):
+    """The text of generated markup: tags removed, entities decoded, white space collapsed."""
+    text = BLOCK_TAG.sub(" ", ANCHOR_LINK.sub("", markup))
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", text))).strip()
+
+
+def clip(text, limit):
+    """text cut at a word boundary to at most limit characters."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut or text[:limit]
+
+
+def search_entries(site):
+    """One (entry, page) per page and one per h2 section of a page (and per h3 section of a reference page); the entry is the
+    title, the path from the site root (with #id for a section), the page title for a section, and a short plain text.
+    Built from the page models only."""
+    out = []
+    for key in sorted(k for k in site.pages if k != "404"):
+        p = site.pages[key]
+        text = plain_text(p.body)
+        out.append(({"t": p.title, "p": p.path, "x": clip(" ".join(x for x in (p.description, text) if x), INDEX_PAGE_TEXT)}, p))
+        marks = list(SECTION_HEAD.finditer(p.body))
+        for k, m in enumerate(marks):
+            level = int(m.group(1))
+            if level > 3 or (level == 3 and p.kind != "reference"):
+                continue
+            end = marks[k + 1].start() if k + 1 < len(marks) else len(p.body)
+            title = plain_text(m.group(3))
+            out.append(({"t": title, "p": "%s#%s" % (p.path, html.unescape(m.group(2))), "g": p.title,
+                         "x": clip(plain_text(p.body[m.end():end]), INDEX_SECTION_TEXT)}, p))
+    return out
+
+
+def search_index(site, rep=None):
+    """The JSON of the search index as bytes. With a report: errors when it is too large or holds a word the site config
+    forbids, and a note with its size. The text of a hand page was checked line by line already, so only the generated
+    pages are checked here."""
+    pairs = search_entries(site)
+    entries = [e for e, _ in pairs]
+    data = (json.dumps({"version": 1, "entries": entries}, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if rep is not None:
+        rep.note("search index", "%d entries, %d bytes (limit %d)" % (len(entries), len(data), INDEX_MAX_BYTES))
+        if len(data) > INDEX_MAX_BYTES:
+            rep.err("search index", "%d bytes is more than the limit of %d" % (len(data), INDEX_MAX_BYTES))
+        for w in (site.cfg.forbidden if site.cfg else []):
+            for e, owner in pairs:
+                if not owner.src and w.lower() in (e["t"] + " " + e["p"] + " " + e.get("g", "") + " " + e["x"]).lower():
+                    rep.err("search index", "the entry for /%s contains the forbidden word '%s'" % (e["p"], w))
+    return data
+
+
 # ------------------------------------------------------------------ rendering
 def tmpl(name):
     with open(os.path.join(TEMPLATES, name), encoding="utf-8") as f:
@@ -1255,6 +1332,38 @@ def page_title(site, p):
     return "%s · %s" % (p.title, site.name)
 
 
+def sidebar_html(site, p, L):
+    """The sidebar: the guides, the reference (each command group folds its commands) and the releases. The page's own
+    section and group are open, the rest closed; its link carries aria-current="page"."""
+    def link(label, path):
+        cur = ' aria-current="page"' if p.path == path else ""
+        return '<a href="%s"%s>%s</a>' % (esc(L(path)), cur, esc(label))
+
+    def section(name, items, opened):
+        return '<details class="side-section"%s>\n<summary>%s</summary>\n<ul>\n%s\n</ul>\n</details>' % (" open" if opened else "", esc(name), "\n".join(items))
+    guides = [(h.nav, h.path) for h in site.hand_order]
+    home = site.pages.get("")
+    guides = [("Home", "")] + guides if home is not None else guides
+    ref = [q for q in site.pages.values() if q.kind == "reference"]
+    items = ["<li>%s</li>" % link(label, path) for label, path in guides]
+    sections = [section("Guides", items, any(path == p.path for _, path in guides))]
+    items = []
+    for q in ref:
+        if q.path == "reference/":
+            items.append("<li>%s</li>" % link(q.nav, q.path))
+    for q in ref:
+        if q.group:
+            subs = ["<li>%s</li>" % link("Overview", q.path)] + ['<li><a href="%s">%s</a></li>' % (esc(L(q.path + "#" + anchor)), esc(label)) for label, anchor in q.sub]
+            items.append('<li><details class="side-group"%s>\n<summary>%s</summary>\n<ul>\n%s\n</ul>\n</details></li>' % (" open" if p.path == q.path else "", esc(q.nav), "\n".join(subs)))
+    for q in ref:
+        if q.path != "reference/" and not q.group:
+            items.append("<li>%s</li>" % link(q.nav, q.path))
+    sections.append(section("Reference", items, p.kind == "reference"))
+    rel = [q for q in site.pages.values() if q.kind == "releases"]
+    sections.append(section("Releases", ["<li>%s</li>" % link(q.nav, q.path) for q in rel], p.kind == "releases"))
+    return '<div class="sidebar" id="sidebar">\n<nav aria-label="Site">\n%s\n</nav>\n</div>' % "\n".join(sections)
+
+
 def render_page(site, p):
     url = site.url
     absolute = p.kind == "notfound"
@@ -1263,13 +1372,18 @@ def render_page(site, p):
         return url + target if absolute else rel_link(p.path, target)
     cfg = site.cfg
     repo = cfg.repo.rstrip("/") if cfg and cfg.repo else None
-    # navigation
-    nav_items = [("Home", "")] + [(h.nav, h.path) for h in site.hand_order] + [("Reference", "reference/"), ("Releases", "releases/")]
-    lis = []
-    for label, path in nav_items:
-        cur = ' aria-current="page"' if p.path == path else ' aria-current="true"' if path == "reference/" and p.kind == "reference" else ""
-        lis.append('<li><a href="%s"%s>%s</a></li>' % (esc(L(path)), cur, esc(label)))
-    nav = "<ul>\n%s\n</ul>" % "\n".join(lis)
+    # navigation: the sidebar on every page but the 404 page, which has a simple header and absolute links
+    nav, sidebar, menu_toggle, menu_button, script, layout = "", "", "", "", "", "layout solo"
+    if absolute:
+        lis = ['<li><a href="%s">%s</a></li>' % (esc(L(path)), esc(label)) for label, path in
+               [("Home", "")] + [(h.nav, h.path) for h in site.hand_order] + [("Reference", "reference/"), ("Releases", "releases/")]]
+        nav = '<nav aria-label="Site">\n<ul>\n%s\n</ul>\n</nav>' % "\n".join(lis)
+    else:
+        sidebar = sidebar_html(site, p, L)
+        menu_toggle = '<input type="checkbox" id="menu-toggle" class="menu-toggle" aria-controls="sidebar">'
+        menu_button = '<label for="menu-toggle" class="menu-button">Menu</label>'
+        script = '<script src="%s" defer></script>' % esc(L("assets/search.js"))
+        layout = "layout"
     # breadcrumb
     crumb = ""
     if len(p.crumbs) > 1:
@@ -1333,7 +1447,7 @@ def render_page(site, p):
     page = tmpl("page.html").substitute(
         title=esc(title), description=esc(p.description), robots=head_robots, canonical=head_canon,
         css=esc(L("assets/site.css")), social=social, jsonld=ld, home=esc(L("")), site_name=esc(site.name),
-        stamp=esc(site.src.stamp), nav=nav, breadcrumb=crumb, h1=esc(p.title), intro=intro, toc=toc, body=body, footer="\n".join(foot))
+        stamp=esc(site.src.stamp), nav=nav, sidebar=sidebar, menu_toggle=menu_toggle, menu_button=menu_button, script=script, layout=layout, breadcrumb=crumb, h1=esc(p.title), intro=intro, toc=toc, body=body, footer="\n".join(foot))
     return page
 
 
@@ -1394,6 +1508,9 @@ def write_site(site, out):
     with open(CSS_FILE, "rb") as f:
         css = f.read()
     w.write("assets/site.css", css)
+    with open(JS_FILE, "rb") as f:
+        w.write("assets/search.js", f.read())
+    w.write(INDEX_FILE, site.index)
     w.write("sitemap.xml", sitemap_xml(site))
     w.write("robots.txt", tmpl("robots.txt").substitute(sitemap=site.url + "sitemap.xml"))
     w.write(".nojekyll", b"")
@@ -1426,6 +1543,9 @@ class Tree(HTMLParser):
         self.lang = None
         self.scripts = []
         self.times = []       # datetime attributes of <time> elements
+        self.sidebar = False   # an element with id "sidebar" was seen
+        self.current = 0       # links with aria-current="page" inside it
+        self._side = None      # the depth of the stack when it opened
         self._cap = None
         self._script = None
         self._title = False
@@ -1452,8 +1572,15 @@ class Tree(HTMLParser):
             self.err("<meta http-equiv> is not allowed in the output")
         if tag == "time" and a.get("datetime"):
             self.times.append(a["datetime"])
-        if tag == "script" and (a.get("type") != "application/ld+json" or "src" in a):
-            self.err("a script that is not JSON-LD")
+        if tag == "script":
+            ld = a.get("type") == "application/ld+json" and "src" not in a
+            lib = "type" not in a and set(a) <= {"src", "defer"} and re.sub(r"^(?:\.\./)*", "", a.get("src") or "") == "assets/search.js"
+            if not (ld or lib):
+                self.err("a script that is not JSON-LD or the search script (assets/search.js)")
+        if a.get("id") == "sidebar":
+            self.sidebar, self._side = True, len(self.stack)
+        if self._side is not None and tag == "a" and a.get("aria-current") == "page":
+            self.current += 1
         icon = tag == "link" and a.get("rel") == "icon" and a.get("href") == "data:,"       # the one data: address the pages use
         for attr in ("href", "src"):
             if attr in a and a[attr] is not None and not icon:
@@ -1498,6 +1625,8 @@ class Tree(HTMLParser):
                 self.stack.pop()
             return
         self.stack.pop()
+        if self._side is not None and len(self.stack) == self._side:
+            self._side = None
         if self._cap and re.match(r"^h[1-6]$", tag):
             self.headings.append((self._cap[0], self._cap[1], self._cap[2].strip()))
             self._cap = None
@@ -1548,7 +1677,7 @@ def check_output(out):
         for n in fs:
             full = os.path.join(dirpath, n)
             files[os.path.relpath(full, out).replace(os.sep, "/")] = full
-    for need in ("index.html", "404.html", "sitemap.xml", "robots.txt", ".nojekyll", "assets/site.css"):
+    for need in ("index.html", "404.html", "sitemap.xml", "robots.txt", ".nojekyll", "assets/site.css", "assets/search.js", INDEX_FILE):
         if need not in files:
             rep.err(need, "missing from the output")
     trees = {}
@@ -1558,6 +1687,8 @@ def check_output(out):
             trees[rel] = parse_html(full)
     if "assets/site.css" in files and os.path.getsize(files["assets/site.css"]) > CSS_WARN_BYTES:
         rep.warn("assets/site.css", "larger than %d bytes" % CSS_WARN_BYTES)
+    if "assets/search.js" in files and os.path.getsize(files["assets/search.js"]) > JS_WARN_BYTES:
+        rep.warn("assets/search.js", "larger than %d bytes" % JS_WARN_BYTES)
     site_url = None
     if "index.html" in trees:
         site_url = trees["index.html"].rels.get("canonical")
@@ -1592,10 +1723,21 @@ def check_output(out):
             last = lv
         for line in t.imgs_noalt:
             rep.err("%s:%d" % (rel, line), "<img> without alt text")
+        for ty, body in t.scripts:
+            if ty != "application/ld+json" and body.strip():
+                rep.err(rel, "an inline script")
         if rel == "404.html":
             if "noindex" not in t.meta.get("robots", ""):
                 rep.err(rel, "the 404 page must be noindex")
+            if t.sidebar or any(ty != "application/ld+json" for ty, _ in t.scripts):
+                rep.err(rel, "the 404 page has no sidebar and no script")
         else:
+            if not t.sidebar:
+                rep.err(rel, "no sidebar")
+            elif t.current != 1:
+                rep.err(rel, "the sidebar needs exactly one link with aria-current=\"page\", has %d" % t.current)
+            if not any(ty != "application/ld+json" for ty, _ in t.scripts):
+                rep.err(rel, "no search script")
             if "noindex" in t.meta.get("robots", "").lower():
                 rep.err(rel, "a page that is in the sitemap is marked noindex")
             expect = (site_url or "") + (rel[:-len("index.html")] if rel.endswith("index.html") else rel)
@@ -1612,7 +1754,45 @@ def check_output(out):
         for line, tag, attr, val in t.links:
             _check_target(rel, line, val, site_url, files, trees, rep, tag, attr)
     _check_sitemap(out, files, trees, site_url, rep)
+    _check_index(files, trees, rep)
     return rep
+
+
+def _check_index(files, trees, rep):
+    """The search index: valid JSON, within its bound, an entry for every page, every entry pointing at a page or a heading."""
+    if INDEX_FILE not in files:
+        return
+    if os.path.getsize(files[INDEX_FILE]) > INDEX_MAX_BYTES:
+        rep.err(INDEX_FILE, "larger than %d bytes" % INDEX_MAX_BYTES)
+        return
+    try:
+        with open(files[INDEX_FILE], encoding="utf-8") as f:
+            data = json.load(f)
+    except (ValueError, OSError) as e:
+        rep.err(INDEX_FILE, "not valid JSON (%s)" % e)
+        return
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, list) or data.get("version") != 1:
+        rep.err(INDEX_FILE, "needs version 1 and a list of entries")
+        return
+    seen = set()
+    for k, e in enumerate(entries):
+        if not (isinstance(e, dict) and all(isinstance(e.get(f), str) for f in ("t", "p", "x")) and isinstance(e.get("g", ""), str)):
+            rep.err(INDEX_FILE, "entry %d needs the text fields t, p and x" % k)
+            continue
+        path, _, frag = e["p"].partition("#")
+        page = (path + "index.html") if path == "" or path.endswith("/") else None
+        if page not in trees or page == "404.html":
+            rep.err(INDEX_FILE, "entry %d points at /%s, which is not a page" % (k, path))
+            continue
+        if frag and frag not in trees[page].ids:
+            rep.err(INDEX_FILE, "entry %d points at /%s, which has no element with id '%s'" % (k, e["p"], frag))
+        if len(e["x"]) > max(INDEX_PAGE_TEXT, INDEX_SECTION_TEXT):
+            rep.err(INDEX_FILE, "entry %d has %d characters of text" % (k, len(e["x"])))
+        if not frag:
+            seen.add(page)
+    for page in sorted(set(trees) - {"404.html"} - seen):
+        rep.err(INDEX_FILE, "no entry for the page %s" % page)
 
 
 def _check_jsonld(rel, t, rep, canon):
