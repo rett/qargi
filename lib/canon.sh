@@ -2,16 +2,14 @@
 # Reconcile a project's memory stores with the canon (canon/CANON.md).
 #
 #   canon.sh check   PROJECT [--kind memory|reference]
-#   canon.sh plan    PROJECT [--kind K] [--default-role R]
-#   canon.sh apply   PROJECT [--kind K] [--default-role R] --approved "<go-ahead>"
-#   canon.sh import  PROJECT --from STORE_ID --role R --map docs-v0 [--approved "<go-ahead>"]
+#   canon.sh plan    PROJECT [--kind K]
+#   canon.sh apply   PROJECT [--kind K] --approved "<go-ahead>"
 #   canon.sh seed-role PROJECT --role R|shared --approved "..."   write the role's baseline (provision/role-seeds/R/; "shared" seeds shared/) without overwriting
 #   canon.sh audit   PROJECT [--kind K]        who wrote under which role folder (read-only)
 #   canon.sh promote PROJECT --kind K --path /roles/R/... --approved "<go-ahead>"
 #
 # PROJECT's stores come from its stored answers (qargi project init). Without
-# --kind, both stores are handled. `plan` and `check` change nothing. The source
-# of an import is read, never modified.
+# --kind, both stores are handled. `plan` and `check` change nothing.
 . "$(dirname "$0")/lib.sh"
 
 here=$(dirname "$(readlink -f "$0")")
@@ -21,22 +19,19 @@ SEED=$here/../provision/canon-seed
 
 verb=${1:-}; shift || true
 PROJECT=${1:-}; shift || true
-KIND='' DEFAULT_ROLE=build PLAN_ARG='' APPROVED='' FROM='' ROLE='' MAP='' PATH_ARG=''
+KIND='' PLAN_ARG='' APPROVED='' ROLE='' PATH_ARG=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --kind) KIND=$2; shift 2;;
-    --default-role) DEFAULT_ROLE=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --from) FROM=$2; shift 2;;
-    --role) ROLE=$2; shift 2;;
-    --map) MAP=$2; shift 2;;
-    --path) PATH_ARG=$2; shift 2;;
-    *) die "unknown option $1";;
+    --kind) need_val "$1" $#; KIND=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --role) need_val "$1" $#; ROLE=$2; shift 2;;
+    --path) need_val "$1" $#; PATH_ARG=$2; shift 2;;
+    *) usage_die "unknown option $1";;
   esac
 done
 export PLAN_ARG
-valid_project "$PROJECT" || die "usage: canon.sh check|plan|apply|import|promote PROJECT ..."
+valid_project "$PROJECT" || usage_die "usage: canon.sh check|plan|apply|promote PROJECT ..."
 PCFG=$DA_CONF/projects/$PROJECT.json
 [ -f "$PCFG" ] || die "no stored answers for $PROJECT: run /qargi-project first"
 ROLES=$(jq -r '([.roles | keys[]] + (if ((.teams // {}) | length) > 0 then ["lead"] else [] end)) | join(",")' "$PCFG")
@@ -60,7 +55,7 @@ make_plan() { # kind -> prints plan json path
   local k=$1 store; store=$(store_of "$k"); [ -n "$store" ] || die "the project has no $k store recorded"
   local tmp; tmp=$(mktemp -d)
   dump "$store" > "$tmp/s.jsonl"
-  python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" --default-role "$DEFAULT_ROLE" \
+  python3 -I "$PY" plan --kind "$k" --project "$PROJECT" --roles "$ROLES" \
     --store "$tmp/s.jsonl" --seed "$SEED" --today "$TODAY" > "$tmp/plan.json" || die "planning failed for $k"
   if [ "$(jq -r .from_version "$tmp/plan.json")" = unknown ] && [ "$verb" = apply ]; then
     jq -r '.notes[]' "$tmp/plan.json" >&2; die "the $k store has an unrecognised layout; nothing was changed"
@@ -94,28 +89,8 @@ case $verb in
       exec_ops "$(store_of "$k")" "$p"
     done
     echo "reconciled $PROJECT (approved: $APPROVED)";;
-  import)
-    [ -n "$FROM" ] && [ -n "$ROLE" ] && [ -n "$MAP" ] || die "import needs --from STORE_ID --role R --map docs-v0"
-    printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
-    tmp=$(mktemp -d)
-    dump "$FROM" > "$tmp/src.jsonl"; dump "$(store_of memory)" > "$tmp/mem.jsonl"; dump "$(store_of reference)" > "$tmp/ref.jsonl"
-    python3 -I "$PY" import --map "$MAP" --project "$PROJECT" --role "$ROLE" --src "$tmp/src.jsonl" --memory "$tmp/mem.jsonl" --reference "$tmp/ref.jsonl" --today "$TODAY" > "$tmp/imp.json"
-    for k in memory reference; do
-      jq -c '{from_version:"-", to_version:"-", ops: .[$k], notes: (if $k=="memory" then .notes else [] end)}' --arg k "$k" "$tmp/imp.json" > "$tmp/$k.plan.json"
-      echo "== $k store: $(jq '.ops|length' "$tmp/$k.plan.json") file(s) to add under roles/$ROLE/"
-      jq -r '.ops[] | "  create \(.path)  (\(.content|length) chars)"' "$tmp/$k.plan.json" | head -60
-    done
-    jq -r '.notes[] | "  note: " + .' "$tmp/imp.json"
-    tok=$(cat "$tmp/memory.plan.json" "$tmp/reference.plan.json" | jq -S -c .ops | plan_token)
-    if [ -n "$APPROVED" ]; then
-      ant_ok; need_plan "$tok"; audit_log canon-import "$PROJECT from $FROM into $ROLE"
-      for k in memory reference; do [ "$(jq '.ops|length' "$tmp/$k.plan.json")" = 0 ] || exec_ops "$(store_of "$k")" "$tmp/$k.plan.json"; done
-      echo "imported $FROM into $PROJECT roles/$ROLE (approved: $APPROVED); the source is untouched"
-    else
-      echo "plan only; plan token: $tok   (apply with: --plan $tok --approved \"...\")"
-    fi;;
   seed-role)
-    [ -n "$ROLE" ] || die "seed-role needs --role R"
+    [ -n "$ROLE" ] || usage_die "seed-role needs --role R"
     [ -n "$APPROVED" ] || die "seed-role needs --approved \"<go-ahead>\""
     [ "$ROLE" = shared ] || printf '%s' "$ROLES" | tr ',' '\n' | grep -qx "$ROLE" || die "role $ROLE is not enabled for $PROJECT"
     RS=$here/../provision/role-seeds/$ROLE; [ -d "$RS" ] || RS=$here/provision/role-seeds/$ROLE
@@ -170,7 +145,7 @@ case $verb in
     [ "${#unattr[@]}" = 0 ] || echo "NOTE: ${#unattr[@]} session(s) could not be attributed to a role"
     exit $bad;;
   promote)
-    [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || die "promote needs --kind K --path /roles/R/..."
+    [ -n "$KIND" ] && [ -n "$PATH_ARG" ] || usage_die "promote needs --kind K --path /roles/R/..."
     [ -n "$APPROVED" ] || die "promote needs --approved \"<go-ahead>\""
     case $PATH_ARG in /roles/*/*) ;; *) die "--path must be /roles/<role>/<file>";; esac
     store=$(store_of "$KIND"); ant_ok; audit_log canon-promote "$PATH_ARG"
@@ -180,5 +155,5 @@ case $verb in
     [ -z "$(jq -r --arg p "$dest" 'select(.path==$p)|.id' "$tmp")" ] || die "$dest already exists; merge by hand"
     ant beta:memory-stores:memories update --memory-store-id "$store" --memory-id "$id" --path "$dest" </dev/null >/dev/null || die "move failed"
     echo "moved $PATH_ARG -> $dest; add its row to shared/INDEX.md and remove it from the role's INDEX.md (approved: $APPROVED)";;
-  *) die "usage: canon.sh check|plan|apply|import|promote PROJECT ...";;
+  *) usage_die "usage: canon.sh check|plan|apply|promote PROJECT ...";;
 esac

@@ -6,12 +6,12 @@ repository. This contract replaces the worker contract: each member
 follows its own.
 
 # Input (the first message)
-TEAM (name), TASK, and one entry per member: role (its ability), BASE, SCOPE, CLONE, RUN_DIR, OUT_PREFIX, DONE.
+TEAM (name), TASK, and one entry per member: role, BASE, SCOPE, CLONE, OUT, OUT_PREFIX, DONE.
 Also STANDARDS (store paths the review judges against), MAX_ROUNDS and PROFILE.
 
 # Procedure
 1. Start the build member with its entry. Give each member only its own entry, its own
-   CLONE directory under /workspace and the shared RUN_DIR with its OUT_PREFIX. Members share
+   CLONE directory under /workspace and the shared OUT with its OUT_PREFIX. Members share
    one sandbox: never let two of them use the same directory.
 2. Read the build member's `<prefix>manifest.json`. If its status is not DONE, stop the team: report
    BLOCKED with the member's reason. If `usage_impact` is empty, say so and skip the members whose
@@ -35,5 +35,5 @@ Also STANDARDS (store paths the review judges against), MAX_ROUNDS and PROFILE.
 - Never decide what only the user can: a disputed or unresolved finding goes into the summary.
 - Members never push, and you never tell one to. You push only if your prompt has a Push section that grants it, and then only what it names; without that section you push nothing. Never read or plan from a backlog.
 - Memory: you may write verified how-to facts under roles/lead/ of the memory store and promote a
-  member's note to shared/ with qargi canon promote --approved; members write only under
-  roles/<their ability>/.
+  member's note to shared/ with qargi canon promote --approved. Members propose notes in
+  their reports; you file the ones worth keeping.

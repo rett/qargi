@@ -24,33 +24,28 @@ case $area:${1:-} in
   hook:subagent-start|hook:subagent-stop|hook:tool-use|hook:tool-failure|hook:notification|hook:stop-failure|hook:pre-compact)
     "$lib/hook.sh" "$@" || true; exit 0;;
 esac
-# Only the earlier XDG layout exists: stop before anything creates the new root (lib/paths.py; lib.sh checks too).
-case $area:${1:-} in migrate:home) ;; *) python3 -I "$lib/paths.py" check || exit 1;; esac
-# What the current directory implies (a missing PROJECT, a role used as an instance); see lib/help.py resolve.
-_rf=$(mktemp)
-if python3 -I "$help" resolve "$area" "$@" > "$_rf"; then
-  mapfile -d '' -t _resolved < "$_rf"
-  if [ "${#_resolved[@]}" -gt 0 ]; then area=${_resolved[0]}; set -- "${_resolved[@]:1}"; fi
-  rm -f "$_rf"
-else rm -f "$_rf"; exit 2; fi
-# The project's cloud binding (qargi cloud): ant runs under the project's profile for this command, and lib.sh checks the
-# workspace before a cloud call. A command that is about no project, or a project without a binding, is left as it is.
-case $area in
-  cloud|help|version) ;;
-  *) mapfile -t _cb < <(python3 -I "$lib/cloud.py" for-args "$area" "$@" 2>/dev/null || true)
-     if [ -n "${_cb[1]:-}" ]; then
-       if [ -n "${ANTHROPIC_PROFILE:-}" ] && [ "$ANTHROPIC_PROFILE" != "${_cb[1]}" ]; then
-         echo "qargi: project ${_cb[0]} uses ant profile ${_cb[1]} (qargi cloud show), but ANTHROPIC_PROFILE is $ANTHROPIC_PROFILE; unset it or change the binding" >&2; exit 1
-       fi
-       export ANTHROPIC_PROFILE=${_cb[1]} QARGI_CLOUD_WORKSPACE=${_cb[2]} QARGI_CLOUD_PROJECT=${_cb[0]}
-     fi;;
-esac
+# The preamble, one python process (lib/help.py preamble): a dev run says so on stderr, once per command (lib/paths.py);
+# what the current directory implies is filled in (a missing PROJECT, a role used as an instance; lib/help.py resolve);
+# and the project's cloud binding is read (qargi cloud). It prints project, profile, workspace id and the resolved
+# arguments, NUL-separated; nothing when resolve refused (its message is on stderr). help.py is imported, not run as a
+# script, so its compiled form is reused (python compiles a script on every run, a cache only an imported module gets).
+mapfile -d '' -t _pre < <(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import help; sys.exit(help.main(["preamble"] + sys.argv[2:]))' "$lib" "$area" "$@")
+[ "${#_pre[@]}" -ge 4 ] || exit 2
+area=${_pre[3]}; set -- "${_pre[@]:4}"
+# With a binding, ant runs under the project's profile for this command, and lib.sh checks the workspace before a cloud
+# call. A command that is about no project, or a project without a binding, is left as it is.
+if [ -n "${_pre[1]}" ]; then
+  if [ -n "${ANTHROPIC_PROFILE:-}" ] && [ "$ANTHROPIC_PROFILE" != "${_pre[1]}" ]; then
+    echo "qargi: project ${_pre[0]} uses ant profile ${_pre[1]} (qargi cloud show), but ANTHROPIC_PROFILE is $ANTHROPIC_PROFILE; unset it or change the binding" >&2; exit 1
+  fi
+  export ANTHROPIC_PROFILE=${_pre[1]} QARGI_CLOUD_WORKSPACE=${_pre[2]} QARGI_CLOUD_PROJECT=${_pre[0]}
+fi
 case $area in
   cloud) exec python3 -I "$lib/cloud.py" "$@";;
   project) exec "$lib/project.sh" "$@";;
   instances) exec "$lib/registry.sh" "$@";;
   provision) exec "$lib/provision.sh" "$@";;
-  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply|prune) exec "$lib/review.sh" "$@";; *) usage;; esac;;
+  review) case ${1:-} in check) shift; exec python3 -I "$lib/review_check.py" "$@";; apply) exec "$lib/review.sh" "$@";; *) usage;; esac;;
   skill|tool) exec "$lib/packs.sh" "$area" "$@";;
   packs) exec "$lib/packs.sh" packs "$@";;
   credential) exec "$lib/cred.sh" "$@";;
@@ -60,6 +55,10 @@ case $area in
   feature) exec "$lib/feature.sh" "$@";;
   marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;
+  branch) exec "$lib/branch.sh" "$@";;
+  changelog) exec "$lib/changelog.sh" "$@";;
+  upstream) exec "$lib/upstream.sh" "$@";;
+  ref) exec "$lib/ref.sh" "$@";;
   methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;
@@ -67,6 +66,7 @@ case $area in
   report) exec python3 -I "$lib/report.py" "$@";;
   noticed) exec python3 -I "$lib/noticed.py" "$@";;
   provider) exec python3 -I "$lib/provider.py" "$@";;
+  env) exec python3 -I "$lib/env.py" "$@";;
   upgrade) exec "$lib/upgrade.sh" "$@";;
   watch) exec "$lib/watch.sh" "$@";;
   collect) exec "$lib/collect.sh" "$@";;
@@ -76,7 +76,5 @@ case $area in
   supervise) exec "$lib/supervise.sh" "$@";;
   discover) exec python3 -I "$lib/discover.py" "$@";;
   export|import) exec python3 -I "$lib/transfer.py" "$area" "$@";;
-  migrate) exec python3 -I "$lib/migrate.py" "$@";;
-  version) cat "$root/VERSION";;
   *) echo "qargi: unknown command '$area'. Try: qargi help" >&2; exit 2;;
 esac

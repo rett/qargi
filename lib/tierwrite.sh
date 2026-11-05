@@ -19,18 +19,18 @@ ARG1='' FROM='' TO='' PROJECT='' PLAN_ARG='' APPROVED=''
 export PLAN_ARG
 while [ $# -gt 0 ]; do
   case $1 in
-    --project) [ $# -ge 2 ] || usage; PROJECT=$2; shift 2;;
-    --from) [ $# -ge 2 ] || usage; FROM=$2; shift 2;;
-    --to) [ $# -ge 2 ] || usage; TO=$2; shift 2;;
-    --plan) [ $# -ge 2 ] || usage; PLAN_ARG=$2; shift 2;;
-    --approved) [ $# -ge 2 ] || usage; APPROVED=$2; shift 2;;
-    -*) die "unknown option $1";;
+    --project) need_val "$1" $#; PROJECT=$2; shift 2;;
+    --from) need_val "$1" $#; FROM=$2; shift 2;;
+    --to) need_val "$1" $#; TO=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    -*) usage_die "unknown option $1";;
     *) [ -z "$ARG1" ] || usage; ARG1=$1; shift;;
   esac
 done
 [ -n "$ARG1" ] || usage
 if [ "$v" = init ]; then
-  [ -z "$FROM$TO" ] || die "init takes a tier only; --from and --to are for move"
+  [ -z "$FROM$TO" ] || usage_die "init takes a tier only; --from and --to are for move"
 else
   [ -n "$FROM" ] && [ -n "$TO" ] || usage
 fi

@@ -47,9 +47,6 @@
       "custom": []
     }
   },
-  "imports": {
-    "docs-v0": "documentation store layout (numbered folders 01-rules to 08-maintainer, tools/)"
-  },
   "note_kinds": {
     "memory": {
       "runnable": [

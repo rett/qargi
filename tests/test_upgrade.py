@@ -26,7 +26,7 @@ class T(unittest.TestCase):
         with open(os.path.join(self.conf, "install.json"), "w") as f:
             json.dump({"tool_root": self.tool}, f)
         with open(os.path.join(self.conf, "agents.json"), "w") as f:
-            json.dump({"forge": {}}, f)
+            json.dump({"schema": 2, "projects": {"alpha": {"forge": {}}, "beta": {"forge": {}, "scribe": {}}}}, f)
         self.env = dict(os.environ, HOME=self.t, QARGI_CONF=self.conf, QARGI_STATE=self.state, QARGI_SUDO="", QARGI_TEST_MARK=self.mark)
 
     def commit(self, version, msg):
@@ -65,7 +65,54 @@ class T(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.head(), git(self.origin, "rev-parse", "HEAD"))
         self.assertIn("--user", open(self.mark).read())              # install.sh --user ran
-        self.assertIn("qargi agent refresh", r.stdout)
+        for cmd in ("qargi agent refresh forge --project alpha", "qargi agent refresh forge --project beta", "qargi agent refresh scribe --project beta"):
+            self.assertIn(cmd, r.stdout)          # a name two projects hold is refreshed once for each
+
+    def old_home(self, body):
+        """A hermetic home (QARGI_HOME, nothing else named) whose config holds the installed-tool record and an agents.json of the given text."""
+        home = os.path.join(self.t, "h")
+        conf = os.path.join(home, "config")
+        os.makedirs(conf)
+        with open(os.path.join(conf, "install.json"), "w") as f:
+            json.dump({"tool_root": self.tool}, f)
+        path = os.path.join(conf, "agents.json")
+        with open(path, "w") as f:
+            f.write(body)
+        self.env = {k: v for k, v in dict(os.environ, HOME=self.t, QARGI_HOME=home, QARGI_SUDO="", QARGI_TEST_MARK=self.mark).items()
+                    if k not in ("QARGI_CONF", "QARGI_STATE")}
+        return path
+
+    def test_old_members_file_is_warned_about(self):
+        """An agents.json of an earlier shape makes every agent verb refuse; the plan says so and says what to do, and changes nothing."""
+        old = json.dumps({"worker": {"abilities": ["build"], "file": "/x/worker.md", "project": None, "seq": 1}})
+        path = self.old_home(old)
+        self.commit("0.2.0", "second change")
+        before = self.head()
+        r = self.q("--branch", "develop")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("agents.json", out)
+        self.assertIn(path, out)
+        self.assertIn("every agent verb refuses", out)
+        self.assertIn("agent add NAME --project P", out)
+        self.assertIn("plan token", r.stdout)                         # the plan is still the plan
+        self.assertEqual(self.head(), before)
+        self.assertEqual(open(path).read(), old)                      # the file is neither moved nor rewritten
+        tok = [l.split()[2] for l in r.stdout.splitlines() if l.startswith("plan token")][0]
+        r = self.q("--branch", "develop", "--plan", tok, "--approved", "go")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("every agent verb refuses", r.stdout + r.stderr)  # and after the upgrade, where the refresh list would have been
+        self.assertNotIn("qargi agent refresh", r.stdout)
+        self.assertEqual(open(path).read(), old)
+
+    def test_current_members_file_is_not_warned_about(self):
+        for body in ('{"schema": 2, "projects": {}}', "{}", json.dumps({"schema": 2, "projects": {"alpha": {"forge": {}}}})):
+            self.old_home(body)
+            self.commit("0.%d.0" % (len(body) + 2), "next " + body)
+            r = self.q("--branch", "develop")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("every agent verb refuses", r.stdout + r.stderr, body)
+            subprocess.run(["rm", "-rf", os.path.join(self.t, "h")], check=True)
 
     def test_default_branch_is_the_current_one(self):
         self.commit("0.2.0", "next")

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Checks that an agent's output is a series of change-specific patches with their context,
-not one monolithic patch. Usage: review_check.py RUN_DIR [--allow-empty]   (exit 1 on any FAIL)
-RUN_DIR holds manifest.json and the patches (RUN_DIR/patches/*.patch or RUN_DIR/*.patch).
-A review run has no patches: report.md with a Findings heading is its deliverable."""
+not one monolithic patch. Usage: review_check.py OUT [--allow-empty]   (exit 1 on any FAIL, 2 on a usage error)
+OUT is the member's output directory (RUN/out): it holds manifest.json and the patches in OUT/patches/*.patch, the one place `review apply` reads them from.
+A review run has no patches: report.md (or PREFIXreport.md) with a Findings heading is its deliverable."""
 import glob, json, os, re, sys
 from email.utils import parsedate_to_datetime
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
+unknown = [a for a in sys.argv[1:] if a.startswith("--") and a != "--allow-empty"]
+if unknown or len(args) > 1:
+    print("qargi: %s\nusage: review_check.py OUT [--allow-empty]" % ("unknown option " + unknown[0] if unknown else "one OUT directory, not %d" % len(args)), file=sys.stderr)
+    sys.exit(2)
 allow_empty = "--allow-empty" in sys.argv   # a team member may return no commits (blocked, or nothing to change)
 run = args[0] if args else "."
 fails, warns, notes = [], [], []
@@ -14,20 +18,21 @@ F = lambda m: fails.append("FAIL " + m)
 W = lambda m: warns.append("WARN " + m)
 N = lambda m: notes.append("NOTE " + m)
 
-patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")) or glob.glob(os.path.join(run, "*.patch")))
+patches = sorted(glob.glob(os.path.join(run, "patches", "*.patch")))
 if not patches:
     # a review run returns a report, not patches
-    rep = os.path.join(run, "report.md")
-    text = open(rep, errors="replace").read() if os.path.exists(rep) else ""
-    if text.strip() and re.search(r"(?mi)^#+\s*findings\b", text):
-        print("OK report-only run: report.md holds a Findings section (%d chars)" % len(text)); sys.exit(0)
+    # the report is report.md, or PREFIXreport.md when the task block gave an OUT_PREFIX (a team run: review--report.md)
+    for rep in sorted(glob.glob(os.path.join(run, "*report.md"))):
+        text = open(rep, errors="replace").read()
+        if text.strip() and re.search(r"(?mi)^#+\s*findings\b", text):
+            print("OK report-only run: %s holds a Findings section (%d chars)" % (os.path.basename(rep), len(text))); sys.exit(0)
     try:
         m0 = json.load(open(os.path.join(run, "manifest.json")))
     except Exception:
         m0 = None
     if m0 is not None and m0.get("commits") == [] and (allow_empty or m0.get("status") == "BLOCKED"):
         print("OK no commits (status %s)%s" % (m0.get("status"), ": " + m0["blocked_reason"] if m0.get("blocked_reason") else "")); sys.exit(0)
-    print("FAIL no patches found in %s, and no report.md with a Findings section" % run); sys.exit(1)
+    print("FAIL no patches found in %s, and no report.md (or PREFIXreport.md) with a Findings section" % run); sys.exit(1)
 try:
     man = json.load(open(os.path.join(run, "manifest.json")))
 except Exception as e:

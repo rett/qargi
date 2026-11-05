@@ -1,0 +1,39 @@
+# The packages the tests need, installed from a cache of their .deb files. A cold cache installs them with apt-get (which keeps the
+# files it downloads in the cache directory) and the cache is saved when the job ends; a warm cache installs the same files with
+# dpkg and never reaches the package mirrors. Should dpkg refuse them (the runner image moved on), the packages are installed the
+# plain way. The cache key holds the package list, so a changed list is a cold cache. A package the runner image already has is
+# not downloaded, so there is nothing to cache for it.
+name: tools
+description: Install jq and shellcheck from a cache of the packages
+
+inputs:
+  packages:
+    description: The apt packages to install, separated by spaces
+    default: jq shellcheck
+
+runs:
+  using: composite
+  steps:
+    - name: Cache of the packages
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/apt-cache
+        key: apt-ubuntu-24.04-${{ inputs.packages }}-v1
+    - name: Install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        d=$HOME/apt-cache
+        mkdir -p "$d"
+        # shellcheck disable=SC2086  # the list is words
+        if compgen -G "$d/*.deb" >/dev/null && sudo dpkg -i "$d"/*.deb; then
+          echo "installed from the cache"
+        else
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq -o Dir::Cache::archives="$d" $PACKAGES
+          sudo chown -R "$(id -u):$(id -g)" "$d"
+          rm -rf "$d/lock" "$d/partial"
+        fi
+        jq --version
+        shellcheck --version | sed -n 2p

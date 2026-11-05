@@ -16,7 +16,7 @@ Every write holds an flock on <file>.lock, re-reads the record under it, decides
 before replacing the file (write a temporary file, then os.replace). Two racing writers therefore take turns: the
 second sees the first one's record and decides again (a lost race is a refusal, never an overwrite).
 
-A lead is LIVE when now - renewed_at < ttl minutes, STALE otherwise. The ttl is the project answer marshal.ttl (minutes),
+A lead is LIVE when now - renewed_at < ttl minutes, STALE otherwise. The ttl is the project answer marshal.lease_minutes (minutes),
 passed in with --ttl.
 
 Environment (read here and nowhere else):
@@ -56,7 +56,7 @@ marshal.sh); it refuses an unsigned head whose lead is not the lead of the recor
 Exit status: 0 ok, 1 refused or failed (message on stderr), 2 usage, 3 the remote was not reached ("remote not checked": nothing was
 changed, try again; only the refs backend returns it).
 Run through lib/marshal.sh; python3 -I, standard library only."""
-import argparse, calendar, fcntl, json, os, pwd, re, socket, subprocess, sys, time
+import argparse, calendar, fcntl, hashlib, json, os, pwd, re, socket, subprocess, sys, time
 
 FMT = "%Y-%m-%dT%H:%M:%SZ"
 STATUSES = ("planned", "active", "blocked", "verifying", "released", "finished", "abandoned")
@@ -121,10 +121,26 @@ class Ctx:
         if not ID_RE.match(self.id):
             raise Refuse("the lead identity %r is not valid (letters, digits and . _ @ : + - only, at most 128)" % self.id)
         self.user, self.host = user, host
+        self._worktree = None
         self.t = now()
 
     def path(self, name):
         return os.path.join(self.state, "features", "%s-%s.json" % (self.project, name))
+
+    @property
+    def worktree(self):
+        """The work tree this session runs in (its real path): the top of the git work tree around the current directory, else the directory.
+        A lead record carries it, so a restarted session of the same user and host in the same work tree can be told from a stranger."""
+        if self._worktree is None:
+            here = os.path.realpath(os.getcwd())
+            top = git_at(here, "rev-parse", '--show-toplevel')
+            self._worktree = os.path.realpath(top.strip()) if top and top.strip() else here
+        return self._worktree
+
+    @property
+    def worktree_key(self):
+        """A digest of the work tree's real path: what a lead record carries (it may be pushed to a shared remote, and a path is not for others)."""
+        return hashlib.sha256(self.worktree.encode("utf-8", "replace")).hexdigest()[:16]
 
     def warn_anon(self):
         if self.anon:
@@ -162,8 +178,46 @@ def lease(ctx, rec):
     return ("live" if age < ctx.ttl * 60 else "stale"), max(age, 0) // 60
 
 
-def new_lead(ctx, since=None):
-    return {"id": ctx.id, "user": ctx.user, "host": ctx.host, "since": since or iso(ctx.t)}
+def new_lead(ctx, since=None, succeeds=None):
+    ld = {"id": ctx.id, "user": ctx.user, "host": ctx.host, "since": since or iso(ctx.t), "worktree": ctx.worktree_key}
+    if succeeds:
+        ld["succeeds"] = succeeds
+    return ld
+
+
+def succession_problem(ctx, name, rec, old):
+    """Why this session cannot take the feature as the successor of the lead OLD, or None when it can: the record's lead is OLD, its lease is
+    stale, and its host, OS user and work tree are this session's. A restart gives the new session a new id, and nothing else that identifies it,
+    so those three are what make it the same lead; the owner's takeover covers every other case."""
+    ld = lead_of(rec)
+    if rec is None or not ld:
+        return "feature %s has no lead to succeed (claim or take it)" % name
+    if rec.get("status") in ("finished", "abandoned"):
+        return "feature %s is %s" % (name, rec["status"])
+    if ld["id"] != old:
+        return "the lead of %s is %s, not %s" % (name, clean(ld["id"]), clean(old))
+    if old == ctx.id:
+        return None
+    st, mins = lease(ctx, rec)
+    if st == "live":
+        return "the lease of %s on %s is still live (renewed %s min ago, ttl %d): the old session may still be running; wait until it is stale, or ask the owner for qargi marshal takeover" % (
+            clean(old), name, "?" if mins is None else mins, ctx.ttl)
+    for what, theirs, mine_ in (("host", ld.get("host"), ctx.host), ("user", ld.get("user"), ctx.user)):
+        if theirs != mine_:
+            return "the old lead ran on another %s (%s, not %s); only the owner's qargi marshal takeover covers that" % (what, clean(str(theirs))[:60], mine_)
+    if not ld.get("worktree"):
+        return "the old lead record names no work tree (it was made before records carried one); only the owner's qargi marshal takeover covers that"
+    if ld["worktree"] != ctx.worktree_key:
+        return "the old lead ran in another work tree; only the owner's qargi marshal takeover covers that"
+    return None
+
+
+def note_audit(text):
+    """The one-line audit detail of a succession or takeover, for lib/marshal.sh to append to the audit log."""
+    out = os.environ.get("QARGI_MARSHAL_AUDIT_OUT")
+    if out:
+        with open(out, "w") as f:
+            f.write(text)
 
 
 def update(ctx, name, fn, create=False):
@@ -873,6 +927,15 @@ def refs_resign(be, ctx, name, expect=None, show=False):
 
 # ---- git -----------------------------------------------------------------------------------------------------------
 
+def git_at(path, *args):
+    try:
+        r = subprocess.run(["git", "-C", path] + list(args), capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=10,
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0"))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
 def git(ctx, *args):
     if not ctx.repo:
         return None
@@ -918,32 +981,104 @@ def overlaps(ctx, name, files_cache):
     return res
 
 
-def tasks_of(ctx, name):
-    out, p = [], os.path.join(ctx.state, "local-runs.jsonl")
+def registry_lines(ctx):
+    """The lead's registry of local runs ($STATE/local-runs.jsonl, written by `local prepare`): one record per run directory (its last line
+    wins), in the order first seen, for this repository only (a line that names another repository is left out; one that names none, or a
+    URL, is kept)."""
+    p = os.path.join(ctx.state, "local-runs.jsonl")
     try:
         lines = open(p).read().splitlines()
     except OSError:
-        return out
+        return []
+    rp = os.path.realpath(ctx.repo) if ctx.repo else ""
+    runs, order = {}, []
     for ln in lines:
         try:
             r = json.loads(ln)
         except ValueError:
             continue
-        if not isinstance(r, dict) or r.get("base") != "feature/" + name:
+        if not isinstance(r, dict) or not isinstance(r.get("run"), str) or not r["run"]:
             continue
-        run = r.get("run") or ""
-        out.append({"run": clean(run), "slug": clean(r.get("slug") or ""), "role": clean(r.get("ability") or r.get("role") or ""),
-                    "started": clean(r.get("started") or ""), "verified": bool(run) and os.path.exists(os.path.join(run, "verified"))})
+        repo = r.get("repo")
+        if rp and isinstance(repo, str) and repo and os.path.realpath(repo) != rp:
+            continue
+        if r["run"] not in runs:
+            order.append(r["run"])
+        runs[r["run"]] = r
+    return [runs[k] for k in order]
+
+
+def task_state(r):
+    """What the registry and the run directory say of a run: cleaned (the line is marked by `local clean`: no open task any more), else
+    verified (the mark of a passing `local verify`, or RUN/verified) or not verified, with applied (RUN/applied) and a directory that is gone."""
+    run = r["run"]
+    cleaned = bool(r.get("cleaned"))
+    verified = bool(r.get("verified")) or os.path.exists(os.path.join(run, "verified"))
+    applied = os.path.exists(os.path.join(run, "applied"))
+    if cleaned:
+        state = "cleaned"
+    else:
+        parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
+        state = ", ".join(parts)
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "state": state}
+
+
+def tasks_of(ctx, name):
+    out = []
+    for r in registry_lines(ctx):
+        if r.get("base") != "feature/" + name:
+            continue
+        out.append(dict(task_state(r), run=clean(r["run"]), slug=clean(r.get("slug") or ""), role=clean(r.get("ability") or r.get("role") or ""),
+                        started=clean(r.get("started") or "")))
     return out
 
 
+def agent_bases(ctx):
+    """{agent/SLUG: the branch the run was prepared against} from the registry: what says which feature an agent branch belongs to."""
+    out = {}
+    for r in registry_lines(ctx):
+        slug, base = r.get("slug"), r.get("base")
+        if isinstance(slug, str) and slug and isinstance(base, str) and base:
+            out["agent/" + slug] = base
+    return out
+
+
+def agent_branches(ctx):
+    return (git(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads/agent/*") or "").split()
+
+
+def is_ancestor(ctx, ref, of):
+    return git(ctx, "merge-base", '--is-ancestor', ref, of) is not None
+
+
 def unmerged_agents(ctx, name):
-    out = git(ctx, "for-each-ref", "--format=%(refname:short)", "refs/heads/agent/*") or ""
+    """The agent/* branches prepared against feature/NAME (the registry's base) that the feature does not contain yet."""
+    bases = agent_bases(ctx)
+    return [b for b in agent_branches(ctx)
+            if bases.get(b) == "feature/" + name and not is_ancestor(ctx, "refs/heads/" + b, "refs/heads/feature/" + name)]
+
+
+def unattributed_agents(ctx):
+    """[(branch, base or "")]: the agent/* branches of no open feature (no base recorded, or a base that is not an existing feature branch)
+    that are merged neither into develop nor into any feature branch. Listed once, so they do not repeat under every feature."""
+    bases, feats = agent_bases(ctx), set(open_features(ctx))
+    targets = ["refs/heads/feature/" + n for n in sorted(feats)]
+    if git(ctx, "rev-parse", "-q", '--verify', "refs/heads/develop") is not None:
+        targets.append("refs/heads/develop")
     res = []
-    for b in out.split():
-        if git(ctx, "merge-base", '--is-ancestor', "refs/heads/" + b, "refs/heads/feature/" + name) is None:
-            res.append(b)
+    for b in agent_branches(ctx):
+        base = bases.get(b, "")
+        if base.startswith("feature/") and base[len("feature/"):] in feats:
+            continue
+        if any(is_ancestor(ctx, "refs/heads/" + b, t) for t in targets):
+            continue
+        res.append((b, clean(base)))
     return res
+
+
+def unattributed_line(ua):
+    return "unattributed agent branches (of no open feature, not merged into develop or a feature): " + \
+        " ".join(b + (" (base %s)" % base if base else "") for b, base in ua)
 
 
 def worktrees_of(ctx, name):
@@ -985,7 +1120,8 @@ def describe(ctx, name, rec, files_cache, derived=True):
     ld = lead_of(rec)
     ghost = rec["status"] == "abandoned" and not branch_exists(ctx, name)
     d = {"feature": name, "project": ctx.project, "status": rec["status"],
-         "lead": ({"id": clean(ld["id"]), "user": clean(ld.get("user", "")), "host": clean(ld.get("host", "")), "since": clean(ld.get("since", ""))} if ld else None),
+         "lead": (dict({"id": clean(ld["id"]), "user": clean(ld.get("user", "")), "host": clean(ld.get("host", "")), "since": clean(ld.get("since", ""))},
+                  **{k: clean(str(ld[k]))[:128] for k in ("worktree", "succeeds") if ld.get(k)}) if ld else None),
          "lease": st, "minutes_since_renewal": mins, "ttl_minutes": ctx.ttl, "renewed_at": rec["renewed_at"],
          "rev": rec.get("rev", 0), "branch": branch_exists(ctx, name), "ghost": ghost, "updated_by": clean(rec.get("updated_by") or ""),
          "purpose": capped(rec["purpose"]), "goal": capped(rec["goal"]), "plan": capped(rec["plan"]), "note": capped(rec["note"]),
@@ -1024,7 +1160,8 @@ def print_full(d, raw_lens):
         print("  integrity: %s%s" % (d["integrity"], (" by " + d["signer"]) if d["signer"] else ((": " + d["integrity_note"]) if d["integrity_note"] else "")))
     if d["lead"]:
         age = "?" if d["minutes_since_renewal"] is None else d["minutes_since_renewal"]
-        print("  lead: %s (%s@%s) %s, renewed %s min ago (ttl %d min), since %s" % (d["lead"]["id"], d["lead"]["user"], d["lead"]["host"], d["lease"].upper(), age, d["ttl_minutes"], d["lead"]["since"]))
+        print("  lead: %s (%s@%s) %s, renewed %s min ago (ttl %d min), since %s%s" % (d["lead"]["id"], d["lead"]["user"], d["lead"]["host"], d["lease"].upper(), age, d["ttl_minutes"], d["lead"]["since"],
+                                                                                    (", succeeded " + d["lead"]["succeeds"]) if d["lead"].get("succeeds") else ""))
     else:
         print("  lead: none")
     print("  status: %s%s%s" % (d["status"], " (branch gone)" if d["ghost"] else "", " (provisional: not on the remote yet)" if d.get("provisional") else ""))
@@ -1034,10 +1171,14 @@ def print_full(d, raw_lens):
         for k, v in fields:
             print("  %s:" % k)
             print(indent(v + ("\n[truncated at %d characters]" % CAP if raw_lens.get(k, 0) > CAP else ""), 4))
-    print("tasks:" + ("" if d["tasks"] else " none"))
-    for t in d["tasks"]:
-        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], "verified" if t["verified"] else "not verified"))
-    print("agent branches not merged into feature/%s:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
+    # the open tasks one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
+    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"]], [t for t in d["tasks"] if t["cleaned"]]
+    print("tasks:" + ("" if opened else " none"))
+    for t in opened:
+        print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], t["state"]))
+    if cleaned:
+        print("  cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned))
+    print("agent branches of feature/%s (prepared against it) not merged into it:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
     for b in d["agent_branches"]:
         print("  " + b)
     print("worktrees on feature/%s or agent/*:%s" % (d["feature"], "" if d["worktrees"] else " none"))
@@ -1083,9 +1224,14 @@ def v_status(ctx, a):
         items = gather(ctx, [a.name])
     else:
         items = listed(ctx, a.history)
+    # the agent branches of no open feature are said once, after the features, never under each of them
+    ua = [] if a.brief else [{"branch": b, "base": base} for b, base in unattributed_agents(ctx)]
     if a.json:
         objs = [d for _, d, _ in items]
-        print(json.dumps(objs[0] if a.name else {"project": ctx.project, "features": objs}, indent=1))
+        if a.name:
+            print(json.dumps(dict(objs[0], agent_unattributed=ua), indent=1))
+        else:
+            print(json.dumps({"project": ctx.project, "features": objs, "agent_unattributed": ua}, indent=1))
         return
     if not items:
         print("no open features (qargi feature start NAME)")
@@ -1098,6 +1244,20 @@ def v_status(ctx, a):
             print()
         r = fresh(ctx, n, rec)
         print_full(d, {k: len(clean(r[k])) for k in ("goal", "plan", "note")})
+    if ua:
+        print()
+        print(unattributed_line([(u["branch"], u["base"]) for u in ua]))
+
+
+def succeed(ctx, name, rec, old):
+    """The record with this session as the lead in the place of OLD, which ran on this host, as this user, in this work tree and whose lease is
+    stale: the goal, plan, note and status stay, the succession is written in the lead (succeeds)."""
+    r = fresh(ctx, name, rec)
+    r["lead"] = new_lead(ctx, succeeds=old)
+    r["renewed_at"], r["updated_by"] = iso(ctx.t), ctx.id
+    if r["status"] in ("released", "unled"):
+        r["status"] = "active"
+    return r
 
 
 def v_claim(ctx, a):
@@ -1108,6 +1268,15 @@ def v_claim(ctx, a):
 
     def fn(rec):
         ld = lead_of(rec)
+        if a.successor_of:
+            why = succession_problem(ctx, a.name, rec, a.successor_of)
+            if why:
+                raise Refuse("cannot continue as the lead of %s after %s: %s" % (a.name, clean(a.successor_of), why))
+            if ld["id"] != ctx.id:
+                r = succeed(ctx, a.name, rec, ld["id"])
+                if a.goal is not None:
+                    r["goal"] = a.goal
+                return r, ("succeeded", ld["id"])
         if ld and ld["id"] != ctx.id:
             raise Refuse(led_by_msg(ctx, a.name, rec))
         r = fresh(ctx, a.name, rec)
@@ -1124,6 +1293,10 @@ def v_claim(ctx, a):
             r["goal"] = a.goal
         return r, again
     again = update(ctx, a.name, fn, create=True)
+    if isinstance(again, tuple):
+        note_audit("%s %s old=%s new=%s" % (ctx.project, a.name, again[1], ctx.id))
+        print("%s continues as the lead of %s after %s (same host, user and work tree; the old lease was stale; ttl %d min)" % (ctx.id, a.name, clean(again[1]), ctx.ttl))
+        return
     print("%s %s (lead %s, ttl %d min)" % ("renewed" if again else "claimed", a.name, ctx.id, ctx.ttl))
 
 
@@ -1136,6 +1309,8 @@ def v_start(ctx, a):
         ld = lead_of(rec)
         st, _ = lease(ctx, rec)
         if ld and ld["id"] != ctx.id and rec.get("status") not in ("finished", "abandoned", "released"):
+            if succession_problem(ctx, a.name, rec, ld["id"]) is None:       # a restarted session of the same lead: no takeover needed
+                return succeed(ctx, a.name, rec, ld["id"]), ("succeeded", ld["id"])
             raise Refuse(led_by_msg(ctx, a.name, rec))
         r = fresh(ctx, a.name, rec)
         if rec is None or rec.get("status") in ("finished", "abandoned", "released", None):
@@ -1150,7 +1325,11 @@ def v_start(ctx, a):
         r["status"], r["finished_at"] = "active", None
         r["renewed_at"], r["updated_by"] = iso(ctx.t), ctx.id
         return r, st
-    update(ctx, a.name, fn, create=True)
+    res = update(ctx, a.name, fn, create=True)
+    if isinstance(res, tuple):
+        note_audit("%s %s old=%s new=%s" % (ctx.project, a.name, res[1], ctx.id))
+        print("marshal: %s leads %s, continuing after %s (same host, user and work tree)" % (ctx.id, a.name, clean(res[1])))
+        return
     print("marshal: %s leads %s" % (ctx.id, a.name))
 
 
@@ -1261,10 +1440,7 @@ def v_takeover(ctx, a):
         r["renewed_at"], r["updated_by"] = iso(ctx.t), ctx.id
         return r, old
     old = update(ctx, a.name, fn)
-    out = os.environ.get("QARGI_MARSHAL_AUDIT_OUT")
-    if out:
-        with open(out, "w") as f:
-            f.write("%s %s old=%s new=%s" % (ctx.project, a.name, old, ctx.id))
+    note_audit("%s %s old=%s new=%s" % (ctx.project, a.name, old, ctx.id))
     print("took over %s from %s (lead %s, ttl %d min); the approval covers this takeover only" % (a.name, old, ctx.id, ctx.ttl))
 
 
@@ -1315,6 +1491,9 @@ def warnings_for(ctx, d, rec_exists):
     elif d["lead"] and d["lease"] == "stale" and d["lead"]["id"] != ctx.id:
         w.append("the lead of %s (%s) is stale (renewed %s min ago, ttl %d): qargi marshal takeover %s --approved WORDS" % (
             d["feature"], d["lead"]["id"], "?" if d["minutes_since_renewal"] is None else d["minutes_since_renewal"], ctx.ttl, d["feature"]))
+        ld = d["lead"]
+        if ld.get("host") == ctx.host and ld.get("user") == ctx.user and ld.get("worktree") == ctx.worktree_key:
+            w.append("you look like the restarted session of that lead (same host, user and work tree): qargi marshal claim %s --as-successor-of %s continues as the lead without a takeover" % (d["feature"], ld["id"]))
     elif not d["lead"] and (rec_exists or d["branch"]) and d["status"] not in ("finished", "abandoned"):
         w.append("feature %s has no lead (%s): claim or take it" % (d["feature"], d["status"]))
     for o, fs in d.get("overlap", {}).items():
@@ -1401,6 +1580,7 @@ def main(argv):
     p.add_argument('--ttl', type=int, default=15)
     p.add_argument('--as', dest="as_id")
     p.add_argument('--goal'), p.add_argument('--plan'), p.add_argument('--note'), p.add_argument('--status')
+    p.add_argument('--as-successor-of', dest="successor_of")
     p.add_argument('--purpose', default="")
     p.add_argument('--approved')
     p.add_argument('--all', action="store_true"), p.add_argument('--brief', action="store_true"), p.add_argument('--json', action="store_true")

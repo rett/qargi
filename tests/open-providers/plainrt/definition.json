@@ -1,0 +1,50 @@
+{
+  "schema": 2,
+  "kind": "provider",
+  "provider": "plainrt",
+  "family": null,
+  "surface": "local",
+  "description": "A made-up command-line runtime with no barrier and no class arguments, and no claim of one: the base of an extension that claims a barrier it does not add",
+  "models": {
+    "pattern": "^fo-[a-z0-9.-]+$",
+    "tiers": {
+      "*": {
+        "model": "fo-main",
+        "alias": null,
+        "verified_on": null,
+        "source": "fixture"
+      }
+    },
+    "effort": {
+      "low": "l",
+      "medium": "m",
+      "high": "h",
+      "xhigh": null,
+      "max": null
+    }
+  },
+  "dispatch": {
+    "mode": "command",
+    "argv": [
+      "plainrt-bin",
+      "run",
+      "--cd",
+      "{clone}"
+    ],
+    "prompt": {
+      "via": "stdin"
+    },
+    "cwd": "{clone}",
+    "timeout_s": 60,
+    "output": {
+      "format": "text"
+    },
+    "exit": {
+      "0": "ok",
+      "*": "failed"
+    }
+  },
+  "barrier": {
+    "kind": "none"
+  }
+}

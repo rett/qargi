@@ -21,24 +21,24 @@ PLAN_ARG='' SESSION_ARG='' ARG2='' IFSTALE=''
 LOC='' DEP='' AGENT_FILE='' NAME='' NOSESS='' ASKED='' RECON='' ARG='' MODEL='' EFFORT='' PROVISION='' APT='' NETWORKING='' APPROVED='' BUDGET=''
 while [ $# -gt 0 ]; do
   case $1 in
-    --location) LOC=$2; shift 2;;
-    --deployment) DEP=$2; shift 2;;
-    --agent) AGENT_FILE=$2; shift 2;;
-    --name) NAME=$2; shift 2;;
+    --location) need_val "$1" $#; LOC=$2; shift 2;;
+    --deployment) need_val "$1" $#; DEP=$2; shift 2;;
+    --agent) need_val "$1" $#; AGENT_FILE=$2; shift 2;;
+    --name) need_val "$1" $#; NAME=$2; shift 2;;
     --no-session) NOSESS=1; shift;;
-    --asked) ASKED=$2; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
     --reconcile) RECON=1; shift;;
-    --model) MODEL=$2; shift 2;;
-    --effort) EFFORT=$2; shift 2;;
+    --model) need_val "$1" $#; MODEL=$2; shift 2;;
+    --effort) need_val "$1" $#; EFFORT=$2; shift 2;;
     --provision) PROVISION=1; shift;;
-    --apt) APT=$2; shift 2;;
-    --networking) NETWORKING=$2; shift 2;;
-    --approved) APPROVED=$2; shift 2;;
-    --plan) PLAN_ARG=$2; shift 2;;
-    --budget) BUDGET=$2; shift 2;;
-    --session) SESSION_ARG=$2; shift 2;;
+    --apt) need_val "$1" $#; APT=$2; shift 2;;
+    --networking) need_val "$1" $#; NETWORKING=$2; shift 2;;
+    --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
+    --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
+    --budget) need_val "$1" $#; BUDGET=$2; shift 2;;
+    --session) need_val "$1" $#; SESSION_ARG=$2; shift 2;;
     --if-stale) IFSTALE=1; shift;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) if [ -z "$ARG" ]; then ARG=$1; else ARG2=$1; fi; shift;;
   esac
 done
@@ -53,7 +53,7 @@ slug() { printf '%s' "$1" | tr '[:upper:] _' '[:lower:]--' | tr -cd 'a-z0-9-' | 
 
 init_cloud() {
   need_asked; ant_ok
-  [ -n "$DEP" ] || die "init --location cloud needs --deployment ID"
+  [ -n "$DEP" ] || usage_die "init --location cloud needs --deployment ID"
   local d name rec run sid
   d=$(ant beta:deployments retrieve --deployment-id "$DEP" 2>/dev/null) || die "cannot read deployment $DEP"
   [ "$(jq -r '.archived_at' <<<"$d")" = null ] || die "deployment is archived"
@@ -101,7 +101,7 @@ init_cloud() {
 
 init_provision() {
   need_asked
-  [ -n "$NAME" ] || die "--provision needs --name"
+  [ -n "$NAME" ] || usage_die "--provision needs --name"
   local args=("$NAME")
   [ -z "$MODEL" ] || args+=(--model "$MODEL")
   [ -z "$EFFORT" ] || args+=(--effort "$EFFORT")
@@ -233,7 +233,7 @@ budget_set() {
   need_asked; ant_ok
   local n=$1 cents=${2:-} i did
   audit_log budget "$n $cents"
-  case $cents in ''|*[!0-9]*) die "budget needs NAME CENTS (a whole number)";; esac
+  case $cents in ''|*[!0-9]*) usage_die "budget needs NAME CENTS (a whole number)";; esac
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "budget applies to cloud instances"
   did=$(jq -r .deployment_id <<<"$i")
@@ -261,12 +261,15 @@ refresh_prompt() {
       *) echo "the prompt of $n changed since it was last rendered; planning the refresh";;
     esac
   fi
-  need_asked; ant_ok
+  need_asked
   i=$(inst_get "$n") || exit 1
   [ "$(jq -r .location <<<"$i")" = cloud ] || die "refresh-prompt applies to cloud instances"
   split_instance "$n"; aid=$(jq -r .agent.id <<<"$i")
+  # the prompt is rendered before any cloud call: one that cannot be rendered (an addendum that cannot be read) is never pushed in part
+  new=$(agent_prompt "$ROLE" "$PROJECT") || die "could not render the system prompt of $ROLE (a contract addendum of the project's cloud runtime cannot be read?); nothing was sent"
+  ant_ok
   ag=$(ant beta:agents retrieve --agent-id "$aid" </dev/null 2>/dev/null) || die "cannot read the agent"
-  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag"); new=$(agent_prompt "$ROLE" "$PROJECT")
+  aver=$(jq -r .version <<<"$ag"); cur=$(jq -r '.system // ""' <<<"$ag")
   if [ "$ROLE" = lead ]; then   # a lead pins its members by version: point it at their current versions
     members=$(jq -c '[.multiagent.agents[]? | {id, version}]' <<<"$ag")
     for id in $(jq -r '.[].id' <<<"$members"); do
@@ -301,14 +304,14 @@ refresh_prompt() {
 }
 
 case $verb in
-  refresh-prompt) [ -n "$ARG" ] || die "refresh-prompt needs NAME"; refresh_prompt "$ARG";;
-  budget) [ -n "$ARG" ] || die "budget needs NAME CENTS"; budget_set "$ARG" "${ARG2:-}";;
-  normalize) [ -n "$ARG" ] || die "normalize needs NAME"; normalize "$ARG";;
+  refresh-prompt) [ -n "$ARG" ] || usage_die "refresh-prompt needs NAME"; refresh_prompt "$ARG";;
+  budget) [ -n "$ARG" ] || usage_die "budget needs NAME CENTS"; budget_set "$ARG" "${ARG2:-}";;
+  normalize) [ -n "$ARG" ] || usage_die "normalize needs NAME"; normalize "$ARG";;
   init)
     case $LOC in
       cloud) if [ -n "$PROVISION" ]; then init_provision; else init_cloud; fi;;
       local) init_local;;
-      *) die "init needs --location local|cloud";;
+      *) usage_die "init needs --location local|cloud";;
     esac;;
   list)
     ps=$(for n in $(jq -r 'keys[]' "$REG"); do printf '%s\t%s\n' "$n" "$(prompt_state "$n")"; done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
@@ -320,7 +323,7 @@ case $verb in
     [ -n "$RECON" ] && for n in $(jq -r 'keys[]' "$REG"); do reconcile "$n"; done
     exit 0;;
   show)
-    [ -n "$ARG" ] || die "show needs NAME"
+    [ -n "$ARG" ] || usage_die "show needs NAME"
     inst_get "$ARG" | jq .
     jq --arg n "$ARG" 'to_entries | map(select(.value.instance==$n)) | map({session: .key} + .value)' "$TRK"
     stale_checks "$ARG"
@@ -331,11 +334,11 @@ case $verb in
     [ -n "$RECON" ] && reconcile "$ARG"
     exit 0;;
   remove)
-    [ -n "$ARG" ] || die "remove needs NAME"
+    [ -n "$ARG" ] || usage_die "remove needs NAME"
     inst_get "$ARG" >/dev/null
     live=$(jq -r --arg n "$ARG" '[to_entries[] | select(.value.instance==$n and .value.closed_at==null)] | length' "$TRK")
     [ "$live" = 0 ] || die "$live open session(s) for $ARG; close them first (the registry entry is all this removes)"
     json_update "$REG" 'del(.[$n])' --arg n "$ARG"
     echo "removed registry entry $ARG (deployment, agent and environment untouched)";;
-  *) die "usage: registry.sh init|list|show|remove ...";;
+  *) usage_die "usage: registry.sh init|list|show|remove ...";;
 esac

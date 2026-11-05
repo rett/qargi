@@ -6,7 +6,7 @@
 # stdin only, a reviewer needs the project's acceptance of the missing read-only barrier, and an idle session is reused only
 # for the same role, profile, model and effort. The legacy role instances (<project>-build ...) start exactly as before.
 # Hermetic, offline: a fake `ant`, and a copy of the tool whose descriptor has the per-dispatch overrides verified (the
-# shipped one has not, so the checkout itself falls back to the legacy instances). Run: tests/test_session_profiles.sh
+# shipped one has not, so the checkout itself refuses a start of the base). Run: tests/test_session_profiles.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
@@ -20,15 +20,15 @@ mkdir -p "$HOME" "$T/c/projects" "$T/s" "$T/bin" "$FAKE" "$T/secrets"
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 
 TOOL=$T/tool; mkdir -p "$TOOL"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$TOOL/"; done
+copy_tool "$SRC" "$TOOL"
 SHIPT=$T/ship; mkdir -p "$SHIPT"
-for d in agents bin lib roles skills provision canon methodologies VERSION; do [ ! -e "$SRC/$d" ] || cp -r "$SRC/$d" "$SHIPT/"; done
+copy_tool "$SRC" "$SHIPT"
 # the checkout once had the cloud overrides unverified; the copy keeps that state so the fallback to the role instances stays tested
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = null)
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = null)' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$SHIPT/lib/providers/claude.json"
+jq '.capabilities.per_dispatch_model_override.verified_on = null
+  | .capabilities.per_dispatch_effort_override.verified_on = null' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$SHIPT/lib/providers/claude-platform.json"
 SHIP=$SHIPT/bin/qargi; YES=$TOOL/bin/qargi
-jq '.capabilities.per_dispatch_model_override.cloud |= (.verified_on = "2026-10-31")
-  | .capabilities.per_dispatch_effort_override.cloud |= (.verified_on = "2026-10-31")' "$SRC/lib/providers/claude.json" > "$T/claude.json" && mv "$T/claude.json" "$TOOL/lib/providers/claude.json"
+jq '.capabilities.per_dispatch_model_override.verified_on = "2026-10-31"
+  | .capabilities.per_dispatch_effort_override.verified_on = "2026-10-31"' "$SRC/lib/providers/claude-platform.json" > "$T/cp.json" && mv "$T/cp.json" "$TOOL/lib/providers/claude-platform.json"
 
 # the fake ant: logs its arguments, answers a deployment, keeps the body of every session create and numbers the sessions
 cat > "$T/bin/ant" <<'EOS'
@@ -59,7 +59,7 @@ printf '%s\n' "$TOKEN" > "$T/secrets/tok"; chmod 600 "$T/secrets/tok"
 # alpha: private repository (a credential); beta: public (none)
 for p in alpha beta; do
   jq -n --arg p "$p" --arg f "$([ "$p" = alpha ] && echo "$T/secrets/tok")" '{schema:1,project:$p,repo:{url:"https://github.com/example/\($p)",credential_file:$f,long_lived:["main"]},
-    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
+    roles:{build:{base:"main",push:{mode:"none"},model:"claude-sonnet-5-5",effort:"high",apt:[],skills:[]}},models:{provider:{local:"claude-code",cloud:"claude-platform"}},memory:{},budget_cents:500}' > "$T/c/projects/$p.json"
 done
 inst() { jq -n --arg d "$1" '{location:"cloud",deployment_id:$d,environment_id:"env_01",agent:{id:"agent_01",version_pinned:3,model:"claude-sonnet-5-5",effort:"high"}}'; }
 jq -n --argjson w "$(inst depl_W)" --argjson r "$(inst depl_R)" --argjson b "$(inst depl_B)" \
@@ -91,11 +91,11 @@ jq -e '.resources | map(.type) == ["memory_store"]' <<<"$body" >/dev/null && ok 
 
 # --- the reviewer is refused until the project accepts that cloud has no read-only barrier
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --asked "review" 2>&1); rc=$?
-{ [ $rc = 2 ] && grep -q "qargi provider accept claude --surface cloud --no-barrier --project alpha --asked" <<<"$out"; } && ok "start alpha-reviewer: refused (exit 2) with the accept command" || no "reviewer without acceptance (rc=$rc): $out"
+{ [ $rc = 2 ] && grep -q "qargi provider accept claude-platform --surface cloud --no-barrier --project alpha --asked" <<<"$out"; } && ok "start alpha-reviewer: refused (exit 2) with the accept command" || no "reviewer without acceptance (rc=$rc): $out"
 out=$("$YES" send alpha-reviewer "review it" --role review --label rv --new --asked "review" 2>&1); rc=$?
 [ $rc = 2 ] && [ "$(n_creates)" = 0 ] && ok "send --new: refused too, and no session was created" || no "send reviewer without acceptance (rc=$rc, creates=$(n_creates)): $out"
-tok=$("$YES" provider accept claude --surface cloud --no-barrier --project alpha --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
-"$YES" provider accept claude --surface cloud --no-barrier --project alpha --asked "I accept it" --plan "$tok" --approved go >"$T/acc.out" 2>&1 || no "accept: tok=$tok $(cat "$T/acc.out")"
+tok=$("$YES" provider accept claude-platform --surface cloud --no-barrier --project alpha --asked "I accept it" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
+"$YES" provider accept claude-platform --surface cloud --no-barrier --project alpha --asked "I accept it" --plan "$tok" --approved go >"$T/acc.out" 2>&1 || no "accept: tok=$tok $(cat "$T/acc.out")"
 body=$(QARGI_DRY_RUN=1 "$YES" start alpha-reviewer --role review --profile auditor --asked "audit" 2>&1); rc=$?
 [ $rc = 0 ] && jq -e --arg m "$H" '.agent.type == "agent_with_overrides" and .agent.id == "agent_01" and .agent.model == {id: $m, effort: "low"}' <<<"$body" >/dev/null && ok "after the acceptance: the reviewer body, haiku with effort low for the auditor profile" || no "reviewer accepted (rc=$rc): $body"
 [ "$(jq -r .agent.system <<<"$body")" = "$(agent_prompt review alpha)" ] && ok "the reviewer's system is agent_prompt review alpha" || no "reviewer system"
@@ -118,7 +118,7 @@ out=$(QARGI_DRY_RUN=1 "$YES" start alpha-worker --profile test --asked "x" 2>&1)
 out=$(QARGI_DRY_RUN=1 "$YES" start alpha-build --role build --asked "x" 2>&1); rc=$?
 { [ $rc != 0 ] && grep -q 'are for the bases' <<<"$out"; } && ok "--role is for the bases: a legacy instance refuses it" || no "legacy with --role (rc=$rc): $out"
 out=$(QARGI_DRY_RUN=1 "$SHIP" start alpha-worker --role build --asked "x" 2>&1); rc=$?
-{ [ $rc != 0 ] && ! jq -e . <<<"$out" >/dev/null 2>&1 && grep -q 'not usable yet' <<<"$out"; } && ok "the shipped tool (overrides unverified) falls back to the legacy instance: the base is refused" || no "legacy fallback (rc=$rc): $out"
+{ [ $rc = 2 ] && ! jq -e . <<<"$out" >/dev/null 2>&1 && grep -q 'cannot set the model and effort per dispatch' <<<"$out" && ! grep -q 'alpha-build' <<<"$out"; } && ok "the shipped tool (overrides unverified): the base is refused, with the reason, and no role instance takes its place" || no "unverified base (rc=$rc): $out"
 [ "$(n_creates)" = 0 ] && ok "none of these created a session" || no "a refused start created a session"
 
 # --- really creating: the body goes to ant on stdin only, the session is tracked with its role, profile, model and effort
@@ -174,5 +174,38 @@ last=$(n_creates)
 got=$(jq -S . "$FAKE/body.$last.json" 2>&1)
 [ "$got" = "$want" ] && ok "legacy start: the request body is unchanged" || { no "legacy golden"; diff <(echo "$want") <(echo "$got") | head -10; }
 [ "$(trk "sesn_$last" .instance)" = alpha-build ] && [ "$(trk "sesn_$last" .role)" = null ] && [ "$(trk "sesn_$last" .prompt_sha)" = null ] && ok "and it is tracked with no role fields, as before" || no "legacy tracker row"
+
+# --- a runtime of the pack library on the cloud surface (data and a sealed adapter; there is no file for it in lib/providers): the base
+# session is built by its adapter, which runs as a private copy of the sealed pack that is removed afterwards
+mkdir -p "$T/tmp" "$T/ext/fc"; export TMPDIR=$T/tmp
+cat > "$T/ext/fc/adapter" <<'EOS'
+#!/bin/sh
+case $1 in
+  resolve) printf '{"model":"fake-cloud-m","effort_native":"h"}\n';;
+  start-session) jq -c --arg p "$0" '. + {fake_adapter: $p}';;
+  *) echo '{"error":"no such verb"}'; exit 3;;
+esac
+EOS
+chmod 755 "$T/ext/fc/adapter"
+jq -n '{schema:2,kind:"provider",provider:"fakecloud",family:null,surface:"cloud",
+  models:{pattern:"^fake-.+$",tiers:{"*":{model:"fake-cloud-m",alias:null,verified_on:null,source:"test"}},effort:{low:"l",medium:"m",high:"h",xhigh:null,max:null}},
+  capabilities:{per_dispatch_model_override:{value:"yes",note:"n"},per_dispatch_effort_override:{value:"yes",note:"n"}},agents:null,resources:{},barrier:{kind:"none"},
+  dispatch:{mode:"adapter"},adapter:"adapter",adapter_verbs:["resolve","start-session"]}' > "$T/ext/fc/definition.json"
+t=$("$YES" provider import "$T/ext/fc" | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'); "$YES" provider import "$T/ext/fc" --plan "$t" --approved test --approve-exec adapter >/dev/null 2>&1 || no "import fakecloud"
+python3 -I - "$TOOL/lib" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+import provider as P
+h = P.definition_hash("fakecloud")
+P.record_verification("fakecloud", {c: {"hash": h, "by": "attest", "at": "2026-11-02", "note": "test"} for c in ("per_dispatch_model_override", "per_dispatch_effort_override")})
+PY
+jq -n '{schema:1,project:"libp",repo:{url:"https://github.com/example/libp",long_lived:["main"]},roles:{build:{base:"main",push:{mode:"none"}}},models:{provider:{cloud:"fakecloud"}},memory:{},budget_cents:500}' > "$T/c/projects/libp.json"
+jq --argjson w "$(inst depl_L)" '. + {"libp-worker":$w}' "$T/c/instances.json" > "$T/i.json" && mv "$T/i.json" "$T/c/instances.json"
+body=$(QARGI_DRY_RUN=1 "$YES" start libp-worker --role build --asked "start the build base" 2>"$T/err"); rc=$?
+{ [ $rc = 0 ] && jq -e '.fake_adapter | test("/qargi-exec\\.[^/]+/fakecloud/adapter$")' <<<"$body" >/dev/null && [ "$(jq -r '.model' <<<"$body")" = fake-cloud-m ] && [ "$(jq -r '.effort' <<<"$body")" = h ]; } \
+  && ok "library runtime: the dry run is built by its adapter (a sealed private copy), with the model and effort its adapter resolved" || no "library start (rc=$rc): $body $(cat "$T/err")"
+[ -z "$(ls "$T/tmp")" ] && ok "library runtime: the copy of the pack is removed afterwards" || no "left in TMPDIR: $(ls "$T/tmp")"
+echo "# drift" >> "$T/c/packs/providers/fakecloud/adapter"
+out=$(QARGI_DRY_RUN=1 "$YES" start libp-worker --role build --asked "start" 2>&1); rc=$?
+{ [ $rc != 0 ] && grep -q "changed since it was sealed" <<<"$out"; } && ok "library runtime: an adapter changed after the approval is not run" || no "library drift (rc=$rc): $out"
 
 [ $fail = 0 ] && echo "session profile tests passed" || { echo "session profile tests FAILED"; exit 1; }

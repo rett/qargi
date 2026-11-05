@@ -16,25 +16,29 @@ brief() {
   local task='' done_cmd='' base='' write_done='' review_done=''
   while [ $# -gt 0 ]; do
     case $1 in
-      --task) task=$2; shift 2;;
-      --done) done_cmd=$2; shift 2;;
-      --base) base=$2; shift 2;;
-      --write-done) write_done=$2; shift 2;;
-      --review-done) review_done=$2; shift 2;;
-      *) die "unknown option $1";;
+      --task) need_val "$1" $#; task=$2; shift 2;;
+      --done) need_val "$1" $#; done_cmd=$2; shift 2;;
+      --base) need_val "$1" $#; base=$2; shift 2;;
+      --write-done) need_val "$1" $#; write_done=$2; shift 2;;
+      --review-done) need_val "$1" $#; review_done=$2; shift 2;;
+      *) usage_die "unknown option $1";;
     esac
   done
-  valid_project "$project" || die "usage: team.sh brief PROJECT TEAM --task TEXT --done CMD"
+  valid_project "$project" || usage_die "usage: team.sh brief PROJECT TEAM --task TEXT --done CMD"
   local f=$DA_CONF/projects/$project.json
   [ -f "$f" ] || die "no stored answers for $project"
   jq -e --arg t "$team" '.teams[$t]' "$f" >/dev/null 2>&1 || die "project $project has no team '$team' (qargi project show $project)"
-  [ -n "$task" ] && [ -n "$done_cmd" ] || die "brief needs --task TEXT and --done CMD (an executable check for the builder's part)"
+  [ -n "$task" ] && [ -n "$done_cmd" ] || usage_die "brief needs --task TEXT and --done CMD (an executable check for the builder's part)"
   local build_base; build_base=$(jq -r '.roles.build.base // empty' "$f")
   if [ -z "$base" ]; then
     [ -n "$build_base" ] && [ "$build_base" != "@dispatcher" ] || die "the builder's base is @dispatcher: give --base BRANCH"
     base=$build_base
   fi
-  local rdone="test -s /mnt/session/outputs/review--report.md && grep -qiE '^#+ *findings' /mnt/session/outputs/review--report.md"
+  # where a hosted member keeps its output and its clone is the cloud runtime's to say (notes of its definition), not the core's
+  local outd clnd
+  outd=$(cloud_note "$project" output-dir) && clnd=$(cloud_note "$project" clone-dir) \
+    || die "the brief needs the cloud runtime of project $project to name its output-dir and clone-dir (notes of its definition)"
+  local rdone="test -s $outd/review--report.md && grep -qiE '^#+ *findings' $outd/review--report.md"
   printf 'TEAM: %s\nTASK: %s\n' "$team" "$task"
   jq -r --arg t "$team" '.teams[$t] | "STANDARDS: " + ((.standards // []) | if length == 0 then "none" else join(", ") end) + "\nMAX_ROUNDS: \(.max_rounds // 2)"' "$f"
   echo "MEMBERS:"
@@ -48,13 +52,13 @@ brief() {
     esac
     [ -n "$mdone" ] || die "member $m has no DONE check: give one in the project's teams.$team.done.$m"
     scope=$(jq -r --arg t "$team" --arg r "$m" '(.teams[$t].scopes[$r] // []) | if length == 0 then "none" else join(", ") end' "$f")
-    printf -- '- role: %s\n  ROLE: %s (the instructions are in your system prompt)\n  BASE: %s\n  SCOPE: %s\n  CLONE: /workspace/%s\n  RUN_DIR: /mnt/session/outputs\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$mbase" "$scope" "$m" "$m" "$mdone"
+    printf -- '- role: %s\n  ROLE: %s (the instructions are in your system prompt)\n  BASE: %s\n  SCOPE: %s\n  CLONE: %s/%s\n  OUT: %s\n  OUT_PREFIX: %s--\n  DONE: %s\n' "$m" "$m" "$mbase" "$scope" "$clnd" "$m" "$outd" "$m" "$mdone"
   done
 }
 
 check() {
   local dir=${1:-} rc=0 d r
-  [ -d "$dir" ] || die "usage: team.sh check RUN_DIR (a directory made by: qargi collect SID DIR)"
+  [ -d "$dir" ] || usage_die "usage: team.sh check RUN_DIR (a directory made by: qargi collect SID DIR)"
   for d in "$dir"/*/; do
     r=$(basename "$d")
     [ "$r" != lead ] || continue
@@ -85,5 +89,5 @@ case $verb in
   contract) contract;;
   brief) brief "$@";;
   check) check "$@";;
-  *) die "usage: team.sh brief|check|contract ...";;
+  *) usage_die "usage: team.sh brief|check|contract ...";;
 esac

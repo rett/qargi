@@ -7,7 +7,7 @@
 . "$(dirname "$0")/lib.sh"
 
 sid=${1:-}; dir=${2:-}
-[ -n "$sid" ] && [ -n "$dir" ] || die "usage: collect.sh SID DIR"
+[ -n "$sid" ] && [ -n "$dir" ] || usage_die "usage: collect.sh SID DIR"
 mkdir -p "$dir"
 [ -z "$(ls -A "$dir")" ] || die "$dir is not empty; use a fresh directory"
 
@@ -19,11 +19,19 @@ for _ in 1 2 3; do
 done
 [ -n "$list" ] || die "no output files found for $sid"
 
+# a listed name may carry the directory the session writes to; that is the cloud runtime's to say (notes of its definition), and the project is the
+# one in the name of the session's instance
+inst=$(jq -r --arg s "$sid" '.[$s].instance // empty' "$TRK" 2>/dev/null || true)
+outd=''
+[ -z "$inst" ] || outd=$(cloud_note "${inst%%-*}" output-dir 2>/dev/null) || outd=''
+outd=${outd%/}
+
 n=0
 while read -r f; do
   id=$(jq -r .id <<<"$f")
   name=$(jq -r '.filename // .name // .id' <<<"$f")
-  name=${name#/mnt/session/outputs/}; name=${name#/}
+  [ -z "$outd" ] || name=${name#"$outd"/}
+  case $name in /*) name=${name##*/};; esac   # an absolute name that is not under the session's output directory: its base name only
   case $name in *..*) die "refusing unsafe file name: $name";; esac
   mkdir -p "$dir/$(dirname "$name")"
   [ ! -e "$dir/$name" ] || die "two output files share the name $name; the file listing carries base names only"

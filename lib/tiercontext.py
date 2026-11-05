@@ -372,8 +372,8 @@ def _dirty_line(c, packet=False):
 def _head(c):
     prj, role = c["project"], c["role"]
     lines = ["qargi resources of project %s for the %s role (this session leads: it dispatches worker agents with /qargi-task and teams with /qargi-team; "
-             "on a git-flow project /qargi-flow is its process). Memory tiers, highest first (a note lives in one tier; agents write only under "
-             "roles/<role>/, shared/ by promotion):" % (prj, role)]
+             "on a git-flow project /qargi-flow is its process). Memory tiers, highest first (a note lives in one tier; members propose notes in "
+             "their reports and the lead files them, shared/ by promotion):" % (prj, role)]
     lines += row_lines(c)
     w = _dirty_line(c)
     if w:
@@ -446,10 +446,11 @@ def packet(c, role, cap=PACKET_CAP):
     if w:
         tail.append(w)
     lines.append("Always-load (role %s):" % role)
-    room = cap - len("\n".join(lines + tail)) - 2
+    more = "... (more rows: see the indexes)"
+    room = cap - len("\n".join(lines + tail)) - 2 - len(more) - 1       # the line that says rows were left out must fit under the cap too
     for a in always:
         if room - len(a) - 1 < 0:
-            lines.append("... (more rows: see the indexes)")
+            lines.append(more)
             break
         lines.append(a)
         room -= len(a) + 1

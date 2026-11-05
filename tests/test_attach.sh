@@ -29,6 +29,20 @@ after=$(git -C "$R" status --porcelain; git -C "$R" for-each-ref; find "$R" -pat
 [ "$before" = "$after" ] && ok "the repository is exactly as it was" || no "the repository changed"
 $DA project show widgettool >/dev/null 2>&1 && $DA project validate widgettool >/dev/null 2>&1 && ok "the stored answers validate" || no "validate"
 
+# a repository with its own .claude/skills: a hint after the gaps, nothing else
+mkdir -p "$R/.claude/skills/one" "$R/.claude/skills/two" "$R/.claude/skills/not-a-skill"; echo x > "$R/.claude/skills/one/SKILL.md"; echo x > "$R/.claude/skills/two/SKILL.md"
+out=$($DA project attach "$R" 2>&1)
+grep -qx "repo has its own .claude/skills (2 skills): qargi packs link widgettool offers to use the library's instead and shows which are new" <<<"$out" && ok "own skills in the repository get a hint naming the project" || no "hint: $out"
+[ "$(grep -n "^repo has its own" <<<"$out" | cut -d: -f1)" -gt "$(grep -n -- "^gaps against" <<<"$out" | cut -d: -f1)" ] && ok "the hint comes after the gaps" || no "hint position"
+rm -rf "$R/.claude"; out=$($DA project attach "$R" 2>&1)
+! grep -q "repo has its own" <<<"$out" && ok "no hint without skills" || no "hint without skills"
+mkdir -p "$T/elsewhere/s/one" "$R/.claude"; echo x > "$T/elsewhere/s/one/SKILL.md"; ln -s "$T/elsewhere/s" "$R/.claude/skills"
+out=$($DA project attach "$R" 2>&1)
+! grep -q "repo has its own" <<<"$out" && ok "a symlinked .claude/skills gets no hint" || no "hint for a symlink"
+rm -rf "$R/.claude"
+after=$(git -C "$R" status --porcelain; git -C "$R" for-each-ref; find "$R" -path "$R/.git" -prune -o -type f -print | sort | xargs cat | sha256sum)
+[ "$before" = "$after" ] && ok "the hint changed nothing in the repository" || no "repository changed by the hint"
+
 # no remote, no tests: it asks instead of guessing
 N=$T/bare; git init -q -b trunk "$N"; $G -C "$N" commit -q --allow-empty -m x
 out=$($DA project attach "$N" --name plain 2>&1)

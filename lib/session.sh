@@ -16,16 +16,16 @@ verb=${1:-}; shift || true
 LABEL='' SESSION='' NEW='' ASKED='' NOOUT='' WHY='' BROLE='' BPROFILE='' OPTIN='' POS=()
 while [ $# -gt 0 ]; do
   case $1 in
-    --label) LABEL=$2; shift 2;;
-    --session) SESSION=$2; shift 2;;
+    --label) need_val "$1" $#; LABEL=$2; shift 2;;
+    --session) need_val "$1" $#; SESSION=$2; shift 2;;
     --new) NEW=1; shift;;
     --no-outputs) NOOUT=1; shift;;
-    --asked) ASKED=$2; shift 2;;
-    --why) WHY=$2; shift 2;;
-    --role) BROLE=${2:-}; shift 2;;
-    --profile) BPROFILE=${2:-}; shift 2;;
+    --asked) need_val "$1" $#; ASKED=$2; shift 2;;
+    --why) need_val "$1" $#; WHY=$2; shift 2;;
+    --role) need_val "$1" $#; BROLE=${2:-}; shift 2;;
+    --profile) need_val "$1" $#; BPROFILE=${2:-}; shift 2;;
     --opt-in) OPTIN=1; shift;;
-    -*) die "unknown option $1";;
+    -*) usage_die "unknown option $1";;
     *) POS+=("$1"); shift;;
   esac
 done
@@ -96,8 +96,8 @@ start_with_repo() { # name [credential-file] -> session id (the lead always star
 # (start-session, a pure builder); the system comes from qargi's own files, never from the task text.
 is_base_inst() { local r=${1#*-}; [ "$r" != "$1" ] && is_base "$r"; }
 
-# A base started without --role is the role-neutral standby session of the base, as before; --role makes it a session for a role.
-no_base_opts() { # name: a legacy instance has its role in its name
+# A base started without --role is the role-neutral standby session of the base; --role makes it a session for a role.
+no_base_opts() { # name: an instance of one role has its role in its name
   if is_base_inst "$1"; then
     [ -z "$BPROFILE$OPTIN" ] || die "--profile and --opt-in need --role ROLE: $1 is a base"
   else
@@ -117,8 +117,8 @@ base_resolve() {
   [ -z "$OPTIN" ] || args+=(--opt-in)
   res=$("$(dirname "$0")/agent.sh" "${args[@]}") || rc=$?   # its refusal (exit 1 or 2) is on stderr already
   [ "$rc" = 0 ] || exit "$rc"
-  jq -e --arg n "$name" '.instance == $n and .legacy == false' <<<"$res" >/dev/null \
-    || die "$BROLE resolves to $(jq -r '.instance' <<<"$res"), not to the base $name: the base is not usable yet (the provider's per-dispatch model and effort overrides are not verified, so the legacy role instance runs); nothing was started"
+  jq -e --arg n "$name" '.instance == $n' <<<"$res" >/dev/null \
+    || die "$BROLE resolves to $(jq -r '.instance' <<<"$res"), not to the base $name; nothing was started"
   [ "$(jq -r .class <<<"$res")" = "$bclass" ] || die "the $(jq -r .profile <<<"$res") profile is of the $(jq -r .class <<<"$res") class, and $name is the $bclass base"
   BR_PROFILE=$(jq -r .profile <<<"$res"); BR_MODEL=$(jq -r .model <<<"$res"); BR_EFFORT=$(jq -r '.effort // empty' <<<"$res"); BR_ACCEPT=false
   # a read-only base needs a read-only barrier on the cloud, or the project's recorded acceptance that there is none
@@ -134,15 +134,17 @@ base_idle_session() {
 }
 
 start_base() { # name: creates the session (or prints the request, with QARGI_DRY_RUN) and tracks it
-  local name=$1 proj=${1%%-*} i dep cf prov adapter system sha req body out rc=0 sid
+  local name=$1 proj=${1%%-*} i dep cf prov system sha req body out rc=0 sid padapter
   i=$(cloud_inst "$name") || exit 1
   base_resolve "$name"
   ant_ok
   system=$(agent_prompt "$BROLE" "$proj") || die "could not render the system prompt of the $BROLE role"
   [ "${#system}" -lt 100000 ] || die "the system prompt of the $BROLE role is ${#system} characters; a session takes fewer than 100000"
   sha=$(printf '%s' "$system" | sha256sum | cut -c1-16)
-  prov=$(project_provider "$proj"); adapter=$(jq -r '.adapter // empty' "$QARGI_TOOL/lib/providers/$prov.json" 2>/dev/null)
-  [ -n "$adapter" ] && [ -x "$QARGI_TOOL/$adapter" ] || die "the provider '$prov' has no adapter that can build a session request"
+  prov=$(project_provider "$proj" cloud) || exit $?   # no default provider: a project with none for the cloud surface is refused (exit 2)
+  # the adapter is found by lib/provider.py, whatever the runtime is (shipped, or a library pack: that one only as a sealed private copy)
+  padapter=$QARGI_TOOL/lib/provider.py
+  python3 -I "$padapter" adapter-run "$prov" cloud start-session --check || die "the provider '$prov' has no adapter that can build a session request"
   dep=$(ant beta:deployments retrieve --deployment-id "$(jq -r .deployment_id <<<"$i")" </dev/null 2>/dev/null) || die "cannot read the deployment"
   cf=$(cred_file "$proj")
   # the request of the adapter: the deployment's agent, environment, resources (and the repository), vaults, initial events and budget
@@ -155,7 +157,7 @@ start_base() { # name: creates the session (or prints the request, with QARGI_DR
         metadata: {deployment_id: $d.id}, accept_no_barrier: $accept}
         + (if $d.initial_events then {initial_events: $d.initial_events} else {} end)
         + (if $d.budget then {budget: $d.budget} else {} end)') || die "could not build the session request"
-  out=$(printf '%s' "$req" | "$QARGI_TOOL/$adapter" start-session) || rc=$?
+  out=$(printf '%s' "$req" | python3 -I "$padapter" adapter-run "$prov" cloud start-session) || rc=$?
   if [ "$rc" != 0 ]; then
     echo "qargi: the $prov adapter did not build the session (exit $rc): $(jq -r '.error // empty' <<<"$out" 2>/dev/null)" >&2
     exit "$rc"
@@ -196,9 +198,9 @@ start() {
 send() {
   need_asked; ant_ok
   local name=$1 task=$2 sid i
-  valid_slug "$LABEL" || die "send needs --label <task-slug> (lower-case letters, digits, '-'): the session is named <instance>-<task-slug>; use the same slug for the agent/<slug> branch"
+  valid_slug "$LABEL" || usage_die "send needs --label <task-slug> (lower-case letters, digits, '-'): the session is named <instance>-<task-slug>; use the same slug for the agent/<slug> branch"
   i=$(cloud_inst "$name") || exit 1
-  [ -n "$task" ] || die "send needs the task text"
+  [ -n "$task" ] || usage_die "send needs the task text"
   local base=''; if is_base_inst "$name" && [ -n "$BROLE" ]; then base=1; else no_base_opts "$name"; fi
   if [ -n "$NEW" ]; then
     if [ -n "${QARGI_DRY_RUN:-}" ]; then start "$name"; else start "$name" >/dev/null; fi
@@ -250,7 +252,7 @@ status() {
 }
 
 stop() {
-  local sid=${POS[0]:-}; [ -n "$sid" ] || die "stop needs SID"
+  local sid=${POS[0]:-}; [ -n "$sid" ] || usage_die "stop needs SID"
   ant beta:sessions:events send --session-id "$sid" --event '{type: user.interrupt}' >/dev/null || die "interrupt failed"
   # an interrupted turn ends with stop_reason end_turn, like a finished one: keep what tells them apart
   json_update "$TRK" 'if has($s) then .[$s].interrupt_sent_at = $t else . end' --arg s "$sid" --arg t "$(now)"
@@ -273,7 +275,7 @@ mark() {
 # Close = archive, only after outputs are collected and a review verdict exists.
 close() {
   local sid=${POS[0]:-} row
-  [ -n "$sid" ] || die "close needs SID"
+  [ -n "$sid" ] || usage_die "close needs SID"
   row=$(jq -e --arg s "$sid" '.[$s]' "$TRK") || die "session $sid is not tracked"
   trk_refresh "$sid" || die "cannot read $sid"
   [ "$(jq -r --arg s "$sid" '.[$s].status' "$TRK")" != running ] || die "session is running; stop it first"
@@ -296,5 +298,5 @@ case $verb in
   stop) stop;;
   mark) mark;;
   close) close;;
-  *) die "usage: session.sh track|start|send|status|stop|mark|close ...";;
+  *) usage_die "usage: session.sh track|start|send|status|stop|mark|close ...";;
 esac

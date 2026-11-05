@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "gitflow",
   "version": 1,
-  "description": "Git-flow as described by its author (A successful Git branching model): master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
+  "description": "Git-flow: master (production, every commit tagged) and develop (integration); feature branches from develop merged back with --no-ff; release/<version> branches from develop, merged into master (tagged) and back into develop; hotfix/<version> branches from master, merged into master (tagged) and develop (or the open release branch). Targeted checks per task, the whole suite at checkpoints, a Keep a Changelog file, CI on a pull request into master before the finish.",
   "params": {
     "project": {
       "required": true,
@@ -11,6 +11,27 @@
     "test_command": {
       "default": "make test",
       "help": "the command that runs the whole test suite"
+    },
+    "ci_timeout_minutes": {
+      "default": "30",
+      "pattern": "[1-9][0-9]*",
+      "help": "the time limit in minutes of the CI job that runs the whole suite; derive it from the suite's own time budgets (the sum of the budgets of the steps one job runs, times 1.5, plus the setup), because a limit below the suite's real time cancels every run"
+    },
+    "runner": {
+      "default": "make",
+      "help": "the task runner that holds the bootstrap and doctor targets"
+    },
+    "bootstrap_command": {
+      "default": "make bootstrap",
+      "help": "the command that sets a checkout up"
+    },
+    "dry_run_command": {
+      "default": "make -n bootstrap",
+      "help": "the command that shows what the bootstrap would do, changing nothing"
+    },
+    "doctor_command": {
+      "default": "make doctor",
+      "help": "the command that checks a checkout, one line per item"
     },
     "version": {
       "default": "0.1.0",
@@ -58,6 +79,14 @@
     "when CI passes: merge release/<version> into master with --no-ff, tag it, merge it into develop with --no-ff, delete the branch",
     "a critical fix to production is a hotfix/<version> branch from master, finished the same way (into the open release branch instead of develop when one exists)"
   ],
+  "after_release": [
+    {
+      "id": "site",
+      "when": "site.enabled",
+      "next": "qargi release site {version}",
+      "help": "build the documentation site of the tag on the detached site branch, as a commit there that you push"
+    }
+  ],
   "roles": {
     "build": {
       "base": "@dispatcher"
@@ -88,6 +117,16 @@
     {
       "src": "CONTRIBUTING.md",
       "dest": "CONTRIBUTING.md"
+    },
+    {
+      "src": "AGENTS.md",
+      "dest": "AGENTS.md",
+      "env": "section"
+    },
+    {
+      "src": "Makefile",
+      "dest": "Makefile",
+      "env": "targets"
     },
     {
       "src": "CLAUDE.md",

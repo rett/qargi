@@ -11,6 +11,7 @@ BIN = os.path.join(ROOT, "bin", "qargi")
 sys.path.insert(0, LIB)
 import commands as C  # noqa: E402
 import help as H  # noqa: E402
+import guard as G  # noqa: E402
 
 
 def slurp(p):
@@ -114,6 +115,78 @@ class Render(unittest.TestCase):
         for t in C.TOPICS:
             self.assertTrue(H.show_topic(t))
 
+    def test_topics_name_only_commands_and_verbs_that_exist(self):
+        for t, (_, paras) in C.TOPICS.items():
+            for m in re.finditer(r"(?<![\w./~])qargi ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?", " ".join(paras)):
+                cmd, verb = m.groups()
+                if cmd == "ships":                      # prose: "the member definition qargi ships"
+                    continue
+                self.assertIn(cmd, C.COMMANDS, "topic %s names qargi %s" % (t, cmd))
+                if verb and verbs(cmd) and verb not in verbs(cmd):
+                    self.fail("topic %s names qargi %s %s, which is not a verb" % (t, cmd, verb))
+
+    def test_the_guard_topic_is_listed_renders_and_is_in_the_man_page(self):
+        self.assertIn("guard", C.TOPICS)
+        title, paras = C.TOPICS["guard"]
+        text = " ".join(paras)
+        self.assertLessEqual(len(text.split()), 400)
+        for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
+            self.assertIn(needle, text)
+        self.assertIn("guard", H.show_overview())
+        self.assertIn(title, H.show_topic("guard"))
+        r = subprocess.run([BIN, "help", "guard"], capture_output=True, text=True, stdin=subprocess.DEVNULL, env=dict(os.environ, QARGI_HOME=tempfile.mkdtemp()))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("local verify", r.stdout)
+
+    # verbs the guard refuses that the topic need not name, each with the reason: none yet
+    GUARD_TOPIC_EXEMPT = {}
+
+    def test_the_guard_topic_names_every_verb_the_guard_refuses(self):
+        text = " ".join(C.TOPICS["guard"][1])
+        words = set(re.findall(r"[a-z][a-z-]*", text))
+        refused = set(G.SKILL_VERBS) | set(G.PROJECT_VERBS) | set(G.MEMORY_VERBS) | {"claim", "set", "renew", "release", "take", "takeover", "finish", "enable", "disable"} | set(G.MARSHAL_SIGNING)
+        src = slurp(os.path.join(LIB, "guard.py"))
+        m = re.search(r"if \(area in \(\"skill\", \"tool\"\) and verb in SKILL_VERBS\) or \(area, verb\) in \((.*?)\)\s*\\", src, re.S)
+        self.assertTrue(m, "the gated (area, verb) pairs of lib/guard.py moved: update this test")
+        pairs = re.findall(r'\("([a-z]+)", "([a-z-]+)"\)', m.group(1))
+        self.assertGreaterEqual(len(pairs), 6)
+        refused |= {v for _, v in pairs}
+        refused |= set(G.ENV_LEAD)                                         # env plan and apply
+        refused |= {"publish", "login", "unset", "accept"}                # release publish, cloud set|unset|login, provider accept
+        missing = sorted(v for v in refused if v not in words and v not in self.GUARD_TOPIC_EXEMPT)
+        self.assertFalse(missing, "the guard topic does not name %s (add them to the topic, or to GUARD_TOPIC_EXEMPT with a reason)" % missing)
+        for area in ("discover", "import", "upgrade", "release", "cloud", "local", "feature", "memory", "marshal", "provider"):
+            self.assertIn(area, words, "the guard topic does not name the area %s" % area)
+        for needle in ("QARGI_LEAD", "QARGI_NESTED", "journal", "plugin"):
+            self.assertIn(needle, text)
+        stale = sorted(v for v in self.GUARD_TOPIC_EXEMPT if v in words or v not in refused)
+        self.assertFalse(stale, "stale exemptions: %s" % stale)
+
+    def test_the_guard_topic_names_every_provider_verb_it_refuses_and_none_it_allows(self):
+        """Each provider verb of commands.py is one of the guard's reading verbs (PROVIDER_READ) or is named in the topic's list of refused ones."""
+        text = " ".join(C.TOPICS["guard"][1])
+        m = re.search(r"provider ([a-z, -]+?) \(", text)
+        self.assertTrue(m, "the guard topic has no 'provider new, ... and adapter-run (...)' list of refused verbs")
+        named = set(re.findall(r"[a-z][a-z-]*", m.group(1))) - {"and"}
+        verbs, read = set(C.COMMANDS["provider"]["verbs"]), set(G.PROVIDER_READ) - {""}
+        missing = sorted(v for v in verbs if v not in read and v not in named)
+        self.assertFalse(missing, "provider verbs the guard refuses and the topic does not name: %s" % missing)
+        self.assertFalse(sorted(named & read), "the topic names as refused a verb the guard allows")
+        self.assertFalse(sorted(named - verbs), "the topic names provider verbs that commands.py does not list")
+
+    def test_the_man_page_holds_the_approvals_and_guard_topics_as_man_writes_them(self):
+        page, shipped = H.man(), slurp(os.path.join(ROOT, "man", "qargi.1"))
+        self.assertEqual(shipped, page)
+        for t in ("approvals", "guard"):                 # the page says "See APPROVALS", and the guard is what the approvals topic points at
+            self.assertIn("\n.SH %s\n" % t.upper(), shipped)
+            for para in C.TOPICS[t][1]:
+                self.assertIn(H.esc(para), shipped, "the %s topic is not in man/qargi.1 as man() writes it" % t)
+
+    def test_the_approvals_topic_states_the_rules_the_skills_point_at(self):
+        text = " ".join(C.TOPICS["approvals"][1])
+        for needle in ("covers the plan", "recorded, not verified", "Never allow-list", "A member never applies"):
+            self.assertIn(needle, text)
+
     def test_cli_help_forms(self):
         home = tempfile.mkdtemp()                       # never the real home: some commands look at it
         self.addCleanup(shutil.rmtree, home, True)
@@ -134,20 +207,6 @@ class Render(unittest.TestCase):
         self.assertIn("unknown command", r.stderr)
         self.assertEqual(run("version").returncode, 0)
 
-    def test_no_help_text_names_a_retired_ability_skill(self):
-        # The abilities are role text that comes with the task block (roles/<role>/ROLE.md); no skill of the same
-        # name exists to load. The changelog keeps the history and is not read here.
-        texts = {"man page": H.man().replace("\\-", "-").replace("\\e", "\\")}
-        for t in C.TOPICS:
-            texts["topic " + t] = H.show_topic(t)
-        for cmd in C.COMMANDS:
-            texts[cmd] = H.show_command(cmd)
-            for v in verbs(cmd):
-                texts["%s %s" % (cmd, v)] = H.show_command(cmd, v)
-        for where, txt in texts.items():
-            for name in ("qargi-build", "qargi-write", "qargi-review", "qargi-test"):
-                self.assertNotIn(name, txt, "%s still names the skill %s" % (where, name))
-
     def test_man_page_is_current_and_lints(self):
         page = H.man()
         self.assertEqual(slurp(os.path.join(ROOT, "man", "qargi.1")), page, "regenerate: python3 lib/help.py man > man/qargi.1")
@@ -157,6 +216,18 @@ class Render(unittest.TestCase):
         if shutil.which("groff"):
             r = subprocess.run(["groff", "-k", "-ww", "-man", "-Tutf8"], input=page, capture_output=True, text=True)
             self.assertEqual(r.stderr, "", "groff warnings")
+
+    def test_man_page_is_written_by_a_copy_without_skills(self):
+        # a copy of lib alone (a partial or packaged one) writes the whole page; SEE ALSO names the skills generically
+        t = tempfile.mkdtemp()
+        try:
+            shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(t, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+            r = subprocess.run([sys.executable, os.path.join(t, "lib", "help.py"), "man"], capture_output=True, text=True, cwd=t, stdin=subprocess.DEVNULL)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith(".TH QARGI 1 "), r.stdout[:80])
+            self.assertIn("The qargi skills, loaded by the lead's session", r.stdout)
+        finally:
+            shutil.rmtree(t)
 
 
 class Env(unittest.TestCase):
@@ -192,7 +263,7 @@ class Env(unittest.TestCase):
 class Complete(Env):
     def test_commands_verbs_and_values(self):
         self.assertIn("lead", H.complete([""]))
-        self.assertEqual(H.complete(["lead", ""]), ["grant", "status", "revoke"])
+        self.assertEqual(H.complete(["lead", ""]), ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha"])   # only projects that define teams
         self.assertEqual(H.complete(["team", "brief", "alpha", ""]), ["code-docs"])
         self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-build", "alpha-write"])
@@ -224,7 +295,7 @@ class Shells(Env):
 
     def test_described_output(self):
         out = H.complete_described(["lead", ""])
-        self.assertEqual([c for c, _ in out], ["grant", "status", "revoke"])
+        self.assertEqual([c for c, _ in out], ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertTrue(all(d for _, d in out))
         r = subprocess.run([BIN, "__complete", "--described", "lead", ""], capture_output=True, text=True)
         self.assertIn("grant\tGuided", r.stdout)
@@ -274,11 +345,14 @@ class Rich(Env):
         os.makedirs(os.path.join(self.t, "c", "packs", "skills", "pdf"))
         os.makedirs(os.path.join(self.t, "c", "packs", "tools"))
         self.put(os.path.join(self.t, "c", "packs", "tools", "github.json"), {})
-        self.put(os.path.join(self.t, "c", "agents.json"), {"forge": {"abilities": ["build", "test"], "seq": 1}, "scribe": {"abilities": ["write"], "seq": 2}})
+        self.put(os.path.join(self.t, "c", "agents.json"), {"schema": 2, "projects": {"alpha": {"forge": {"roles": ["build", "test"], "seq": 1}, "scribe": {"roles": ["write"], "seq": 2}},
+                                                                              "beta": {"forge": {"roles": ["test"], "seq": 3}, "lone": {"roles": ["write"], "seq": 4}}}})
 
     def test_members_complete_with_their_abilities(self):
-        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "scribe"])
-        self.assertEqual(dict(H.complete_described(["agent", "rename", ""]))["forge"], "build,test")
+        self.assertEqual(H.complete(["agent", "remove", ""]), ["forge", "lone", "scribe"])   # every project's members, a name once
+        self.assertEqual(H.complete(["agent", "remove", "--project", "alpha", ""]), ["forge", "scribe"])
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "alpha", ""]))["forge"], "build,test")
+        self.assertEqual(dict(H.complete_described(["agent", "rename", "--project", "beta", ""]))["forge"], "test")
         self.assertEqual(H.complete(["agent", "for", ""]), list(C.ABILITIES))
 
     def test_sessions_are_narrowed_by_what_the_verb_does(self):
@@ -315,7 +389,8 @@ class Rich(Env):
 
     def test_project_answers_and_their_values(self):
         keys = H.complete(["project", "set", "alpha", ""])
-        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge"):
+        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge",
+                  "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
         self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))
@@ -420,6 +495,21 @@ class Infer(Env):
         r = subprocess.run([BIN, "project", "show"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
         self.assertEqual(r.returncode, 2)
         self.assertIn("which project?", r.stderr)
+
+
+class ProviderNameHelp(unittest.TestCase):
+    """The provider verbs take a runtime name, not a family name: the help says so, and the verbs agree."""
+
+    def test_the_help_says_a_name_is_a_runtime_name(self):
+        r = subprocess.run([BIN, "help", "provider"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = " ".join(r.stdout.split())
+        self.assertIn("takes a runtime name, and a family name is refused as an unknown provider", text)
+
+    def test_a_family_name_is_refused_as_the_help_says(self):
+        r = subprocess.run([BIN, "provider", "layout", "claude"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unknown provider 'claude'", r.stderr)
 
 
 if __name__ == "__main__":
