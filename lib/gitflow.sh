@@ -222,6 +222,33 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
   (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
 }
 run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
+# run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
+# $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
+run_suite_logged() {
+  local rc
+  SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
+  if ( umask 077; mkdir -p "$DA_STATE/suite-logs" && : > "$SUITE_LOG" ) 2>/dev/null; then
+    run_suite 2>&1 | tee "$SUITE_LOG"
+    rc=${PIPESTATUS[0]}
+  else SUITE_LOG=''; run_suite; rc=$?; fi
+  return "$rc"
+}
+# suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
+# tests/run.sh) and failing tests (`FAIL name` lines) its report holds, where its own logs of the failed steps are, and the log of the
+# whole run. A test command that is no tests/run.sh has neither: its last lines stand in.
+suite_failure_report() {
+  local f=${SUITE_LOG:-} steps names dir
+  if [ -n "$f" ] && [ -s "$f" ]; then
+    steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
+    names=$(grep -E '^FAIL( |:)' "$f" | awk '!s[$0]++')
+    dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
+    if [ -n "$steps" ]; then echo "failing steps:"; printf '%s\n' "$steps" | head -20 | sed 's/^/  /'; fi
+    if [ -n "$names" ]; then echo "failing tests:"; printf '%s\n' "$names" | head -20 | sed 's/^/  /'; fi
+    if [ -z "$steps$names" ]; then echo "no failing test name in the output; its last lines:"; tail -5 "$f" | sed 's/^/  /'; fi
+    [ -z "$dir" ] || echo "logs of the failed steps: $dir"
+  fi
+  [ -z "$f" ] || echo "log of the whole run: $f"
+}
 # suite_mode COMMAND -> how a suite command runs its steps, from its words: "-j N" and/or "shard I/K" ("" when it names neither)
 suite_mode() {
   local mode=''

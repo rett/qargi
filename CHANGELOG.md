@@ -10,6 +10,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task
   branch, a merge of develop, a plain commit) and names the next step, `qargi feature verify NAME`; a feature never verified names it
   too.
+- A failed `qargi feature verify` (and `qargi release verify`) ends its output with the failing steps and tests that the suite
+  runner's report names, where the runner kept the logs of the failed steps, and the path of a log of the whole run
+  (`STATE/suite-logs/PROJECT.feature-NAME.log`, mode 600, the last run of each). The suite's output is shown as before, now with its
+  error stream on standard output.
 
 ## [0.2.2] - 2026-11-05
 

@@ -14,6 +14,11 @@ export QARGI_PROJECT=app
 mkdir -p "$HOME" "$T/c/projects" "$T/s"
 R=$T/app; git init -q -b master "$R"; git init -q --bare "$T/origin.git"
 echo 0.1.0 > "$R/VERSION"; printf '# Changelog\n\n## [Unreleased]\n' > "$R/CHANGELOG.md"
+# the repository carries the suite runner of this repository and a manifest of two steps of its own: one passes, one fails with a named test
+mkdir -p "$R/tests"; cp tests/run.sh "$R/tests/run.sh"
+printf '#!/bin/sh\necho "ok   fine"\n' > "$R/tests/test_good.sh"
+printf '#!/bin/sh\necho "ok   fine"\necho "FAIL the second check of the bad step"\nexit 1\n' > "$R/tests/test_bad.sh"
+printf 'fast | par | 30 | 5 | sh tests/test_good.sh\nfast | par | 30 | 5 | sh tests/test_bad.sh\n' > "$R/tests/suite.txt"
 git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" push -q origin master develop
 git -C "$R" checkout -q -b parked
 jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
@@ -27,6 +32,7 @@ devcommit() { # name: a commit on develop
   echo "$1" > "$w/$1.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "develop $1"
   git -C "$R" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
 }
+setcmd() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/projects/app.new" && mv "$T/c/projects/app.new" "$T/c/projects/app.json"; }   # the project's test command
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 
 # --- 1. status says why the result is stale, and what to do
@@ -52,6 +58,28 @@ grep -q "moved after that run by 7 commit(s)" <<<"$out" && grep -q "\.\.\. and 2
 git -C "$R" update-ref refs/heads/feature/why "$(git -C "$R" rev-parse develop)"
 out=$($F status why 2>&1)
 grep -q "why: the run's commit is not in the history of feature/why" <<<"$out" && ok "a branch reset since the run is told so" || no "reset: $out"
+
+# --- 2. a failed verify ends with the failing steps and tests, and the log
+REL="$DA release"
+setcmd 'bash tests/run.sh -j 2'
+$F start bad >/dev/null 2>&1; task c1; $F merge bad agent/c1 >/dev/null 2>&1
+out=$($F verify bad 2>&1); rc=$?
+tail -n 6 <<<"$out" > "$T/last"
+[ $rc = 1 ] && grep -q '^full suite: fail at ' <<<"$out" && ok "a failed verify exits 1 and says the suite failed" || no "failed verify rc=$rc: $out"
+lg=$T/s/suite-logs/app.feature-bad.log
+grep -qx 'failing steps:' "$T/last" && grep -qx '  sh tests/test_bad.sh' "$T/last" && grep -qx 'failing tests:' "$T/last" && grep -qx '  FAIL the second check of the bad step' "$T/last" \
+  && ! grep -q 'test_good' "$T/last" && ok "the last lines name the failing step and test, not the passing ones" || no "last lines: $(cat "$T/last")"
+[ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] && [ -f "$lg" ] && grep -q '^total: .*FAILED' "$lg" && [ "$(stat -c %a "$lg")" = 600 ] && ok "the last line is the log of the run, which holds the whole report (mode 600)" || no "log line: $(tail -n 1 <<<"$out")"
+grep -q '^logs of the failed steps: ' <<<"$out" && ok "the runner's own step logs are named too" || no "step logs: $out"
+$F status bad 2>&1 | grep -q 'full suite: fail at this head' && ok "status says fail at this head" || no "status after failed verify"
+setcmd 'echo some output; exit 3'
+out=$($F verify bad 2>&1); rc=$?
+[ $rc = 1 ] && grep -qx 'no failing test name in the output; its last lines:' <<<"$out" && grep -qx '  some output' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $lg" ] \
+  && ok "a test command that is no runner: its last lines stand in, then the log" || no "plain command: $out"
+setcmd 'bash tests/run.sh -j 2'
+out=$($REL verify 0.9.0 2>&1); rc=$?
+[ $rc = 1 ] && grep -qx '  sh tests/test_bad.sh' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $T/s/suite-logs/app.release-0.9.0.log" ] && ok "release verify ends the same way" || no "release verify: $out"
+setcmd 'exit 0'
 
 [ "$fail" = 0 ] && echo "all fverify tests passed"
 exit "$fail"

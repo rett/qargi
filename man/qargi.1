@@ -1884,6 +1884,8 @@ the project, instead of the one inferred from here.
 .TP
 .BI "verify " "NAME"
 Run the project's whole test suite on the feature's head and record the result.
+.br
+The output of the suite is kept in STATE/suite\-logs/PROJECT.feature\-NAME.log (PROJECT.release\-VERSION.log for a release; the last run of each). When the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
@@ -2359,7 +2361,7 @@ a hotfix: branch from master, finish into master and the open release branch (or
 .BI "verify " "VERSION"
 Run the project's whole test suite on the release branch (develop's head before it starts) and record the result.
 .br
-When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command.
+When the tag VERSION exists it also warns about a tag that has no GitHub release (asked with a read\-only gh release view, through QARGI_GH, default gh; a gh that is missing or not logged in is a note) and about a tagged commit that lacks .github/workflows/release.yml while the branch has it, because a pushed tag starts that workflow only when its own commit contains it. Warnings and notes never fail the verb. The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. The output of the suite is kept in STATE/suite\-logs/PROJECT.feature\-NAME.log (PROJECT.release\-VERSION.log for a release; the last run of each). When the suite fails, the last lines of the output are the failing steps and tests that its report names (the FAILED: and FAIL lines of tests/run.sh; a test command that is no runner shows its last lines instead), where the runner kept the logs of the failed steps, and the path of that log.
 .RS
 .TP
 .BI "\-\-project " "PROJECT"
