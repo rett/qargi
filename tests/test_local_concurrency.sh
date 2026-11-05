@@ -46,9 +46,9 @@ concurrent_round() { # own|shared -> ten prepares at once, ten verifies at once,
     && [ "$(jq -r --arg m "$mode-" 'select(.slug | startswith($m)) | .tmpdir' "$REG" | sort)" = "$(printf '%s\n' "${tmps[@]}" | sort)" ] \
     && ok "and the registry grew by exactly $n whole lines, one per run, each naming its run directory, slug and temporary directory" \
     || no "concurrent $mode registry after prepare: $nb -> $na lines; $(grep "$mode-" "$REG")"
-  for i in $(seq $n); do   # each run has work to verify: a commit in its clone and a manifest
+  for i in $(seq $n); do   # each run has work to verify: a commit in its clone, a manifest and a report (verify fails first on an uncollected run)
     r=${runs[i - 1]}; g=$(sed -n '1,/^$/s/^GIT=//p' "$scr/log/p$i"); c=$r/clone
-    echo "$i" > "$c/f-$i"; "$g" -C "$c" add "f-$i"; "$g" -C "$c" commit -q -m "work $i"; echo '{"status":"DONE"}' > "$r/out/manifest.json"
+    echo "$i" > "$c/f-$i"; "$g" -C "$c" add "f-$i"; "$g" -C "$c" commit -q -m "work $i"; echo '{"status":"DONE"}' > "$r/out/manifest.json"; echo r > "$r/out/report.md"
   done
   pids=(); rcs=(); bad=''
   for i in $(seq $n); do
