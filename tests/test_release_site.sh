@@ -105,6 +105,8 @@ git -C "$R" cat-file -e gh-pages:_site/index.html && git -C "$R" cat-file -e gh-
 [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .release)" = 0.6.0 ] && [ "$(git -C "$R" show gh-pages:site/site.json | jq -r .url)" = "https://docs.example.org/qargi/" ] \
   && ok "site.json records release 0.6.0 and keeps its other answers" || no "site.json: $(git -C "$R" show gh-pages:site/site.json)"
 git -C "$R" show gh-pages:_site/releases/index.html | grep -q "a second thing" && ok "the releases page is built from the tag's changelog" || no "releases page"
+git -C "$R" cat-file -e gh-pages:_site/assets/search.js && git -C "$R" show gh-pages:_site/assets/search-index.json | jq -e '.entries | map(select(.p == "releases/")) | length == 1' >/dev/null \
+  && git -C "$R" show gh-pages:_site/releases/index.html | grep -q 'id="sidebar"' && ok "the built site has the sidebar, the search script and its index" || no "sidebar and search files"
 grep -q "^push it with: git -C .* push origin gh-pages" "$T/o" && no "a push command without an origin" || { grep -q "nothing was pushed" "$T/o" && grep -q "no origin remote" "$T/o" && ok "nothing is pushed; without origin it says so" || no "apply output: $(cat "$T/o")"; }
 [ "$(git -C "$R" branch --show-current)" = scratch ] && [ -z "$(git -C "$R" status --porcelain)" ] && [ ! -e "$R/_site" ] && [ "$(wts)" = 1 ] \
   && ok "the main checkout is untouched and no worktree is left" || no "main checkout: $(git -C "$R" status --porcelain) $(git -C "$R" worktree list)"
@@ -128,6 +130,7 @@ out=$($REL status 0.5.0 2>&1); grep -qx "site: not built for 0.5.0" <<<"$out" &&
 out=$($REL site 0.5.0 2>&1); t=$(tok <<<"$out")
 $REL site 0.5.0 --plan "$t" --approved go > "$T/o" 2>&1
 grep -q "^push it with: git -C $R push origin gh-pages\$" "$T/o" && [ "$(git -C "$R" rev-parse origin/gh-pages)" = "$P1" ] && ok "with an origin it prints the push command and pushes nothing" || no "push line: $(cat "$T/o")"
+grep -q "^preview it before you push: " "$T/o" && ok "it tells the lead to preview the built site before pushing it" || no "no preview hint before the push"
 P2=$(git -C "$R" rev-parse gh-pages)
 git -C "$R" checkout -q gh-pages
 printf -- '---\ntitle: Broken\ndescription: A page that names a command the release does not have, so that the build of the site refuses it.\n---\n\n## 1. Run\n\n```bash\nqargi nosuchverb\n```\n' > "$R/site/pages/broken.md"

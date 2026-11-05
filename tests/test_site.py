@@ -488,9 +488,9 @@ class Build(unittest.TestCase):
         ref = self.page("reference/set-up/index.html")
         self.assertIn('<div class="table-wrap" tabindex="0" role="region" aria-label="Table">', ref)
         self.assertIn('<nav aria-label="On this page"><details class="toc" open>', ref)
-        self.assertRegex(ref, r'<li><a href="\.\./" aria-current="true">Reference</a></li>')       # an ancestor, not the page itself
-        self.assertNotIn('aria-current="page">Reference</a>', ref)
-        self.assertRegex(self.page("reference/index.html"), r'<a href="\./" aria-current="page">Reference</a>')
+        self.assertRegex(ref, r'<li><a href="\./" aria-current="page">Overview</a></li>')            # the page itself, in its group
+        self.assertNotIn('aria-current="true"', ref)                                               # an ancestor is not marked
+        self.assertRegex(self.page("reference/index.html"), r'<li><a href="\./" aria-current="page">Overview</a></li>')
         self.assertIn('color-scheme: light dark', self.page("assets/site.css"))
         self.assertIn('<meta name="color-scheme" content="light dark">', t)
 
@@ -510,12 +510,13 @@ class Build(unittest.TestCase):
         self.assertNotIn("@import", css)
         self.assertNotIn("url(", css)
 
-    def test_no_javascript_and_no_external_requests(self):
+    def test_no_inline_script_and_no_external_requests(self):
         for dirpath, _, files in os.walk(self.out):
             for f in files:
                 if f.endswith(".html") and f != "verify-acme.html":
                     t = slurp(os.path.join(dirpath, f))
-                    self.assertNotRegex(t, r"<script(?![^>]*application/ld\+json)", f)
+                    for tag in re.findall(r"<script[^>]*>", t):
+                        self.assertRegex(tag, r'^<script (?:type="application/ld\+json"|src="(?:\.\./)*assets/search\.js" defer)>$', f)       # no inline code
                     self.assertNotRegex(t, r"\son[a-z]+=", f)
                     for m in re.finditer(r'(?:src|href)="(https?://[^"]+)"', t):
                         if m.group(1).startswith(("https://docs.example.org/qargi/", "https://github.com/example/qargi")):
@@ -727,7 +728,8 @@ class Build(unittest.TestCase):
         rc, out, err = build(os.path.join(t, "o2"), pages, "--url", "https://docs.example.org/qargi/")
         self.assertEqual(rc, 0, out + err)
         html_ = slurp(os.path.join(t, "o2", "index.html"))
-        self.assertEqual(html_.count("<script"), 1)         # only the JSON-LD
+        self.assertEqual(html_.count("<script"), 2)         # the JSON-LD and the search script, which has no inline code
+        self.assertIn('<script src="assets/search.js" defer></script>', html_)
         self.assertNotIn("<script>alert", html_)
         self.assertIn("&lt;/title&gt;&lt;script&gt;", html_)
         m = re.search(r'<script type="application/ld\+json">(.*?)</script>', html_, re.S)
@@ -735,6 +737,258 @@ class Build(unittest.TestCase):
         self.assertEqual(json.loads(m.group(1))["@graph"][0]["name"], "qargi")
         rc, out, _ = run("check-output", os.path.join(t, "o2"))
         self.assertEqual(rc, 0, out)
+
+
+class SidebarAndSearch(unittest.TestCase):
+    """The left sidebar on every page but the 404 page and the client-side search: its index and its script."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        shutil.copytree(FIX, os.path.join(cls.tmp, "fix"))
+        cls.pages = os.path.join(cls.tmp, "fix", "pages")
+        cls.out = os.path.join(cls.tmp, "sub")                  # served under a path: https://docs.example.org/qargi/
+        cls.rc, cls.stdout, cls.stderr = build(cls.out, cls.pages)
+        cls.root = os.path.join(cls.tmp, "root")                # served at the root of a host
+        cls.rc2, cls.stdout2, cls.stderr2 = build(cls.root, cls.pages, "--url", "https://docs.example.org/")
+        cls.again = os.path.join(cls.tmp, "again")
+        cls.rc3, _, _ = build(cls.again, cls.pages)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def page(self, rel, out=None):
+        return slurp(os.path.join(out or self.out, rel))
+
+    def html_files(self, out=None):
+        out = out or self.out
+        return sorted(os.path.relpath(os.path.join(d, f), out) for d, _, fs in os.walk(out) for f in fs if f.endswith(".html") and f != "verify-acme.html")
+
+    def sidebar(self, rel, out=None):
+        m = re.search(r'<div class="sidebar" id="sidebar">\n(.*?)\n</div>\n<main', self.page(rel, out), re.S)
+        self.assertIsNotNone(m, rel)
+        return m.group(1)
+
+    def sections(self, rel):
+        """name -> (open, markup) of the three sections of the sidebar of a page."""
+        found = re.findall(r'<details class="side-section"( open)?>\n<summary>([^<]+)</summary>(.*?)\n</details>\n(?=<details class="side-section"|</nav>)', self.sidebar(rel), re.S)
+        return {name: (bool(o), body) for o, name, body in found}
+
+    def test_the_builds_succeed(self):
+        for rc, out, err in ((self.rc, self.stdout, self.stderr), (self.rc2, self.stdout2, self.stderr2)):
+            self.assertEqual((rc, err), (0, ""), out)
+        self.assertEqual(self.rc3, 0)
+
+    def test_every_page_but_the_404_page_has_the_sidebar_and_one_current_page(self):
+        files = self.html_files()
+        self.assertIn("reference/set-up/index.html", files)
+        for rel in files:
+            if rel == "404.html":
+                continue
+            t = self.page(rel)
+            self.assertEqual(t.count('id="sidebar"'), 1, rel)
+            side = self.sidebar(rel)
+            self.assertEqual(len(re.findall(r'aria-current="page"', side)), 1, rel)
+            self.assertEqual(list(self.sections(rel)), ["Guides", "Reference", "Releases"], rel)
+            self.assertIn('<nav aria-label="Site">', side)
+            self.assertIn('<label for="menu-toggle" class="menu-button">Menu</label>', t)         # the narrow-screen button needs no script
+            self.assertIn('<input type="checkbox" id="menu-toggle" class="menu-toggle" aria-controls="sidebar">', t)
+            self.assertIn('class="skip" href="#main"', t)
+            self.assertNotIn('<ul>\n<li><a href="../">Home</a></li>\n<li><a href="../first-project/">First project</a></li>\n<li><a href="../reference/">Reference</a>', t)   # the top navigation list is gone
+        self.assertRegex(self.sidebar("first-project/index.html"), r'<a href="\./" aria-current="page">First project</a>')
+        self.assertRegex(self.sidebar("index.html"), r'<a href="\./" aria-current="page">Home</a>')
+        self.assertRegex(self.sidebar("releases/index.html"), r'<a href="\./" aria-current="page">Release notes</a>')
+
+    def test_the_current_section_is_open_and_the_others_are_closed(self):
+        want = {"index.html": "Guides", "first-project/index.html": "Guides", "reference/index.html": "Reference",
+                "reference/set-up/index.html": "Reference", "reference/topics/index.html": "Reference", "releases/index.html": "Releases"}
+        for rel, current in want.items():
+            opened = [name for name, (o, _) in self.sections(rel).items() if o]
+            self.assertEqual(opened, [current], rel)
+        # in the reference only the group of the current page is open
+        ref = self.sections("reference/set-up/index.html")["Reference"][1]
+        groups = re.findall(r'<details class="side-group"( open)?>\n<summary>([^<]+)</summary>', ref)
+        self.assertEqual([name for o, name in groups if o], ["Set up"])
+        self.assertGreater(len(groups), 3)
+        refs = self.sections("reference/index.html")["Reference"][1]
+        self.assertEqual([o for o, _ in re.findall(r'<details class="side-group"( open)?>\n<summary>([^<]+)</summary>', refs) if o], [])
+
+    def test_the_commands_of_each_group_are_listed_under_it(self):
+        sys.path.insert(0, LIB)
+        try:
+            import commands as C
+        finally:
+            sys.path.remove(LIB)
+        side = self.sidebar("index.html")
+        for title, names in C.GROUPS:
+            m = re.search(r'<summary>%s</summary>\n<ul>\n(.*?)\n</ul>\n</details>' % re.escape(title), side, re.S)
+            self.assertIsNotNone(m, title)
+            hrefs = re.findall(r'<li><a href="([^"]+)"', m.group(1))
+            slug = MD.slugify(title)
+            self.assertEqual(hrefs, ["reference/%s/" % slug] + ["reference/%s/#%s" % (slug, n) for n in names], title)
+
+    def resolve(self, rel, href):
+        """(file, fragment) a relative link of the page rel leads to."""
+        path, _, frag = href.partition("#")
+        self.assertFalse(path.startswith("/") or "://" in path, href)
+        if path == "":
+            return rel, frag
+        target = os.path.normpath(os.path.join(os.path.dirname(rel), path))
+        return (os.path.join(target, "index.html") if path.endswith("/") else target), frag
+
+    def test_the_links_of_the_sidebar_resolve(self):
+        for rel in self.html_files():
+            if rel == "404.html":
+                continue
+            side = self.sidebar(rel)
+            hrefs = re.findall(r'href="([^"]+)"', side)
+            self.assertGreater(len(hrefs), 20, rel)
+            for h in hrefs:
+                target, frag = self.resolve(rel, h)
+                full = os.path.join(self.out, target)
+                self.assertTrue(os.path.isfile(full), "%s: %s" % (rel, h))
+                if frag:
+                    self.assertIn('id="%s"' % frag, slurp(full), "%s: %s" % (rel, h))
+        # the generator's own checker reads them too: breaking one is found
+        d = os.path.join(self.tmp, "broken")
+        shutil.copytree(self.out, d)
+        p = os.path.join(d, "first-project", "index.html")
+        t = slurp(p)
+        self.assertIn('<li><a href="../releases/">Release notes</a></li>', t)
+        spit(p, t.replace('<li><a href="../releases/">Release notes</a></li>', '<li><a href="../gone/">Release notes</a></li>'))
+        rc, out, _ = run("check-output", d)
+        self.assertEqual(rc, 1)
+        self.assertIn("no such file gone/index.html", out)
+
+    def test_the_sidebar_is_absent_from_the_404_page(self):
+        for out, base in ((self.out, "https://docs.example.org/qargi/"), (self.root, "https://docs.example.org/")):
+            t = self.page("404.html", out)
+            self.assertNotIn("sidebar", t)
+            self.assertNotIn("menu-toggle", t)
+            self.assertNotIn("<script", t)
+            self.assertIn('<a href="%s">The documentation home page</a>' % base, t)          # its absolute links stay
+            self.assertIn('<a class="brand" href="%s">qargi</a>' % base, t)
+            self.assertIn('<nav aria-label="Site">', t)
+            self.assertIn('href="%sreference/"' % base, t)
+
+    def test_sub_path_and_root_builds_have_the_same_relative_links(self):
+        for rel in self.html_files():
+            if rel == "404.html":
+                continue
+            self.assertEqual(self.sidebar(rel), self.sidebar(rel, self.root), rel)
+            for out in (self.out, self.root):
+                t = self.page(rel, out)
+                self.assertNotRegex(self.sidebar(rel, out), r'href="(?:/|https?:)')
+                self.assertRegex(t, r'<script src="(?:\.\./)*assets/search\.js" defer></script>')
+        self.assertEqual(self.page("assets/search.js"), self.page("assets/search.js", self.root))
+        self.assertEqual(self.page("assets/search-index.json"), self.page("assets/search-index.json", self.root))      # no address in it
+
+    def test_no_inline_script_handler_or_style(self):
+        for rel in self.html_files():
+            t = self.page(rel)
+            for tag in re.findall(r"<script[^>]*>(.*?)</script>", t, re.S):
+                self.assertTrue(tag == "" or tag.startswith('{"@context"'), rel)       # nothing inline but the JSON-LD
+            self.assertNotRegex(t, r"\son[a-z]+=", rel)
+            self.assertNotRegex(t, r"\sstyle=", rel)
+            self.assertNotIn("javascript:", t)
+
+    def test_the_index_is_valid_bounded_and_clean(self):
+        raw = self.page("assets/search-index.json")
+        data = json.loads(raw)
+        self.assertEqual(data["version"], 1)
+        self.assertLessEqual(len(raw.encode()), S.INDEX_MAX_BYTES)
+        self.assertIn("search index: %d entries, %d bytes" % (len(data["entries"]), len(raw.encode())), self.stdout)       # the size is reported
+        forbidden = json.loads(slurp(os.path.join(FIX, "site.json")))["forbidden"]
+        for w in forbidden:
+            self.assertNotIn(w.lower(), raw.lower())
+        self.assertNotIn(self.tmp, raw)
+        self.assertNotRegex(raw, r"https?://")
+        pages = {f[:-len("index.html")] if f.endswith("index.html") else f for f in self.html_files() if f != "404.html"}
+        whole = [e["p"] for e in data["entries"] if "#" not in e["p"]]
+        self.assertEqual(sorted(whole), sorted(pages))                       # one entry per page, and none for the 404 page
+        for e in data["entries"]:
+            self.assertEqual(set(e) - {"g"}, {"t", "p", "x"})
+            self.assertTrue(e["t"] and e["x"] is not None)
+            self.assertLessEqual(len(e["x"]), max(S.INDEX_PAGE_TEXT, S.INDEX_SECTION_TEXT))
+            path, _, frag = e["p"].partition("#")
+            if frag:
+                self.assertIn('id="%s"' % frag, self.page(path + "index.html"))
+                self.assertIn("g", e)
+            self.assertNotRegex(e["x"], r'&(?:lt|gt|amp|quot|#\d+);|<a |<code|class="')       # plain text: no markup, no entities
+        titles = {(e["t"], e["p"]) for e in data["entries"]}
+        self.assertIn(("qargi release verify", "reference/run-a-task/#release-verify"), titles)      # a command section is searchable
+        self.assertIn(("Your first project", "first-project/"), titles)
+
+    def test_the_index_is_bounded_and_follows_the_pages_on_forbidden_words(self):
+        site = type("FakeSite", (), {})()
+        site.cfg = None
+        site.pages = {"": S.Page("", "home", "Home", "Home page.", "<p>%s</p>" % ("word " * 400)),
+                      "a/": S.Page("a/", "hand", "A", "A page.", '<h2 id="x">Sec</h2><p>%s</p>' % ("long " * 400))}
+        rep = S.Report()
+        data = S.search_index(site, rep)
+        self.assertEqual(rep.errors, [])
+        entries = json.loads(data)["entries"]
+        self.assertEqual([e["p"] for e in entries], ["", "a/", "a/#x"])
+        self.assertLessEqual(len(entries[0]["x"]), S.INDEX_PAGE_TEXT)
+        self.assertLessEqual(len(entries[2]["x"]), S.INDEX_SECTION_TEXT)
+        self.assertFalse(entries[2]["x"].endswith(" "))
+        old = S.INDEX_MAX_BYTES
+        S.INDEX_MAX_BYTES = 100
+        try:
+            rep = S.Report()
+            S.search_index(site, rep)
+        finally:
+            S.INDEX_MAX_BYTES = old
+        self.assertEqual(len(rep.errors), 1)
+        self.assertIn("more than the limit of 100", rep.errors[0])
+        # a word the config forbids that only a generated page carries is no error: the reference documents the tool, and the
+        # index holds what the pages hold (a hand page with the word fails on its own line, as before)
+        d = os.path.join(self.tmp, "forbid")
+        shutil.copytree(os.path.join(self.tmp, "fix"), d)
+        cfg = os.path.join(d, "site.json")
+        data = json.loads(slurp(cfg))
+        data["forbidden"] = ["whether the whole suite passed"]
+        spit(cfg, json.dumps(data))
+        rc, out, err = build(os.path.join(self.tmp, "forbid-out"), os.path.join(d, "pages"))
+        self.assertEqual(rc, 0, out + err)
+        self.assertNotIn("forbidden word", out + err)
+
+    def test_the_script_is_one_small_file_with_no_dynamic_code_and_no_network_beyond_the_index(self):
+        js = self.page("assets/search.js")
+        self.assertEqual(js, slurp(os.path.join(LIB, "site", "search.js")))                     # the bytes of the source, nothing stamped in
+        self.assertLess(len(js.encode()), S.JS_WARN_BYTES)
+        for banned in ("eval(", "new Function", "innerHTML", "outerHTML", "document.write", "insertAdjacentHTML", "setTimeout(\"", "XMLHttpRequest", "importScripts", "http:", "https:", "localStorage", "sendBeacon"):
+            self.assertNotIn(banned, js)
+        self.assertIn("document.currentScript", js)              # the base is the script's own address, so any base path works
+        self.assertIn('"search-index.json"', js)
+        self.assertEqual(len(re.findall(r"\bfetch\(", js)), 1)
+        self.assertIn("aria-live", js)
+        for key in ("ArrowDown", "ArrowUp", "Enter", "Escape"):
+            self.assertIn('"%s"' % key, js)
+
+    def test_the_whole_build_is_reproducible(self):
+        def tree(root):
+            out = {}
+            for d, _, fs in os.walk(root):
+                for f in fs:
+                    with open(os.path.join(d, f), "rb") as fh:
+                        out[os.path.relpath(os.path.join(d, f), root)] = fh.read()
+            return out
+        a, b = tree(self.out), tree(self.again)
+        self.assertEqual(sorted(a), sorted(b))
+        for k in a:
+            self.assertEqual(a[k], b[k], k)
+        self.assertIn("assets/search.js", a)
+        self.assertIn("assets/search-index.json", a)
+
+    def test_the_stylesheet_has_the_sidebar_the_narrow_menu_and_print(self):
+        css = self.page("assets/site.css")
+        self.assertLess(len(css.encode()), 15 * 1024)
+        self.assertRegex(css, r"@media \(max-width: 48rem\)[^@]*\.menu-toggle:checked ~ \.layout \.sidebar \{ display: block; \}")
+        self.assertRegex(css, r"@media print \{[^}]*\.sidebar")
+        self.assertIn("position: sticky", css)
+        self.assertNotIn("url(", css)
 
 
 class LastMod(unittest.TestCase):
@@ -1125,6 +1379,14 @@ class CheckOutput(unittest.TestCase):
             spit(p, t.replace(old, new, 1))
         return edit
 
+    def drop_entry(self, path):
+        def edit(d):
+            p = os.path.join(d, "assets", "search-index.json")
+            data = json.loads(slurp(p))
+            data["entries"] = [e for e in data["entries"] if e["p"] != path]
+            spit(p, json.dumps(data))
+        return edit
+
     def test_each_defect_is_found(self):
         cases = [
             ("dupid", self.sub("first-project/index.html", 'id="add-a-member"', 'id="store-the-answers"'), "id 'store-the-answers' is used more than once"),
@@ -1158,6 +1420,23 @@ class CheckOutput(unittest.TestCase):
             ("robots", self.sub("robots.txt", "Sitemap:", "Nothing:"), "no Sitemap line"),
             ("noindex404", self.sub("404.html", '<meta name="robots" content="noindex">', ""), "must be noindex"),
             ("xml", self.sub("sitemap.xml", "</urlset>", ""), "not well-formed"),
+            ("nosidebar", self.sub("first-project/index.html", 'id="sidebar"', 'id="side"'), "no sidebar"),
+            ("twocurrent", self.sub("first-project/index.html", '<li><a href="../">Home</a></li>', '<li><a href="../" aria-current="page">Home</a></li>'), 'exactly one link with aria-current="page", has 2'),
+            ("nocurrent", self.sub("first-project/index.html", ' aria-current="page">First project</a>', '>First project</a>'), 'exactly one link with aria-current="page", has 0'),
+            ("sidebar404", self.sub("404.html", '<div class="layout solo">', '<div class="layout solo"><div class="sidebar" id="sidebar"></div>'), "the 404 page has no sidebar"),
+            ("script404", self.sub("404.html", "</head>", '<script src="assets/search.js" defer></script></head>'), "the 404 page has no sidebar and no script"),
+            ("noscript", self.sub("first-project/index.html", '<script src="../assets/search.js" defer></script>', ""), "no search script"),
+            ("foreignscript", self.sub("first-project/index.html", '<script src="../assets/search.js" defer></script>', '<script src="https://evil.example/x.js" defer></script>'), "script that is not JSON-LD or the search script"),
+            ("asyncscript", self.sub("first-project/index.html", '<script src="../assets/search.js" defer>', '<script src="../assets/search.js" async onload="x">'), "script that is not JSON-LD or the search script"),
+            ("inlinejs", self.sub("first-project/index.html", '<script src="../assets/search.js" defer></script>', '<script src="../assets/search.js" defer>alert(1)</script>'), "an inline script"),
+            ("nojs", lambda d: os.remove(os.path.join(d, "assets", "search.js")), "assets/search.js: missing"),
+            ("noindexfile", lambda d: os.remove(os.path.join(d, "assets", "search-index.json")), "assets/search-index.json: missing"),
+            ("badindex", lambda d: spit(os.path.join(d, "assets", "search-index.json"), "{not json"), "search-index.json: not valid JSON"),
+            ("bigindex", lambda d: spit(os.path.join(d, "assets", "search-index.json"), " " * (S.INDEX_MAX_BYTES + 1)), "larger than"),
+            ("shapeindex", lambda d: spit(os.path.join(d, "assets", "search-index.json"), '{"version":1,"entries":[{"t":1}]}'), "entry 0 needs the text fields"),
+            ("pageless", self.drop_entry("first-project/"), "no entry for the page first-project/index.html"),
+            ("deadentry", self.sub("assets/search-index.json", '"p":"first-project/"', '"p":"gone/"'), "points at /gone/, which is not a page"),
+            ("deadanchor", self.sub("assets/search-index.json", '"p":"first-project/#add-a-member"', '"p":"first-project/#nope"'), "has no element with id 'nope'"),
         ]
         for name, edit, frag in cases:
             rc, out = self.broken(name, edit)

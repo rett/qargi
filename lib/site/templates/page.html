@@ -12,19 +12,22 @@ $canonical
 <link rel="stylesheet" href="$css">
 $social
 $jsonld
+$script
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+$menu_toggle
 <header class="site-header">
-<div class="wrap">
+<div class="wrap wide">
 <a class="brand" href="$home">$site_name</a>
 <span class="stamp">$stamp</span>
-<nav aria-label="Site">
+$menu_button
 $nav
-</nav>
 </div>
 </header>
-<main id="main" class="wrap">
+<div class="$layout">
+$sidebar
+<main id="main" class="content">
 $breadcrumb
 <article>
 <h1>$h1</h1>
@@ -33,8 +36,9 @@ $toc
 $body
 </article>
 </main>
+</div>
 <footer class="site-footer">
-<div class="wrap">
+<div class="wrap wide">
 $footer
 </div>
 </footer>
