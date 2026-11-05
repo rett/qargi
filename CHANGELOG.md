@@ -284,6 +284,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi feature finish NAME` refuses a feature that is behind develop when both sides changed the same files since their merge
   base (exit 1, nothing changed). It lists those files and says to run `qargi feature sync NAME` first. A feature behind develop
   with no file in common is refused as before, without the list.
+- `qargi release status VERSION` shows, next to the full-suite verdict, the command that produced it and when it ran (from the suite
+  record). When `release.test_command` is set and is not that command, or the project's `test_command` changed since the run, a line
+  of its own says so, so the pass is not read as the release gate. A record made by another command is shown, not reported as "not run".
 
 ### Removed
 - Schema 1 provider definitions (`lib/providers/claude.json`, `schema.json`, the `claude/adapter` router) and all schema-1 code.

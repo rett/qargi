@@ -11,7 +11,9 @@
 #                                           the changelog and man page. A release starts only from a develop whose head passed `verify`.
 #                                           Preflight: a man page's .TH date and version are set too, and a CHANGELOG.md needs
 #                                           content under '## [Unreleased]' (--allow-empty-notes waives that); otherwise it refuses.
-#   release.sh status VERSION [--hotfix]    for an existing tag also warns: no GitHub release for it (gh release view, through
+#   release.sh status VERSION [--hotfix]    the full-suite verdict names the command that produced it and when it ran (the suite record); a
+#                                           release.test_command that is not that command gets a line of its own: the pass is not the release gate.
+#                                           For an existing tag also warns: no GitHub release for it (gh release view, through
 #                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
 #                                           with release.sign set and no release yet it says "awaiting signature" until `sign` recorded
 #                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
@@ -115,6 +117,21 @@ tag_checks() {
   esac
 }
 open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPREFIX}*"; }   # the open release branches
+# suite_verdict BRANCH -> SV_TEXT, the last whole-suite run recorded for the branch ("pass at this head (command: C; ran AT)"; empty when none was
+# recorded), and SV_NOTE, set when release.test_command is set and is not the command of that run: the run is then not the release gate.
+suite_verdict() {
+  local f cur res at cmd
+  SV_TEXT='' SV_NOTE=''
+  f=$(rec "$1"); [ -f "$f" ] || return 0
+  cur=$(jq -r '.sha // empty' "$f" 2>/dev/null) || return 0; [ -n "$cur" ] || return 0
+  res=$(jq -r '.result // "?"' "$f"); at=$(jq -r '.at // "an unknown time"' "$f"); cmd=$(jq -r '.command // "an unknown command"' "$f")
+  SV_TEXT="$res at $([ "$cur" = "$(sha_of "$1")" ] && echo 'this head' || echo 'an older head') (command: $cmd; ran $at)"
+  if [ -n "$RTC" ] && [ "$RTC" != "$cmd" ]; then
+    SV_NOTE="  note: release.test_command is \"$RTC\", not the command of that run: it is not the release gate (qargi release verify $VER runs it)"
+  elif [ -n "$TESTCMD" ] && [ "$TESTCMD" != "$cmd" ]; then
+    SV_NOTE="  note: the test command is now \"$TESTCMD\", not the command of that run: a release does not start from it (qargi release verify $VER runs the current one)"
+  fi
+}
 
 # The signing of a release (lib/release_sign.py holds the answers' checks and the record). The record of VER is a file under STATE/release/.
 RS=$(dirname "$0")/release_sign.py
@@ -210,7 +227,9 @@ case $verb in
   status)
     h=$(sha_of "$BR")
     if [ -z "$h" ]; then
-      echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: $(v=$(verified "$BASE"); if [ -z "$v" ]; then echo "not run"; elif [ "${v%% *}" = "$(sha_of "$BASE")" ]; then echo "${v##* } at this head"; else echo "${v##* } at an older head"; fi)"
+      suite_verdict "$BASE"
+      echo "no $BR yet. develop is at $(g rev-parse --short develop 2>/dev/null || echo '?'), full suite: ${SV_TEXT:-not run}"
+      [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
       remote_report "$BASE"
       tag_checks
       sign_status
@@ -218,7 +237,9 @@ case $verb in
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
-    v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
+    suite_verdict "$BR"
+    echo "full suite: ${SV_TEXT:-not run on this branch}"
+    [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
     tag_checks
