@@ -7,6 +7,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Catalog entries for common development tooling, found with `qargi discover search` and installed as role packages:
+  `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
+  `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
+  shipped catalog against the schema of its kind.
 - Providers as data, one runtime per surface. Claude ships as two runtimes of one family, `claude-code` (local) and
   `claude-platform` (cloud), with a shared model catalog. The family name `claude` resolves per surface (a notice says so) in a
   project's `models.provider` and in `provider of`; every `provider` verb that takes a NAME takes a runtime name (there is no
