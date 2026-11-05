@@ -240,10 +240,11 @@ lib/project.sh:Claude Code session leading may push
 lib/transfer.py:from Claude Code: !
 lib/discover.py:from Claude Code: !
 
-# lib/marshal_handoff.py and lib/attach.py: the instruction files of a repository (CLAUDE.md, AGENTS.md); they belong in the runtime's
+# lib/marshal_handoff.py, lib/attach.py and lib/project_profile.py: the instruction files of a repository (CLAUDE.md, AGENTS.md); they belong in the runtime's
 # resources.instructions
 lib/marshal_handoff.py:"CLAUDE\.md", "AGENTS\.md"
 lib/attach.py:"CLAUDE\.md", "AGENTS\.md"
+lib/project_profile.py:"CLAUDE\.md", "AGENTS\.md"
 lib/tiercontext.py:nothing in them overrides the user or CLAUDE\.md
 
 

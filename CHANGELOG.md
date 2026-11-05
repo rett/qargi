@@ -11,6 +11,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pkg-golangci-lint`, `pkg-bats`, `pkg-podman`, `pkg-mandoc`, `pkg-golang` (the Go toolchain and a C compiler, so
   `go test -race` runs) and `pkg-gh` (the GitHub command line, for its release commands). A test checks every entry of the
   shipped catalog against the schema of its kind.
+- `qargi project profile check [NAME] [--profile FILE]` (read only, so a member may run it) reads a repository's profile
+  (`~/.qargi/config/profiles/<repository>.md`, the repository being the project's directory name, or FILE). It exits 1 while the
+  profile still carries the shipped example's title or "Copy to" line, and warns (exit 0) of each backticked command in the
+  profile's Gates section that is in none of the repository's `CLAUDE.md`, `AGENTS.md` and Makefile targets. No profile is fine.
+  `project validate` prints the header finding as a `WARN:` line.
 - Providers as data, one runtime per surface. Claude ships as two runtimes of one family, `claude-code` (local) and
   `claude-platform` (cloud), with a shared model catalog. The family name `claude` resolves per surface (a notice says so) in a
   project's `models.provider` and in `provider of`; every `provider` verb that takes a NAME takes a runtime name (there is no
@@ -325,6 +330,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   verified and `local clean` marks it cleaned (the line stays, one per run, rewritten under the registry's lock); a task reads
   `verified`, `applied` or `not verified` as the registry and the run directory say, and a cleaned run is listed only on a
   `cleaned:` line, never as an open task. `feature merge` of an agent branch whose run exists and has no passing verify warns.
+- `packs check --target T PROJECT` no longer reports `manifest missing` for a project that was never applied, which looked like a
+  broken render. It prints `not applied: ... (qargi packs apply ...)` and exits 0, and a render directory without its manifest still
+  fails. The answer `packs.none: true` (`qargi project set P packs.none true`; `project set` of `packs` is refused to a member) says the
+  project uses no project packs: the check passes with no render, and fails when a pack is linked to a role of the project. The
+  section of the skills a session would load, the unmanaged ones in `~/.claude/skills` included, is printed in every case.
+- `qargi project set P PATH false` stored the string `false`; it stores the JSON value, like `true` and numbers.
 - `agent` verbs check the records of the project they are about, not every project; `agent rename` keeps a member file edited by
   hand and says so; a record that lacks `roles` or `file` is refused with one line naming the member.
 - The dispatcher finds the project of an instance `PROJECT-ROLE` for every role, not only the four built-in ones and lead.
