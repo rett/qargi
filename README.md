@@ -233,6 +233,19 @@ develop, the branches of `repo.long_lived` or `repo.detached`, the parking branc
 worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with
 the reason. A remote branch is deleted as a lease on the tip the plan showed.
 
+### Following an upstream repository
+
+A project that is a fork keeps its own changes, the overlay, on top of an upstream repository. The answers name the remote
+(`upstream.remote`), the branch it follows (`upstream.branch`) and the local branch that carries the upstream line and nothing
+else (`upstream.into`, default `upstream`; put it in `repo.long_lived`); `upstream.overlay_check`, optional, is a command array
+that checks the overlay still applies or builds. `qargi upstream status` fetches that one branch of that remote and says how
+far the branch is behind and ahead; `qargi upstream review [--limit N]` lists the upstream commits not yet in it with the files
+each touches and marks the ones that touch a file develop changed since it parted from the upstream line; `qargi upstream sync`
+fast-forwards the branch to the fetched tip from a plan and a token, refuses a branch with commits of its own, pushes nothing and
+never merges into develop: the upstream line meets develop only through a feature (`qargi feature start upstream-X`, then
+`qargi feature merge upstream-X upstream`), where the overlay is fixed and the feature lands as any other. With
+`upstream.overlay_check` set, sync then runs it on a trial merge of the branch into develop in a temporary worktree.
+
 ### The worktree root
 
 qargi makes the worktrees it creates under one root, `worktrees.root` in the answers (default `<state>/worktrees/PROJECT`), one

@@ -46,6 +46,7 @@ declare -A SCRIPTS=(
   [registry.sh]="instances init|instances list|instances show x"
   [branch.sh]="branch prune"
   [changelog.sh]="changelog renumber"
+  [upstream.sh]="upstream status|upstream review|upstream sync"
   [review.sh]="review apply x"
   [session.sh]="start x|send x|track x|status|stop x|close x"
   [supervise.sh]="supervise nudge x|supervise tick"

@@ -223,6 +223,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CHANGELOG.md` of the work tree around the current directory and leaves the change uncommitted; `--check` only reports and exits 1
   on a duplicate. `feature sync` warns about duplicates after the merge, and `feature finish` refuses (exit 1, nothing changed)
   until they are renumbered, committed and verified. A member may run only `--check`; `renumber` without it is refused by the guard.
+- `qargi upstream status|review|sync` for a project that is a fork of an upstream repository and keeps its own changes, the
+  overlay, on top of it. The answers name the remote (`upstream.remote`), the branch it follows (`upstream.branch`) and the
+  local branch that carries the upstream line and nothing else (`upstream.into`, default `upstream`); `upstream.overlay_check`,
+  optional, is a command array. `status` fetches that one branch of that remote (no tags, the only verb that reaches the
+  network) and reports how far the branch is behind and ahead with the newest upstream commits; `review [--limit N]` lists
+  the upstream commits not yet in the branch with the files each touches and marks the ones that touch a file develop changed
+  since it parted from the upstream line; `sync` fast-forwards the branch to the fetched tip from a plan and a token
+  (`--plan`, `--approved`), creates it at the tip when it does not exist, journals the move, refuses a branch with commits of
+  its own, pushes nothing and never merges into develop (the next step, `feature start upstream-X` then `feature merge`, is
+  printed); with `upstream.overlay_check` it then runs the command on a trial merge of the branch into develop in a temporary
+  worktree (exit 1 on a failure or a conflict; the fast-forward stands). `project validate` checks the `upstream` answers.
+  The guard refuses a member `upstream status` (its fetch changes the remote-tracking refs of the lead's repository, which
+  `local verify` compares) and `upstream sync`, and `project set` of any `upstream` answer; `review` stays allowed.
+  `tests/test_upstream.sh` runs the verbs against a local bare repository acting as upstream.
 
 ### Changed
 - `roles.ROLE.go` is gone: a Go tool is a `roles.ROLE.tools` entry of kind `go`, and the cloud provision takes the environment's go
