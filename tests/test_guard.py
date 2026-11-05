@@ -498,6 +498,22 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_site_to_a_member(self):
+        """release site commits the built documentation site on the lead's site branch; the verb and the script run directly are refused with
+        their own reason, a verb held in a variable as publish's is. Status, which prints the site line, and the help stay allowed."""
+        for form in ("qargi release site 0.2.0", "qargi release site 0.2.0 --plan 0123456789ab --approved go", "/opt/q/bin/qargi release site 0.2.0",
+                     "sudo qargi release site 0.2.0", "bash -c 'qargi release site 0.2.0'", "cd src && qargi release site 0.2.0",
+                     "qargi release --project p site 0.2.0", "eval 'qargi release site 0.2.0'", "bash lib/release.sh site 0.2.0"):
+            r = self.bash(form)
+            self.assertEqual(r.returncode, 2, form)
+            self.assertIn("qargi release site commits the built documentation site on the lead's site branch", r.stderr)
+        r = self.bash("v=site; qargi release $v 0.2.0")
+        self.assertEqual(r.returncode, 2)
+        for c in ("qargi release status 0.2.0", "qargi release finish 0.2.0", "echo qargi release site", "grep -n 'release site' lib/commands.py",
+                  "qargi help release site", "python3 lib/site.py check --release 0.2.0 --source ."):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_env_plan_and_apply_to_a_member(self):
         """env plan runs the project's dry-run command and env apply its bootstrap: project code. Both verbs, a verb held in a variable, and the
         scripts run directly are refused; env show (it only reads) and words in a quoted string stay allowed."""

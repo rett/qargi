@@ -15,6 +15,8 @@ A template's {{name}} is replaced by the parameter of that name; a {{...}} that 
 alone (it may belong to the file's own language), but a declared parameter with no value is an error. A scaffold entry may say
 "env": "section" (the file holds the Development environment section) or "targets" (the file holds the bootstrap and doctor targets of
 a task runner): project attach and adopt then treat the entry as present when the repository already has the piece in another file.
+The optional after_release list names the steps that follow a release, each {id, when, next, help}: `qargi release finish` ends with
+"next: NEXT" ({version} replaced) for each step whose `when`, a dotted project answer such as site.enabled, is true.
 """
 import json, os, re, sys, datetime
 
@@ -120,6 +122,25 @@ def problems(name):
         for ph in set(PLACEHOLDER.findall(open(p, encoding="utf-8").read())):
             if ph not in params:
                 bad.append("%s: scaffold/%s uses {{%s}}, which params does not declare" % (name, src, ph))
+    ar = m.get("after_release", [])
+    if not isinstance(ar, list):
+        bad.append("%s: after_release is a list of steps {id, when, next, help}" % name)
+        ar = []
+    aids = []
+    for s in ar:
+        if not isinstance(s, dict) or set(s) - {"id", "when", "next", "help"}:
+            bad.append("%s: after_release step %r: an object {id, when, next, help}" % (name, s))
+            continue
+        aids.append(s.get("id"))
+        if not (isinstance(s.get("id"), str) and NAME.match(s["id"])):
+            bad.append("%s: after_release step %r: id is one lower-case token" % (name, s.get("id")))
+        if not (isinstance(s.get("when"), str) and re.fullmatch(r"[a-z_]+(\.[a-z_]+)*", s["when"])):
+            bad.append("%s: after_release step %s: when is the dotted name of a project answer that must be true (for example site.enabled)" % (name, s.get("id")))
+        nx = s.get("next")
+        if not (isinstance(nx, str) and nx.startswith("qargi ") and "\n" not in nx):
+            bad.append("%s: after_release step %s: next is the one qargi command line to run next ({version} stands for the version)" % (name, s.get("id")))
+    if len(aids) != len(set(aids)):
+        bad.append("%s: after_release step ids are unique" % name)
     ids = [o.get("id") for o in (m.get("deployment") or {}).get("options", [])]
     if len(ids) != len(set(ids)) or any(not i for i in ids):
         bad.append("%s: deployment option ids are unique and not empty" % name)
@@ -179,6 +200,10 @@ def main(argv):
         print("\nrelease:")
         for i, step in enumerate(m.get("release", []), 1):
             print("  %d. %s" % (i, step))
+        if m.get("after_release"):
+            print("\nafter a release (release finish names the step when the answer is true):")
+            for s in m["after_release"]:
+                print("  %-12s when %s: %s (%s)" % (s.get("id"), s.get("when"), s.get("next"), s.get("help", "")))
         print("\nparameters:")
         for k, spec in (m.get("params") or {}).items():
             print("  %-13s %s%s" % (k, spec.get("help", ""), " (required)" if spec.get("required") else (" (default %s)" % spec.get("default") if spec.get("default") else "")))
