@@ -308,8 +308,14 @@ def man(date_from=None):
     w(".SH EXIT STATUS")
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
-    skills = sorted(n for n in os.listdir(os.path.join(ROOT, "skills")) if os.path.isfile(os.path.join(ROOT, "skills", n, "SKILL.md")))
-    w("The skills " + ", ".join(esc(n) for n in skills[:-1]) + " and " + esc(skills[-1]) + ", loaded by the lead's session "
+    # a copy of qargi without its skills directory (a partial copy, a packaged lib) still writes the page
+    sk = os.path.join(ROOT, "skills")
+    skills = sorted(n for n in os.listdir(sk) if os.path.isfile(os.path.join(sk, n, "SKILL.md"))) if os.path.isdir(sk) else []
+    if len(skills) > 1:
+        named = "The skills " + ", ".join(esc(n) for n in skills[:-1]) + " and " + esc(skills[-1])
+    else:
+        named = "The skill " + esc(skills[0]) if skills else "The qargi skills"
+    w(named + ", loaded by the lead's session "
       "(qargi help roles for the roles, which come as role text with the task block).")
     return "\n".join(x for x in o if x != "") + "\n"
 
