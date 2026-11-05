@@ -74,6 +74,14 @@
     "when CI passes: merge release/<version> into master with --no-ff, tag it, merge it into develop with --no-ff, delete the branch",
     "a critical fix to production is a hotfix/<version> branch from master, finished the same way (into the open release branch instead of develop when one exists)"
   ],
+  "after_release": [
+    {
+      "id": "site",
+      "when": "site.enabled",
+      "next": "qargi release site {version}",
+      "help": "build the documentation site of the tag on the detached site branch, as a commit there that you push"
+    }
+  ],
   "roles": {
     "build": {
       "base": "@dispatcher"
