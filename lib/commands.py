@@ -488,14 +488,33 @@ COMMANDS = {
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
                                "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. "
                                "When site.enabled is true a site line says 'site: not built for VERSION', 'site: built at SHA, not pushed' or 'site: pushed' "
-                               "(the commit of qargi release site on the site branch, and whether the live origin has it).")),
+                               "(the commit of qargi release site on the site branch, and whether the live origin has it). "
+                               "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
+                               "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
+                               "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
+                               "for each file of the answer release.assets whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
+                               "and the project's own after-steps, the optional answer release.after_steps (a list of words, {version} replaced), which qargi lists but does not record as done.")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command. " + OTHER_RUNS_NOTE + " " + SUITE_FAIL_NOTE),
+            "fix": verb("Make a worktree on the release branch to commit a fix in, and push the fix again with --push", [("VERSION", "none")],
+                        [PROJECT_OPT, HOTFIX_OPT, opt("--push", "push the committed fix: the same as release push (the plan token and approval below)"), PLAN, APPROVED],
+                        desc=("For the pull request whose checks failed, or a change review asked for. Without --push it creates the worktree of release/VERSION (hotfix/VERSION with --hotfix) "
+                              "under the worktree root (worktrees.root, default <state>/worktrees/<project>/<branch>), prints 'worktree: PATH' and the next step, and changes nothing else; "
+                              "run again it names the same worktree. Fix there, commit on the branch, then run it with --push (or release push), which asks for a plan token and an approval, "
+                              "pushes the branch and updates the open pull request, whose checks run again. Refused when the branch does not exist or the tag VERSION does (then it is a hotfix). "
+                              "release finish removes the worktree with the branch when it is clean.")),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
-                         desc=REMOTE_NOTE + " When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses."),
+                         desc=REMOTE_NOTE + " When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
+                              "When a pull request for the branch is open already (found with gh pr list; a gh that cannot list it is caught by the refusal of gh pr create) the plan says so, "
+                              "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed."),
             "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
-                           [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
-                           desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
+                           [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
+                            opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
+                            PLAN, APPROVED, RESOLVED_OPT],
+                           desc=("The plan lists the checks of the branch's pull request (gh pr checks: one line per check, pass, fail or pending) and refuses, without a token, while one fails or is pending, "
+                                 "unless --ignore-checks WORDS is given; the plan token covers the words. A missing gh, no pull request or no checks is a warning in the plan, and the apply then refuses "
+                                 "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
+                                 "Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
                                  "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "

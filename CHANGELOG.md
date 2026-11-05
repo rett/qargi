@@ -56,6 +56,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
 - The advisor sign-off in the `qargi-flow` skill tells the lead to put "do not run the test suite while a feature verify is
   running" in the brief it writes for the advisor.
+- `qargi release fix VERSION` makes a worktree on the release branch under the worktree root and prints its path; after the
+  fix is committed there, `release fix VERSION --push` (the same as `release push`) pushes it to the open pull request.
+  `release finish` removes that worktree with the branch.
+- `qargi release status` shows the checks of the release branch's pull request (name and pass, fail or pending), and for a tag a
+  checklist of what is left after the release: the tag on origin, the GitHub release published or missing, the assets of
+  `release.assets` present, the signatures of `release.sign.files` attached or unsigned, and the optional `release.after_steps`.
+- `qargi release finish` lists the pull request's checks in its plan and refuses, without a token, while one fails or is
+  pending, unless `--ignore-checks "<your words>"` is given (recorded in the output and the audit log); a missing gh or
+  pull request is a warning in the plan, and the apply refuses then unless the words are given.
+- `qargi release push` for a branch whose pull request is open says `updated PR #N` instead of failing with `gh pr create failed`.
 
 ## [0.2.2] - 2026-11-05
 
