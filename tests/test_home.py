@@ -9,6 +9,11 @@ CLEAN = ("QARGI_CONF", "QARGI_STATE", "QARGI_HOME", "XDG_CONFIG_HOME", "XDG_STAT
 BANNER = "qargi: dev run from %s; data in %s/.qargi (QARGI_HOME=~/.qargi uses live data)"
 
 
+def slurp(path):
+    with open(path) as f:
+        return f.read()
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.t = os.path.realpath(tempfile.mkdtemp())
@@ -193,7 +198,7 @@ class Install(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         rec = self.record()
         self.assertEqual(rec["tool_root"], ROOT)
-        self.assertEqual(rec["version"], open(os.path.join(ROOT, "VERSION")).read().strip())
+        self.assertEqual(rec["version"], slurp(os.path.join(ROOT, "VERSION")).strip())
         self.assertRegex(rec["installed_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual(stat.S_IMODE(os.stat(self.live + "/config/install.json").st_mode), 0o600)
         self.assertEqual(self.where_installed(), False)
@@ -218,16 +223,23 @@ class Install(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(self.live + "/config/install.json"))
 
-    def test_a_project_install_writes_nothing(self):
+    def test_a_project_install_writes_only_its_manifest(self):
+        # the live location gets the project's install manifest and nothing else: no install.json, so no run turns into a dev run
         proj = os.path.join(self.t, "proj")
         os.makedirs(proj)
         r = self.install("--project", proj)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse(os.path.lexists(self.live))
-        self.install("--user")
-        before = open(self.live + "/config/install.json").read()
+        written = [os.path.relpath(os.path.join(d, f), self.live) for d, _, fs in os.walk(self.live) for f in fs]
+        self.assertEqual(len(written), 1, written)
+        self.assertRegex(written[0], r"^config/project-\d+\.manifest$")
+        self.assertEqual(self.where_installed(), False)
         self.assertEqual(self.install("--project", proj, "--uninstall").returncode, 0)
-        self.assertEqual(open(self.live + "/config/install.json").read(), before)
+        self.assertFalse(os.path.exists(os.path.join(self.live, written[0])), "the project uninstall removes its manifest")
+        self.install("--project", proj)
+        self.install("--user")
+        before = slurp(self.live + "/config/install.json")
+        self.assertEqual(self.install("--project", proj, "--uninstall").returncode, 0)
+        self.assertEqual(slurp(self.live + "/config/install.json"), before)
 
     def test_the_record_goes_to_the_live_location_that_is_named(self):
         qh = os.path.join(self.t, "qh")
