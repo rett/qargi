@@ -172,6 +172,22 @@ if isinstance(wts, dict) and "root" in wts:
     elif isinstance(repo.get("path"), str) and repo["path"]:
         rr = os.path.realpath(os.path.expanduser(repo["path"])); wp = os.path.realpath(os.path.expanduser(wr))
         if wp == rr or wp.startswith(rr + os.sep): bad.append("worktrees.root: %s is inside the repository; a worktree inside the working tree is a mess" % wr)
+# upstream: a fork that follows an upstream repository (lib/upstream.sh): the remote, the branch it follows, the local branch that carries the
+# upstream line (default upstream; never a git-flow branch) and, optionally, the command array that checks the overlay
+up = c.get("upstream", {})
+need(isinstance(up, dict), "upstream: an object like {remote: \"upstream\", branch: \"main\", into: \"upstream\", overlay_check: [\"make\", \"check\"]}")
+if isinstance(up, dict):
+    for k in up:
+        if k not in ("remote", "branch", "into", "overlay_check"): bad.append("upstream.%s: unknown key (remote, branch, into, overlay_check)" % k)
+    if up:
+        need(isinstance(up.get("remote"), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", up.get("remote") or ""), "upstream.remote: the name of a git remote of the repository, such as upstream")
+        need(branch_name(up.get("branch")), "upstream.branch: the upstream branch the fork follows, such as main")
+    into = up.get("into", "upstream")
+    need(branch_name(into), "upstream.into: a branch name (default upstream): the local branch that carries the upstream line and nothing else")
+    if branch_name(into) and (into in FLOW_NAMES or into.startswith(FLOW_PREFIXES)): bad.append("upstream.into: %s is a git-flow branch; the upstream line needs a branch of its own, such as upstream" % into)
+    if branch_name(into) and branch_name(pk) and into == pk: bad.append("upstream.into: %s is also the parking branch" % into)
+    oc = up.get("overlay_check", [])
+    need(isinstance(oc, list) and all(isinstance(x, str) and x for x in oc), "upstream.overlay_check: a command as an array of words, such as [\"make\", \"check\"]")
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess

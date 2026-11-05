@@ -75,7 +75,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -383,6 +383,29 @@ COMMANDS = {
                                    "first one, and every '(item N)' cross-reference inside the section follows the item it means: with a duplicated N, the nearest item numbered N at or "
                                    "before the reference, else the nearest after it. The file is rewritten and not committed. Without --check it is the lead's: a member run may only use --check."),
                              examples=["qargi changelog renumber --check", "qargi changelog renumber"]),
+        },
+    },
+    "upstream": {
+        "summary": "Follow an upstream repository: how far behind, what is new, sync its branch",
+        "desc": ("A project that is a fork keeps its own changes, the overlay, on top of an upstream repository. The answers name the remote (upstream.remote), "
+                 "the branch it follows (upstream.branch) and the local branch that carries the upstream line and nothing else (upstream.into, default upstream); "
+                 "upstream.overlay_check, optional, is a command array that checks the overlay still applies or builds. status fetches that one branch of that "
+                 "remote (the only verb that reaches the network) and says where the branch stands; review and sync work from the last fetch. The upstream line "
+                 "never meets develop directly: after a sync, cut a feature and merge the branch into it (qargi feature start upstream-X, then qargi feature merge "
+                 "upstream-X BRANCH), fix the overlay there, and let the feature land as any other. Nothing is pushed."),
+        "scripts": ["upstream.sh"],
+        "verbs": {
+            "status": verb("Fetch the upstream branch and say how far the local branch is behind and ahead of it, with the newest upstream commits", [], [PROJECT_OPT],
+                           desc="The fetch is of that one branch of that remote, with no tags; it changes the remote-tracking ref and nothing else."),
+            "review": verb("List the upstream commits not yet in the local branch, with the files each one touches; a commit that touches a file the overlay changed is marked", [],
+                           [PROJECT_OPT, opt("--limit", "show at most N commits, newest first (default 30)", "N")],
+                           desc="The overlay is what develop changed since it parted from the upstream line (their merge base). Reads the last fetch (qargi upstream status); changes nothing."),
+            "sync": verb("Fast-forward the local branch to the fetched upstream branch (--ff-only), with the token and an approval", [], [PROJECT_OPT, PLAN, APPROVED],
+                         desc=("Refused when the branch has commits of its own (not a fast-forward): it carries the upstream line only. Creates the branch at the upstream tip "
+                               "when it does not exist yet. The move is journaled; nothing is pushed and nothing is merged into develop: the next step is printed. With "
+                               "upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast-forward "
+                               "stands either way; a failure or a merge conflict exits 1)."),
+                         examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
         },
     },
     "release": {
@@ -1262,10 +1285,11 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign and site; marshal claim, set, renew, release, take, "
-        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; memory init, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
+        "upstream status, sync; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
