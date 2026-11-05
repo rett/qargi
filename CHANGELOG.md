@@ -7,6 +7,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi project profile check [NAME] [--profile FILE]` (read only, so a member may run it) reads a repository's profile
+  (`~/.qargi/config/profiles/<repository>.md`, the repository being the project's directory name, or FILE). It exits 1 while the
+  profile still carries the shipped example's title or "Copy to" line, and warns (exit 0) of each backticked command in the
+  profile's Gates section that is in none of the repository's `CLAUDE.md`, `AGENTS.md` and Makefile targets. No profile is fine.
+  `project validate` prints the header finding as a `WARN:` line.
 - Providers as data, one runtime per surface. Claude ships as two runtimes of one family, `claude-code` (local) and
   `claude-platform` (cloud), with a shared model catalog. The family name `claude` resolves per surface (a notice says so) in a
   project's `models.provider` and in `provider of`; every `provider` verb that takes a NAME takes a runtime name (there is no

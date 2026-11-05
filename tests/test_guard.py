@@ -338,6 +338,14 @@ class Skills(unittest.TestCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_project_profile_check_is_open_to_a_member(self):
+        """qargi project profile check reads a profile and the repository's CLAUDE.md, AGENTS.md and Makefile and writes nothing: a member may run it."""
+        for c in ("qargi project profile check", "qargi project profile check p", "qargi project profile check p --profile ./profile.md",
+                  "sudo qargi project profile check p", "cd src && qargi project profile check p", "bash -c 'qargi project profile check p'",
+                  "./lib/project.sh profile check p", "bash lib/project.sh profile check --profile x.md"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
         the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a

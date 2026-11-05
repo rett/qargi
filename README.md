@@ -516,7 +516,11 @@ registry, session tracker and profiles are per user, under `~/.qargi/config` and
 `~/.qargi/state` (`QARGI_HOME` replaces `~/.qargi`), whichever level installs the skills. Repository rules for
 agents go in a profile under `~/.qargi/config/profiles/`, also
 outside the repository: nothing qargi related is added to a project's
-committed files. `--project` installs are hidden from git through the
+committed files. `qargi project profile check [NAME] [--profile FILE]` reads the
+profile and changes nothing: it exits 1 while the profile still carries the shipped
+example's title and "Copy to" line (`project validate` warns of the same), and warns
+of a gate command in its Gates section that the repository's `CLAUDE.md`,
+`AGENTS.md` and `Makefile` targets do not know. `--project` installs are hidden from git through the
 repository's local `.git/info/exclude`.
 
 Installing also adds the baseline packs that ship with qargi (`packs/`) to your pack library, without linking any of them (see Baseline packs).
