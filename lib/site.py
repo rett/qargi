@@ -25,6 +25,13 @@ Trust: reading the command line IMPORTS lib/commands.py of --source (and --sourc
 that source's code. Give only a source you trust. The import happens in a boxed child (python -I -S -B, an empty working
 folder, a minimal environment, limits on cpu time, memory, output size and time), which limits the damage but is not a sandbox.
 
+site.json (a JSON object; an unknown key is refused): schema, release (the release the site is built for), url (the site address, https), pages
+(the hand pages in menu order), forbidden (words no hand page, nor the copyright line, may contain), repo (the https address of the source, linked
+in every footer), og_image (a file in static/), name (the site name, default qargi), author ({"name": "...", "url": "https://..."}, the url optional),
+copyright (optional: one line of plain text, at most 200 characters, no < or >, shown escaped in the footer of every page, the 404 page included;
+for example "(c) 2026 Example Author. MIT licensed.") and license_url (optional, an https address without a query or fragment: the words
+"MIT licensed" of the copyright line become a link to it; without those words it is not shown, and check warns).
+
 Exit status: 0 ok, 1 errors found (warnings never fail), 2 a usage error or a refusal (an unsafe path).
 Run it as `python3 -I lib/site.py ...`: it loads its own parts by path and needs nothing installed.
 """
@@ -67,6 +74,8 @@ FRONT_KEYS = ("title", "description", "doctype", "nav")
 DOCTYPES = ("tutorial", "how-to", "reference", "explanation")
 CODE_SHELL = ("bash", "sh", "shell", "console", "shell-session", "zsh")
 SITE_NAME = "qargi"
+COPYRIGHT_MAX = 200                  # characters of the copyright line in the footer
+LICENSE_WORDS = "MIT licensed"       # the words of the copyright line that link to license_url
 
 
 def _load(name, filename):
@@ -439,7 +448,7 @@ class Config:
     def __init__(self, data, where):
         if not isinstance(data, dict):
             raise Refusal("%s: not an object" % where)
-        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name", "author"}
+        known = {"schema", "release", "url", "pages", "forbidden", "repo", "og_image", "name", "author", "copyright", "license_url"}
         extra = set(data) - known
         if extra:
             raise Refusal("%s: unknown key(s) %s" % (where, ", ".join(sorted(extra))))
@@ -459,6 +468,18 @@ class Config:
             if "url" in a:
                 normalize_url(a["url"] if isinstance(a["url"], str) else "", "%s: author url" % where)
             self.author = a
+        self.copyright = data.get("copyright")
+        self.license_url = data.get("license_url")
+        if self.copyright is not None:
+            c = self.copyright
+            if not isinstance(c, str) or not c.strip():
+                raise Refusal("%s: copyright must be a non-empty string" % where)
+            if len(c) > COPYRIGHT_MAX:
+                raise Refusal("%s: copyright is %d characters; at most %d" % (where, len(c), COPYRIGHT_MAX))
+            if re.search(r"[<>\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]", c):
+                raise Refusal("%s: copyright is one line of plain text: no markup (< >), line break or control character" % where)
+        if self.license_url is not None:
+            normalize_url(self.license_url if isinstance(self.license_url, str) else "", "%s: license_url" % where)
         for k, t in (("pages", list), ("forbidden", list)):
             v = data.get(k, t())
             if not isinstance(v, t) or not all(isinstance(x, str) and x for x in v):
@@ -1253,6 +1274,12 @@ def validate(site, hand, rep):
     for p in pages.values():
         if p.kind == "releases":
             check_links(site, p, p.links, "CHANGELOG.md", files, rep)
+    if cfg and cfg.copyright:
+        for w in cfg.forbidden:
+            if w.lower() in cfg.copyright.lower():
+                rep.err("site.json", "copyright contains the forbidden word '%s'" % w)
+    if cfg and cfg.license_url and not (cfg.copyright and LICENSE_WORDS in cfg.copyright):
+        rep.warn("site.json", "license_url is shown only as a link on the words '%s' in copyright" % LICENSE_WORDS)
     if cfg and cfg.repo:
         try:
             normalize_url(cfg.repo, "site.json repo")
@@ -1460,6 +1487,14 @@ def render_page(site, p):
         bits.append('<a href="%s">Report a problem with this page</a>' % esc(issue))
     if bits:
         foot.append("<p>%s</p>" % " · ".join(bits))
+    if cfg and cfg.copyright:
+        text, link = cfg.copyright, cfg.license_url
+        if link and LICENSE_WORDS in text:
+            a, b = text.split(LICENSE_WORDS, 1)
+            shown = '%s<a href="%s">%s</a>%s' % (esc(a), esc(link), LICENSE_WORDS, esc(b))
+        else:
+            shown = esc(text)
+        foot.append('<p class="copyright">%s</p>' % shown)
     page = tmpl("page.html").substitute(
         title=esc(title), description=esc(p.description), robots=head_robots, canonical=head_canon,
         css=esc(L("assets/site.css")), social=social, jsonld=ld, home=esc(L("")), site_name=esc(site.name),
