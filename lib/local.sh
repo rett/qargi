@@ -313,19 +313,6 @@ render_warning() {
   return 0
 }
 
-# project_of REPO URL -> the stored project whose repo.path (or repo.url) is the one given; nothing when there is none
-project_of() {
-  local f rp ru
-  for f in "$DA_CONF"/projects/*.json; do
-    [ -f "$f" ] || continue
-    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
-    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
-    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
-    basename "$f" .json; return 0
-  done
-  return 0
-}
-
 verb=${1:-}; shift || true
 case $verb in
   prepare)
@@ -502,6 +489,7 @@ WRAP
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
+    marshal_touch_run "$RUN"   # the lead's verify keeps its lease on the feature the run is based on
     # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. Said first and plainly, before the refs
     # are compared (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest). Not for a saved copy, which exists only for a passed run.
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
@@ -605,6 +593,7 @@ WRAP
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
+    marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
     if [ -n "$RUN" ] && [ ! -e "$RUN" ] && [ ! -L "$RUN" ]; then
       # the run directory is gone (a reboot that emptied a tmpfs, or removed by hand): only the registry's record and the saved copy are left
       case ${RUN##*/} in qargi.??????) ;; *) usage_die "clean needs a RUN dir made by prepare";; esac

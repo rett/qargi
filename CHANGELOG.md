@@ -21,11 +21,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   close it (`local clean`, or `local close --applied-by-am`). A run that was cleaned, discarded, closed, or applied and merged does not block.
 - The member text says that DONE of a write role requires `ls OUT/patches`.
 
+- The lead's lease on a feature no longer lapses during a long worker run: every command of the current lead on the feature renews
+  it (`feature merge`, `sync`, `status`, `verify` and `finish`; `local prepare`, `verify` and `clean`; `review check` and `apply`),
+  once a third of the lease has passed and also when it lapsed meanwhile, as long as nobody else took the feature over. Another
+  identity is still refused while the lease is live, and `marshal check` itself stays a read.
+- `marshal release NAME` after `feature finish` (or on a feature that is abandoned, already released, or has neither a record nor
+  a branch) exits 0 with one line, "nothing to release", instead of "you are not the lead of NAME, which is without a lead"; it
+  needs no `--note` then. A feature held by another lead, or one with a branch that was never claimed, is still refused.
+
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
   directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
 - `qargi local verify` fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and OUT has no
   patches and no report, instead of leaving the lead to read the refs and the empty directory. `local clean --discard` is not affected.
+
 
 ## [0.2.2] - 2026-11-05
 

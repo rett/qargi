@@ -209,6 +209,7 @@ case $verb in
     wt_outside_report;;
   status)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
+    marshal_touch "$PROJ" "$NAME_ARG"   # the lead's own command keeps its lease (a read of the feature, never a refusal)
     echo "feature $NAME_ARG of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "develop..$BR") commit(s) ahead of develop, $(g rev-list --count "$BR..develop") behind"
     g log --format='  %h %s' "develop..$BR" | head -20
     v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi

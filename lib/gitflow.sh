@@ -10,7 +10,7 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   if [ -f "$(dirname "${BASH_SOURCE[0]}")/marshal.sh" ]; then . "$(dirname "${BASH_SOURCE[0]}")/marshal.sh"
   else
     marshal_start() { return 127; }; marshal_check() { return 127; }; marshal_finish() { return 127; }
-    marshal_hold_start() { :; }; marshal_hold_stop() { :; }
+    marshal_hold_start() { :; }; marshal_hold_stop() { :; }; marshal_touch() { :; }; marshal_touch_run() { :; }
   fi
 fi
 
