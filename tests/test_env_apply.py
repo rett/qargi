@@ -308,5 +308,164 @@ class Apply(Fixtures):
         self.assertNotIn("not built yet", self.q("env", "plan").stderr)
 
 
+
+class Tools(Apply):
+    """roles.<role>.tools in the plan and the apply: a go tool (go install, a fake go) and a binary (downloaded from a local server, checked
+    against its sha256), the token over them, go in --approve-exec, and env check reporting what is missing or wrong."""
+    GO_TOOL = {"kind": "go", "name": "github.com/acme/lint/cmd/acme-lint", "version": "v1.2.0"}
+
+    def setUp(self):
+        super().setUp()
+        import shutil, threading
+        from http.server import HTTPServer, SimpleHTTPRequestHandler
+        shutil.copy(os.path.join(ROOT, "tests", "fixtures", "fake-go.sh"), os.path.join(self.bin, "go"))
+        os.chmod(os.path.join(self.bin, "go"), 0o755)
+        self.gobin = os.path.join(self.t, "gobin")
+        self.local_bin = os.path.join(self.t, ".local", "bin")
+        self.env = dict(self.env, GOBIN=self.gobin, PATH=self.gobin + os.pathsep + self.local_bin + os.pathsep + self.env["PATH"])
+        self.www = os.path.join(self.t, "www")
+        self.payload = b"#!/bin/sh\necho acme-fmt 2.0.1\n"
+        with open(put(self.www, "acme-fmt-2.0.1", ""), "wb") as f:
+            f.write(self.payload)
+        handler = type("Quiet", (SimpleHTTPRequestHandler,), {"log_message": lambda *a: None})
+        self.srv = HTTPServer(("127.0.0.1", 0), lambda *a: handler(*a, directory=self.www))
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = "http://127.0.0.1:%d/acme-fmt-2.0.1" % self.srv.server_address[1]
+        self.sha = __import__("hashlib").sha256(self.payload).hexdigest()
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        super().tearDown()
+
+    def binary(self, **kw):
+        return dict({"kind": "binary", "name": "acme-fmt", "version": "2.0.1", "url": self.url, "sha256": self.sha}, **kw)
+
+    def declare(self, build, test=None):
+        a = {"schema": 1, "project": "acme", "repo": {"url": "https://github.com/acme/acme", "path": self.d, "long_lived": ["master", "develop"]},
+             "roles": {"build": {"base": "develop", "push": {"mode": "none"}, "effort": "high", "tools": build}}}
+        if test is not None:
+            a["roles"]["test"] = {"base": "develop", "push": {"mode": "none"}, "effort": "high", "tools": test}
+        put(self.conf, "projects/acme.json", json.dumps(a))
+
+    def go_log(self):
+        p = os.path.join(self.bin, "go-log")
+        return slurp(p) if os.path.exists(p) else ""
+
+    def test_the_plan_lists_the_tools_with_their_state_and_names_go(self):
+        self.declare([self.GO_TOOL, self.binary(), {"kind": "submodule", "name": "acme-test", "path": "vendor/acme-test"}], test=[self.GO_TOOL])
+        r = self.plan("--approve-exec", "make")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("tools the roles declare (roles.<role>.tools), 3;", r.stdout)
+        self.assertRegex(r.stdout, r"(?m)^  missing go github\.com/acme/lint/cmd/acme-lint@v1\.2\.0   \[build, test\]   acme-lint is not installed")
+        self.assertRegex(r.stdout, r"(?m)^  missing binary acme-fmt 2\.0\.1   \[build\]   acme-fmt is not installed")
+        self.assertRegex(r.stdout, r"(?m)^  note    submodule vendor/acme-test   \[build\]   submodule vendor/acme-test: .* is not a git work tree")
+        self.assertRegex(r.stdout, r"(?m)^plan token: [0-9a-f]{12}   \(apply with: .* --approve-exec go,make\)$")
+        self.assertEqual(self.go_log(), "")                                # the plan installs nothing
+        self.assertFalse(os.path.exists(os.path.join(self.local_bin, "acme-fmt")))
+
+    def test_the_token_covers_the_tools(self):
+        self.declare([self.GO_TOOL])
+        t1 = self.token()
+        self.declare([dict(self.GO_TOOL, version="v1.3.0")])
+        t2 = self.token()
+        self.assertNotEqual(t1, t2)
+        r = self.apply(t1, "--approve-exec", "make,go")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("the plan changed", r.stderr)
+        self.assertIsNone(self.ran())
+
+    def test_apply_needs_go_named_and_installs_after_the_bootstrap(self):
+        self.declare([self.GO_TOOL, self.binary()])
+        tok = self.token()
+        r = self.apply(tok, "--approve-exec", "make")
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("and go for the go tools of the plan) and does not name go; nothing was run", r.stderr)
+        self.assertIsNone(self.ran())
+        r = self.apply(tok, "--approve-exec", "make,go")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.ran(), "bootstrap one two\ndoctor\n")
+        self.assertEqual(self.go_log(), "install github.com/acme/lint/cmd/acme-lint@v1.2.0\n")
+        self.assertLess(r.stdout.index("running: make bootstrap"), r.stdout.index("running: go install github.com/acme/lint/cmd/acme-lint@v1.2.0"))
+        self.assertIn("go github.com/acme/lint/cmd/acme-lint@v1.2.0: installed", r.stdout)
+        self.assertIn("binary acme-fmt 2.0.1: installed", r.stdout)
+        f = os.path.join(self.local_bin, "acme-fmt")
+        with open(f, "rb") as fh:
+            self.assertEqual(fh.read(), self.payload)
+        self.assertTrue(os.stat(f).st_mode & stat.S_IXUSR)
+        self.assertTrue(r.stdout.rstrip().endswith("ENV OK"), r.stdout)    # env check finds both, at the declared version and hash
+        rec = json.loads(slurp(os.path.join(self.t, "state", "env", "acme.json")))["apply"]
+        self.assertEqual(rec["tools"], [{"kind": "go", "name": "github.com/acme/lint/cmd/acme-lint", "version": "v1.2.0", "exit": 0},
+                                        {"kind": "binary", "name": "acme-fmt", "version": "2.0.1", "exit": 0}])
+        # a second apply has nothing to install: the tools are ok, go need not be named
+        r = self.apply(self.token(), "--approve-exec", "make")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.go_log(), "install github.com/acme/lint/cmd/acme-lint@v1.2.0\n")
+        self.assertIn("  ok      go github.com/acme/lint/cmd/acme-lint@v1.2.0", r.stdout)
+
+    def test_a_binary_whose_sha256_differs_is_not_installed(self):
+        self.declare([self.binary(sha256="f" * 64)])
+        r = self.apply(self.token(), "--approve-exec", "make")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("binary acme-fmt 2.0.1: FAILED", r.stdout)
+        self.assertIn("has sha256 %s, not the declared %s; not installed" % (self.sha, "f" * 64), r.stdout)
+        self.assertIn("1 tool(s) could not be installed: binary acme-fmt 2.0.1", r.stderr)
+        self.assertEqual(os.listdir(self.local_bin), [])                   # no file, no temporary left behind
+        self.assertNotIn("env check", r.stdout)
+
+    def test_a_wrong_version_is_reinstalled_and_a_failing_go_install_is_named(self):
+        subprocess.run([os.path.join(self.bin, "go"), "install", "github.com/acme/lint/cmd/acme-lint@v1.1.0"], check=True, env=self.env)
+        self.declare([self.GO_TOOL])
+        r = self.plan("--approve-exec", "make")
+        self.assertRegex(r.stdout, r"(?m)^  wrong   go github\.com/acme/lint/cmd/acme-lint@v1\.2\.0   \[build\]   acme-lint at .* is v1\.1\.0; roles build pins v1\.2\.0")
+        r = self.apply(self.token(), "--approve-exec", "make,go")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.go_log().endswith("install github.com/acme/lint/cmd/acme-lint@v1.2.0\n"))
+        self.declare([dict(self.GO_TOOL, version="v0.0.0-broken")])
+        r = self.apply(self.token(), "--approve-exec", "make,go")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("go github.com/acme/lint/cmd/acme-lint@v0.0.0-broken: FAILED", r.stdout)
+        self.assertIn("no matching version", r.stdout)
+
+    def test_a_failing_bootstrap_installs_no_tool_and_dry_run_stops_before_both(self):
+        self.declare([self.GO_TOOL])
+        put(self.conf, "projects/acme.json", json.dumps(dict(json.loads(slurp(os.path.join(self.conf, "projects", "acme.json"))), env={"bootstrap_command": "make nosuchtarget"})))
+        r = self.apply(self.token(), "--approve-exec", "make,go")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("the 1 tool install(s) were not run", r.stderr)
+        self.assertEqual(self.go_log(), "")
+        self.declare([self.GO_TOOL])
+        r = self.apply(self.token(), "--approve-exec", "make,go", env=dict(self.env, QARGI_DRY_RUN="1"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("then 1 tool install(s); it was not run", r.stdout)
+        self.assertEqual(self.go_log(), "")
+
+    def test_env_check_reports_a_missing_or_wrong_tool(self):
+        self.declare([self.GO_TOOL, self.binary()])
+        r = self.q("env", "check", "--project", "acme")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("tools:    2 declared (roles.<role>.tools): 2 missing", r.stdout)
+        self.assertIn("missing:  acme-lint is not installed (roles build: go github.com/acme/lint/cmd/acme-lint@v1.2.0; qargi env apply installs it)", r.stdout)
+        self.assertIn("missing:  acme-fmt is not installed", r.stdout)
+        self.assertIn("ENV INCOMPLETE: 2 missing", r.stdout)
+        subprocess.run([os.path.join(self.bin, "go"), "install", "github.com/acme/lint/cmd/acme-lint@v1.1.0"], check=True, env=self.env)
+        os.makedirs(self.local_bin)
+        with open(os.path.join(self.local_bin, "acme-fmt"), "wb") as f:
+            f.write(b"other\n")
+        os.chmod(os.path.join(self.local_bin, "acme-fmt"), 0o755)
+        r = self.q("env", "check", "--project", "acme", "--json")
+        j = json.loads(r.stdout)
+        self.assertEqual(len(j["missing"]), 2, j["missing"])
+        self.assertTrue(any("is v1.1.0; roles build pins v1.2.0" in m for m in j["missing"]), j["missing"])
+        self.assertTrue(any("sha256 differs" in m for m in j["missing"]), j["missing"])
+        self.assertEqual(self.ran(), "doctor\ndoctor\n")                   # the doctor still ran each time; the tools come after it
+
+    def test_two_roles_pinning_a_tool_differently_fail_validation(self):
+        self.declare([self.GO_TOOL], test=[dict(self.GO_TOOL, version="v1.3.0")])
+        r = self.q("project", "validate", "acme")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("roles.build.tools and roles.test.tools declare go github.com/acme/lint/cmd/acme-lint differently", r.stdout)
+        self.assertEqual(self.plan("--approve-exec", "make").returncode, 0)   # the plan still runs (with the first entry); project set would not store this
+
 if __name__ == "__main__":
     unittest.main()

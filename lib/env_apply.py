@@ -17,6 +17,13 @@ The plan token is a hash over the dry-run output, the dry-run and bootstrap comm
 Apply runs the dry run again and refuses when the token is no longer the plan's. The lines and the executables the plan lists are read
 from the text of the output (best effort): a recipe can run more than its dry run shows, and a script it calls can call sudo.
 
+The tools the roles declare (roles.<role>.tools, lib/tools.py) are part of the plan: each go tool and binary is listed with its state here
+(ok, missing, wrong, or installed in a directory PATH lacks), the submodules with theirs (qargi local prepare checks those out in a member's
+clone; apply does nothing with them), and the token covers the list. After a bootstrap that exits 0, apply installs what is missing or wrong:
+`go install NAME@VERSION` for a go tool (go must then be named in --approve-exec), and for a binary the file at its URL, downloaded to a
+temporary name, kept only when its sha256 is the declared one, made executable and moved to ~/.local/bin/NAME. A tool that fails leaves the
+others alone and the verb exits 1 after naming it.
+
 Apply needs --plan, --approved, and --approve-exec naming the executables of the dry-run and the bootstrap commands (it may also name
 others the plan listed; a name that is none of them is refused). It refuses privileged lines (sudo, doas, pkexec, su, run0 in a command of
 the line) without --allow-root. The bootstrap command runs once with standard input, output and error inherited, so sudo can ask on your terminal;
@@ -41,6 +48,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import env as E  # noqa: E402
 import paths as P  # noqa: E402
+import tools as T  # noqa: E402
 
 CAP = 1024 * 1024
 TIMEOUT = 120
@@ -215,7 +223,25 @@ def analyse(text):
 def token_of(text, ctx):
     L = library()
     return L.token_of(json.dumps({"dry_run_output": text, "dry_run_command": ctx["dry"], "bootstrap_command": ctx["boot"], "repo": ctx["repo"],
-                                  "head": ctx["head"], "host": socket.gethostname()}, sort_keys=True))
+                                  "head": ctx["head"], "host": socket.gethostname(), "tools": ctx["tools"]}, sort_keys=True))
+
+
+def tool_rows(ctx):
+    """[(entry, state, text)] for the tools the roles declare, each looked at here once (go version -m runs for a go tool that is there)."""
+    return [(t,) + T.status(t, ctx["repo"]) for t in ctx["tools"]]
+
+
+def pending(rows):
+    """The go tools and binaries apply would install: missing, or there but not what is declared."""
+    return [t for t, state, _ in rows if t["kind"] in ("go", "binary") and state in ("missing", "wrong")]
+
+
+def say_tools(rows):
+    if not rows:
+        return
+    print("\ntools the roles declare (roles.<role>.tools), %d; apply installs the ones that are missing or wrong, after the bootstrap:" % len(rows))
+    for t, state, text in rows:
+        print("  %-8s%s   [%s]   %s" % (state, T.label(t), ", ".join(t["roles"]), vis(text)))
 
 
 def parse(verb, argv):
@@ -247,7 +273,7 @@ def context(verb, opts):
             repo, "bootstrap target" if not boot else "dry-run command", "bootstrap_command" if not boot else "dry_run_command"), 2)
     env = child_env()
     return {"project": project, "repo": repo, "dry": dry, "boot": boot, "dry_argv": argv_of(dry, "dry-run"), "boot_argv": argv_of(boot, "bootstrap"),
-            "env": env, "head": head_of(repo, env), "detected": d}
+            "env": env, "head": head_of(repo, env), "detected": d, "tools": T.declared(answers)}
 
 
 def say_command(ctx):
@@ -290,10 +316,35 @@ def plan(argv):
         print("  " + vis(x))
     for label, argv0 in (("dry run", ctx["dry_argv"][0]), ("bootstrap", ctx["boot_argv"][0])):
         print("%s runs %s -> %s" % (label, vis(argv0), which(argv0, ctx["env"], ctx["repo"]) or "not on the PATH"))
-    need = sorted({ctx["dry_argv"][0], ctx["boot_argv"][0]})
+    rows = tool_rows(ctx)
+    say_tools(rows)
+    need = sorted({ctx["dry_argv"][0], ctx["boot_argv"][0]} | exec_for(pending(rows)))
     print("\nplan token: %s   (apply with: qargi env apply --plan %s --approved \"<the user's go-ahead after reading this plan>\" --approve-exec %s%s)"
           % (tok, tok, ",".join(vis(x) for x in need), " --allow-root" if priv else ""))
     return 0
+
+
+def exec_for(todo):
+    """The executables the tool installs run: go, for a go tool (a binary is downloaded and run by nothing)."""
+    return {"go"} if any(t["kind"] == "go" for t in todo) else set()
+
+
+def install(todo, ctx):
+    """Install the pending tools in order; [(entry, exit status, text)]. go is looked up on the PATH of the child environment now, after the bootstrap."""
+    out = []
+    go = which("go", ctx["env"], ctx["repo"])
+    for t in todo:
+        if t["kind"] == "go":
+            if go is None:
+                out.append((t, 1, "go is not on the PATH (absolute entries of PATH: %s); not installed" % ctx["env"]["PATH"]))
+                continue
+            print("running: go install %s@%s" % (t["name"], t["version"]), flush=True)
+            rc, text = T.install_go(t, go, ctx["repo"])
+        else:
+            print("downloading %s -> %s/%s (checked against its sha256)" % (vis(t["url"]), T.BIN_DIR, t["name"]), flush=True)
+            rc, text = T.install_binary(t)
+        out.append((t, rc, text))
+    return out
 
 
 def audit(verb, detail, opts):
@@ -341,11 +392,14 @@ def apply(argv):
     ctx = context("apply", opts)
     L = library()
     named = set(L.exec_names(opts))
-    required = {ctx["dry_argv"][0], ctx["boot_argv"][0]}
+    rows = tool_rows(ctx)
+    todo = pending(rows)
+    commands = {ctx["dry_argv"][0], ctx["boot_argv"][0]}
+    required = commands | exec_for(todo)
     if required - named:
-        raise Stop("--approve-exec must name %s (the dry-run and bootstrap executables) and does not name %s; nothing was run"
-                   % (", ".join(sorted(required)), ", ".join(sorted(required - named))), 2)
-    for argv0 in sorted(required):
+        raise Stop("--approve-exec must name %s (the dry-run and bootstrap executables%s) and does not name %s; nothing was run"
+                   % (", ".join(sorted(required)), ", and go for the go tools of the plan" if "go" in required else "", ", ".join(sorted(required - named))), 2)
+    for argv0 in sorted(commands):
         if which(argv0, ctx["env"], ctx["repo"]) is None:
             raise Stop("%s is not on the PATH (absolute entries of PATH: %s); nothing was run" % (vis(argv0), ctx["env"]["PATH"]), 2)
     text, _ = dry_run(ctx["dry_argv"], ctx["repo"], ctx["env"])
@@ -361,8 +415,10 @@ def apply(argv):
     if priv and not opts.get("--allow-root"):
         raise Stop("the plan has %d privileged line(s) (first: %s) and --allow-root is not given; nothing was run" % (len(priv), vis(priv[0][1])), 2)
     say_command(ctx)
+    say_tools(rows)
     if os.environ.get("QARGI_DRY_RUN"):
-        print("QARGI_DRY_RUN is set: the plan matches and the bootstrap command would run now; it was not run")
+        print("QARGI_DRY_RUN is set: the plan matches and the bootstrap command would run now%s; it was not run"
+              % (", then %d tool install(s)" % len(todo) if todo else ""))
         return 0
     detail = "%s %s token %s head %s" % (record_name(ctx), ctx["boot"], tok, ctx["head"][:12])
     audit("env:apply", detail + (" allow-root" if priv else ""), opts)
@@ -376,12 +432,22 @@ def apply(argv):
         print("qargi: could not run %s: %s" % (vis(ctx["boot_argv"][0]), e.strerror or "error"), file=sys.stderr)
         rc = 127
     audit("env:apply-result", "%s exit %d" % (detail, rc), opts)
+    done = install(todo, ctx) if rc == 0 else []
+    failed = [(t, msg) for t, trc, msg in done if trc != 0]
+    for t, trc, msg in done:
+        print("%s: %s" % (T.label(t), "installed" if trc == 0 else "FAILED"), flush=True)
+        for ln in msg.splitlines():
+            print("  " + vis(ln))
     f = write_record(ctx, {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "seconds": round(time.time() - t0, 1), "exit": rc, "command": ctx["boot"],
                            "dry_run_command": ctx["dry"], "token": tok, "head": ctx["head"], "host": socket.gethostname(), "repo": ctx["repo"],
-                           "dry_run_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "allow_root": bool(priv)})
+                           "dry_run_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "allow_root": bool(priv),
+                           "tools": [{"kind": t["kind"], "name": t["name"], "version": t.get("version"), "exit": trc} for t, trc, _ in done]})
     print("recorded in %s" % f)
     if rc != 0:
-        print("qargi: the bootstrap command exited with status %d" % rc, file=sys.stderr)
+        print("qargi: the bootstrap command exited with status %d%s" % (rc, "; the %d tool install(s) were not run" % len(todo) if todo else ""), file=sys.stderr)
+        return 1
+    if failed:
+        print("qargi: %d tool(s) could not be installed: %s" % (len(failed), ", ".join(T.label(t) for t, _ in failed)), file=sys.stderr)
         return 1
     return check_after(ctx)
 
