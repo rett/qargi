@@ -3129,7 +3129,7 @@ Check what an agent returned and put it on a task branch.
 .BI "check " "OUT"
 Check what a run returned: numbered patches, messages, manifest, groups.
 .br
-OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).
+OUT is the member's output directory (RUN_DIR/out); the patches are read from OUT/patches only, where review apply reads them. Given a run directory instead (no patches or manifest.json in it, an out directory in it), it checks RUN_DIR/out and notes that it did. Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).
 .RS
 .TP
 .B \-\-allow\-empty

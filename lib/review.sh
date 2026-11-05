@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The step between `qargi review check RUN_DIR` and `qargi feature merge NAME BRANCH`: put a collected, verified series on a
+# The step between `qargi review check OUT` and `qargi feature merge NAME BRANCH`: put a collected, verified series on a
 # task branch of the real repository.
 #
 #   review.sh apply RUN_DIR [--branch BRANCH] [--project P]   agent/<slug> at the run's base with the patches applied

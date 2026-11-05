@@ -174,6 +174,11 @@ if [ -d "$PK/skills" ] && [ -f "$PK/baseline.json" ]; then
   { [ "$rc" = 0 ] && [ "$(ls "$LIB/skills" | wc -l)" = "$(jq '.packs|length' "$PK/baseline.json")" ] \
     && [ -z "$(for f in "$LIB"/skills/*/.pack.json; do jq -e '.compatible_providers == ["any"]' "$f" >/dev/null || echo bad; done)" ]; } \
     && ok "the shipped baseline seeds into a library, every record declaring [\"any\"]" || { no "seeding the shipped baseline (rc=$rc)"; echo "$out" | sed 's/^/       | /'; }
+  # the numbering rule travels with the member packs, and a seeded shipped pack has its own content hash as both the record and the shipped hash
+  for n in gitflow-member keep-a-changelog; do
+    grep -q "unnumbered" "$LIB/skills/$n/SKILL.md" && grep -q "renumber" "$LIB/skills/$n/SKILL.md" && ok "shipped pack $n tells a member to use unnumbered items and that the lead renumbers" || no "shipped pack $n lacks the numbering rule"
+    [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(jq -r .shipped "$LIB/skills/$n/.pack.json")" ] && [ "$(jq -r .sha256 "$LIB/skills/$n/.pack.json")" = "$(hash_of "$PK/skills/$n")" ] && ok "shipped pack $n is recorded with the content hash of packs/skills/$n" || no "shipped pack $n hash"
+  done
   listed=$(jq -r '.packs[].name' "$PK/baseline.json" | sort); present=$(ls "$PK/skills" | sort)
   [ "$listed" = "$present" ] && ok "every packs/skills directory is listed in baseline.json and the reverse" || no "listed [$listed] vs present [$present]"
   # the seven shipped packs: three process packs and four member practice packs, each text-only (a SKILL.md and nothing else)

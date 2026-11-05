@@ -34,6 +34,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runner's report names, where the runner kept the logs of the failed steps, and the path of a log of the whole run
   (`STATE/suite-logs/PROJECT.feature-NAME.log`, mode 600, the last run of each). The suite's output is shown as before, now with its
   error stream on standard output.
+- `qargi review check RUN_DIR` checks `RUN_DIR/out` when it is given a run directory (no patches or manifest.json in it, an `out`
+  directory in it) and says so in a note, so naming the run instead of its output directory is harmless. The `qargi-verify`
+  skill names `RUN_DIR/out`.
+- The `gitflow-member` and `keep-a-changelog` packs tell a member to add an unnumbered bullet (or the next free number, said in its
+  report) instead of numbering a changelog item itself, so parallel tasks do not conflict on the same number; the lead renumbers at
+  merge with `qargi changelog renumber` (a member may only run it with `--check`), which `/qargi-verify` now names.
+- The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
+  reports the disagreement.
 
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
