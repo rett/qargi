@@ -74,6 +74,7 @@
 3 bash tests/test_project_profile.sh
 3 bash tests/test_new.sh
 10 python3 tests/test_canon.py
+10 bash tests/test_release_ci.sh
 0 bash tests/test_changelog_section.sh
 9 bash tests/test_marshal_hook.sh
 2 python3 tests/test_help.py

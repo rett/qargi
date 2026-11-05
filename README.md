@@ -189,7 +189,11 @@ refusal changes nothing.
    suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
    merges into master, tags, merges back into develop and pushes. `release status` and `release
-   verify` work as for features.
+   verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
+   is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
+   while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release
+   fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
+   pull request.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
    `qargi release publish TAG` creates the release from the changelog section (plan and token).
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
