@@ -21,12 +21,22 @@
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
 #   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
-#                                           after the checks pass: merge, tag, back-merge, delete the branch, push
+#                                           after the checks pass: merge, tag, back-merge, delete the branch, push. Then it prints the steps of the answer
+#                                           release.after_steps ({version} replaced) as "after the release: STEP" lines, never runs them, and records
+#                                           them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for `status` (after_steps_show prints them).
 #
+#   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
+#                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
+#                                           replaced; QARGI_RELEASE_VERSION is set; refused with a message when unset), the worktree recorded under
+#                                           STATE/release/ so that `sign` and `publish` take the files from it. Prints where the files are and the next
+#                                           command (`qargi release sign VERSION` when release.sign is set). An existing asset worktree is kept unless
+#                                           --recreate. Lead only (refused in a member run and when QARGI_NESTED is set); no plan token: it runs the
+#                                           command the lead put in the answers, on the tag, and changes no branch.
 #   release.sh sign VERSION                 sign the files of the answer release.sign.files (ssh-keygen -Y sign -f KEY -n NAMESPACE FILE, one by one),
 #                                           run release.sign.verify_command and record the result under STATE/release/. Only from the tag, because the
 #                                           release files are built from the tagged commit: after `finish`, before `publish`. The repository's HEAD
-#                                           must be the commit of the tag VERSION, on master or detached, with no tracked file modified. ssh-keygen
+#                                           must be the commit of the tag VERSION, on master or detached, with no tracked file modified (when `assets`
+#                                           built the files, the files are those of its worktree, which must be at the tag instead). ssh-keygen
 #                                           runs on the person's own terminal (stdin, stdout and stderr are inherited; nothing is captured and no
 #                                           input is logged), so the passphrase is typed there and never passes through qargi; no ssh agent is
 #                                           asked (SSH_AUTH_SOCK and SSH_ASKPASS are removed from its environment). Refused when stdin is no
@@ -34,12 +44,13 @@
 #                                           optional and off by default; exit 2); the guard refuses it to a member too.
 #                                           The verify command is an argv list, run without a shell in the repository.
 #
-#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--notes-file FILE]
+#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--asset-dir DIR]... [--notes-file FILE]
 #                                           create the GitHub release of the tag VERSION (gh release create --verify-tag, through
 #                                           QARGI_GH) with the tag's changelog section as notes; for a tag pushed before the release
 #                                           workflow existed. Refuses when the release exists, the tag is missing or the section is empty.
-#                                           The files of --asset and of the answer release.assets (relative to the repository, inside it)
-#                                           are attached by the same gh release create. The notes are --notes-file, else the answer
+#                                           The files of --asset, of every regular file of --asset-dir and of the answer release.assets (names or globs,
+#                                           {version} replaced) are attached by the same gh release create. A relative name is taken in the asset worktree
+#                                           of `assets` when there is one, else in the repository; a full path must lie in a worktree of the repository. The notes are --notes-file, else the answer
 #                                           release.notes_file ({version} replaced), else the changelog section. When release.sign is
 #                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
 #                                           plan token covers the notes and the hash of every asset.
@@ -49,7 +60,7 @@
 #                                           default gh-pages when repo.detached lists it, and site.config, default site/site.json, whose folder pages/ holds
 #                                           the hand pages). Only when site.enabled is true. The source is the tag's tree (git archive), the generator is
 #                                           lib/site.py; the work is done in a temporary worktree of the site branch, which moves by update-ref only after
-#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json and regenerates _site/.
+#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json; the build checks the site and its output (_site/) is not committed, a Pages build of the branch needing _site/ empty.
 #                                           It never pushes: it prints the push command. Refused in a member run and when QARGI_NESTED is set.
 #                                           `finish` ends with "next: qargi release site VERSION" (the methodology's after_release step) and `status`
 #                                           says whether the site of VERSION is built and pushed, both only when site.enabled is true.
@@ -63,20 +74,21 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT=''; ASSETS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' RECREATE=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
-    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
+    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
-[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
+[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset, --asset-dir and --notes-file belong to release publish"
+[ "$verb" = assets ] || [ -z "$RECREATE" ] || die "--recreate belongs to release assets"
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -149,6 +161,33 @@ suite_verdict() {
 RS=$(dirname "$0")/release_sign.py
 SIGNREC=$DA_STATE/release/$PROJ-$VER.sign.json
 sign_configured() { jq -e '(.release // {}) | has("sign")' "$af" >/dev/null 2>&1; }
+# The release asset worktree: `assets` builds the release files in a clean detached worktree of the tag, under the state directory, and records it
+# in ASSETREC. While it is there at the tag, `sign` and `publish` take the files from it (relative names) instead of the repository.
+ASSETREC=$DA_STATE/release/$PROJ-$VER.assets.json
+ASSETWT=$DA_STATE/release-assets/$PROJ-$VER
+# asset_wt: sets AWT to the recorded asset worktree of VER when it exists and is still at the tag (a note on stderr when the record is stale); else ''
+asset_wt() {
+  local p tc
+  AWT=''
+  [ -f "$ASSETREC" ] || return 0
+  p=$(jq -r '.worktree // empty' "$ASSETREC" 2>/dev/null); tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  if [ -n "$p" ] && [ -d "$p" ] && [ "$(git -C "$p" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)" = "$tc" ]; then AWT=$p
+  else echo "note: the release asset worktree of $VER (${p:-none}) is gone or no longer at the tag: ignored (qargi release assets $VER --recreate makes it again)" >&2; fi
+}
+# sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
+sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
+# after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
+# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_show prints the recorded ones again as the same lines.
+AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
+after_steps_record() {
+  local st=()
+  mapfile -t st < <(python3 -I "$RS" after-steps "$af" "$VER" 2>/dev/null)
+  [ "${#st[@]}" -gt 0 ] || return 0
+  mkdir -p "$DA_STATE/release"
+  printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
+  printf 'after the release: %s\n' "${st[@]}"
+}
+after_steps_show() { [ -f "$AFTERREC" ] && jq -r '.steps[] | "after the release: " + .' "$AFTERREC" 2>/dev/null; return 0; }
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
 sign_status() {
@@ -157,7 +196,7 @@ sign_status() {
   tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
   [ "${GHS:-}" != found ] || return 0
   python3 -I "$RS" config "$af" >/dev/null 2>&1 || { echo "warning: the release answers of $PROJ are not valid (qargi project validate $PROJ), so the signature of $VER was not checked"; return 0; }
-  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
+  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$(sign_root)" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
   echo "awaiting signature: $s"
   sign_gate
   if [ -z "$SG_WHY" ]; then echo "$VER is ready for signing: qargi release sign $VER"; else echo "  not ready for signing: $SG_WHY"; fi
@@ -168,6 +207,14 @@ sign_gate() {
   local tc head br f
   SG_WHY=''
   tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || { SG_WHY="no tag $VER yet (qargi release finish $VER makes it): sign from the tag, after finish and before publish"; return 0; }
+  asset_wt
+  if [ -n "$AWT" ]; then   # the release files were built in the asset worktree of the tag (qargi release assets): the repository's own checkout is not involved
+    if [ -n "$(git -C "$AWT" status --porcelain --untracked-files=no)" ]; then SG_WHY="tracked files of the asset worktree $AWT are modified: the release files must be built from the tag as it is"; return 0; fi
+    while IFS= read -r f; do
+      [ -f "$AWT/$f" ] || { SG_WHY="the file $f of release.sign.files does not exist in the asset worktree $AWT: qargi release assets $VER builds the release files"; return 0; }
+    done < <(jq -r '.release.sign.files[]' "$af")
+    return 0
+  fi
   head=$(g rev-parse -q --verify 'HEAD^{commit}') || head=''
   br=$(g symbolic-ref -q --short HEAD) || br=''
   if [ "$head" != "$tc" ]; then
@@ -417,7 +464,36 @@ case $verb in
       echo "no origin remote: nothing was pushed"
     fi
     lead_advice
+    after_steps_record
     after_release;;
+  assets)
+    python3 -I "$RS" lead-only assets || exit $?
+    rel_valid
+    jq -e '(.release // {}) | has("assets_command")' "$af" >/dev/null 2>&1 || die "release.assets_command is not set for $PROJ: the command that builds the release files, run in a clean worktree of the tag (qargi project set $PROJ release.assets_command '[\"make\", \"dist\"]'; a command line or a list of words)"
+    tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it): the release files are built from the tag"
+    if [ -e "$ASSETWT" ] || [ -f "$ASSETREC" ]; then
+      [ -n "$RECREATE" ] || die "the release asset worktree of $VER exists already ($ASSETWT): its files may be signed; to build again from the tag: qargi release assets $VER --recreate"
+      g worktree remove --force "$ASSETWT" >/dev/null 2>&1 || true; rm -rf "$ASSETWT" "$ASSETREC"
+    fi
+    g worktree prune
+    mkdir -p "$(dirname "$ASSETWT")" "$DA_STATE/release"
+    g worktree add -q --detach "$ASSETWT" "$tc" 2>/dev/null || die "could not make a worktree of tag $VER at $ASSETWT"
+    acmd=()
+    if [ "$(jq -r '.release.assets_command | type' "$af")" = array ]; then
+      mapfile -d '' -t acmd < <(jq -j --arg v "$VER" '.release.assets_command[] | split("{version}") | join($v), "\u0000"' "$af")
+    else acmd=(bash -c "$(jq -r '.release.assets_command' "$af")"); fi
+    echo "building the release files of $PROJ $VER in a clean worktree of the tag (${tc:0:7}): $ASSETWT"
+    echo "running: ${acmd[*]}"
+    arc=0
+    run_clean "$ASSETWT" env QARGI_RELEASE_VERSION="$VER" "${acmd[@]}" </dev/null || arc=$?
+    [ "$arc" = 0 ] || die "release.assets_command failed (exit $arc); the worktree is left at $ASSETWT to look at (qargi release assets $VER --recreate starts again)"
+    jq -n --arg p "$PROJ" --arg v "$VER" --arg c "$tc" --arg w "$ASSETWT" --arg t "$(now)" '{schema:1, project:$p, version:$v, commit:$c, worktree:$w, at:$t}' > "$ASSETREC"
+    audit_log "release:assets" "$PROJ $VER"
+    made=$( { git -C "$ASSETWT" ls-files --others; git -C "$ASSETWT" ls-files --modified; } | sort -u)
+    echo "the release files are in $ASSETWT ($(printf '%s' "$made" | grep -c . || true) file(s) made or changed by the command):"
+    printf '%s\n' "$made" | head -n 30 | sed -e '/^$/d' -e 's/^/  /'
+    if sign_configured; then echo "next: qargi release sign $VER   (signs release.sign.files from this worktree, then qargi release publish $VER)"
+    else echo "next: qargi release publish $VER   (release.assets and --asset FILE or --asset-dir DIR name the files; relative names are taken in this worktree)"; fi;;
   sign)
     python3 -I "$RS" lead-only || exit $?
     sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
@@ -429,7 +505,8 @@ case $verb in
     ns=$(jq -r '.release.sign.namespace' "$af")
     [ -f "$key" ] || die "release.sign.key: $key is not a file"
     mapfile -t rels < <(jq -r '.release.sign.files[]' "$af")
-    mapfile -t sfiles < <(python3 -I "$RS" resolve "$REPO" "${rels[@]}") && [ "${#sfiles[@]}" = "${#rels[@]}" ] || die "a file of release.sign.files cannot be used"
+    sroot=$(sign_root)
+    mapfile -t sfiles < <(python3 -I "$RS" resolve "$sroot" "${rels[@]}") && [ "${#sfiles[@]}" = "${#rels[@]}" ] || die "a file of release.sign.files cannot be used"
     [ "${#sfiles[@]}" -gt 0 ] || die "release.sign.files names nothing to sign"
     rm -f "$SIGNREC"; mkdir -p "$DA_STATE/release"
     tc=$(g rev-parse "refs/tags/$VER^{commit}")
@@ -446,9 +523,9 @@ case $verb in
     if [ "$signrc" = 0 ] && jq -e '.release.sign.verify_command' "$af" >/dev/null 2>&1; then
       mapfile -d '' -t vcmd < <(jq -j '.release.sign.verify_command[] | ., "\u0000"' "$af")
       echo "verifying: ${vcmd[*]}"
-      (cd "$REPO" && "${vcmd[@]}" </dev/null) && vrc=0 || vrc=$?
+      (cd "$sroot" && "${vcmd[@]}" </dev/null) && vrc=0 || vrc=$?
     fi
-    res=$(python3 -I "$RS" record --state "$SIGNREC" --repo "$REPO" --af "$af" --project "$PROJ" --version "$VER" --commit "$tc" --sign-rc "$signrc" --verify-rc "$vrc") || true
+    res=$(python3 -I "$RS" record --state "$SIGNREC" --repo "$sroot" --af "$af" --project "$PROJ" --version "$VER" --commit "$tc" --sign-rc "$signrc" --verify-rc "$vrc") || true
     audit_log "release:sign" "$PROJ $VER ${res:-failed}"
     case ${res:-} in
       ok) echo "signed$([ "$vrc" = none ] && echo " (release.sign.verify_command is not set, so nothing verified it)" || echo " and verified"): $VER of $PROJ is recorded (${SIGNREC#"$DA_STATE/"})"
@@ -475,14 +552,18 @@ case $verb in
       printf '%s\n' "$sect" > "$notes"
       nsrc="the $VER section of CHANGELOG.md at the tag"
     fi
-    # the assets: release.assets and every --asset, each a regular file inside the repository; attached by the same gh release create
-    mapfile -t alist < <(jq -r '(.release.assets // [])[]' "$af")
-    alist+=("${ASSETS[@]}")
-    assets=(); ahash=; arel=; declare -A seen
-    if [ "${#alist[@]}" -gt 0 ]; then
-      out=$(python3 -I "$RS" resolve "$REPO" "${alist[@]}") || die "an asset cannot be used; nothing was published"
+    # the assets: release.assets, every --asset and every file of --asset-dir, each a regular file inside the release asset worktree (qargi release assets)
+    # or the repository (relative names are taken in the asset worktree when there is one), or inside another worktree of the repository (a full path);
+    # attached by the same gh release create
+    asset_wt
+    aargs=(assets --af "$af" --version "$VER" --base "${AWT:-$REPO}" --root "$REPO")
+    while IFS= read -r w; do [ -z "$w" ] || aargs+=(--root "$w"); done < <(g worktree list --porcelain | sed -n 's/^worktree //p')
+    for a in "${ASSETS[@]}"; do aargs+=(--asset "$a"); done
+    for a in "${ASSET_DIRS[@]}"; do aargs+=(--asset-dir "$a"); done
+    assets=(); ahash=; arel=
+    out=$(python3 -I "$RS" "${aargs[@]}") || die "an asset cannot be used; nothing was published"
+    if [ -n "$out" ]; then
       while IFS=$'\t' read -r h abs rel; do
-        [ -z "${seen[$abs]:-}" ] || continue; seen[$abs]=1   # named twice (the answers and --asset)
         assets+=("$abs"); ahash+="$h $rel"$'\n'; arel+="$rel"$'\n'
       done <<<"$out"
     fi
@@ -497,7 +578,7 @@ case $verb in
     # when the project signs its releases, nothing is published before the signature of this tag is recorded ok and the signed files are as signed
     signline=''; stok=''
     if sign_configured; then
-      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc") \
+      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$(sign_root)" --af "$af" --commit "$tc") \
         || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
       stok=$(sha256sum < "$SIGNREC")
     fi
@@ -552,18 +633,21 @@ case $verb in
     bout=$(cd "$WT" && python3 -I "$(dirname "$0")/site.py" build --release "$VER" --source "$SITESRC" --pages "$WT/$SITE_PAGES" --config "$WT/$SITE_CONF" \
              --out "$WT/_site" --allow-root "$WT" </dev/null 2>&1) \
       || die "the site of $VER did not build; nothing was changed:"$'\n'"$(printf '%s\n' "$bout" | tail -n 25 | sed 's/^/  | /')"
-    git -C "$WT" add -A -- "$SITE_CONF" _site
+    # the build runs to check the site (a page that does not build refuses), but its output is not committed: a Pages build of the branch needs _site/
+    # empty. A _site/ that an earlier build committed is removed by the commit (the git rm above).
+    rm -rf "${WT:?}/_site"
+    git -C "$WT" add -A -- "$SITE_CONF"
     if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
     tree=$(git -C "$WT" write-tree)
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
     echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
-    echo "commit it on $SITE_BR: $SITE_CONF records release $VER and _site/ holds the built site; nothing is pushed"
+    echo "commit it on $SITE_BR: $SITE_CONF records release $VER; the build only checks the site, _site/ is not committed (and one an earlier build committed is removed); nothing is pushed"
     printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'
     echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
     remote_report "$SITE_BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
-    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER and _site/ is regenerated."
+    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER; _site/ is not committed."
     new=$(git -C "$WT" rev-parse HEAD)
     g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"
     journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"
@@ -572,5 +656,5 @@ case $verb in
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
-  *) die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;
+  *) die "usage: qargi release start|status|verify|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac
