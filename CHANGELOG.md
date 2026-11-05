@@ -164,6 +164,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   DIR --source-new DIR` lists the commands, verbs and options that changed and the hand pages that still name what is gone. The
   build refuses paths outside the source tree, symbolic links, an `--out` that is not new or empty and a config or `static/` folder
   other users can write; it reads the source's `lib/commands.py` in a boxed child process, so give it only a source you trust.
+- `qargi release site VERSION` regenerates the documentation site when a release ships: it builds the site of the tag VERSION with
+  `lib/site.py` (the tag's tree is the source; the hand pages and `site.json` are those of the detached site branch) in a temporary
+  worktree of that branch and commits it there as `Site: built from release VERSION` (`site.json` records the release, `_site/`
+  holds the built site), behind a plan token and an approval, touching no working tree. It never pushes and prints the
+  `git push` command instead; a build error refuses with the generator's report. The answers are `site.enabled`, `site.branch`
+  (default `gh-pages` when `repo.detached` lists it) and `site.config` (default `site/site.json`, the hand pages in `pages/`
+  beside it). With `site.enabled`, `release finish` ends with `next: qargi release site VERSION` (the new `after_release` step
+  of the gitflow methodology, checked by `methodology check` and shown by `methodology show`) and `release status` says
+  `site: not built for VERSION`, `site: built at SHA, not pushed` or `site: pushed`. The member guard refuses it.
 - `qargi local list [--scratch DIR]` lists the local runs the registry names, with role, slug, age, applied and merged. `qargi local
   clean --applied --scratch DIR` cleans every applied and merged run and keeps the rest (exit 1 when one was kept); `local clean
   --stale DAYS --scratch DIR [--yes]` lists finished runs older than DAYS and, with `--yes`, cleans each by the rules of `clean RUN`.
