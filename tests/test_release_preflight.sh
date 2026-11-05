@@ -47,7 +47,7 @@ refuses "a changelog without an Unreleased section refuses" "no '## \[Unreleased
 mk plain; seal
 $REL start 0.2.0 >/dev/null 2>&1 && ok "a project with neither man page nor changelog is not checked" || no "plain: $($REL start 0.2.0 2>&1)"
 # the generated manual page keeps the date `release start` set: regenerating it after the start must not empty the date again
-mk regen; cp -r "$SRC/lib" "$R/lib"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
+mk regen; cp -r "$SRC/lib" "$R/lib"; cp -r "$SRC/skills" "$R/skills"; mkdir "$R/man"; printf '# Changelog\n\n## [Unreleased]\n- x\n' > "$R/CHANGELOG.md"
 (cd "$R" && python3 lib/help.py man > man/qargi.1)
 [ "$(head -1 "$R/man/qargi.1")" = '.TH QARGI 1 "" "qargi 0.1.0"' ] && ok "a first generation (no page yet) writes an empty date" || no "first generation: $(head -1 "$R/man/qargi.1")"
 seal
