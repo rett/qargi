@@ -133,24 +133,41 @@ out=$($DA review apply "$R9" 2>&1); rc=$?
 R10=$(newrun spacey); mv "$R10"/out/patches/0001-*.patch "$R10/out/patches/0001-has a space.patch"; mv "$R10"/out/patches/0002-*.patch "$R10/out/patches/0002-it's  here.patch"
 out=$($DA review apply "$R10" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/spacey")" = 2 ] && echo "$out" | grep -q "applied 2 patch(es)"; } && ok "patch files whose names hold spaces are applied, as two patches" || no "spacey names: rc=$rc $out"
-# --- qargi review prune: only merged agent/* branches, only with --yes
-git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
-git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master
-git -C "$A" branch agent/in-feature develop; git -C "$A" branch feature/x develop
-git -C "$A" worktree add -q "$T/fw" feature/x; echo f > "$T/fw/f.txt"; git -C "$T/fw" add -A; git -C "$T/fw" commit -q -m "feature work"
-git -C "$A" worktree remove --force "$T/fw"
-git -C "$A" checkout -q -b agent/unmerged develop; echo u > "$A/u.txt"; git -C "$A" add -A; git -C "$A" commit -q -m "unmerged work"; git -C "$A" checkout -q parked
-git -C "$A" branch agent/in-feature2 feature/x
-git -C "$A" branch other/merged develop
-git -C "$A" worktree add -q "$T/held" -b agent/held develop
+# --- review prune is gone (qargi branch prune replaces it): the verb and the --yes option are unknown, and no branch is touched
+git -C "$A" branch agent/merged-dev develop
 h1=$(heads)
 out=$($DA review prune 2>&1); rc=$?
-[ $rc = 0 ] && [ "$(heads)" = "$h1" ] && echo "$out" | grep -q "agent/merged-dev" && echo "$out" | grep -q "agent/in-feature2" && echo "$out" | grep -q "agent/at-master" && ! echo "$out" | grep -q "agent/unmerged" \
-  && ok "prune without --yes lists the merged agent/* branches and changes nothing" || no "prune list: $out"
+[ $rc != 0 ] && [ "$(heads)" = "$h1" ] && ok "review prune is not a verb any more (usage, nothing changes)" || no "review prune: rc=$rc $out"
 out=$($DA review prune --yes 2>&1); rc=$?
-git -C "$A" rev-parse -q --verify agent/merged-dev >/dev/null && no "a merged branch survived --yes" || ok "prune --yes deletes branches merged into develop"
-git -C "$A" rev-parse -q --verify agent/in-feature2 >/dev/null && no "a branch merged into a feature survived" || ok "prune --yes deletes branches merged into a feature/*"
-git -C "$A" rev-parse -q --verify agent/unmerged >/dev/null && git -C "$A" rev-parse -q --verify agent/held >/dev/null && git -C "$A" rev-parse -q --verify other/merged >/dev/null && git -C "$A" rev-parse -q --verify feature/x >/dev/null \
-  && ok "unmerged, checked-out and non-agent branches are never touched" || no "prune touched another branch: $out"
-echo "$out" | grep -q "deleted agent/merged-dev" && ok "prune prints what it deleted" || no "prune output: $out"
+[ $rc != 0 ] && [ "$(heads)" = "$h1" ] && ok "and --yes deletes nothing" || no "review prune --yes: rc=$rc $out"
+out=$($DA review apply --yes "$T/nosuchrun" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "unknown option --yes" <<<"$out" && ok "review apply has no --yes" || no "review apply --yes: rc=$rc $out"
+# --- review apply --from-saved ID: the copy a passing verify saved, for a run whose directory is gone (a reboot that emptied a tmpfs)
+RS=$(newrun saved1); IS=$(basename "$RS"); SS=$T/s/runs/$IS
+$DA local verify "$RS" >/dev/null 2>&1 && [ -d "$SS/out/patches" ] || no "(setup) verify saved no copy of $RS"
+out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "still exists" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved1 >/dev/null && ok "--from-saved is refused while the run directory exists (apply that)" || no "from-saved, dir there: rc=$rc $out"
+rm -rf "$RS"
+for bad in "--from-saved" "--from-saved ../x" "--from-saved $IS $RS"; do
+  # shellcheck disable=SC2086
+  out=$($DA review apply $bad 2>&1); rc=$?; [ $rc = 2 ] && ok "review apply $bad is a usage error" || no "usage '$bad': rc=$rc $out"
+done
+out=$($DA review apply --from-saved qargi.nosuch 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "no saved copy" <<<"$out" && ok "an id with no saved copy is refused" || no "no copy: rc=$rc $out"
+out=$($DA review apply --from-saved "$IS" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/saved1")" = 2 ] && grep -q "applied 2 patch(es)" <<<"$out" && read -r ab at _ < "$SS/applied" \
+  && [ "$ab" = agent/saved1 ] && [ "$at" = "$(git -C "$A" rev-parse agent/saved1)" ] && grep -q "^local refs/heads/agent/saved1 " "$SS/refs.before"; } \
+  && ok "--from-saved applies the saved series on agent/<slug> at the run's base and records it in the saved copy" || no "from-saved apply: rc=$rc $out"
+out=$($DA review apply --from-saved "$IS" --branch agent/again 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "applied already" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/again >/dev/null && ok "and refuses to apply it twice" || no "from-saved twice: rc=$rc $out"
+RS2=$(newrun saved2); IS2=$(basename "$RS2"); $DA local verify "$RS2" >/dev/null 2>&1; rm -rf "$RS2"
+git -C "$A" tag hand-made-during-run develop
+out=$($DA review apply --from-saved "$IS2" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "REFS CHANGED" <<<"$out" && grep -q "hand-made-during-run" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved2 >/dev/null \
+  && ok "--from-saved runs local verify on the saved snapshot: refs changed since refuses" || no "from-saved, refs changed: rc=$rc $out"
+git -C "$A" tag -d hand-made-during-run >/dev/null
+RS3=$(newrun saved3); IS3=$(basename "$RS3"); $DA local verify "$RS3" >/dev/null 2>&1; rm -rf "$RS3"; sed -i 's/^ a$/ zzz/' "$T/s/runs/$IS3"/out/patches/0002-*.patch
+rm -f "$T/s/runs/$IS3/out/manifest.json"
+out=$($DA review apply --from-saved "$IS3" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "review check refuses" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/saved3 >/dev/null && ok "--from-saved runs review check on the saved OUT" || no "from-saved, check: rc=$rc $out"
 exit $fail

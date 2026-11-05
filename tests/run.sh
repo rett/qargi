@@ -27,6 +27,7 @@ run python3 tests/test_tierplan.py
 run bash tests/test_tier_hook.sh
 run bash tests/test_tier_packet.sh
 run python3 tests/test_help.py
+run python3 tests/test_site.py
 run python3 tests/test_membackend.py
 run python3 tests/test_transfer.py
 run python3 tests/test_discover.py
@@ -35,6 +36,9 @@ run bash tests/test_session.sh
 run bash tests/test_session_profiles.sh
 run python3 tests/test_report.py
 run python3 tests/test_noticed.py
+run python3 tests/test_env.py
+run python3 tests/test_env_apply.py
+run python3 tests/test_tools.py
 run python3 tests/test_cloud.py
 run python3 tests/test_upgrade.py
 run python3 tests/test_supervise.py
@@ -51,13 +55,16 @@ run bash tests/test_new.sh
 run bash tests/test_adopt.sh
 run bash tests/test_flow.sh
 run bash tests/test_changelog_section.sh
+run bash tests/test_changelog_renumber.sh
 run bash tests/test_verify_env.sh
 run bash tests/test_release_preflight.sh
 run bash tests/test_release_publish.sh
 run bash tests/test_release_gh.sh
+run bash tests/test_release_site.sh
 run python3 tests/test_home.py
 run bash tests/test_install.sh
 run bash tests/test_project.sh
+run bash tests/test_project_profile.sh
 run bash tests/test_local.sh
 run bash tests/test_local_run.sh
 run bash tests/test_cred.sh
@@ -78,9 +85,11 @@ run python3 tests/test_marshal_sign_unit.py
 run bash tests/test_marshal_forget.sh
 run bash tests/test_marshal_hook.sh
 run bash tests/test_journal.sh
+run bash tests/test_upstream.sh
 run bash tests/test_team.sh
 run bash tests/test_leadcred.sh
 run bash tests/test_lead.sh
+run python3 tests/test_lead_usage.py
 run python3 tests/role_seed_sim.py shared
 run python3 tests/role_seed_sim.py build
 run python3 tests/role_seed_sim.py write
@@ -90,6 +99,7 @@ run bash tests/test_open_providers.sh
 run bash tests/test_neutral.sh
 run bash tests/test_skill_budget.sh
 run bash tests/test_tool_copy.sh
+run bash tests/test_hermetic.sh
 run shellcheck -x -S warning lib/*.sh lib/conformance/*.sh bin/qargi install.sh tests/*.sh
 echo "total: $((SECONDS - t0))s ($([ $rc = 0 ] && echo passed || echo FAILED))"
 exit $rc

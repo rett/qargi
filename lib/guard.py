@@ -14,9 +14,11 @@ reason on stderr), since it has no other. A refusal, a failure and an unknown cl
 
 Publishing: git push, send-pack, http-push and svn dcommit (only the subcommand, the first word after git's global options, counts: `git commit -m push` is no
 push), the programs git-push, git-send-pack, git-http-push and git-receive-pack, gh, ssh, scp, sftp, an rsync operand of the form host:path or rsync://, and
-changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias or
-runs a program (alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand, include.path, diff.external, credential.* ...), `--exec-path=DIR`, and the variables
-GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
+changing a remote. Git is also refused every way to run another command under a name the guard does not know: `-c` and `--config-env` with a key that defines an alias,
+runs a program or reads another configuration file (GIT_RUNS_CODE: alias.*, core.pager|editor|fsmonitor|hooksPath|sshCommand|askPass|gitProxy, include.path, includeIf.*.path,
+diff.external, credential.*, filter.*, gpg.*, url.*.insteadOf, remote.*.url|uploadpack ...), and `git config` that writes such a key for later (set, --add, --replace-all or
+KEY VALUE, in any scope or --file, after -C, the key read in any case), or that can write any key (--edit, a section renamed), or whose key a variable or xargs brings
+(config_refusal); `--exec-path=DIR`, and the variables GIT_CONFIG_*, GIT_EXEC_PATH, GIT_SSH* in front of it. A git subcommand, or a qargi area or a verb of a gated area, that a variable or a substitution builds is refused.
 
 Review is read-only as a rule. A member whose definition passes `--class read-only` (the hook command in its frontmatter,
 under the protected ~/.claude/agents) is held to it on every task. A member that serves several abilities passes no class
@@ -35,13 +37,15 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     install, qargi packs apply|seed|link|unlink, qargi project link|unlink (they link the project's skills, agents and memory into the
     checkout and the runtime's memory directory, which changes what a session loads) and qargi import (it restores the pack library).
     Read-only verbs (list, show, check, effective, search, render, export) stay allowed. The verb is found after wrappers, inside `sh|bash -c STRING` and
-    `eval STRING`, inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
-    verbs call: packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
+    `eval STRING`, in the program a shell reads on its standard input (below), inside $(...) and backticks, and when the script is named directly (packs.sh, discover.py, and the scripts the shell
+    verbs call: env_apply.py is env apply in any use (qargi env plan and apply run the project's dry-run and bootstrap commands: project code; env.py is env,
+    found like linker.py, so env show stays open), packs_link.py is packs link|unlink and project_link.py is project link|unlink in any use, packs_audit.py store is skill accept|unaccept, marshal_handoff.py is marshal handoff,
     linker.py (the link engine) is packs link in any use, and render.py (it can run the command a definition names) is refused in any use;
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer (the other answers stay open). A project verb the guard cannot read is
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check) and of
+    roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
     taken off, so a quote or a backslash inside the verb does not hide it). Whatever the verb would have said, it is not read. lib/gated_answers.py, the store behind
@@ -77,8 +81,12 @@ read-only role run there) is refused to a member, found like the skill verbs, an
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
 PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
-Release: `qargi release publish` (it creates the GitHub release of a tag) is refused to a member, found like the skill verbs, also as a
-verb held in a variable and through lib/release.sh; the other release verbs stay allowed (they need a plan token and approval of their own).
+Release: `qargi release publish` (it creates the GitHub release of a tag), `qargi release sign` (it signs the release files with the
+lead's key) and `qargi release site` (it commits the built documentation site on the lead's site branch) are refused to a member, found
+like the skill verbs, also as a verb held in a variable and through lib/release.sh and lib/release_sign.py; the other release verbs stay
+allowed (they need a plan token and approval of their own).
+Changelog: `qargi changelog renumber` without --check (it rewrites the changelog of a work tree) is the lead's, found like the skill verbs, also through
+lib/changelog.sh and lib/changelog_numbers.py and when a word is held in a variable; `renumber --check` only reads and stays allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
   - the verbs that change it: qargi marshal claim|set|renew|release|take|takeover|finish|enable|disable, found like the skill verbs
     (after wrappers, in `sh -c`, `eval`, $(...), through a path to bin/qargi or marshal.sh). status and check stay allowed, and so
@@ -89,11 +97,22 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
     allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
     member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
+    `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
+    and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
+    lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
+    the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
+    that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
+    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it; any verb, also through lib/ref.sh);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
   - a write under the marshal/ directory of the state, where `marshal enable` keeps the per-project `.enabled` switch of the
     shared-refs backend: found and decided like features/, reading stays allowed;
+  - a write under the runs/ directory of the state, where `qargi local verify` saves a copy of each passed run (OUT, the snapshots, the
+    record) that `qargi review apply --from-saved` applies: decided like features/, reading stays allowed;
+  - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
+    feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
+    like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
   - a write to the ref journal of the state ($QARGI_STATE/ref-journal.jsonl, its lock and any rotated or temporary file next to
     it, e.g. ref-journal.jsonl.lock, .1, .tmp): the lead's record of the branch moves its own verbs made, which `qargi local verify`
     accepts as lead-side changes; and the same for the registry of local runs ($QARGI_STATE/local-runs.jsonl and the files like it), which names the
@@ -104,7 +123,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     with the key), refused with their own reason; and a write to the allowed signers ($QARGI_STATE/marshal/<project>.signers, under
     the marshal/ root above) or to the acceptance marks ($QARGI_STATE/features/.accepted-<project>.json, under features/), which the
     refusal names;
-  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
+  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, printf -v, read or mapfile, unset or env -u in a command.
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
@@ -123,12 +142,25 @@ names the key by its full path, a glob that expands to a protected path (for a w
 (a directory assigned to a variable earlier in the command, d=...; cat $d/marshal_ed25519; a name produced by a command substitution,
 cat $(echo ...), or by an echo piped to xargs).
 Reading a Bash command (passes(), segments()): a word quoted $'...' (ANSI-C) or $"..." is read as the plain string it stands for (ansi_c); then the plain, conservative split. The line is cut at every ; && || | & and newline whatever the quotes, a comment
-or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed"` is
-refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. A $( ), <( ), >( ) or backtick substitution, also
+or a heredoc body, so a refused verb is found wherever a command could start, and it is refused as text too: `git commit -m "Docs; qargi packs seed" && make` is
+refused, and a member writes a message to a file with its file tool and commits with `git commit -F FILE`. The one narrowing (mask_data(), for the verbs that change
+a skill or the marshal; push, gh and ssh are read in the whole text): when EVERY command of the line is echo, cat, tee, grep or git commit|log|status|diff|show|add
+(they print, write or search the text and run nothing from it; not printf, whose -v assigns a variable), the ; | & and newlines inside a quoted string are blanks and a heredoc body is cut out, so
+`git commit -m "Docs; qargi packs seed"` and a message written with `cat > msg <<'E'` are data. Another program in the line (a shell, make, a script, a
+function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc never closed, or a heredoc
+delimiter that starts with # keeps the plain split; a file named in quotes (in a word with < or > or the word after one, or a file of tee) is never
+blanked. As the plain split never sees such a name whole, a word that still holds a ; | & or newline after quote removal and resolves into a protected
+location (or names the signing key) is refused as a path (separator_path_refusal). A $( ), <( ), >( ) or backtick substitution, also
 inside double quotes, is a command of its own (the line is cut at it, and the text inside it is cut again on its own, so `cat <<<"$(qargi upgrade) x"` is read);
 a line continuation is read both ways; `>|` is a redirection and is not cut; the keywords and groupings that a command follows (if, then, do, !, {, (, case
 patterns, function definitions) and redirections written before it are skipped; an unbalanced quote falls back on the words with the quotes taken off.
-A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. No file is guessed to be run later.
+A string handed to a shell (sh -c STRING, eval STRING) is read again, with the segments that follow it. So is the program a shell (sh, bash, dash, zsh, ksh; source
+and . of /dev/stdin, /dev/fd/0, /proc/self/fd/0 or -) takes from its standard input (sh -s, sh - or no file, the words xargs brings, -I included) or from a file a
+command of the same line writes, when the line shows it (program_fed): a here-string, an echo or printf piped in (through cat and tee; printf's format filled in,
+escapes decoded) or written to that file; a heredoc body is read by the plain split already, and a redirection glued to the shell (bash<<<TEXT) is a word of its own.
+A program the line does not show is refused, since the guard cannot read it: a pipe from cat FILE, curl or any other program, `bash < FILE`, a descriptor, a process
+substitution, a here-string or an echo that a variable or a substitution builds, a file cp, a download or any other writer makes in the same line. The member writes
+the script with its file tool and runs `bash FILE`. No other file is guessed to be run later.
 Where the shell is: the line is cut more than once (the substitutions cut out, left whole, and each on its own), and every cut starts in the directory of
 the call. A plain `cd DIR` at the top level (and pushd, popd, and a cd after an && whose chain is cds alone) changes the directory of what follows when DIR
 is there; a cd to a word a variable, a substitution or a glob builds, with a CDPATH, or `env -C DIR` (and `builtin cd`) leaves the directory unknown (UNKNOWN_DIR),
@@ -146,13 +178,14 @@ substitution) is refused when it could name a record file of the run (`> abilit?
 its file, whenever a variable or a substitution builds the name; a glob that can name a protected location is refused for a write. A directory that only lies above a protected location or the run
 (/tmp, $HOME) is refused as an mv destination only when something moved into it is, holds or has the name of the place (fits_beside), and always with -T. Under the read-only class the
 variables a read-only tool takes its programs and options from (PATH, GIT_*, PAGER, BASH_ENV, RIPGREP_CONFIG_PATH, LD_* ...) are not set, and a write to
-a git configuration or hook file in a command that also runs git is refused for every member.
+a git configuration or hook file (GIT_PLACE: ~/.gitconfig, ~/.config/git, .git/config, .git/hooks, .git/modules, .git/worktrees, config.worktree, info/attributes) in a
+command that also runs git is refused for every member.
 The run: a directory is a run when it holds ability and refs.before, or the clone and out directories beside any file of the record (RUN_CONTROL), and it is not
 below the clone directory of another (a repository may hold a docs/tmpdir). RUN_CONTROL files are not written, moved, removed, copied or linked, nothing is
 the run directory itself is no destination (a copy over it, an extraction, a link; run_dir_refusal), and the run directory is not removed or moved; under
 `--class read-only` the run is not asked whether the member is read-only: a run that cannot be found refuses every write (NO_RUN).
-Not seen: a script built by code (python -c ...), a program or a verb held in a variable, what a pipe or a here-string hands a shell (`echo qargi upgrade | sh`,
-`bash -c "$(echo qargi upgrade)"`), a wrapper's option that takes a value (sudo -u root qargi ...).
+Not seen: a script built by code (python -c ...), a program or a verb held in a variable, the output of a substitution handed to sh -c (`bash -c "$(echo qargi upgrade)"`),
+a wrapper's option that takes a value (sudo -u root qargi ...; the ones of xargs are read).
 
 Failure: the guard fails closed. Any unexpected exception ends in exit 2 with the reason on stderr. Input that is not
 JSON is still let through (exit 0), as before. Known limits outside this file: a hook that cannot start, exits other than 0 or 2, times out or prints invalid
@@ -168,7 +201,10 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
+EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream", "site")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
+ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
+XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
 WRAP = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "timeout", "setsid", "xargs", "nice", "parallel"}
 WRITERS = {"rm", "rmdir", "touch", "mkdir", "chmod", "chown", "truncate", "tee", "patch", "unlink", "shred",
            "ex", "vi", "vim", "nvim", "ed", "rename", "sqlite3", "setfacl", "mkfifo"}      # the editors and the like write the files they are given
@@ -184,12 +220,12 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
-           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh",
-           "agent.sh", "team.sh")
+           "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
-OWN_ONLY = ("linker.py", "render.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
+OWN_ONLY = ("linker.py", "render.py", "env.py")                       # names too common to refuse by name alone: only the file of the tool is the script (own_script)
 # Known limit, by design: the scripts are recognized by the NAME the command gives. `python3 LINK` where LINK is a symlink to lib/linker.py or
 # lib/render.py, a copy of them under another name, and `python3 -c 'import linker'` (with lib on the path) are not recognized. A check on the
 # resolved path would catch only a link that already exists when the call is judged, not one made earlier in the same command line
@@ -200,12 +236,14 @@ MEMORY_VERBS = ("init", "move", "split", "merge", "copy")                       
 MEMORY_READ = ("tiers", "check", "get", "lint")
 PROVIDER_READ = ("", "list", "show", "effective", "require-barrier", "skills-dirs", "of", "layout", "require-skills", "launch", "addenda", "notes", "model")   # the provider verbs that only read; the rest, and any verb added later, change the definitions or run code (check, adapter-run)
 BUILT_VERB_AREAS = {"skill", "tool", "packs", "discover", "project", "local", "cloud", "memory"}   # a verb the shell builds in these is refused: one of the verbs that change something may be what it builds
+ENV_LEAD = ("plan", "apply")                                   # the verbs of qargi env that run a project's commands (lib/env_apply.py)
 LEAD_VERBS = {("local", "clean"), ("local", "prepare"), ("local", "verify"), ("agent", "remove"), ("project", "new"), ("team", "run")}   # the lead's runs and agents: `local clean --discard` removes another run with no token
 MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
 FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
+UPSTREAM_OPEN = ("", "review")                               # the upstream verbs that only read: status fetches into the lead's repository and sync moves a branch (the rest is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
 KEY_NOTE = "the signing key is the lead's alone; report it in your task output"
@@ -266,8 +304,12 @@ def word_then_subst(word, text):
 GIT_VALUE_OPTS = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")   # git's global options that take the next word
 GIT_PUSHERS = {"push", "send-pack", "http-push"}             # the git subcommands that publish
 GIT_PUSH_PROGRAMS = {"git-push", "git-send-pack", "git-http-push", "git-receive-pack"}   # and the programs behind them, run by their own name
-GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy)|diff\.external|pager\..*|"
-                           r"sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|remote\..*\.(?:receivepack|uploadpack|vcs))$", re.I)
+# the git configuration keys that make git run a program, read another configuration file, or give a command or a remote another name: refused in
+# `git -c KEY=V`, `--config-env KEY=V` and every `git config` that writes one (one list; git reads the section and the key whatever their case)
+GIT_RUNS_CODE = re.compile(r"^(?:alias\..*|include(?:if\..*)?\.path|core\.(?:pager|editor|fsmonitor|hookspath|sshcommand|askpass|gitproxy|alternaterefscommand)|"
+                           r"diff\.external|pager\..*|sequence\.editor|credential\..*|gpg\..*|filter\..*|diff\..*\.(?:command|textconv)|merge\..*\.driver|"
+                           r"(?:diff|merge)tool\..*\.cmd|submodule\..*\.update|uploadpack\..*|receivepack\..*|url\..*\.(?:insteadof|pushinsteadof)|"
+                           r"remote\..*\.(?:receivepack|uploadpack|vcs|url|pushurl)|protocol\.(?:ext\.)?allow)$", re.I)
 GIT_ENV_RUNS_CODE = re.compile(r"^(?:GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS|GLOBAL|SYSTEM)|GIT_EXEC_PATH|GIT_SSH(?:_COMMAND)?|GIT_PROXY_COMMAND|GIT_ASKPASS|GIT_EXTERNAL_DIFF|"
                                r"GIT_PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR)$")
 REMOTE_CHANGES = ("add", "set-url", "remove", "rm", "rename", "set-branches", "set-head")
@@ -313,6 +355,10 @@ def git_refusal(pre, rest):
         return "changing a git remote is not available to an agent"
     if builds_word(sub):
         return "a git subcommand that a variable or a substitution builds (%s) could be a push or any other verb and is not available to an agent" % sub
+    if sub == "config":
+        why = config_refusal(args, any(os.path.basename(t) == "xargs" for t in pre))
+        if why:
+            return why
     for name, val in opts:
         key = (val or "").partition("=")[0]
         if (name in ("-c", "--config-env") and GIT_RUNS_CODE.match(key)) or (name == "--exec-path" and val):
@@ -322,6 +368,49 @@ def git_refusal(pre, rest):
         m = ASSIGNMENT.match(t)
         if m and GIT_ENV_RUNS_CODE.match(m.group(1)):
             return "git with %s set reads a configuration that runs a program or gives a git command another name (an alias can be a push) and is not available to an agent" % m.group(1)
+    return None
+
+
+CONFIG_VALUE_OPTS = {"--file", "-f", "--blob", "--type", "-t", "--default", "--comment", "--value", "--url"}   # git config options that take the next word
+CONFIG_VERBS = {"set", "get", "list", "unset", "rename-section", "remove-section", "edit"}       # the subcommands of git config (2.46): a key always has a dot
+CONFIG_ANY = {"--edit", "-e", "--rename-section", "edit", "rename-section"}                       # can make any key: an editor on the file, a section renamed to alias
+
+
+def config_written(args):
+    """The keys `git config ARGS` writes: the key of set, --add, --replace-all or NAME VALUE; [] for a read (--get, --list, a key alone), an unset or a section
+    removed; None when it can make any key (--edit, a section renamed)."""
+    names, opts, skip = [], [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in CONFIG_VALUE_OPTS:
+            skip = True
+        elif a.startswith("-"):
+            opts.append(a.split("=", 1)[0])
+        else:
+            names.append(a)
+    if names[:1] and names[0] in CONFIG_VERBS:
+        verb, names = names[0], names[1:]
+        return None if verb in CONFIG_ANY else names[:1] if verb == "set" else []
+    if any(o in CONFIG_ANY for o in opts):
+        return None
+    if any(o in CONFIG_READS or o in ("--unset", "--unset-all", "--remove-section") for o in opts):
+        return []
+    return names[:1] if len(names) > 1 or any(o in ("--add", "--replace-all") for o in opts) else []
+
+
+def config_refusal(args, via_xargs):
+    """The reason `git config ARGS` writes a key in GIT_RUNS_CODE (in any scope or file), one a variable or xargs brings, or any key, or None."""
+    keys = config_written(args)
+    if keys is None:
+        return ("git config --edit and a renamed section can write any key, one that runs a program or gives a git command another name (an alias can be a push) "
+                "among them, and are not available to an agent")
+    if via_xargs and not any(a.split("=", 1)[0] in CONFIG_READS for a in args):
+        return "git config through xargs writes a key the guard cannot read, which could run a program or give a git command another name, and is not available to an agent"
+    for key in keys:
+        if builds_word(key) or GIT_RUNS_CODE.match(key):
+            return ("git config %s sets a git configuration that runs a program, reads another configuration file or gives a git command or a remote another name "
+                    "(an alias can be a push) and is not available to an agent" % key)
     return None
 
 
@@ -351,6 +440,14 @@ def blocked(command, depth=0):
         why = blocked(inner, depth + 1) if inner is not None else None
         if why:
             return why
+    for _, ps in passes(command) if depth < 3 else ():       # a shell fed its program on its standard input or in a file the line writes: the text the line shows is read again
+        for n, p in enumerate(ps):
+            toks, i = parsed(p.text)
+            if i < len(toks) and (os.path.basename(toks[i]) in SHELLS or os.path.basename(toks[i]) in SOURCES):
+                for text in program_fed(ps, n, ".")[0]:
+                    why = blocked(as_program(text), depth + 1)
+                    if why:
+                        return why
     return None
 
 
@@ -383,30 +480,45 @@ def ansi_c(text):
         elif c == "$" and quote == "" and text[k + 1:k + 2] == "'":
             buf, k = [], k + 2
             while k < n and text[k] != "'":
-                if text[k] == "\\" and k + 1 < n:
-                    m = ANSI_CODE.match(text, k + 1)
-                    if text[k + 1] in ANSI_ESCAPES:
-                        buf.append(ANSI_ESCAPES[text[k + 1]])
-                        k += 2
-                    elif m and m.group(5) is not None:
-                        buf.append(chr(ord(m.group(5)) & 31))
-                        k = m.end()
-                    elif m:
-                        code = int(m.group(1) or m.group(3) or m.group(4) or m.group(2), 16 if m.group(2) is None else 8)
-                        buf.append(chr(code) if 0 < code < 0x110000 else "")
-                        k = m.end()
-                    else:
-                        buf.append(text[k:k + 2])
-                        k += 2
-                else:
-                    buf.append(text[k])
-                    k += 1
+                k = escape_at(text, k, buf)
             out.append("'" + "".join(buf).replace("'", "'\\''") + "'")
             k += 1
             continue
         out.append(c)
         k += 1
     return "".join(out)
+
+
+def escape_at(text, k, buf):
+    """Append to buf what the character at text[k] stands for in an ANSI-C string (a backslash escape: \\n, \\xHH, \\NNN, \\uHHHH, \\cX ...; else the
+    character itself) and return the index after it."""
+    n = len(text)
+    if text[k] != "\\" or k + 1 >= n:
+        buf.append(text[k])
+        return k + 1
+    m = ANSI_CODE.match(text, k + 1)
+    if text[k + 1] in ANSI_ESCAPES:
+        buf.append(ANSI_ESCAPES[text[k + 1]])
+        return k + 2
+    if m and m.group(5) is not None:
+        buf.append(chr(ord(m.group(5)) & 31))
+        return m.end()
+    if m:
+        code = int(m.group(1) or m.group(3) or m.group(4) or m.group(2), 16 if m.group(2) is None else 8)
+        buf.append(chr(code) if 0 < code < 0x110000 else "")
+        return m.end()
+    buf.append(text[k:k + 2])
+    return k + 2
+
+
+def escapes_decoded(text):
+    """text with its backslash escapes decoded as an ANSI-C string decodes them (what echo -e, printf and %b print for them)."""
+    if "\\" not in text:
+        return text
+    buf, k = [], 0
+    while k < len(text):
+        k = escape_at(text, k, buf)
+    return "".join(buf)
 
 
 @functools.cache
@@ -431,13 +543,16 @@ BARE_REDIR = re.compile(r"^(?:\d*|&)(?:<<<|<<-?|<>|>>|>\||>&?|<&?|&>>?)$")      
 def skip_wrappers(toks):
     """The index of the program: past assignments (VAR=x), wrappers (sudo, env, time ...), their options, the keywords a command can follow (then, do, !) and
     redirections written before the program (> f, 2>&1)."""
-    i, env = 0, False
+    i, env, xargs = 0, False, False
     while i < len(toks):
         t = toks[i]
         if t in ("-C", "--chdir") and env:
             i += 2                                           # env -C DIR PROGRAM: DIR is where PROGRAM runs, not the program
+        elif xargs and t in XARGS_VALUE_OPTS:
+            i += 2                                           # xargs -I {} sh -c '{}': {} is the replace string, not the program
         elif "=" in t.split("/")[0] and not t.startswith("-") or os.path.basename(t) in WRAP or t.isdigit() or (t.startswith("-") and i) or t in KEYWORDS:
             env = env or os.path.basename(t) == "env"
+            xargs = xargs or os.path.basename(t) == "xargs"
             i += 1
         elif LEADING_REDIR.match(t):
             i += 2 if BARE_REDIR.match(t) else 1
@@ -446,12 +561,19 @@ def skip_wrappers(toks):
     return i
 
 
+GLUED_SHELL = re.compile(r"^([^<>]+)([<>].*)$", re.S)     # a program word with a redirection glued to it
+
+
 @functools.cache
 def parsed(seg):
     """(the words of a segment without what the grammar puts around a command, the index of its program): _cmd_tokens and skip_wrappers, once per text (every check
     asks). The list is shared: not to be changed."""
     toks = list(_cmd_tokens(seg))
-    return toks, skip_wrappers(toks)
+    i = skip_wrappers(toks)
+    m = GLUED_SHELL.match(toks[i]) if i < len(toks) else None
+    if m and (os.path.basename(m.group(1)) in SHELLS or m.group(1) in SOURCES):
+        toks[i:i + 1] = [m.group(1), m.group(2)]               # bash<<<TEXT, sh<FILE: the redirection glued to the program is a word of its own for the shell
+    return toks, i
 
 
 @functools.cache
@@ -522,7 +644,7 @@ def substitutions(text, depth=0):
     return out
 
 
-Piece = collections.namedtuple("Piece", "text top chained")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&
+Piece = collections.namedtuple("Piece", "text top chained piped")   # top: a plain cd here, if it is one, changes the directory of what follows if the command before it in its && chain ran (see pieces()); chained: it follows an &&; piped: it follows a | (its standard input is the output of the piece before it)
 SEQUENCE = ("", ";")                                         # separators after which a command runs whatever came before (a newline strips to "")
 KEYWORDS_OPEN, KEYWORDS_CLOSE = ("if", "while", "until", "for", "select", "case"), ("fi", "done", "esac")
 
@@ -578,11 +700,12 @@ def pieces(text, whole=False, top=True):
         while ends[j] <= at:
             j += 2
         counted.setdefault(j, [0, 0])[0 if kind > 0 else 1] += 1
-    out, depth, quote, heredoc, comment = [], 0, "", False, False
+    out, depth, quote, heredoc, comment, piped = [], 0, "", False, False, False
     for k in range(0, len(parts), 2):
         tick()
         piece = parts[k]
         before, after = (parts[k - 1] if k else ""), (parts[k + 1] if k + 1 < len(parts) else "")
+        piped = piped or before.strip() == "|"                # `a |& b` and `a |<newline> b` leave an empty piece between the | and the command
         opens, closes = counted.get(k - 1, (0, 0))
         ahead = counted.get(k + 1, (0, 0))[0]                # a substitution starts behind this piece: its command goes on after it
         if "\n" in before:
@@ -591,7 +714,8 @@ def pieces(text, whole=False, top=True):
         top_level = (top and depth == 0 and not quote and not heredoc and not comment and before.strip() in SEQUENCE + ("&&",) and after.strip() not in ("|", "&")
                      and not ahead and not opens and not closes)
         if piece.strip():
-            out.append(Piece(piece.strip(), top_level, before.strip() == "&&"))
+            out.append(Piece(piece.strip(), top_level, before.strip() == "&&", piped))
+            piped = False
         words = piece.split()
         first = words[0] if words else ""
         depth = max(0, depth + piece.count("(") - piece.count(")") + (first in KEYWORDS_OPEN) - (first in KEYWORDS_CLOSE) + words.count("{") - words.count("}"))
@@ -636,6 +760,130 @@ def segments(command):
     """The commands of a Bash command line as texts, in the order of passes() (the plain, conservative split: a verb in quoted text is found too). Read once per
     command (the checks of one call all ask)."""
     return tuple(p.text for _, ps in passes(command) for p in ps)
+
+
+INERT = {"echo", "cat", "tee", "grep", "egrep", "fgrep"}   # programs that do nothing with the text of an argument or of their input but print, write or search it (not printf: -v assigns)
+INERT_GIT = {"commit", "log", "status", "diff", "show", "add"}       # git subcommands that are in the same case (git commit -m TEXT, git commit -F -)
+MASK_BAIL = re.compile(r"[\\`\0\r\x0b\x0c]|\$[\[\x27\"({]|[<>]\(")  # a backslash, a substitution, $'..', $"..", ${..}, $[..], a control character: not read here
+MASK_TOKEN = re.compile(r"""'|"|<<<|<<-?|[;|&\n()]|[ \t]+|#|[^'"<;|&\n()# \t]+|.""", re.S)
+HEREDOC_WORD = re.compile(r"""[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|([^\s;&|<>()'"]+))(?=[ \t\n;&|)<>]|$)""")
+MASK_SEPARATORS = re.compile(r"[;|&\n]")
+REDIRECT_END = re.compile(r"[<>][|&]?$")                    # a word that is a redirection whose file is the next word (>, &>, 2>>, {fd}>, >|, >&)
+
+
+def inert_command(words):
+    """True when the command whose words are given does nothing with the text of its arguments or its input (see mask_data)."""
+    return bool(words) and (words[0] in INERT or (words[0] == "git" and len(words) > 1 and words[1] in INERT_GIT))   # a quoted word carries \x01: it is no name here
+
+
+def mask_data(command):
+    """The command with its data made harmless to the plain split, or the command itself. The split (segments) cuts a line at every ; | & and newline,
+    inside quotes and heredocs too, so `git commit -m "Docs; qargi packs seed"` and a heredoc that a commit message is written from were refused as the
+    verb they mention. When EVERY command of the line is one that only prints, writes or searches (INERT: echo, cat, tee, grep, git commit|log|status|
+    diff|show|add; not printf, whose -v NAME assigns a variable, and an array subscript in NAME runs a substitution), a quoted string of it cannot run
+    anything, and a heredoc body is the input of such a command: the separators in the quoted strings become blanks and the heredoc bodies are cut out
+    (the delimiter line stays), and nothing else changes, so a redirection or a path in the line is still judged. Any other command in the line (a shell,
+    make, find, a script, a function, an assignment, a keyword, a group), a comment, a backslash, a substitution, $'..', ${..}, a quote or heredoc that
+    is never closed, a heredoc delimiter that starts with # (bash reads it as a comment): the command is returned as it is, and the plain split reads all of it. A quoted string that names a file is not blanked: one in a
+    word that holds a < or > (`>"a;b"`, `&>"a;b"`, `&>>"a;b"`, `x>"a;b"`, `{fd}>"a;b"`) or in the word after one (`> "a;b"`), and the command is returned
+    as it is when a quoted string with a separator is among the words of tee (the files it writes). Used for the verbs that change a skill or the
+    marshal, not for push/gh/ssh (blocked() reads the whole text); separator_path_refusal() judges such a name as a path."""
+    if not QUOTED.search(command) or MASK_BAIL.search(command):
+        return command
+    n, pos, count = len(command), 0, 0
+    words, cur, spans, pending = [], [], [], []                 # cur: the pieces of the word being read, joined when it ends (one long word stays linear)
+    redir = False                                               # the word being read holds a < or >
+    quotes = []                                                 # (start, end) of the quoted strings that hold a separator
+
+    def end_word():
+        nonlocal redir
+        if cur:
+            words.append("".join(cur))
+            cur.clear()
+        redir = False
+
+    while pos < n:
+        count += 1
+        if not count & 255:
+            tick()
+        t = MASK_TOKEN.match(command, pos).group()
+        end = pos + len(t)
+        if t in ("'", '"'):
+            j = command.find(t, end)
+            if j < 0:
+                return command                              # never closed
+            target = redir or (not cur and bool(words) and bool(REDIRECT_END.search(words[-1])))   # a file a redirection names
+            if MASK_SEPARATORS.search(command, end, j):
+                if words and words[0] == "tee":
+                    return command                          # a file tee writes: the plain split reads it, and separator_path_refusal the name
+                if not target:
+                    quotes.append((end, j))
+            cur.append("\x01")
+            end = j + 1
+        elif t == "<<<":
+            end_word()
+            words.append(t)
+        elif t in ("<<", "<<-"):
+            end_word()
+            m = HEREDOC_WORD.match(command, end)
+            if not m or (m.group(3) or "").startswith("#"):
+                return command                              # no delimiter, or one bash reads as a comment (`cat <<#E`)
+            pending.append((next(g for g in m.groups() if g is not None), t == "<<-"))
+            end = m.end()
+        elif t == "(" or t == ")":
+            return command
+        elif t == "#":
+            if not cur:
+                return command                              # a comment
+            cur.append(t)
+        elif t == "&" and (command[pos - 1:pos] in ("<", ">") or command[end:end + 1] == ">"):
+            cur.append(t)                                   # 2>&1, <&3, &>file: a redirection, not a separator
+        elif t == "|" and command[pos - 1:pos] == ">":
+            cur.append(t)                                   # >| file
+        elif t in (";", "|", "&", "\n"):
+            end_word()
+            if words and not inert_command(words):
+                return command
+            words = []
+            if t == "\n" and pending:
+                s = end
+                for delim, tabs in pending:
+                    body = s
+                    while True:
+                        nl = command.find("\n", s)
+                        line = command[s:n if nl < 0 else nl]
+                        if (line.lstrip("\t") if tabs else line) == delim:
+                            break
+                        if nl < 0:
+                            return command                  # the delimiter never comes
+                        s = nl + 1
+                        count += 1
+                        if not count & 255:
+                            tick()
+                    spans.append((body, s))
+                    s = n if nl < 0 else nl + 1
+                pending = []
+                end = s
+        elif t in (" ", "\t"):
+            end_word()
+        else:
+            cur.append(t)
+            redir = redir or "<" in t or ">" in t
+        pos = end
+    end_word()
+    if pending or (words and not inert_command(words)):
+        return command
+    cuts = sorted([(a, b, False) for a, b in quotes] + [(a, b, True) for a, b in spans])
+    if not cuts:
+        return command
+    out, last = [], 0
+    for a, b, body in cuts:
+        out.append(command[last:a])
+        if not body:
+            out.append(MASK_SEPARATORS.sub(" ", command[a:b]))
+        last = b
+    out.append(command[last:])
+    return "".join(out)
 
 
 UNKNOWN_DIR = "\0unknown"                                   # in the directories the shell may be in: a directory the guard cannot name (`cd $(dirname $PWD)`, `cd "$d"`, `env -C $d`)
@@ -689,7 +937,7 @@ def env_chdir(toks, i):
 
 
 def walk(command, here):
-    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, texts, text, dirs). texts: the pieces of the
+    """Every piece of every cut of the command, with the directories the shell may be in when it runs it: (n, ps, text, dirs). ps: the pieces of the
     cut and n the place of this one in it. here: the directory the call runs in (or a list of them). A plain `cd` at the top level of the line changes
     them for what follows (after an && only if the commands before it in the chain are plain cds too: `pushd d && popd && cmd`); a cd anywhere else (a
     subshell, a substitution, an if, after || or `cmd &&`, before a pipe, with an option or two directories ...)
@@ -703,12 +951,11 @@ def walk(command, here):
         if len(dirs) > MAX_DIRS:
             raise TooManyDirs()
         stack, ran = [], False                               # ran: the piece before was a cd that is certain
-        texts = [p.text for p in ps]
         for n, piece in enumerate(ps):
             tick()
             toks, i = parsed(piece.text)
             chdir = env_chdir(toks, i)
-            yield n, texts, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
+            yield n, ps, piece.text, (moved(dirs, [chdir], False, visited, cdpath) if chdir else dirs)     # env -C DIR PROGRAM runs PROGRAM in DIR, once
             prog = os.path.basename(toks[i]) if i < len(toks) else ""
             if prog not in ("cd", "pushd", "popd"):
                 ran = False
@@ -797,7 +1044,7 @@ NO_RUN = ("under the read-only class nothing is written or changed here: no run 
           "so no write can be shown to be the report; run from the clone")
 
 
-RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git", "dispatch.json", "task.md", "refs.before.new")
+RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "refs.accepted", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git", "dispatch.json", "task.md", "refs.before.new")
 
 
 def control_refusal(full):
@@ -986,6 +1233,19 @@ def option_value(rest, k, names):
     return None
 
 
+def script_values_off(rest):
+    """rest without the words that -e, -f, --expression and --file hand a sed or perl script (or the file of one): they are no files to change, whatever
+    characters the script holds (a glob, a $, a -S)."""
+    out, skip = [], False
+    for t in rest:
+        if skip:
+            skip = False
+            continue
+        skip = t in ("--expression", "--file") or bool(re.match(r"^-[A-Za-z]*[ef]$", t))
+        out.append(t)
+    return out
+
+
 def write_targets(toks, i):
     """(what, destination) of everything a segment writes, by its redirections and its program (git included). A destination of "" is a redirection with no
     target left in the segment. Sources that a command removes (mv, rm) are targets too."""
@@ -1019,8 +1279,10 @@ def write_targets(toks, i):
         elif prog in ("awk", "gawk", "mawk") and any(t in ("inplace", "-iinplace", "--include=inplace") for t in rest):    # gawk -i inplace edits its files
             targets += [("awk -i inplace", a) for a in (args if any(t in ("-f", "--file") for t in rest) else args[1:])]
         elif prog in INPLACE and any(re.match(r"^-[A-Za-z]*i", t) or t == "--in-place" or t.startswith("--in-place=") for t in rest):   # -i, -i.bak, -pi, -ni
-            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) for t in rest)
-            targets += [(prog + " -i", a) for a in (args if scripted else args[1:])]
+            scripted = any(t in ("-e", "-f", "--expression", "--file") or re.match(r"^-[A-Za-z]*[ef]$", t) or t.startswith(("--expression=", "--file="))
+                           or re.match(r"^-[A-Za-z]*[ef]\S", t) for t in rest)        # a script given by an option: every operand is a file (-es/a/b/ and -ifoo count too: more files, never fewer)
+            files = operands(script_values_off(rest), any(os.path.basename(t) == "xargs" for t in toks[:i]))     # sed -i -e SCRIPT FILE: the script is no file
+            targets += [(prog + " -i", a) for a in (files if scripted else args[1:])]
         elif prog in TARS and tar_extracts(rest):
             targets += [("tar", d) for d in tar_dirs(rest)] or [("tar", ".")]          # an archive is extracted below -C DIR, else below where the shell is
         elif prog == "unzip" and not set("".join(t[1:] for t in rest if re.fullmatch(r"-[A-Za-z]+", t))) & set("lptZvcz"):
@@ -1047,6 +1309,8 @@ def write_targets(toks, i):
                 targets += [("git " + sub, tree) for tree in trees]
             if sub == "config":
                 targets += git_config_targets(rest[k + 1:])
+                if config_written(rest[k + 1:]) != []:                         # a write: GIT_CONFIG=FILE in front of it names the file, as --file does
+                    targets += [("git config --file", t.split("=", 1)[1]) for t in toks[:i] if t.startswith("GIT_CONFIG=")]
             places = [t for t in rest[k + 1:] if not t.startswith("-")]
             if sub == "clone" and len(places) > 1:                        # git clone URL DIR, git init DIR, git worktree add DIR
                 targets.append(("git clone", places[-1]))
@@ -1212,11 +1476,16 @@ class OwnReason(MarshalReason):
     """A refusal that carries its own advice: decide_call() prints it as it is."""
 
 
+class TextReason(MarshalReason):
+    """A refusal that carries its own advice, and the advice about text when the command holds a quote or a heredoc (the plain split may have read text as a command)."""
+
+
 DEVICE = re.compile(r"^/dev/(?:null|zero|full|tty|stdin|stdout|stderr|fd/\d+)$")           # a device a redirection may name; /dev/shm and the rest are directories
 UNKNOWN = re.compile(r"[$`*?\[]")                            # in a word: a variable, a substitution or a glob stands where the guard would read a name
 OVERWRITES = {"a redirection", "tee", "cp", "install", "ln", "rsync", "dd", "sort -o", "uniq", "mv", "truncate", "sed -i", "perl -i", "git bundle create"}   # they make or replace the file they name
 TOUCHERS = WRITERS | COPIERS | {"dd"}                          # the programs whose every operand is a file they change or take away (a source is moved or removed)
-GIT_PLACE = re.compile(r"(?:^|/)(?:\.gitconfig|\.config/git(?:/.*)?|\.git/config|\.git/hooks(?:/.*)?|info/attributes)$")   # what git reads its configuration and its hooks from
+GIT_PLACE = re.compile(r"(?:^|/)(?:\.gitconfig|\.config/git(?:/.*)?|\.git/config|\.git/hooks(?:/.*)?|\.git/modules(?:/.*)?|\.git/worktrees(?:/.*)?|config\.worktree|"
+                       r"info/attributes)$")   # what git reads its configuration and its hooks from (a submodule's and a worktree's too)
 RESTRICTED_ENV = {"PATH", "ENV", "BASH_ENV", "IFS", "HOME", "SHELL", "SHELLOPTS", "CDPATH", "GLOBIGNORE", "PAGER", "EDITOR", "VISUAL", "MANPAGER", "LESSOPEN", "TMPDIR",
                   "SSH_ASKPASS", "XDG_CONFIG_HOME", "PROMPT_COMMAND", "RIPGREP_CONFIG_PATH", "NODE_OPTIONS", "RUBYOPT", "PERL5OPT", "PYTHONSTARTUP", "PYTHONPATH",
                   "EXINIT", "VIMINIT", "GREP_OPTIONS", "BROWSER", "PERL5LIB", "RUBYLIB", "NODE_PATH"}
@@ -1341,7 +1610,7 @@ def review_refusal(call):
     if call.kind != "shell":
         return None
     seen, places, runs_git = set(), [], False
-    for n, texts, seg, dirs in walk(call.command, cwd):
+    for n, ps, seg, dirs in walk(call.command, cwd):
         toks, i = parsed(seg)
         prog = os.path.basename(toks[i]) if i < len(toks) else ""
         for here in dirs:                                    # a cd that may not happen leaves several: each is judged
@@ -1505,6 +1774,8 @@ def _protected_roots():
     roots.update(providers_state_roots(P, home))
     roots.update(feature_roots(P, home))
     roots.update(switch_roots(P, home))
+    roots.update(lead_state_roots(P, home))
+    roots.update(saved_runs_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     roots.update(lead_roots(home) | lead_files(home))
@@ -1557,6 +1828,18 @@ def providers_state_roots(P=None, home=None):
 def feature_roots(P=None, home=None):
     """The features/ directory of the state: the marshal's record of each open feature."""
     return state_sub("features", P, home)
+
+
+def lead_state_roots(P=None, home=None):
+    """The handoff/ and busy/ directories of the state: when the lead's last handoff note was written, and the whole-suite runs in progress. `qargi lead
+    compact-check` reads both to say whether a compact is safe, so a member must not write them."""
+    return state_sub("handoff", P, home) | state_sub("busy", P, home)
+
+
+def saved_runs_roots(P=None, home=None):
+    """The runs/ directory of the state: the copies `qargi local verify` saves of a passed run (its OUT, its snapshots, its record), which
+    `qargi review apply --from-saved` applies after the run directory is lost. A member must not plant or change one."""
+    return state_sub("runs", P, home)
 
 
 def switch_roots(P=None, home=None):
@@ -1623,6 +1906,12 @@ def refusal_text(what, dest, root):
                              "which a rollback is measured against); %s" % (what, dest, root, MARSHAL_NOTE))
     if root in feature_roots():
         return MarshalReason("%s on %s would change %s, the marshal's record of the open features; %s" % (what, dest, root, MARSHAL_NOTE))
+    if root in lead_state_roots():
+        return MarshalReason("%s on %s would change %s, where the lead's handoff note and whole-suite runs are recorded (qargi lead compact-check reads them); %s"
+                             % (what, dest, root, MARSHAL_NOTE))
+    if root in saved_runs_roots():
+        return OwnReason("%s on %s would change %s, the lead's saved copies of passed local runs (review apply --from-saved applies them); "
+                         "a member writes only its own OUT" % (what, dest, root))
     if root in switch_roots() and name.endswith(".signers"):
         return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
                              % (what, dest, root, MARSHAL_NOTE))
@@ -1738,6 +2027,9 @@ def brace_expand(word, limit=MAX_BRACE):
     return tuple(out)
 
 
+TRIMMED = re.compile(r"\$\{\w+(?:%%?|##?)[^{}]*\}")       # ${NAME%PATTERN}, ${NAME%%PATTERN}, ${NAME#PATTERN}, ${NAME##PATTERN}: a part of the variable's own value
+
+
 @functools.cache                                     # the files do not change while one command is judged
 def key_named(word, here, recursive):
     """The signing key (or, for a recursive reader, a directory holding it) that one shell word stands for, else None. The word
@@ -1751,8 +2043,10 @@ def key_named(word, here, recursive):
         if not c or c.startswith("-"):
             continue
         for b in brace_expand(expand_path(c)):
-            if "${" in b and (bool(recursive) or os.path.basename(b).startswith(KEY_PREFIX) or re.search(r"[*?\[]", os.path.basename(b))):
-                return b                                      # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
+            if "${" in b:
+                base = os.path.basename(TRIMMED.sub("x", b))      # ${f%%:*}, ${f%/*}, ${f##*/}: the * and the / belong to the pattern, not to the path
+                if bool(recursive) or base.startswith(KEY_PREFIX) or re.search(r"[*?\[]", base):
+                    return b                                  # ${X:-dir}/marshal_*: a directory the guard cannot read could be the credentials directory
             plain = re.sub(r"/(?:\./)+", "/", re.sub(r"/{2,}", "/", b))        # dir//key and dir/./key are the path dir/key
             if any(d + os.sep + KEY_PREFIX in plain for d in key_dirs()):     # a path inside text, e.g. python -c "open('...')"
                 return b
@@ -1874,18 +2168,51 @@ def skill_refusal(call):
         return key_refusal_text(call.name, fp) if full and (is_key(full) or (call.kind == "search" and below_key_dir(full))) else None
     if call.kind != "shell":
         return None
-    return bash_skill_refusal(call.command, call.cwd, 0)
+    return bash_skill_refusal(mask_data(call.command), call.cwd, 0) or separator_path_refusal(call.command, call.cwd)
+
+
+SEPARATOR_WORD = re.compile(r"[;|&\n]")
+WORD_QUOTING = re.compile(r"[\"'\\]")
+
+
+def separator_path_refusal(command, here):
+    """A backstop of the plain split, which cuts a word at a ; | & or newline even inside quotes and so never judges it whole as a path: a word that,
+    after quote removal, still holds one of them and resolves into a protected location, or names the signing key, is refused (`echo x > "s;/x/SKILL.md"`
+    or `tee 's;/x/SKILL.md'` with a link `s;` to a skills directory). A read of such a name is refused too: which words a command writes is not read here.
+    The directory is the one of the call (a cd in the line is not followed), and a word longer than a path can be is no path."""
+    if not WORD_QUOTING.search(command) or not SEPARATOR_WORD.search(command):
+        return None
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)   # the redirection operators are words of their own: `x>"a;b"` is x, >, a;b
+        lex.whitespace_split, lex.commenters = True, ""
+        words = set(lex)
+    except ValueError:                                       # an open quote (an apostrophe in a heredoc body): the quoted strings alone
+        words = {a or b for a, b in re.findall(r"'([^']*)'|\"([^\"]*)\"", command)}
+    for w in words:
+        tick()
+        if len(w) > 4096 or not SEPARATOR_WORD.search(w):
+            continue
+        full = resolve(here, w)
+        root = protected(full)
+        if root:
+            return refusal_text("a command", w, root)
+        if is_key(full) or below_key_dir(full):
+            return key_refusal_text("", w, "a command")
+    return None
 
 
 def names_lead(t):
-    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
+    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, -uQARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
     lhs, _, rhs = t.partition("=")
-    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD")
+    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD") or t == "-uQARGI_LEAD"
 
 
-def lead_refusal(prog, rest, pre):
-    """The reason a segment sets or unsets QARGI_LEAD, or None. pre: the words up to and with the program (VAR=x, env -u NAME)."""
-    if any(names_lead(t) for t in pre) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
+def lead_refusal(toks, i):
+    """The reason a segment (its words toks, the program at i) sets or unsets QARGI_LEAD, or None. The names it sets are env_names()'s, as for QARGI_NESTED
+    (VAR=x in front, export|declare|... NAME, printf -v NAME and -vNAME, read|mapfile NAME); names_lead() adds the words that unset it (unset NAME, env -u
+    NAME) and the operands of the builtins."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
+    if "QARGI_LEAD" in env_names(toks, i) or any(names_lead(t) for t in toks[:i + 1]) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
         return MarshalReason("setting or unsetting QARGI_LEAD changes who the lead is and is not available to an agent; " + MARSHAL_NOTE)
     return None
 
@@ -1900,15 +2227,15 @@ def bash_skill_refusal(command, here, depth):
     if word_then_subst(AUDIT_SUBST, joined):
         return "qargi skill accept (packs_audit.py with a command substitution in its arguments could be `store`) changes a skill and is not available to an agent"
     seen = set()                                         # the (text, directory) pairs judged
-    for n, texts, seg, dirs in walk(command, here):
+    for n, ps, seg, dirs in walk(command, here):
         toks, i = parsed(seg)
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-        why = lead_refusal(prog, rest, toks[:i + 1])
+        why = lead_refusal(toks, i)
         if why:
             return why
-        if prog in ("export", "declare", "typeset", "readonly") and any(t.split("=")[0] == "QARGI_NESTED" for t in rest):
+        if "QARGI_NESTED" in env_names(toks, i):             # export|declare|typeset|readonly|local NAME, printf -v NAME, read NAME
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         for at in dirs:                                      # a cd that may not happen leaves several directories: each is judged
             if (seg, at) in seen:                            # judged already
@@ -1925,10 +2252,18 @@ def bash_skill_refusal(command, here, depth):
                     return why
                 inner = shell_string(prog, rest) if depth < 3 else None
                 if inner is not None:
-                    inner += " ; " + " ; ".join(texts[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
+                    inner += " ; " + " ; ".join(p.text for p in ps[n + 1:n + 201]).replace('"', " ").replace("'", " ")      # a `;` inside the quoted string split it: read the pieces that follow as part of it
                     why = bash_skill_refusal(inner, [at], depth + 1)
                     if why:
                         return why
+                if prog in SHELLS or prog in SOURCES:            # its program on its standard input, or in a file this line writes: read again what the line shows of it
+                    fed, unread = program_fed(ps, n, at)
+                    if unread or (fed and depth >= 3):
+                        return fed_refusal(prog, unread or "a program nested more than three shells deep")
+                    for text in fed:
+                        why = bash_skill_refusal(as_program(text), [at], depth + 1)
+                        if why:
+                            return why
             why = protected_write(toks, i, at) or key_read(toks, i, at)       # redirections alone, or in front of a program, write and read too
             if why:
                 return why
@@ -2022,7 +2357,224 @@ def shell_string(prog, rest):
         text = next((" ".join(rest[k + 1:]) for k, t in enumerate(rest) if SHELL_C.match(t)), None)
     else:
         return None
-    return None if text is None else text.replace('"', "").replace("'", "").replace("\\$", "$").replace("\\`", "`")
+    return None if text is None else as_program(text)
+
+
+def as_program(text):
+    """A program text a shell is handed, made ready to be read again as shell_string reads one (its quotes dropped, `\\$` and `\\`` as the expansions)."""
+    return text.replace('"', "").replace("'", "").replace("\\$", "$").replace("\\`", "`")
+
+
+# --- a shell that reads its program from its standard input or from a file the line writes (sh -s, bash <<< TEXT, echo TEXT | sh, . /dev/stdin)
+
+SOURCES = {"source", "."}                                    # run a file in the shell itself, as sh FILE does in a new one
+STDIN_NAMES = {"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}   # the names of the standard input
+SHELL_VALUE_OPTS = re.compile(r"^(?:[-+][A-Za-z]*[oO]|--rcfile|--init-file)$")   # shell options that take the next word (-o pipefail, -euo pipefail, -O extglob, --rcfile F)
+SHELL_STDIN_OPT = re.compile(r"^-[A-Za-z]*s[A-Za-z]*$")      # -s: the program is read from the standard input, the words are its arguments
+STDIN_REDIR = re.compile(r"^0?(<<<|<<-?|<>|<&|<)(.*)$", re.S)   # a redirection of the standard input: here-string, heredoc, file, descriptor
+XARGS_REPLACE = re.compile(r"^(?:-I|-i|--replace)")          # xargs puts its input into the words of the command (sh -c '{}')
+PRINTERS = {"echo", "printf"}                                # print the words they are given: the line shows what they write
+PASSERS = {"cat", "tee"}                                     # hand their standard input on (cat with no file, tee always)
+PRINTF_CONV = re.compile(r"%(?:%|[-+ 0#']*(\*|\d+)?(?:\.(\*|\d*))?([a-zA-Z]))")
+FED_NOTE = ("write the script to a file with your file tool and run it with `bash FILE` (a heredoc on the command line is read too)")
+
+
+def shell_source(prog, rest, pre):
+    """Where a shell (or source and .) takes its program from: "string" (sh -c: shell_string reads it), ("file", NAME), "stdin" (sh -s, sh -, no file, a name of
+    the standard input, or the words xargs brings from its own), or None when prog is no shell. pre: the words before the program (xargs among them)."""
+    if prog not in SHELLS and prog not in SOURCES:
+        return None
+    x = next((k for k, t in enumerate(pre) if os.path.basename(t) == "xargs"), None)
+    replaces = x is not None and any(XARGS_REPLACE.match(t) for t in pre[x + 1:])
+    words, k = [], 0
+    while k < len(rest):                                     # the words without the redirections; a process substitution is a word (the name of a file)
+        t = rest[k]
+        if t.startswith(("<(", ">(")) or not LEADING_REDIR.match(t):
+            words.append(t)
+        elif BARE_REDIR.match(t):
+            k += 1
+        k += 1
+    k = 0
+    if prog in SHELLS:
+        while k < len(words):
+            t = words[k]
+            if SHELL_C.match(t):
+                return "stdin" if x is not None and (k + 1 >= len(words) or replaces) else "string"
+            if SHELL_STDIN_OPT.match(t):
+                return "stdin"
+            if t in ("-", "--"):
+                k += 1
+                break
+            if not t.startswith(("-", "+")) or len(t) < 2:
+                break
+            k += 2 if SHELL_VALUE_OPTS.match(t) else 1
+    elif words[:1] == ["--"]:
+        k = 1
+    if k < len(words):
+        return "stdin" if words[k] in STDIN_NAMES else ("file", words[k])
+    return "stdin" if prog in SHELLS or x is not None else None   # no file: the standard input (xargs brings the name of one from it)
+
+
+def stdin_redirect(toks):
+    """The last redirection of the standard input among the words of a command, as (operator, word): ("<<<", TEXT), ("<<", DELIM), ("<", FILE), ("<&", N), or None."""
+    last, k = None, 0
+    while k < len(toks):
+        t = toks[k]
+        m = STDIN_REDIR.match(t)
+        if m and not t.startswith("<("):
+            op, val = m.group(1), m.group(2)
+            if not val and k + 1 < len(toks):
+                val, k = toks[k + 1], k + 1
+            last = (op, val)
+        elif BARE_REDIR.match(t):
+            k += 1
+        k += 1
+    return last
+
+
+def here_string_expands(seg):
+    """True when the outer shell expands the word of the last here-string of a segment (a variable, a substitution or a glob in it, outside single quotes)."""
+    words, out = lex(seg), False
+    for k, (w, e) in enumerate(words):
+        m = re.match(r"^0?<<<", w)
+        if m:
+            out = e if w[m.end():] else (k + 1 < len(words) and words[k + 1][1])
+    return out
+
+
+def printf_text(fmt, args):
+    """What printf FORMAT ARGS prints, close enough to read a command in it: the escapes decoded, a conversion given its argument as it is (%b decoded, %c its
+    first character, no width padding), and the format used again while arguments are left."""
+    fmt, args, out = escapes_decoded(fmt), list(args), []
+    while True:
+        used, last = False, 0
+        for m in PRINTF_CONV.finditer(fmt):
+            tick()
+            out.append(fmt[last:m.start()])
+            last = m.end()
+            if m.group() == "%%":
+                out.append("%")
+                continue
+            for star in (m.group(1), m.group(2)):
+                if star == "*" and args:
+                    args.pop(0)
+            a, used = (args.pop(0) if args else ""), True
+            out.append(escapes_decoded(a) if m.group(3) == "b" else a[:1] if m.group(3) == "c" else a)
+        out.append(fmt[last:])
+        if not args or not used:
+            return "".join(out)
+
+
+def printed(prog, words):
+    """The texts echo or printf prints for its words (the redirections left out): echo's words as they are and with their escapes decoded (echo -e, and sh's
+    echo, decode them), printf's format filled in; nothing for printf -v, which assigns."""
+    if prog == "echo":
+        k = 0
+        while k < len(words) and re.fullmatch(r"-[neE]+", words[k]):
+            k += 1
+        raw = " ".join(words[k:])
+        return list(dict.fromkeys([raw, escapes_decoded(raw)]))
+    if words[:1] == ["--"]:
+        words = words[1:]
+    if not words or words[0].startswith("-v"):
+        return []
+    return [printf_text(words[0], words[1:])]
+
+
+def plain_words(rest):
+    """The words of a command without its redirections and the words they name."""
+    out, k = [], 0
+    while k < len(rest):
+        t = rest[k]
+        if BARE_REDIR.match(t):
+            k += 1
+        elif not LEADING_REDIR.match(t) and not REDIR.match(t):
+            out.append(t)
+        k += 1
+    return out
+
+
+def input_of(ps, n, depth=0):
+    """What the command ps[n] (a piece of a cut) reads on its standard input: (texts, why). texts: the text the line shows for it (a here-string, an echo or a
+    printf piped in, through cat and tee); why: what gives it when the guard cannot read it (another program, a file, a descriptor), else None. A heredoc
+    gives nothing to read again, since the plain split reads its body as commands, and a command with no redirection and no pipe reads the call's own input."""
+    seg = ps[n].text
+    r = stdin_redirect(parsed(seg)[0])
+    if r:
+        op, val = r
+        if op == "<<<":
+            return ([], "a here-string that a variable, a substitution or a glob builds") if here_string_expands(seg) else ([val], None)
+        if op in ("<<", "<<-") or (op == "<" and val == "/dev/null") or (op == "<&" and val == "-"):
+            return [], None
+        if not ((op == "<" and val in STDIN_NAMES - {"-"}) or (op == "<&" and val == "0")):
+            if not val or val.startswith(("<(", "(")):
+                return [], "a process substitution"           # `bash < <(curl x)`: the cut that takes the substitution out leaves the < with no word
+            return [], ("descriptor %s" % val) if op == "<&" else ("the file %s" % val)
+    if ps[n].piped and n > 0:
+        return output_of(ps, n - 1, depth)
+    return [], None
+
+
+def output_of(ps, m, depth=0):
+    """What the command ps[m] writes to its standard output, as input_of says it: the text of echo and printf (unless the shell builds a word of it), what cat
+    with no file and tee hand on, and for any other program its name as the reason."""
+    seg = ps[m].text
+    toks, i = parsed(seg)
+    if i >= len(toks):
+        return [], "a command the guard cannot read"
+    prog, rest = os.path.basename(toks[i]), toks[i + 1:]
+    if prog in PRINTERS:
+        if any(e for _, e in lex(seg)):
+            return [], "%s of a word that a variable, a substitution or a glob builds" % prog
+        return printed(prog, plain_words(rest)), None
+    if prog in PASSERS and depth < 8:
+        if prog == "cat" and [t for t in operands(rest) if t != "-"]:
+            return [], "the files cat reads"
+        return input_of(ps, m, depth + 1)
+    return [], "the output of %s" % prog
+
+
+@functools.lru_cache(maxsize=64)
+def pass_writes(ps, here):
+    """{real path: (index, what)} of every file the pieces of one cut write, the first writer of each (write_targets), seen from the directory here."""
+    out = {}
+    for m, p in enumerate(ps):
+        tick()
+        toks, i = parsed(p.text)
+        for what, dest in write_targets(toks, i):
+            if dest:
+                out.setdefault(resolve(here, dest), (m, what))
+    return out
+
+
+def program_fed(ps, n, here):
+    """What the shell ps[n] runs when that is not a -c string (shell_string) or a file that was there before the command: (texts, why), as input_of says it.
+    Its standard input (sh -s, sh with no file, a name of the standard input, the words of xargs), or a file a command of the same line writes: what
+    an echo or printf writes there is read, a heredoc is read already, and any other writer (cp, curl, a download, a copy) is why."""
+    toks, i = parsed(ps[n].text)
+    if i >= len(toks):
+        return [], None
+    src = shell_source(os.path.basename(toks[i]), toks[i + 1:], toks[:i])
+    if src == "stdin":
+        return input_of(ps, n)
+    if not isinstance(src, tuple):
+        return [], None
+    name = src[1]
+    if name.startswith(("<(", ">(")):
+        return [], "a process substitution"
+    w = pass_writes(ps, here).get(resolve(here, name))
+    if w is None:
+        return [], None
+    m, what = w
+    if what == "a redirection":
+        return output_of(ps, m)
+    if what == "tee":
+        return input_of(ps, m)
+    return [], "%s, which writes %s in the same command" % (what, name)
+
+
+def fed_refusal(prog, why):
+    return TextReason("%s takes its program from %s, which the guard cannot read, so it is not available to an agent; %s" % (prog, why, FED_NOTE))
 
 
 def own_script(path, here):
@@ -2038,7 +2590,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     """The reason a qargi command (or the script behind it, run directly) is a verb that changes a skill, or None. via_xargs: xargs
     stands before the program, so its arguments come from standard input, where --write could be. here: the directory the command runs
     in, and exe: the word that names the program, for the scripts that are only the tool's own (OWN_ONLY)."""
-    words = [t for t in rest if not t.startswith("-")]
+    # a ) with no ( in a word closes a substitution or group whose start the plain split cut off (`printf -v x 'b[%s(true; qargi upgrade)]' $`
+    # runs `qargi upgrade` in an arithmetic subscript): the command ends there, so the verb is read without it
+    words = [t.split(")")[0] if ")" in t and "(" not in t else t for t in rest if not t.startswith("-")]
     name, script = prog, exe or prog
     if prog not in SCRIPTS:
         if (prog in SHELLS or re.match(r"^python[0-9.]*$", prog)) and words and os.path.basename(words[0]) in SCRIPTS:
@@ -2051,6 +2605,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["packs", "link"]
     if name == "render.py":
         return "lib/render.py is the renderer of member definitions and can run the command a definition names; it is not available to an agent"
+    if name == "env.py":                                 # qargi env: show reads; plan and apply are refused below
+        words = ["env"] + words
+    if name == "env_apply.py":                           # the library of env plan and apply: any use of it is the verb
+        words = ["env", "apply"]
     if name == "discover.py":
         words = ["discover"] + words
     if name == "cloud.py":
@@ -2061,8 +2619,18 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["marshal"] + words
     if name == "feature.sh":
         words = ["feature"] + words
+    if name == "branch.sh":
+        words = ["branch"] + words
+    if name in ("changelog.sh", "changelog_numbers.py"):   # the script of the verb and its library: any use is the verb
+        words = ["changelog"] + words
+    if name == "upstream.sh":
+        words = ["upstream"] + words
+    if name == "ref.sh":
+        words = ["ref"] + words
     if name == "release.sh":
         words = ["release"] + words
+    if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
+        words = ["release", "sign"]
     if name == "packs_link.py":                          # plan and apply both: any use of the script is the verb (the shell makes its inputs)
         words = ["packs", "unlink" if "unlink" in words[:2] else "link"]
     if name == "project_link.py":                        # plan, apply and members-dir alike: any use of the script is the verb (the shell checks the plan token)
@@ -2093,6 +2661,25 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "ref":
+        return OwnReason("qargi ref %s moves a branch of the lead's repository and writes the lead's ref journal, which local verify trusts, and is the lead's to run; "
+                         "report in your task output a branch you think should be rewritten" % (verb or "(no verb)"))
+    if area == "branch":
+        return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
+                         "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))
+    if area == "changelog":
+        # renumber writes the changelog of a work tree and only --check reads; a --check that is the value of --project is no flag, and a word a variable
+        # or a substitution builds could be anything. Help alone reads.
+        check = any(t == "--check" and (i == 0 or rest[i - 1] != "--project") for i, t in enumerate(rest))
+        if not ((verb == "renumber" and check and not via_xargs and not any("$" in t or "`" in t for t in rest))
+                or (verb == "" and any(t in ("-h", "--help") for t in rest))):
+            return OwnReason("qargi changelog %s rewrites the changelog of a work tree and is the lead's to run; only qargi changelog renumber --check (it writes nothing) is available to an agent; "
+                             "report the duplicate item numbers in your task output" % (verb or "(no verb)"))
+    if area == "upstream" and verb not in UPSTREAM_OPEN:
+        return OwnReason("qargi upstream %s %s and is the lead's to run (qargi upstream review only reads the last fetch and is allowed); "
+                         "report in your task output that the upstream line needs looking at"
+                         % (verb or "(no verb)", "fetches into the lead's repository, which changes the remote-tracking refs that qargi local verify compares" if verb == "status"
+                            else "fast-forwards the branch that carries the upstream line (and journals the move), from a plan and a token,"))
     if (name == "qargi" and builds_word(area)) or (area in BUILT_VERB_AREAS and builds_word(verb)):
         return "qargi %s %s: a verb that a variable or a substitution builds (it could be any of the verbs that change a skill or the marshal) is not available to an agent" % (area, verb)
     if area == "memory" and words[1:2] != [] and (verb in MEMORY_VERBS or (verb not in MEMORY_READ and any(w in MEMORY_VERBS for w in words[1:4]))):
@@ -2112,6 +2699,12 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         path = words[3]
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
+        if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
+            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, env, upstream, the site answers qargi release site builds from) and is not available to an agent: propose the value in your report" % path
+        if path == "packs" or path.startswith("packs."):
+            return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
+        if ROLE_TOOLS_PATH.fullmatch(path):
+            return "qargi project set of %s changes the tools the lead later installs and checks out (roles.<role>.tools: go install, a downloaded binary, a submodule) and is not available to an agent: propose the entry in your report" % path
     if area == "provider" and verb == "accept":
         return "qargi provider accept records that you accept a provider with no read-only barrier and is not available to an agent"
     if area == "provider" and verb == "check":
@@ -2120,8 +2713,20 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    if area == "release" and any(w == "site" for w in words[1:4]):
+        return "qargi release site commits the built documentation site on the lead's site branch and is not available to an agent; report that the site of the release needs building"
+    if area == "release" and any(w == "sign" for w in words[1:4]):
+        return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
+    # qargi env: show only reads files, so a member may run it. plan runs the project's dry-run command (make -n still runs $(shell ...) and + lines) and
+    # apply runs its bootstrap: both run project code, with the lead's rights and terminal, and are the lead's. A verb held in a variable could be either
+    if area == "env" and (verb in ENV_LEAD or builds_word(verb)):
+        return ("qargi env %s runs the project's dry-run or bootstrap command, which is project code, with the lead's rights, and is not available to an agent "
+                "(qargi env show only reads); report what you need in your task output" % (verb if verb in ENV_LEAD else "plan|apply"))
     if area == "release" and any(w == "publish" or "$" in w or "`" in w for w in words[1:4]):   # a verb held in a variable could be publish
         return "qargi release publish creates a GitHub release and is not available to an agent; report that the tag needs publishing"
+    if area == "feature" and verb == "park":
+        return OwnReason("qargi feature park resets the parking branch to develop and checks it out in the main checkout (and journals the move), which is the lead's to do; "
+                         "report in your task output that the main checkout needs parking")
     if area == "feature" and verb not in FEATURE_OPEN:
         return MarshalReason("qargi feature %s writes the feature marshal (the lead's record) and is not available to an agent (only %s are); %s"
                              % (verb, ", ".join(v for v in FEATURE_OPEN if v), MARSHAL_NOTE))
@@ -2447,7 +3052,7 @@ def clear_caches():
     _BRACE_WORK[0] = 0
     for cache in (_RESOURCE_DIRS, _ROOTS, _KEY_DIRS, _STATE):          # read from the library, the environment and the state: a judge that outlives one call must not keep them
         cache.clear()
-    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps):
+    for f in (real_dir, resolve, run_like, in_a_clone, run_dir, protected, key_named, ability_of, run_class, brace_expand, run_tmps, pass_writes):
         f.cache_clear()
 
 
@@ -2483,7 +3088,8 @@ def judge(call):
 
 
 QUOTED = re.compile(r"[\"']|<<")
-TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too: if the verb is only text (a commit message, a note), "
+TEXT_HINT = (" The guard cuts a command at every ; && || | and newline, inside quotes and heredocs too (not when every command of the line is echo, cat, tee, grep "
+             "or git commit|log|status|diff|show|add, with no comment, backslash or substitution): if the verb is only text (a commit message, a note), "
              "write the text to a file with your file tool and commit with git commit -F FILE.")
 
 
@@ -2494,7 +3100,7 @@ def decide_call(call):
         return "qargi guard: %s. Agents never push; return patches instead.%s" % (why, hint)
     why = skill_refusal(call)
     if isinstance(why, MarshalReason):
-        return "qargi guard: %s.%s" % (why, hint if type(why) is MarshalReason else "")
+        return "qargi guard: %s.%s" % (why, hint if type(why) in (MarshalReason, TextReason) else "")
     if why:
         return ("qargi guard: %s. Only a person, through qargi's own skills, changes a skill; propose the change in your report.%s" % (why, hint))
     why = review_refusal(call)

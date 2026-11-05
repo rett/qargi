@@ -15,6 +15,51 @@ chk() { # name expected(0|1) jq-filter
 chk "valid template"                0 '.'
 chk "placeholder repo url"          1 '.repo.url="https://github.com/OWNER/REPO"'
 chk "no long-lived branches"        1 '.repo.long_lived=[]'
+chk "repo.detached: a branch name"  0 '.repo.detached=["docs-site","site/pages"]'
+chk "repo.detached: not a list"     1 '.repo.detached="docs-site"'
+chk "repo.detached: a git-flow name" 1 '.repo.detached=["develop"]'
+chk "repo.detached: a feature name" 1 '.repo.detached=["feature/docs"]'
+chk "repo.detached: a duplicate"    1 '.repo.detached=["docs","docs"]'
+chk "repo.detached: a bad name"     1 '.repo.detached=["a b"]'
+chk "repo.parking_branch: a name"   0 '.repo.parking_branch="rest"'
+chk "repo.parking_branch: develop"  1 '.repo.parking_branch="develop"'
+chk "repo.parking_branch: not a string" 1 '.repo.parking_branch=3'
+chk "repo.parking_branch: long-lived" 1 '.repo.long_lived=["master","develop","rest"] | .repo.parking_branch="rest"'
+chk "repo.parking_branch: detached" 1 '.repo.detached=["rest"] | .repo.parking_branch="rest"'
+chk "branches: both keys"           0 '.branches={delete_merged:"local+remote",push_features:"when-shared"}'
+chk "branches.delete_merged: bad"   1 '.branches={delete_merged:"remote"}'
+chk "branches.push_features: bad"   1 '.branches={push_features:"yes"}'
+chk "branches: unknown key"         1 '.branches={keep:true}'
+chk "branches: not an object"       1 '.branches="local"'
+chk "worktrees.root: absolute"      0 '.worktrees={root:"/tmp/worktrees"}'
+chk "worktrees.root: relative"      1 '.worktrees={root:"worktrees"}'
+chk "worktrees.root: empty"         1 '.worktrees={root:""}'
+chk "worktrees.root: unknown key"   1 '.worktrees={path:"/tmp/x"}'
+chk "worktrees.root: in the repo"   1 '.repo.path="/tmp/qrepo" | .worktrees={root:"/tmp/qrepo/wt"}'
+chk "packs.none: true"              0 '.packs={none:true}'
+chk "packs.none: false"             0 '.packs={none:false}'
+chk "packs.none: not a boolean"     1 '.packs={none:"yes"}'
+chk "packs: unknown key"            1 '.packs={off:true}'
+chk "packs: not an object"          1 '.packs=true'
+GO='{kind:"go",name:"github.com/acme/lint/cmd/acme-lint",version:"v1.2.0"}'
+BIN='{kind:"binary",name:"acme-fmt",version:"2.0.1",url:"https://downloads.example.test/acme-fmt-2.0.1",sha256:"'"$(printf 'a%.0s' $(seq 64))"'"}'
+SUB='{kind:"submodule",name:"acme-test",path:"vendor/acme-test"}'
+chk "roles.R.tools: the three kinds" 0 ".roles.build.tools=[$GO,$BIN,$SUB]"
+chk "roles.R.tools: empty"           0 '.roles.build.tools=[]'
+chk "roles.R.tools: not a list"      1 '.roles.build.tools={}'
+chk "roles.R.tools: apt is no kind"  1 '.roles.build.tools=[{kind:"apt",name:"jq"}]'
+chk "roles.R.tools: go unpinned"     1 ".roles.build.tools=[$GO | .version=\"latest\"]"
+chk "roles.R.tools: go version in name" 1 ".roles.build.tools=[$GO | .name=\"github.com/acme/lint@v1.2.0\"]"
+chk "roles.R.tools: binary no sha256" 1 ".roles.build.tools=[$BIN | del(.sha256)]"
+chk "roles.R.tools: binary bad sha256" 1 ".roles.build.tools=[$BIN | .sha256=\"abc\"]"
+chk "roles.R.tools: binary url not http" 1 ".roles.build.tools=[$BIN | .url=\"ftp://x/y\"]"
+chk "roles.R.tools: submodule no path" 1 ".roles.build.tools=[$SUB | del(.path)]"
+chk "roles.R.tools: submodule path .." 1 ".roles.build.tools=[$SUB | .path=\"vendor/../x\"]"
+chk "roles.R.tools: unknown key"     1 ".roles.build.tools=[$GO | .url=\"https://x\"]"
+chk "roles.R.tools: twice"           1 ".roles.build.tools=[$GO,$GO]"
+chk "roles.R.tools: same in two roles" 0 ".roles.build.tools=[$GO] | .roles.write.tools=[$GO]"
+chk "roles.R.tools: two roles disagree" 1 ".roles.build.tools=[$GO] | .roles.write.tools=[$GO | .version=\"v1.3.0\"]"
+chk "roles.R.go is gone"             1 '.roles.build.go=["github.com/acme/lint@v1.2.0"]'
 chk "unknown role"                  1 '.roles.fresh=.roles.build'
 chk "a base as a role entry"        0 '.roles.worker=.roles.build | .roles.reviewer=.roles.build'
 chk "no roles"                      1 '.roles={}'
@@ -27,7 +72,50 @@ chk "bad skill"                     1 '.roles.write.skills=["bash"]'
 chk "zero budget"                   1 '.budget_cents=0'
 chk "bad store id"                  1 '.memory.memory_store="x"'
 chk "empty store ids allowed"       0 '.memory={memory_store:"",reference_store:""}'
-chk "bad memory.tiers key"          1 '.memory.tiers={bogus:{path:"/x"}}'
+SIGN='{key:"~/.ssh/relkey",namespace:"relsign",files:["dist/release/SHA256SUMS"],verify_command:["make","release-verify"]}'
+chk "release signing answers"       0 ".release={sign:$SIGN, assets:[\"dist/release/a.tar.gz\"], notes_file:\"dist/NOTES-{version}.md\"}"
+chk "release: unknown key"          1 '.release={sing:{}}'
+chk "release.sign: a public key"    1 ".release={sign:($SIGN|.key=\"~/.ssh/relkey.pub\")}"
+chk "release.sign: a relative key"  1 ".release={sign:($SIGN|.key=\"relkey\")}"
+chk "release.sign: no namespace"    1 ".release={sign:($SIGN|del(.namespace))}"
+chk "release.sign: a file outside"  1 ".release={sign:($SIGN|.files=[\"../SHA256SUMS\"])}"
+chk "release.sign: absolute file"   1 ".release={sign:($SIGN|.files=[\"/etc/passwd\"])}"
+chk "release.sign: verify is text"  1 ".release={sign:($SIGN|.verify_command=\"make release-verify\")}"
+chk "release.assets: a label (#)"   1 '.release={assets:["a.tar.gz#label"]}'
+chk "release.notes_file: absolute"  1 '.release={notes_file:"/tmp/notes.md"}'
+chk "release layout answers"        0 '.release={version_file:"none", changelog:{unreleased:"## {version} (unreleased)", released:"## {version} ({date})"}, man_pages:["docs/acme.1"], test_command:["make","check"], preflight:["make","check-release","{version}"]}'
+chk "release.version_file: a path"  0 '.release={version_file:"conf/version.txt"}'
+chk "release.version_file: outside" 1 '.release={version_file:"../VERSION"}'
+chk "release.changelog: unknown"    1 '.release={changelog:{head:"## x"}}'
+chk "changelog.numbered: true"      0 '.release={changelog:{numbered:true}}'
+chk "changelog.numbered: not bool"  1 '.release={changelog:{numbered:"yes"}}'
+chk "release.changelog: not object" 1 '.release={changelog:"## [Unreleased]"}'
+chk "changelog.unreleased: no head" 1 '.release={changelog:{unreleased:"Unreleased"}}'
+chk "changelog.unreleased: {date}"  1 '.release={changelog:{unreleased:"## Next {date}"}}'
+chk "changelog.released: no version" 1 '.release={changelog:{released:"## Released {date}"}}'
+chk "changelog.released: other {x}" 1 '.release={changelog:{released:"## {version} {when}"}}'
+chk "release.man_pages: not a list" 1 '.release={man_pages:"man/acme.1"}'
+chk "release.man_pages: outside"    1 '.release={man_pages:["../acme.1"]}'
+chk "release.test_command: a line"  0 '.release={test_command:"make check"}'
+chk "release.test_command: empty"   1 '.release={test_command:[]}'
+chk "release.test_command: number"  1 '.release={test_command:5}'
+chk "release.preflight: text"       1 '.release={preflight:"make check"}'
+chk "release.preflight: empty list" 1 '.release={preflight:[]}'
+chk "upstream: remote and branch"   0 '.upstream={remote:"upstream",branch:"main"}'
+chk "upstream: every key"           0 '.upstream={remote:"upstream",branch:"main",into:"vendor",overlay_check:["make","check"]}'
+chk "upstream: absent is fine"      0 'del(.upstream)'
+chk "upstream: not an object"       1 '.upstream="upstream"'
+chk "upstream: unknown key"         1 '.upstream={remote:"upstream",branch:"main",url:"https://example.net/x"}'
+chk "upstream: no remote"           1 '.upstream={branch:"main"}'
+chk "upstream: no branch"           1 '.upstream={remote:"upstream"}'
+chk "upstream.remote: a bad name"   1 '.upstream={remote:"up stream",branch:"main"}'
+chk "upstream.branch: a bad name"   1 '.upstream={remote:"upstream",branch:"a..b"}'
+chk "upstream.into: develop"        1 '.upstream={remote:"upstream",branch:"main",into:"develop"}'
+chk "upstream.into: a feature name" 1 '.upstream={remote:"upstream",branch:"main",into:"feature/up"}'
+chk "upstream.into: the parking branch" 1 '.upstream={remote:"upstream",branch:"main",into:"scratch"}'
+chk "upstream.overlay_check: text"  1 '.upstream={remote:"upstream",branch:"main",overlay_check:"make check"}'
+chk "upstream.overlay_check: empty word" 1 '.upstream={remote:"upstream",branch:"main",overlay_check:["make",""]}'
+chk "bad memory.tiers key"        1 '.memory.tiers={bogus:{path:"/x"}}'
 chk "absolute repo tier path"       1 '.memory.tiers={repo:{path:"/abs/mem"}}'
 # profiles: each bad shape is refused with its own message
 chkm() { # name jq-filter expected-message-prefix
@@ -52,6 +140,13 @@ chkm "abilities not a list"         '.profiles.tiny={base:"worker",abilities:"bu
 chkm "abilities unknown role"       '.profiles.tiny={base:"worker",abilities:["nosuch"]}' 'profiles.tiny.abilities: '
 chkm "abilities class conflict"     '.profiles.tiny={base:"worker",abilities:["review"]}' 'profiles.tiny.abilities: review is read-only, but base worker is write'
 chkm "unknown profile key"          '.profiles.tiny={base:"worker",colour:"red"}' 'profiles.tiny.colour: '
+# env: the overrides of the detected environment commands (lib/env.py)
+chk  "env overrides"                 0 '.env={doctor_command:"make doctor",bootstrap_command:"make bootstrap",dry_run_command:"make -n bootstrap",known_failures:["expected: x"]}'
+chkm "env not an object"            '.env="make"' 'env: '
+chkm "env unknown key"              '.env={colour:"red"}' 'env.colour: unknown key'
+chkm "env command not a string"     '.env={doctor_command:["make"]}' 'env.doctor_command: '
+chkm "env command with a newline"   '.env={bootstrap_command:"a\nb"}' 'env.bootstrap_command: '
+chkm "env known_failures not a list" '.env={known_failures:"x"}' 'env.known_failures: '
 # models.accept_no_barrier: what `qargi provider accept` records, exactly {by, at, reason} per surface
 ACC='{by:"rett",at:"2026-10-31T12:00:00Z",reason:"review on cloud, no barrier, my call"}'
 chk  "accept_no_barrier recorded"   0 ".models.accept_no_barrier.cloud=$ACC"
@@ -83,6 +178,18 @@ fnd "validate: models without a provider is a finding"       '.models={}'       
 fnd "validate: a blank provider is a finding"                '.models.provider="  "'     yes
 fnd "validate: a provider that is not a string is a finding" '.models.provider=3'        yes
 fnd "validate: a provider named is no finding"               '.models.provider={local:"claude-code",cloud:"claude-platform"}' no
+# a pack linked to a role of the project that the library does not hold is a WARN line; validate still exits 0
+mkdir -p "$T/c/packs/skills/present" "$T/c/packs/tools"
+jq -n '{links:[{pack:"skill:present",scope:"user"},{pack:"skill:gone",scope:"project",project:"demo"},{pack:"tool:lost",scope:"project-role",project:"demo",role:"write"},
+  {pack:"skill:other",scope:"project",project:"elsewhere"},{pack:"skill:norole",scope:"user-role",role:"fresh"},{pack:"skill:gone-all",scope:"user"}]}' > "$T/c/packs/links.json"
+jq '.models.provider={local:"claude-code",cloud:"claude-platform"}' <<<"$base" > "$T/a.json"
+out=$($DA project validate "$T/a.json" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -qE '^WARN: skill:gone is linked to .*build.* of demo but is not in the pack library' <<<"$out" && grep -qE '^WARN: tool:lost is linked to write of demo ' <<<"$out" \
+  && grep -qE '^WARN: skill:gone-all is linked to ' <<<"$out" && [ "$(grep -c '^WARN:' <<<"$out")" = 3 ] && grep -qx ok <<<"$out"; } \
+  && echo "ok   validate warns of a linked pack the library does not hold (once per pack, with its roles) and still exits 0" || { echo "FAIL pack WARN (exit $rc): $out"; fail=1; }
+mkdir -p "$T/c/packs/skills/gone" "$T/c/packs/skills/gone-all"; echo '{}' > "$T/c/packs/tools/lost.json"
+out=$($DA project validate "$T/a.json" 2>&1); [ "$?" = 0 ] && ! grep -q '^WARN:' <<<"$out" && echo "ok   with the packs in the library the warnings are gone" || { echo "FAIL pack WARN gone: $out"; fail=1; }
+rm -rf "$T/c/packs"
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
@@ -98,10 +205,14 @@ done
 msg=$($DA project set demo deployment dep_0123 2>&1); grep -q "applies to the next provision" <<<"$msg" && echo "ok   set deployment to a cloud deployment keeps the provision note" || { echo "FAIL set cloud deployment note: $msg"; fail=1; }
 $DA project set demo roles.build.effort turbo >/dev/null 2>&1 && { echo "FAIL set invalid accepted"; fail=1; } || echo "ok   set refuses an invalid value"
 [ "$(jq -r .roles.build.effort $T/c/projects/demo.json)" = high ] && echo "ok   refused set changed nothing" || { echo "FAIL set changed the file"; fail=1; }
-# marshal.ttl is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
-$DA project set demo marshal.ttl 20 >/dev/null 2>&1 && [ "$(jq .marshal.ttl $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.ttl" || { echo "FAIL set marshal.ttl"; fail=1; }
+# marshal.lease_minutes is a project answer; the backend switch is not (it is set with a plan and an audit line by the marshal verbs)
+$DA project set demo marshal.lease_minutes 20 >/dev/null 2>&1 && [ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   set marshal.lease_minutes" || { echo "FAIL set marshal.lease_minutes"; fail=1; }
+for bad in 0 -3 1441 abc 2.5 '"15"'; do
+  $DA project set demo marshal.lease_minutes "$bad" >/dev/null 2>&1 && { echo "FAIL set marshal.lease_minutes $bad accepted"; fail=1; } || echo "ok   set refuses marshal.lease_minutes $bad"
+done
+[ "$(jq .marshal.lease_minutes $T/c/projects/demo.json)" = 20 ] && echo "ok   refused lease values changed nothing" || { echo "FAIL a refused lease value changed the file"; fail=1; }
 cp $T/c/projects/demo.json $T/before.json
-for k in marshal.backend marshal.ttl.x marshal; do
+for k in marshal.backend marshal.lease_minutes.x marshal; do
   v=refs; [ "$k" = marshal ] && v='{"backend":"refs"}'
   msg=$($DA project set demo "$k" "$v" 2>&1) && { echo "FAIL set $k accepted"; fail=1; } || { grep -q "marshal enable" <<<"$msg" && cmp -s $T/before.json $T/c/projects/demo.json && echo "ok   set refuses $k and points to the marshal verbs" || { echo "FAIL set $k: $msg"; fail=1; }; }
 done

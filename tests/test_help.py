@@ -129,7 +129,7 @@ class Render(unittest.TestCase):
         self.assertIn("guard", C.TOPICS)
         title, paras = C.TOPICS["guard"]
         text = " ".join(paras)
-        self.assertLessEqual(len(text.split()), 330)
+        self.assertLessEqual(len(text.split()), 400)
         for needle in ("QARGI_NESTED", "plan token", "OUT", "local verify", "report", "push", "quotes", "heredoc", "substitution"):
             self.assertIn(needle, text)
         self.assertIn("guard", H.show_overview())
@@ -151,6 +151,7 @@ class Render(unittest.TestCase):
         pairs = re.findall(r'\("([a-z]+)", "([a-z-]+)"\)', m.group(1))
         self.assertGreaterEqual(len(pairs), 6)
         refused |= {v for _, v in pairs}
+        refused |= set(G.ENV_LEAD)                                         # env plan and apply
         refused |= {"publish", "login", "unset", "accept"}                # release publish, cloud set|unset|login, provider accept
         missing = sorted(v for v in refused if v not in words and v not in self.GUARD_TOPIC_EXEMPT)
         self.assertFalse(missing, "the guard topic does not name %s (add them to the topic, or to GUARD_TOPIC_EXEMPT with a reason)" % missing)
@@ -216,6 +217,18 @@ class Render(unittest.TestCase):
             r = subprocess.run(["groff", "-k", "-ww", "-man", "-Tutf8"], input=page, capture_output=True, text=True)
             self.assertEqual(r.stderr, "", "groff warnings")
 
+    def test_man_page_is_written_by_a_copy_without_skills(self):
+        # a copy of lib alone (a partial or packaged one) writes the whole page; SEE ALSO names the skills generically
+        t = tempfile.mkdtemp()
+        try:
+            shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(t, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+            r = subprocess.run([sys.executable, os.path.join(t, "lib", "help.py"), "man"], capture_output=True, text=True, cwd=t, stdin=subprocess.DEVNULL)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(r.stdout.startswith(".TH QARGI 1 "), r.stdout[:80])
+            self.assertIn("The qargi skills, loaded by the lead's session", r.stdout)
+        finally:
+            shutil.rmtree(t)
+
 
 class Env(unittest.TestCase):
     def setUp(self):
@@ -250,7 +263,7 @@ class Env(unittest.TestCase):
 class Complete(Env):
     def test_commands_verbs_and_values(self):
         self.assertIn("lead", H.complete([""]))
-        self.assertEqual(H.complete(["lead", ""]), ["grant", "status", "revoke"])
+        self.assertEqual(H.complete(["lead", ""]), ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertEqual(H.complete(["lead", "grant", ""]), ["alpha"])   # only projects that define teams
         self.assertEqual(H.complete(["team", "brief", "alpha", ""]), ["code-docs"])
         self.assertEqual(H.complete(["instances", "show", ""]), ["alpha-build", "alpha-write"])
@@ -282,7 +295,7 @@ class Shells(Env):
 
     def test_described_output(self):
         out = H.complete_described(["lead", ""])
-        self.assertEqual([c for c, _ in out], ["grant", "status", "revoke"])
+        self.assertEqual([c for c, _ in out], ["usage", "compact-check", "grant", "status", "revoke"])
         self.assertTrue(all(d for _, d in out))
         r = subprocess.run([BIN, "__complete", "--described", "lead", ""], capture_output=True, text=True)
         self.assertIn("grant\tGuided", r.stdout)
@@ -376,7 +389,8 @@ class Rich(Env):
 
     def test_project_answers_and_their_values(self):
         keys = H.complete(["project", "set", "alpha", ""])
-        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge"):
+        for k in ("budget_cents", "lead.push.local", "roles.build.effort", "roles.write.model", "teams.code-docs.members", "lead.push.merge",
+                  "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.man_pages", "release.test_command", "release.preflight"):
             self.assertIn(k, keys)
         self.assertEqual(dict(H.complete_described(["project", "set", "alpha", ""]))["budget_cents"], "now 1500")
         self.assertEqual(H.complete(["project", "set", "alpha", "roles.build.effort", ""]), list(C.EFFORTS))

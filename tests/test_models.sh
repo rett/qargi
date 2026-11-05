@@ -125,7 +125,7 @@ out=$(wm 2>&1)
 grep -E '^ *mix ' <<<"$out" | grep -q 'write class; never serves review' && ok "models: a mixed-class member is flagged write class" || no "mixed flag: $out"
 wd agent add gone --project wbase --roles test >/dev/null 2>&1; rm -f "$W/repow/.claude/agents/gone.md"
 out=$(wm 2>&1); rc=$?
-{ [ $rc = 0 ] && grep -E '^ *gone ' <<<"$out" | grep -q 'definition file missing'; } && ok "models: a member whose definition file is missing is flagged" || no "missing file: $out"
+{ [ $rc = 0 ] && grep -E '^ *gone ' <<<"$out" | grep -q 'MISSING: the file is not there'; } && ok "models: a member whose definition file is missing is flagged" || no "missing file: $out"
 wd agent add deepthought --project wbase --roles review --model claude-fable-5-1 >/dev/null 2>&1; wd agent add sage --project wbase --roles review --model fable >/dev/null 2>&1; wd agent add researcher --project wbase --roles review --model fable >/dev/null 2>&1
 out=$(wm 2>&1)
 { grep -E '^ *deepthought ' <<<"$out" | grep -q frontier && grep -E '^ *sage ' <<<"$out" | grep -q frontier && ! grep -E '^ *researcher +review +fable' <<<"$out" | grep -q frontier; } && ok "models: a member on the frontier model is flagged unless it is the researcher" || no "frontier: $out"

@@ -320,5 +320,30 @@ class Install(Env):
         self.assertEqual(self.rd(self.agent), before)
 
 
+class ShippedCatalog(unittest.TestCase):
+    """catalog/tools.json, the file qargi ships: every entry has the fields its kind needs and the ids are unique."""
+    NEED = {"skill": ("url", "path", "name"), "mcp": ("name", "url", "tools", "vault_ids"), "package": ("manager", "packages"), "agent-tool": ("target", "tool")}
+    STACKS = {"go", "python", "node", "rust", "jekyll", "bats", "containers", "actions", "man", "shell"}   # what detect_stack can see
+
+    def test_every_entry_fits_the_schema(self):
+        with open(os.path.join(os.path.dirname(BIN), "..", "catalog", "tools.json")) as f:
+            tools = json.load(f)["tools"]
+        ids = [t["id"] for t in tools]
+        self.assertEqual(len(ids), len(set(ids)), "duplicate ids")
+        for t in tools:
+            self.assertIn(t["kind"], self.NEED, t["id"])
+            for k in ("id", "name", "summary", "tags", "roles", "stack", "risk", "install", "scope_hint"):
+                self.assertIn(k, t, t["id"] + " lacks " + k)
+            for k in self.NEED[t["kind"]]:
+                self.assertIn(k, t["install"], t["id"] + " install lacks " + k)
+            self.assertIn(t["risk"], ("low", "medium", "high"), t["id"])
+            self.assertIn(t["scope_hint"], ("user", "user-role", "project", "project-role"), t["id"])
+            self.assertTrue(set(t["roles"].values()) <= {"necessary", "recommended", "optional"}, t["id"])
+            self.assertTrue(t["id"].startswith({"skill": "skill-", "mcp": "mcp-", "package": "pkg-", "agent-tool": "agent-"}[t["kind"]]), t["id"])
+            if t["kind"] == "package":
+                self.assertTrue(t["install"]["packages"] and all(isinstance(x, str) and x for x in t["install"]["packages"]), t["id"])
+                self.assertTrue(set(t["stack"]) <= self.STACKS | {"actions"}, t["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

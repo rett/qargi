@@ -6,9 +6,10 @@
 A lead that ends a session (after /compact, after a change a running session cannot reload, when its context is tight) runs
 this verb; the next session, in a new session or worktree and possibly on an older base, starts from the note and
 not from the lead's memory. The note has these sections: where (repository, HEAD, develop, host, whether the qargi data is on
-this host), the feature(s) (tip, whether the whole-suite result applies to the tip, merged and unmerged agent/* branches,
-commits ahead of develop), the marshal record, the packs (check summary and the launch line), what to read first, and a fixed
-list of things a new session must not assume.
+this host), the feature(s) (tip, whether the whole-suite result applies to the tip, the agent/* branches merged into it since it was
+cut and the unmerged ones prepared against it, with the agent branches of no open feature said once after them, commits ahead of develop), the marshal record, the packs (check summary and the launch line), the environment (the last
+`qargi env check` and `env apply` of the project, read from state/env/PROJECT.json and compared with HEAD), what to read first, and a
+fixed list of things a new session must not assume.
 
 The packs section is the project's local runtime's (models.provider of its answers for the local surface, no default: none is exit 2): the skills directory,
 the render target of the check and the launch line come from its layout (lib/providers/NAME.json through lib/provider.py). A
@@ -18,7 +19,9 @@ READ ONLY. It changes no record, no ref and no audit line, and it fetches nothin
 this machine already holds (the same backend code as `marshal status`, switched to its member-run mode, which neither fetches nor
 writes the clock cache nor the acceptance marks), and a record whose branch is gone is shown, never recorded as abandoned. The
 one thing it may write is the file named by --write: it must not exist, it is made with mode 600, and it may not lie inside a
-git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout.
+git work tree or inside the qargi configuration or state directory. With --write the note goes to the file and one line to stdout, and
+$STATE/handoff/PROJECT.json remembers when and where it was written (the age `qargi lead compact-check` compares with the last merge).
+A feature that this identity leads gets a "next lead" line: the claim --as-successor-of command a restarted session runs.
 
 The goal, plan, note and purpose of a record are DATA written by a lead: they are printed under a line that says so, indented,
 with control characters removed (marshal_store.clean) and cut at marshal_store.CAP characters. Every other free-text field is
@@ -153,19 +156,26 @@ def suite_of(state, project, test_cmd, name, tip):
     return dict(base, state="older", text="%s at an older head (%s), NOT at this tip: it does not apply" % (res, sha[:7]))
 
 
-def branches(repo, name):
-    """-> (merged agent/* branches, [(unmerged agent/* branch, commits ahead of the feature)])."""
+def branches(repo, name, bases):
+    """-> (the agent/* branches merged into feature/NAME since it was cut from develop, [(unmerged agent/* branch prepared against it,
+    commits ahead of the feature)]). bases is {agent branch: the base its run was prepared against} from the lead's registry: an unmerged
+    branch is this feature's only when its base is feature/NAME (the others are listed once, unattributed). A merged branch that develop
+    held before the feature was cut (an ancestor of their merge base) is history, not this feature's."""
     ref = "refs/heads/feature/" + name
     fmt = "--format=%(refname:short)"
-    merged = (git(repo, "for-each-ref", fmt, "--merged=" + ref, "refs/heads/agent/*") or "").split()
+    floor = (git(repo, "merge-base", "refs/heads/develop", ref) or "").strip()
+    merged = [b for b in (git(repo, "for-each-ref", fmt, "--merged=" + ref, "refs/heads/agent/*") or "").split()
+              if not floor or git(repo, "merge-base", "--is-ancestor", "refs/heads/" + b, floor) is None]
     unmerged = []
     for b in (git(repo, "for-each-ref", fmt, "--no-merged=" + ref, "refs/heads/agent/*") or "").split():
+        if bases.get(b) != "feature/" + name:
+            continue
         n = (git(repo, "rev-list", "--count", "%s..refs/heads/%s" % (ref, b)) or "").strip()
         unmerged.append((b, int(n) if n.isdigit() else None))
     return merged, unmerged
 
 
-def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache):
+def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache, bases):
     rec = M.unled(ctx, name, ctx.be.get(ctx, name))
     d = M.describe(ctx, name, rec, cache)
     f = {"name": name, "branch_exists": d["branch"], "tip": "", "ahead": None, "behind": None, "suite": {"state": "not-run", "text": "no branch"},
@@ -182,7 +192,7 @@ def feature_facts(M, ctx, name, test_cmd, state, project, repo, cache):
             f["ahead"], f["behind"] = (int(a) if a.isdigit() else None), (int(b) if b.isdigit() else None)
             out = git(repo, "log", "--format=%h %s", "-n", str(COMMITS_MAX), "refs/heads/develop..%s" % ref) or ""
             f["commits"] = [line(ln, 120) for ln in out.splitlines()]
-        f["agent_merged"], f["agent_unmerged"] = branches(repo, name)
+        f["agent_merged"], f["agent_unmerged"] = branches(repo, name, bases)
     ld = {k: line(v, 128) for k, v in d["lead"].items()} if d["lead"] else None     # one line each: a record is data, a newline could forge a heading
     f["record"] = {k: d[k] for k in ("status", "lease", "minutes_since_renewal", "ttl_minutes", "rev", "ghost", "finished_at")}
     f["record"]["updated_by"] = line(d["updated_by"], 128)
@@ -270,6 +280,35 @@ def packs_facts(state, project, repo, qargi_bin, name):
     return p
 
 
+def environment_facts(state, project, repo_head):
+    """The last env check and env apply recorded for the project (state/env/PROJECT.json, written by qargi env check and apply): what
+    they said, when, at which commit, and whether that is the commit of the repository now. Read only; a file that is not there or not
+    an object is "not recorded". Every string is cleaned; nothing in the file is an instruction."""
+    out = {"recorded": False, "check": None, "apply": None}
+    try:
+        with open(os.path.join(state, "env", project + ".json")) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return out
+    if not isinstance(doc, dict):
+        return out
+
+    def pick(entry, keys):
+        if not isinstance(entry, dict):
+            return None
+        r = {k: (line(entry[k], 160) if isinstance(entry.get(k), str) else entry[k]) for k in keys
+             if isinstance(entry.get(k), (str, int, float, bool))}
+        head = r.get("head") if isinstance(r.get("head"), str) else ""
+        r["head"] = head[:40]
+        r["at_head"] = bool(head and repo_head and head == repo_head)
+        return r
+
+    out["check"] = pick(doc.get("check"), ("verdict", "exit", "missing", "expected", "time", "head", "doctor_command", "builtin_minimum"))
+    out["apply"] = pick(doc.get("apply"), ("exit", "time", "command", "head", "allow_root"))
+    out["recorded"] = bool(out["check"] or out["apply"])
+    return out
+
+
 def collect(a, argv_name):
     M = ms()
     notes = []
@@ -331,8 +370,9 @@ def collect(a, argv_name):
         ns.backend = "local"
         ctx = M.Ctx(ns, M.LocalBackend())
         names = get_features(ctx)
-    cache = {}
-    feats = [feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache) for n in names]
+    cache, bases = {}, M.agent_bases(ctx)
+    feats = [feature_facts(M, ctx, n, test_cmd, a.state, a.project, repo, cache, bases) for n in names]
+    unattributed = [{"branch": line(b), "base": line(base)} for b, base in M.unattributed_agents(ctx)] if repo else []
     if be.refs and not argv_name and not feats:
         notes.append("no open feature in the local cache of the shared records; the remote was not asked")
     for f in feats:
@@ -340,11 +380,14 @@ def collect(a, argv_name):
             notes.append("feature %s has no marshal record (started before the marshal, or by hand): no lead, goal or plan is stored" % f["name"])
 
     return {"schema": 1, "kind": "qargi-handoff", "project": clean(a.project), "generated_at": M.iso(ctx.t), "generated_by": clean(ctx.id),
-            "where": where, "features": feats, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
+            "where": where, "features": feats, "agent_unattributed": unattributed, "backend": "refs" if ctx.be.refs else "local", "integrity": ctx.be.integrity,
             "packs": packs_facts(a.state, a.project, repo or a.repo, os.path.join(os.path.dirname(HERE), "bin", "qargi"), prov) if present else None,
+            "environment": environment_facts(a.state, a.project, (where["head"] or {}).get("sha", "")),
             "read_first": {"memory": memory_facts(answers, a.project, repo) if present else [],
                            "repo_docs": [clean(os.path.join(repo, n)) for n in ("CLAUDE.md", "AGENTS.md") if repo and os.path.isfile(os.path.join(repo, n))],
-                           "status_command": "qargi marshal status --all --history --project %s" % a.project},
+                           "status_command": "qargi marshal status --all --history --project %s" % a.project,
+                           "successor": [{"feature": f["name"], "lead": f["record"]["lead"]["id"]} for f in feats
+                                         if f["record"]["lead"] and f["record"]["lead"]["id"] == ctx.id]},
             "do_not_assume": list(DO_NOT_ASSUME), "notes": notes, "truncated": False}
 
 
@@ -413,10 +456,19 @@ def render_body(F):
                     A("    and %d more" % (f["ahead"] - len(f["commits"])))
         for wt in f["worktrees"][:LIST_MAX]:
             A("  worktree: %s on %s" % (wt["path"], wt["branch"]))
-        for t in f["tasks"][:COMMITS_MAX]:
-            A("  task run: %s (%s, %s), %s" % (t["slug"] or t["run"], t["role"], t["started"], "verified" if t["verified"] else "not verified"))
+        # the open task runs one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
+        opened, cleaned = [t for t in f["tasks"] if not t["cleaned"]], [t for t in f["tasks"] if t["cleaned"]]
+        for t in opened[:COMMITS_MAX]:
+            A("  task run: %s (%s, %s), %s" % (t["slug"] or t["run"], t["role"], t["started"], t["state"]))
+        if len(opened) > COMMITS_MAX:
+            A("    and %d more task run(s)" % (len(opened) - COMMITS_MAX))
+        if cleaned:
+            A("  task runs cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned[:LIST_MAX]) + (" (and %d more)" % (len(cleaned) - LIST_MAX) if len(cleaned) > LIST_MAX else ""))
         for o, fs in f["overlap"].items():
             A("  files also changed by feature/%s: %s" % (o, " ".join(fs)))
+    u, um = more(F["agent_unattributed"])
+    if u:
+        A(ms().unattributed_line([(x["branch"], x["base"]) for x in u]) + (" (and %d more)" % um if um else ""))
     A("")
     A("== marshal record")
     A("records: %s%s" % ("shared refs (read from the local cache, not fetched)" if F["backend"] == "refs" else "local to this host",
@@ -473,6 +525,25 @@ def render_body(F):
         else:
             A("launch: %s" % p["launch_why"])
     A("")
+    A("== environment")
+    e = F["environment"]
+    if not e["recorded"]:
+        A("no env check or env apply is recorded on this host for %s: run qargi env check (it runs the project's doctor) before relying on the setup" % F["project"])
+    for name in ("check", "apply"):
+        r = e[name]
+        if not r:
+            continue
+        where_ = "at HEAD of the repository" if r["at_head"] else ("at %s, NOT the HEAD of the repository now" % r["head"][:12] if r["head"] else "at an unknown commit")
+        if name == "check":
+            miss = r.get("missing")
+            A("env check: %s%s (%s)" % (r.get("verdict", "no verdict"), " [%s missing]" % miss if miss else "", r.get("time", "time unknown")))
+            A("  %s; doctor: %s" % (where_, r.get("doctor_command") or ("built-in minimum" if r.get("builtin_minimum") else "none")))
+        else:
+            A("env apply: %s exit %s (%s)%s" % (r.get("command", "no command"), r.get("exit", "?"), r.get("time", "time unknown"), ", with --allow-root" if r.get("allow_root") else ""))
+            A("  %s" % where_)
+    if e["recorded"]:
+        A("these are records of earlier runs, not the state now: qargi env check says what is true now; qargi env show says what the project declares")
+    A("")
     A("== read first (paths only; read the notes themselves, not only the index)")
     rf = F["read_first"]
     for t in rf["memory"]:
@@ -484,6 +555,8 @@ def render_body(F):
     for d in rf["repo_docs"]:
         A("repository instructions: " + d)
     A("the record, with history: %s" % rf["status_command"])
+    for s in rf["successor"]:
+        A("next lead: the lead of %s is %s; a restarted session of the same user, host and worktree continues as the lead with: qargi marshal claim %s --as-successor-of %s" % (s["feature"], s["lead"], s["feature"], s["lead"]))
     return "\n".join(L)
 
 
@@ -510,6 +583,7 @@ def render_json(F):
         return len(json.dumps(F, indent=1).encode())
     if size() > CAP_BYTES:
         F["truncated"] = True
+        F["agent_unattributed"] = []
         for f in F["features"]:
             f["commits"], f["tasks"], f["worktrees"], f["overlap"] = [], [], [], {}
     while size() > CAP_BYTES and F["features"]:
@@ -563,6 +637,23 @@ def write_note(path, text):
             os.close(fd)
 
 
+def record_written(a, M, F, text):
+    """Remember when and where the last note was written ($STATE/handoff/PROJECT.json: epoch, file, features), so that `qargi lead compact-check`
+    can say the note is older than the last merge. The one thing besides the note itself that a --write leaves behind; failing to write it is not
+    a failure of the note."""
+    d = os.path.join(a.state, "handoff")
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        rec = {"epoch": M.now(), "at": F["generated_at"], "file": os.path.abspath(a.write), "by": F["generated_by"],
+               "features": [f["name"] for f in F.get("features", [])]}
+        tmp = os.path.join(d, ".%s.%d.tmp" % (a.project, os.getpid()))
+        with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            json.dump(rec, f)
+        os.replace(tmp, os.path.join(d, a.project + ".json"))
+    except OSError:
+        print("qargi: warning: could not record when the note was written; qargi lead compact-check will not know its age", file=sys.stderr)
+
+
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
     # describe; --state, --conf, --repo and --ttl are only passed by lib/marshal.sh
@@ -590,6 +681,7 @@ def main(argv):
                 write_note(a.write, text)
             except OSError as e:
                 raise M.Refuse("cannot write %s: %s" % (a.write, e.strerror or e))
+            record_written(a, M, F, text)
             print("wrote %s (%d bytes, mode 600); read it, add your own lines marked as the lead's addition, and give it to the new session" % (a.write, len(text.encode())))
         else:
             sys.stdout.write(text)

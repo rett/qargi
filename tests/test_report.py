@@ -209,6 +209,22 @@ class Local(unittest.TestCase):
         self.assertIn("from-registry", out)
         self.assertIn("directory gone 1", out)
         self.assertIn("started 10m ago", out)
+        self.assertIn("directory gone (a reboot", out)
+        self.assertIn("gone-job", out)
+
+    def test_a_vanished_run_is_named_with_its_saved_copy_and_a_cleaned_one_is_not_listed(self):
+        self.register(os.path.join(self.root, "qargi.vanish"), "vanished-job", 30)
+        os.makedirs(os.path.join(self.state, "runs", "qargi.vanish", "out"))
+        with open(os.path.join(self.state, "local-runs.jsonl"), "a") as f:
+            f.write(json.dumps({"run": os.path.join(self.root, "qargi.clean"), "slug": "cleaned-job", "ability": "build", "base": "main",
+                                "started": ts(40, datetime.now(timezone.utc)), "cleaned": ts(5, datetime.now(timezone.utc))}) + "\n")
+        out = self.report().stdout
+        self.assertIn("directory gone 1", out)
+        self.assertIn("vanished-job", out)
+        self.assertIn("review apply --from-saved qargi.vanish", out)
+        self.assertNotIn("cleaned-job", out)
+        rep = json.loads(self.report("--json").stdout)
+        self.assertEqual([r["saved"] for r in rep["local"]["runs"]], [os.path.join(self.state, "runs", "qargi.vanish")])
 
     def test_since_and_instance(self):
         self.register(make_run(self.root, "qargi.busy", 2, None, "l", "recent"), "recent", 10)

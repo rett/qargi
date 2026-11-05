@@ -299,6 +299,45 @@ done
 chk >/dev/null; rc=$?; [ "$rc" = 0 ] && [ "$(st acc-strict)" = accepted ] && ok "(accepted again, and check passes)" || no "accepted again: rc=$rc $(line acc-strict)"
 rm -rf "$CS"; mk "$CS" mine; mk "$CS" other-mine; rm -f "$ACC"
 
+# --- a pack copied out of the library, imported again and rendered: one record rule for the import, the hashes, the render and the audit
+mkskill s-cp; rm -rf "$T/src-cp"; mkdir -p "$T/src-cp"; cp -r "$T/c/packs/skills/s-cp" "$T/src-cp/s-cp"; $DA skill remove s-cp >/dev/null
+out=$($DA skill import "$T/src-cp/s-cp" --compatible any 2>&1)
+grep -q "^note: the source's top-level .pack.json is qargi's own record" <<<"$out" && ok "importing a pack copied out of the library says its record is ignored" || no "import note: $out"
+$DA skill import "$T/src-cp/s-cp" --compatible any --plan "$(tok_of <<<"$out")" --approved test >/dev/null 2>&1 || no "import of the copy"
+$DA skill link s-cp --scope project --project alpha >/dev/null
+$DA packs apply --target claude-code alpha --plan "$($DA packs apply --target claude-code alpha | tok_of)" --approved test >/dev/null
+rm -rf "$CS"
+chk >/dev/null; rc=$?; [ "$rc" = 0 ] && [ "$(st s-cp)" = qargi ] && ok "the imported copy is qargi in the render, and the check passes (render, drift and audit agree)" || no "check after the import: rc=$rc $(chk)"
+mkdir -p "$CS"; cp -r "$T/c/packs/skills/s-cp" "$CS/s-cp"; rm -f "$CS/s-cp/.pack.json"
+[ "$(st s-cp | sort -u)" = qargi ] && [ "$(st s-cp | wc -l)" = 2 ] && ok "a copy of it in the checkout is qargi too (the audit hashes it as the library's pack)" || no "s-cp: $(line s-cp)"
+rm -rf "$CS"; $DA skill unlink s-cp --scope project --project alpha >/dev/null; $DA skill remove s-cp >/dev/null
+$DA packs apply --target claude-code alpha --plan "$($DA packs apply --target claude-code alpha | tok_of)" --approved test >/dev/null
+mk "$CS" mine; mk "$CS" other-mine
+# a project no pack is linked to says so, before the missing render
+mk "$US" user-mine
+$DA packs check --target claude-code beta >"$T/beta.out" 2>&1; rc=$?; out=$(cat "$T/beta.out")
+grep -q "^no pack is linked to any role of beta" <<<"$out" && grep -q "^not applied: beta has no render yet (qargi packs apply --target claude-code beta)" <<<"$out" && ! grep -q "manifest missing" <<<"$out" && [ "$rc" = 0 ] \
+  && ok "packs check on a project never applied says so as its own state (exit 0, how to apply), not as a broken render" || no "beta check (rc=$rc): $out"
+grep -qE "^ +unmanaged +user-mine  \(" <<<"$out" && ok "and still lists the unmanaged user skills a member would load" || no "beta user skills: $out"
+# a render directory without its manifest is a broken render, not a project never applied
+mkdir -p "$T/s/render/beta/claude-code"; out=$(chk beta); rc=0; $DA packs check --target claude-code beta >/dev/null 2>&1 || rc=$?
+{ [ "$rc" = 1 ] && grep -q "^FAIL manifest missing" <<<"$out"; } && ok "a render directory with no manifest still fails" || no "partial render (rc=$rc): $out"
+rmdir "$T/s/render/beta/claude-code" "$T/s/render/beta"
+# packs.none: true is the explicit answer "this project uses no project packs"
+$DA project set beta packs.none true >/dev/null || no "project set packs.none"
+$DA packs check --target claude-code beta >"$T/beta.out" 2>&1; rc=$?; out=$(cat "$T/beta.out")
+{ [ "$rc" = 0 ] && grep -q "^ok   beta: packs.none is true" <<<"$out" && ! grep -q "not applied\|^no pack is linked" <<<"$out"; } && ok "packs.none: true passes with no render" || no "beta none (rc=$rc): $out"
+grep -qE "^ +unmanaged +user-mine  \(" <<<"$out" && ok "and still lists the unmanaged user skills" || no "beta none user skills: $out"
+$DA skill link s-all --scope project --project beta >/dev/null
+$DA packs check --target claude-code beta >"$T/beta.out" 2>&1; rc=$?
+{ [ "$rc" = 1 ] && grep -q "^FAIL packs.none is true, but 1 packs reach a role of beta (skill:s-all)" "$T/beta.out"; } && ok "packs.none with a pack linked is a contradiction and fails" || no "beta none + linked (rc=$rc): $(cat "$T/beta.out")"
+$DA skill unlink s-all --scope project --project beta >/dev/null
+$DA project set beta packs.none maybe >/dev/null 2>&1 && no "packs.none accepted a string" || ok "packs.none takes true or false only"
+$DA project set beta packs.other 1 >/dev/null 2>&1 && no "packs accepted an unknown key" || ok "packs takes no key but none"
+$DA project set beta packs.none false >/dev/null || no "project set packs.none false"
+rm -rf "${US:?}/user-mine"
+chk alpha | grep -q "^no pack is linked" && no "the line appears for a project with packs" || ok "and not for a project that has packs"
+
 # --- the helper script run directly, as a member could: store refuses in a member run and writes only the environment's accepted.json
 mkdir -p "$T/run/out"; : > "$T/run/ability"; : > "$T/run/refs.before"; DAA=$ROOT/bin/qargi
 PYA="python3 -I $ROOT/lib/packs_audit.py"
