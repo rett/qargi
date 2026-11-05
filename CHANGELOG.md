@@ -7,6 +7,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `qargi release site` now ends with a reminder to preview the built site locally before pushing it, naming the site branch's build
+  script and a local web server for the output.
 - The generated documentation site has a left sidebar in place of the top navigation list, and a search box. The sidebar is on
   every page but `404.html` (which keeps a simple header and absolute links) and lists Guides (the hand pages, in `site.json`
   order), Reference (each command group folds its commands) and Releases; the page you are on has `aria-current="page"` and its
