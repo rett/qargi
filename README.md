@@ -228,6 +228,11 @@ hand pages in `site/pages/`), `release finish` ends with `next: qargi release si
 tag with `lib/site.py` to check it and commits the release it built on the site branch (`site.json`; the build's `_site/` is not
 committed, because a Pages build needs it empty), behind a plan and token; it never pushes and prints the push command. `release status VERSION` says whether the site of that version is built and pushed.
 
+Two optional fields of `site.json` add a line to the footer of every page, the 404 page included. `copyright` is one line of plain text (at most 200
+characters, no `<` or `>`, shown escaped), for example `"(c) 2026 Example Author. MIT licensed."`; the forbidden words of `site.json` apply to it.
+`license_url` is an `https://` address (no query or fragment) that the words "MIT licensed" in `copyright` link to; without those words it is not
+shown and `lib/site.py check` warns. With `copyright` unset the pages are unchanged. The fields of `site.json` are listed in the header of `lib/site.py`.
+
 ### Feature branches on origin
 
 Two answers decide what the flow does with a feature branch on origin. `branches.push_features` is `never` (the default),
