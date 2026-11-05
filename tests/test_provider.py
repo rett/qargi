@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# hermetic: allow-file tmp (the paths and variables of an environment the code is given are text; nothing is made under them)
 """Provider definitions: lib/provider.py (definition, validate2, cap, effective, require_barrier, layout, the verbs) against
 lib/providers/schema-2.json. The shipped claude-code, claude-platform and the claude catalog are the real examples; every changed
 definition is a copy in a temporary directory, never the user's data.

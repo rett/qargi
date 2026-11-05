@@ -461,7 +461,7 @@ class Check(Fixtures):
         d = self.doctor_repo("echo 'ok: started'\nsleep 30\n")
         t0 = time.monotonic()
         rc, out, _ = self.check(d, "--timeout", "1")
-        self.assertLess(time.monotonic() - t0, 15)
+        self.assertLess(time.monotonic() - t0, 15)   # hermetic: allow clock (the doctor sleeps 30 s: the bound is its cut-off, with a margin of 14 s)
         self.assertEqual(rc, 1)
         self.assertIn("did not finish within 1 s", out)
 

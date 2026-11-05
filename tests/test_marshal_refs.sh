@@ -185,10 +185,11 @@ mkfifo "$T/go"; exec 9<>"$T/go"
 i=0; pids=''
 for m in $RACERS; do
   i=$((i + 1))
-  ( read -r -u 9 _; env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "$DA" marshal claim race --as "u$i" >"$T/m/$m.o" 2>"$T/m/$m.e"; echo $? > "$T/m/$m.rc" ) &
+  ( : > "$T/m/$m.ready"; read -r -u 9 _; env HOME="$T/m/$m/home" QARGI_CONF="$T/m/$m/c" QARGI_STATE="$T/m/$m/s" "$DA" marshal claim race --as "u$i" >"$T/m/$m.o" 2>"$T/m/$m.e"; echo $? > "$T/m/$m.rc" ) &
   pids="$pids $!"
 done
-sleep 1; for _ in $RACERS; do echo go >&9; done
+for m in $RACERS; do for _ in $(seq 1 200); do [ -e "$T/m/$m.ready" ] && break; sleep 0.05; done; done   # all eight wait at the fifo
+for _ in $RACERS; do echo go >&9; done
 # shellcheck disable=SC2086  # the pids
 wait $pids
 exec 9>&-
@@ -300,22 +301,23 @@ rm -f "$ORIGIN/hooks/pre-receive"
 # ============================================================ (12) offline
 XE b marshal status --all --brief >/dev/null            # B's cache is warm
 slow a fetch; slow b fetch
-cat > "$ORIGIN/hooks/pre-receive" <<'HOOK'
+rm -f "$T/hook.done"
+cat > "$ORIGIN/hooks/pre-receive" <<HOOK
 #!/bin/sh
-sleep 5
+sleep 5   # hermetic: allow sleep (the slow hook of the origin, not a wait of the test)
+: > "$T/hook.done"
 exit 1
 HOOK
 chmod +x "$ORIGIN/hooks/pre-receive"
-t0=$(date +%s)
 XE b QARGI_REMOTE_TIMEOUT=1 marshal status --all --brief; rc=$?
-[ $rc = 0 ] && grep -q "remote not checked" <(out) && grep -q "^f1 " "$T/o" && [ $(( $(date +%s) - t0 )) -lt 20 ] \
+[ $rc = 0 ] && grep -q "remote not checked" <(out) && grep -q "^f1 " "$T/o" && [ ! -e "$T/hook.done" ] \
   && ok "offline: status shows the cache with 'remote not checked' and exits 0" || no "SPEC offline status (rc=$rc): $(out)"
 XE a QARGI_REMOTE_TIMEOUT=1 marshal claim off1 --as alice
 grep -q "remote not checked" <(out) && ok "offline: the claim says 'remote not checked'" || no "SPEC offline claim must say 'remote not checked': $(out)"
 [ "$(jq -r '.state // ""' "$(S a)/features/app-off1.json" 2>/dev/null)" = provisional ] && [ "$(oref refs/qargi/features/off1)" = none ] \
   && ok "offline: the claim stays provisional locally and nothing reached the origin" || no "SPEC offline claim is provisional: $(cat "$(S a)/features/app-off1.json" 2>&1), origin $(oref refs/qargi/features/off1)"
 unslow a; unslow b; rm -f "$ORIGIN/hooks/pre-receive"
-sleep 6   # the hook of the killed push ends (and rejects) before the origin is used again
+for _ in $(seq 1 300); do [ -e "$T/hook.done" ] && break; sleep 0.1; done   # the hook of the killed push ends (and rejects) before the origin is used again
 XE a marshal renew off1 --as alice; rc=$?
 [ $rc = 0 ] && [ "$(orec refs/qargi/features/off1 | jq -r .lead.id)" = alice ] && [ "$(jq -r '.state // ""' "$(S a)/features/app-off1.json" 2>/dev/null)" != provisional ] \
   && ok "offline: the next verb completes the provisional claim" || no "SPEC provisional claim completes on the next verb (rc=$rc), origin $(oref refs/qargi/features/off1): $(out)"
@@ -489,16 +491,16 @@ XE a marshal claim hv1 --as alice >/dev/null 2>&1
 n0=$(ocount refs/qargi/features/hv1)
 slow a "fetch push"
 RN hv1 9 & rp=$!
-sleep 3.5; unslow a
+sleep 3.5; unslow a   # hermetic: allow sleep (the renewer works in real time, one round a second: the remote stays out of reach for a few of them)
 wait "$rp"
 n1=$(ocount refs/qargi/features/hv1)
 [ "$n0" = 1 ] && [ "$n1" -gt "$n0" ] \
   && ok "renewer: renewals go on after the remote was unreachable for a few rounds (hv1: $n0 -> $n1 commits)" || no "SPEC the renewer must go on when the remote is not checked: hv1 commits $n0 -> $n1"
 XE a marshal claim hv2 --as alice >/dev/null 2>&1
 RN hv2 12 & rp=$!
-sleep 1.5
+for _ in $(seq 1 100); do [ "$(ocount refs/qargi/features/hv2)" -gt 1 ] && break; sleep 0.1; done   # the renewer has renewed once
 XE a marshal release hv2 --as alice --note n >/dev/null 2>&1; XE b marshal take hv2 --as bob >/dev/null 2>&1
-sleep 4
+for _ in $(seq 1 100); do kill -0 "$(cat "$T/rn.pid")" 2>/dev/null || break; sleep 0.1; done   # the renewer ends once its renewal is refused
 kill -0 "$rp" 2>/dev/null && ! kill -0 "$(cat "$T/rn.pid")" 2>/dev/null \
   && ok "renewer: it ends when the renewal is refused (another lead took the feature), its holder still running" || no "SPEC the renewer must end on a refusal (holder alive: $(kill -0 "$rp" 2>&1 && echo yes), renewer $(cat "$T/rn.pid") alive: $(kill -0 "$(cat "$T/rn.pid")" 2>&1 && echo yes))"
 kill "$rp" 2>/dev/null; wait "$rp" 2>/dev/null
