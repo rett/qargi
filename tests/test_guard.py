@@ -145,7 +145,7 @@ class Review(unittest.TestCase):
         """`local clean` removes the directory tmpdir names and asks the repository repo.path names whether the applied tip is merged; `local list`, verify and
         review apply read the others. A member must not be able to write any of them (a link, a rewritten path, a forged tip)."""
         self.ability("review")
-        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "git", "class", "ability", "profile", "refs.before")
+        names = ("tmpdir", "applied", "repo.path", "repo.url", "cred.path", "started", "verified", "refs.after", "refs.diff", "refs.accepted", "git", "class", "ability", "profile", "refs.before")
         wrong = []
         for name in names:
             p = os.path.join(self.run, name)
@@ -844,12 +844,12 @@ class RenderTree(unittest.TestCase):
 
     def test_a_path_that_merely_says_render_is_allowed(self):
         e = os.path.join(self.t, "elsewhere/render/proj")
-        for p in (e + "/CLAUDE.md", os.path.join(self.state, "runs/render/x"), os.path.join(self.state, "render-notes.md"),
-                  os.path.join(self.state, "runs/x.log"), os.path.join(self.t, "state2/render/proj/x")):
+        for p in (e + "/CLAUDE.md", os.path.join(self.state, "notes/render/x"), os.path.join(self.state, "render-notes.md"),
+                  os.path.join(self.state, "notes/x.log"), os.path.join(self.t, "state2/render/proj/x")):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             self.assertEqual(self.call("Write", {"file_path": p}).returncode, 0, p)
             self.assertEqual(self.bash("echo x > %s" % p).returncode, 0, p)
-        for c in ("echo x > %s/runs/audit.log" % self.state, "rm -rf %s/runs/old" % self.state, "touch render/x", "echo render > notes.txt"):
+        for c in ("echo x > %s/notes/audit.log" % self.state, "rm -rf %s/notes/old" % self.state, "touch render/x", "echo render > notes.txt"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
@@ -1097,6 +1097,22 @@ class Marshal(unittest.TestCase):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
 
+    def test_ref_record_is_the_leads(self):
+        """qargi ref record --rewrite moves an agent branch of the lead's repository and writes the lead's ref journal, which local verify trusts."""
+        cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",
+                "bin/qargi ref record", "env FOO=1 qargi ref record", "sudo qargi ref record", "bash -c 'qargi ref record'", "eval 'qargi ref record'",
+                "echo $(qargi ref record)", "true && qargi ref record", "ls; qargi ref record", "qargi 'ref' 'record'", "bash lib/ref.sh record --rewrite agent/x a b --why w",
+                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record"]
+        for c in cmds:
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+        for c in ("qargi ref record --rewrite agent/x a b --why w", "bash lib/ref.sh record"):
+            self.assertIn("qargi ref record moves a branch of the lead's repository", self.bash(c).stderr, c)
+        for c in ("echo qargi ref record", "grep -n 'ref record' lib/commands.py", "cat lib/ref.sh", "git log --grep 'ref record'"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_switch_directory_is_protected_like_features(self):
         """$STATE/marshal/<project>.enabled turns the shared-refs backend on; a member must not write it by any construct."""
         m = os.path.join(self.state, "marshal")
@@ -1120,6 +1136,26 @@ class Marshal(unittest.TestCase):
             self.assertEqual(res.returncode, 0, (c, res.stderr))
         os.makedirs(os.path.join(self.t, "elsewhere/marshal"))
         self.assertEqual(self.call("Write", {"file_path": os.path.join(self.t, "elsewhere/marshal/x.enabled")}).returncode, 0)
+
+    def test_the_saved_runs_are_protected_and_readable(self):
+        """$STATE/runs/<id> is the copy local verify saves of a passed run, which review apply --from-saved applies: a member must not plant or change one."""
+        p = os.path.join(self.state, "runs", "qargi.abcdef")
+        os.makedirs(os.path.join(p, "out", "patches"))
+        open(os.path.join(p, "refs.before"), "w").close()
+        for tool, key in (("Edit", "file_path"), ("Write", "file_path")):
+            for cls in ((), ("--class", "read-only")):
+                res = subprocess.run([BIN, "__guard", *cls], input=json.dumps({"tool_name": tool, "tool_input": {key: p + "/out/patches/0001-x.patch"}, "cwd": self.clone}),
+                                     capture_output=True, text=True, env=self.env())
+                self.assertEqual(res.returncode, 2, (tool, cls, res.stderr))
+                self.assertIn("saved copies of passed local runs", res.stderr)
+        for c in ("echo x > %s/refs.before" % p, "rm -rf %s" % p, "cp -r /tmp %s/out" % p, "echo 1 > $QARGI_STATE/runs/qargi.zzzzzz/applied",
+                  "mkdir -p %s/runs/qargi.planted" % self.state):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 2, (c, res.stderr))
+            self.assertIn("qargi guard:", res.stderr, c)
+        for c in ("cat %s/refs.before" % p, "ls %s/out" % p):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
 
     def test_the_handoff_and_busy_directories_are_protected_and_the_context_verbs_are_reads(self):
         """$STATE/handoff and $STATE/busy tell `qargi lead compact-check` when the note was written and what is running: a member does not write

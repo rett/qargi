@@ -102,12 +102,14 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
     the remote-tracking refs that `qargi local verify` compares against a run's snapshot) and `qargi upstream sync` (it fast-forwards the branch
     that carries the upstream line and journals the move, from a plan and a token), also through lib/upstream.sh and as a verb held in a
-    variable; `qargi upstream review` only reads the last fetch and stays allowed;
+    variable; `qargi upstream review` only reads the last fetch and stays allowed, and so is `qargi ref` (record --rewrite moves an agent branch and journals it; any verb, also through lib/ref.sh);
   - a write under the features/ directory of the state ($QARGI_STATE, else <root>/state, and ~/.qargi/state), where the
     marshal keeps one record per open feature (and, beside them, the `.observed-<project>.json` clock cache of the shared-refs
     backend): decided like the other protected roots, reading stays allowed;
   - a write under the marshal/ directory of the state, where `marshal enable` keeps the per-project `.enabled` switch of the
     shared-refs backend: found and decided like features/, reading stays allowed;
+  - a write under the runs/ directory of the state, where `qargi local verify` saves a copy of each passed run (OUT, the snapshots, the
+    record) that `qargi review apply --from-saved` applies: decided like features/, reading stays allowed;
   - a write under the handoff/ and busy/ directories of the state, where `marshal handoff --write` records when the note was written and
     feature verify and release verify record the whole-suite run in progress: `qargi lead compact-check` reads them. Found and decided
     like features/, reading stays allowed. `qargi lead usage` and `compact-check` only read and stay allowed;
@@ -219,7 +221,7 @@ GIT_OUTPUT_DIRS = {"format-patch", "archive"}                    # git subcomman
 SKILL_VERBS = {"new", "import", "seal", "remove", "unlink", "link", "enable", "disable", "accept", "unaccept"}
 SCRIPTS = ("qargi", "packs.sh", "discover.py", "cloud.py", "upgrade.sh", "marshal.sh", "feature.sh", "provider.py", "provider.sh",
            "memory.sh", "tierwrite.sh", "tierplan.py", "memplan.py", "packs_link.py", "project_link.py", "gated_answers.py", "project.sh", "packs_audit.py", "marshal_handoff.py", "linker.py", "render.py", "local_run.py", "local.sh", "release.sh", "release_sign.py",
-           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh")
+           "agent.sh", "team.sh", "env.py", "env_apply.py", "branch.sh", "changelog.sh", "changelog_numbers.py", "upstream.sh", "ref.sh")
 # the command and the scripts behind the refused verbs (packs_link.py is packs link|unlink, packs_audit.py store is skill accept|unaccept,
 # marshal_handoff.py is marshal handoff: the shell verbs call them, and a member could call them directly with a hand-made inputs file;
 # linker.py, the link engine packs_link.py calls, is packs link, and render.py renders member definitions and runs the command a definition names)
@@ -1042,7 +1044,7 @@ NO_RUN = ("under the read-only class nothing is written or changed here: no run 
           "so no write can be shown to be the report; run from the clone")
 
 
-RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git", "dispatch.json", "task.md", "refs.before.new")
+RUN_CONTROL = ("ability", "class", "profile", "refs.before", "refs.after", "refs.diff", "refs.accepted", "verified", "started", "tmpdir", "applied", "repo.path", "repo.url", "cred.path", "git", "dispatch.json", "task.md", "refs.before.new")
 
 
 def control_refusal(full):
@@ -1773,6 +1775,7 @@ def _protected_roots():
     roots.update(feature_roots(P, home))
     roots.update(switch_roots(P, home))
     roots.update(lead_state_roots(P, home))
+    roots.update(saved_runs_roots(P, home))
     roots.update(journal_roots(P, home))
     roots.update(memory_roots(P, home))
     roots.update(lead_roots(home) | lead_files(home))
@@ -1831,6 +1834,12 @@ def lead_state_roots(P=None, home=None):
     """The handoff/ and busy/ directories of the state: when the lead's last handoff note was written, and the whole-suite runs in progress. `qargi lead
     compact-check` reads both to say whether a compact is safe, so a member must not write them."""
     return state_sub("handoff", P, home) | state_sub("busy", P, home)
+
+
+def saved_runs_roots(P=None, home=None):
+    """The runs/ directory of the state: the copies `qargi local verify` saves of a passed run (its OUT, its snapshots, its record), which
+    `qargi review apply --from-saved` applies after the run directory is lost. A member must not plant or change one."""
+    return state_sub("runs", P, home)
 
 
 def switch_roots(P=None, home=None):
@@ -1900,6 +1909,9 @@ def refusal_text(what, dest, root):
     if root in lead_state_roots():
         return MarshalReason("%s on %s would change %s, where the lead's handoff note and whole-suite runs are recorded (qargi lead compact-check reads them); %s"
                              % (what, dest, root, MARSHAL_NOTE))
+    if root in saved_runs_roots():
+        return OwnReason("%s on %s would change %s, the lead's saved copies of passed local runs (review apply --from-saved applies them); "
+                         "a member writes only its own OUT" % (what, dest, root))
     if root in switch_roots() and name.endswith(".signers"):
         return MarshalReason("%s on %s would change %s, the marshal's allowed signers (the keys whose records are accepted); %s"
                              % (what, dest, root, MARSHAL_NOTE))
@@ -2610,6 +2622,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         words = ["changelog"] + words
     if name == "upstream.sh":
         words = ["upstream"] + words
+    if name == "ref.sh":
+        words = ["ref"] + words
     if name == "release.sh":
         words = ["release"] + words
     if name == "release_sign.py":                        # the record of a signature and the checks of release sign: any use of the script is the verb
@@ -2644,6 +2658,9 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
     if name in ("memory.sh", "tierwrite.sh"):
         words = ["memory"] + words
     area, verb = (words + ["", ""])[:2]
+    if area == "ref":
+        return OwnReason("qargi ref %s moves a branch of the lead's repository and writes the lead's ref journal, which local verify trusts, and is the lead's to run; "
+                         "report in your task output a branch you think should be rewritten" % (verb or "(no verb)"))
     if area == "branch":
         return OwnReason("qargi branch %s deletes merged branches and the worktrees qargi made (with --remote, branches on origin with the lead's credentials) and is the lead's "
                          "to run, from a plan and a token; report in your task output which branches are merged" % (verb or "(no verb)"))

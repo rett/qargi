@@ -138,20 +138,100 @@ refused "$R" "a deleted branch that was not journaled"
 $F start fin >/dev/null 2>&1; task agent/t1 t1.txt t1; $F merge fin agent/t1 >/dev/null 2>&1
 $F verify fin >/dev/null 2>&1
 d0=$(sha develop); fin=$(sha feature/fin); t=$($F finish fin 2>&1 | tok); n=$(jn)
+RF=$(fresh r-finish)                                     # strict: no passing verify yet
+RF3=$(fresh r-finish3)                                   # strict too: cleaned without a verify of its own after the finish
+RF2=$(mkrun r-finish2); $DA local verify "$RF2" >/dev/null 2>&1 || no "(setup) r-finish2 does not verify"   # after a passing verify
+rd0=$(git --git-dir="$T/origin.git" rev-parse develop)
 $F finish fin --plan "$t" --approved go >/dev/null 2>&1; rc=$?
 d1=$(sha develop)
 [ $rc = 0 ] && [ "$d1" != "$d0" ] && jhas develop "$d0" "$d1" && ok "feature finish journals develop's move" || no "finish: rc=$rc, journal $(tail -n +"$((n + 1))" "$J" 2>&1)"
 jhas feature/fin "$fin" "$Z" && ok "and the deletion of the feature branch" || no "finish left no deletion line"
+jq -e --arg o "$rd0" --arg n "$d1" --arg u "$T/origin" 'select(.remote == "origin" and .url == $u and .ref == "refs/heads/develop" and .old == $o and .new == $n and .verb == "feature:finish")' "$J" >/dev/null \
+  && ok "and its push of develop to origin (remote origin, the origin URL, what origin had and what it has now)" || no "finish left no push line: $(tail -n 4 "$J")"
+out=$($DA local verify "$RF" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "develop moved by qargi feature finish" <<<"$out" && grep -q "develop on origin moved by qargi feature finish" <<<"$out" \
+  && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && grep -q "origin/develop moved to what origin has" <<<"$out"; } \
+  && ok "a run prepared before the finish verifies, and verify names develop's move and push, the deletion and the fetch" || no "verify after finish (strict): rc=$rc $out"
+out=$($DA local verify "$RF2" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "feature/fin deleted by qargi feature finish" <<<"$out" && ok "after a passing verify too: the journaled deletion of the feature branch is accepted (fast-forwards alone were before)" || no "verify after finish (lenient): rc=$rc $out"
+echo '{}' > "$RF3/out/manifest.json"; out=$($DA local clean "$RF3" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RF3" ] && grep -q "accepted, the lead's own move: develop moved by qargi feature finish" <<<"$out" && ok "clean accepts those moves and names them" || no "clean after finish: rc=$rc $out"
 
 # --- a release
 $REL verify 0.2.0 >/dev/null 2>&1; d0=$(sha develop)
 $REL start 0.2.0 --date 2026-01-02 >/dev/null 2>&1; rb=$(sha release/0.2.0)
 jhas release/0.2.0 "$Z" "$rb" && [ "$rb" != "$Z" ] && ok "release start journals the new release branch" || no "release start left no journal line"
+RR=$(fresh r-release)
 t=$($REL push 0.2.0 | tok); $REL push 0.2.0 --plan "$t" --approved go >/dev/null 2>&1
+jq -e --arg n "$rb" 'select(.remote == "origin" and .ref == "refs/heads/release/0.2.0" and .old == "0000000000000000000000000000000000000000" and .new == $n and .verb == "release:push")' "$J" >/dev/null \
+  && ok "release push journals the new branch on origin" || no "release push left no push line: $(tail -n 2 "$J")"
 m0=$(sha master); d0=$(sha develop); t=$($REL finish 0.2.0 | tok)
 $REL finish 0.2.0 --plan "$t" --approved go >/dev/null 2>&1; rc=$?
 m1=$(sha master); d1=$(sha develop)
 [ $rc = 0 ] && [ "$m1" != "$m0" ] && jhas master "$m0" "$m1" && jhas develop "$d0" "$d1" && jhas release/0.2.0 "$rb" "$Z" && ok "release finish journals master, develop and the release branch's deletion" || no "release finish: rc=$rc, lines $(tail -n 4 "$J" 2>&1)"
+tg=$(git -C "$A" rev-parse refs/tags/0.2.0)
+[ "$(jq -c --arg n "$tg" 'select(.ref == "refs/tags/0.2.0" and .old == "0000000000000000000000000000000000000000" and .new == $n and .verb == "release:finish")' "$J" | wc -l)" = 2 ] \
+  && jq -e 'select(.remote == "origin" and .ref == "refs/heads/release/0.2.0" and .new == "0000000000000000000000000000000000000000")' "$J" >/dev/null \
+  && ok "and the tag (in the repository and on origin) and the deletion of the release branch on origin" || no "release finish tag lines: $(grep tags "$J")"
+out=$($DA local verify "$RR" 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q "master moved by qargi release finish" <<<"$out" && grep -q "master on origin moved by qargi release finish" <<<"$out" \
+  && grep -q "tag 0.2.0 created by qargi release finish" <<<"$out" && grep -q "tag 0.2.0 on origin created by qargi release finish" <<<"$out" \
+  && grep -q "release/0.2.0 deleted by qargi release finish" <<<"$out"; } \
+  && ok "a run prepared before the release verifies, and verify names every move, push and tag of the release" || no "verify after release: rc=$rc $out"
+
+# --- the parking branch (answers repo.parking_branch, default scratch) fast-forwarded to develop by hand is accepted; nothing else of the kind
+git -C "$A" branch scratch develop~1
+R=$(fresh r-park); git -C "$A" branch -f scratch develop
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "scratch (the parking branch) fast-forwarded to develop" <<<"$out" && ok "a hand fast-forward of the parking branch to develop's tip is accepted and named" || no "parking ff: rc=$rc $out"
+R=$(fresh r-park2); git -C "$A" branch -f scratch "$(hand scratch)"
+refused "$R" "a hand move of the parking branch that does not end at develop's tip"
+git -C "$A" branch -f scratch develop; git -C "$A" branch zz2 develop~1
+R=$(fresh r-park3); git -C "$A" branch -f zz2 develop
+refused "$R" "a hand fast-forward to develop of a branch that is not the parking branch"
+jq '.repo.parking_branch = "zz2"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "zz2 (the parking branch)" <<<"$out" && ok "the parking branch is the one the answers name (repo.parking_branch)" || no "answers parking: rc=$rc $out"
+jq 'del(.repo.parking_branch)' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
+
+# --- qargi ref record --rewrite: the lead rewrites an agent branch to a commit with the same tree, and verify accepts it as a rewrite
+REF="$DA ref record --rewrite"
+task agent/rw rw.txt one; o=$(sha agent/rw)
+same() { git -C "$A" commit-tree -p "$1~1" -m "${2:-reworded}" "$1^{tree}"; }   # the same tree, another message
+R=$(fresh r-rewrite); RL=$(mkrun r-rewrite2); $DA local verify "$RL" >/dev/null 2>&1
+nw=$(same "$o"); n=$(jn)
+out=$($REF agent/rw "$o" "$nw" --why "reworded the message" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(sha agent/rw)" = "$nw" ] && jq -e --arg o "$o" --arg n "$nw" 'select(.verb == "ref:rewrite" and .ref == "refs/heads/agent/rw" and .old == $o and .new == $n and .why == "reworded the message")' "$J" >/dev/null; } \
+  && ok "ref record --rewrite moves the agent branch and journals the move with the reason" || no "rewrite: rc=$rc $out"
+out=$($DA local verify "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "agent/rw moved by a rewrite (qargi ref record --rewrite: reworded the message)" <<<"$out" && ok "verify accepts the rewrite and names it as one" || no "verify after rewrite: rc=$rc $out"
+out=$($DA local verify "$RL" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "agent/rw moved by a rewrite" <<<"$out" && ok "after a passing verify too (it is not a fast-forward)" || no "verify after rewrite (lenient): rc=$rc $out"
+n=$(jn); cur=$(sha agent/rw)
+dt=$(git -C "$A" commit-tree -p "$cur~1" -m "other content" "$(git -C "$A" rev-parse 'develop^{tree}')")
+out=$($REF agent/rw "$cur" "$dt" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "trees of OLD .* differ" <<<"$out" && [ "$(sha agent/rw)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a NEW with another tree is refused: nothing moves, nothing is journaled" || no "other tree: rc=$rc $out"
+out=$($REF agent/rw "$o" "$(same "$cur" again)" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "not at OLD" <<<"$out" && [ "$(sha agent/rw)" = "$cur" ] && [ "$(jn)" = "$n" ] && ok "a REF that is not at OLD is refused" || no "not at OLD: rc=$rc $out"
+dv=$(sha develop)
+out=$($REF develop "$dv" "$(same "$dv")" --why "x" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "only an agent/\* branch" <<<"$out" && [ "$(sha develop)" = "$dv" ] && ok "a branch that is not agent/* is refused" || no "develop rewrite: rc=$rc $out"
+for bad in "agent/rw $cur $(same "$cur")" "--why x" "agent/rw $cur --why x"; do
+  # shellcheck disable=SC2086
+  out=$($REF $bad 2>&1); rc=$?
+  [ $rc = 2 ] && [ "$(jn)" = "$n" ] && ok "ref record --rewrite $bad is a usage error" || no "usage $bad: rc=$rc $out"
+done
+out=$($DA ref record agent/rw "$cur" "$(same "$cur")" --why x 2>&1); [ $? = 2 ] && grep -q "needs --rewrite" <<<"$out" && ok "ref record without --rewrite is a usage error" || no "no --rewrite: $out"
+R=$(fresh r-rewrite3); git -C "$A" branch -f agent/rw "$(same "$cur" "by hand")"
+refused "$R" "a same-tree rewrite of an agent branch made by hand (not recorded)"
+git -C "$A" branch -f agent/rw "$cur"
+# clean follows the applied tip of a run through a recorded rewrite
+$F start rwf >/dev/null 2>&1
+RW=$(seriesrun rwc rwc.go feature/rwf); $DA review apply "$RW" >/dev/null 2>&1 || no "(setup) apply rwc"
+at=$(sha agent/rwc); at2=$(same "$at" "names: change rwc, reworded")
+$REF agent/rwc "$at" "$at2" --why "reworded" >/dev/null 2>&1 && $F merge rwf agent/rwc >/dev/null 2>&1 || no "(setup) rewrite and merge rwc"
+out=$($DA local clean "$RW" 2>&1); rc=$?
+[ $rc = 0 ] && [ ! -e "$RW" ] && ok "clean counts a run as merged when the commit its applied tip was rewritten to is merged" || no "clean after rewrite: rc=$rc $out"
 
 # --- the guard protects the journal from a member; reading stays allowed
 RG=$(mkrun guard-run); cd "$RG/clone" || exit 1

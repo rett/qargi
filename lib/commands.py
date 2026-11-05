@@ -75,7 +75,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "changelog", "upstream", "ref", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -406,6 +406,23 @@ COMMANDS = {
                                "upstream.overlay_check set, the command then runs on a trial merge of the branch into develop in a temporary worktree (the fast-forward "
                                "stands either way; a failure or a merge conflict exits 1)."),
                          examples=["qargi upstream sync", "qargi upstream sync --plan TOKEN --approved \"yes, take the upstream commits\""]),
+        },
+    },
+    "ref": {
+        "summary": "Record in the lead's ref journal a branch move that no flow verb made",
+        "desc": ("The ref journal ($QARGI_STATE/ref-journal.jsonl) is the lead's record of the branch and tag moves qargi's verbs make (feature, release, branch prune, "
+                 "review apply, with their pushes); qargi local verify and local clean accept and name what it records. qargi ref record adds the one move a lead makes by hand "
+                 "that verify must still accept: the rewrite of an agent branch that keeps its content."),
+        "scripts": ["ref.sh"],
+        "verbs": {
+            "record": verb("Rewrite an agent branch to a commit with the same tree, and journal the move with the reason", [("REF", "branch"), ("OLD", "none"), ("NEW", "none")],
+                           [opt("--rewrite", "the kind of move: REF goes from OLD to NEW, whose trees must be identical"),
+                            opt("--why", "the reason, journaled and named by local verify", "TEXT"), PROJECT_OPT],
+                           desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
+                                 "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
+                                 "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
+                                 "local clean and local list follow the applied tip of a run to NEW. No working tree, other ref or origin is touched. Not available in a member run."),
+                           examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
         },
     },
     "release": {
@@ -908,13 +925,22 @@ COMMANDS = {
                                   "When the project (found by matching the repository against the stored answers) has a render for its local runtime "
                                   "(packs apply --target RUNTIME) that has drifted, prepare also prints a WARNING block to stderr with the "
                                   "findings and the fix, packs apply --target RUNTIME PROJECT. The run goes on, and stdout and the "
-                                  "TASK-BLOCK PATHS block are unchanged.")),
-            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir")],
+                                  "TASK-BLOCK PATHS block are unchanged.\n"
+                                  "A --scratch on a tmpfs (/dev/shm, often /tmp) is warned about on stderr: a reboot empties it and loses the run (its clone, commits "
+                                  "and output); prefer a directory on disk, such as ~/.cache/qargi-runs.")),
+            "verify": verb("Compare the repository's refs with the snapshot taken by prepare", [("RUN_DIR", "dir", True)],
+                           [opt("--saved", "verify the lead's saved copy of a passed run whose directory is gone (ID: the name of the run directory, qargi.XXXXXX)", "ID")],
                            desc=("Exits 2 when refs changed (1 before), 3 when the lead's registry does not vouch for the run: it is not in it, names no repository for it, or RUN/repo.path, repo.url or cred.path differ "
-                                 "from it (the repository and the credential come from the registry; a member can write the run directory). After a passing verify the run records RUN/verified and its line in the registry is marked verified "
-                                 "(what marshal status and handoff list the task as, also after clean); later verify and clean compare with RUN/verified: "
-                                 "your own fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there, are accepted; remote "
-                                 "refs, tags, deletions and rewrites still fail. Run it on every run before merging any of them.")),
+                                 "from it (the repository and the credential come from the registry; a member can write the run directory). "
+                                 "It accepts the lead's own moves and names each one (\"develop moved by qargi feature finish\"): what the lead's ref journal records (the branches and tags "
+                                 "that qargi's flow verbs move, push to origin or delete: feature finish and park, release and hotfix finish and push, branch prune, review apply, "
+                                 "the parking branch following develop, a rewrite recorded with qargi ref record --rewrite), a remote-tracking ref of origin that says what origin has "
+                                 "(a fetch), and the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too. "
+                                 "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
+                                 "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
+                                 "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
+                                 "When it passes it copies OUT, a run bundle beside it and the snapshots to <state>/runs/<run id>/, so a run lost with its directory (a reboot "
+                                 "that emptied a tmpfs) can still be applied: qargi review apply --from-saved ID. --saved ID compares the refs against that copy's snapshots.")),
             "clean": verb("Remove a collected, verified run and its temporary directory", [("RUN_DIR", "dir", True)],
                           [opt("--discard", "drop the run on purpose: also a run whose output holds no manifest, whose commits were never merged or whose repository refs changed (verify's outcome is printed as a warning)"),
                            opt("--applied", "clean every run under --scratch whose work is recorded applied (review apply) and merged into a branch other than agent/*; the others are kept and named, and the exit status is 1 when an applied run was kept"),
@@ -923,20 +949,26 @@ COMMANDS = {
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
-                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence). It also refuses a run whose clone holds commits that were "
+                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
+                                "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
                                 "A run cleaned with --applied needs a RUN/applied record and a repository path in the registry (a run of a repository URL is kept); --applied takes no RUN_DIR and no --discard. "
                                 "A cleaned run keeps its line in the registry, marked cleaned: marshal status and handoff list it as cleaned, never as an open task. "
                                 "--stale DAYS --scratch DIR is a plan first: it prints each finished run older than DAYS days and changes nothing; with --yes each is cleaned exactly as clean RUN would, "
                                 "so a stale run whose commits were never applied or merged is kept and named (exit status 1), never dropped. It is refused without --scratch, "
-                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only."),
+                                "takes no RUN_DIR, no --applied and no --discard, and --yes is for --stale only. "
+                                "A run whose directory is gone (a reboot, or removed by hand) is the registry's record and the saved copy alone: clean RUN drops both once "
+                                "the saved work is applied and merged, and refuses otherwise; clean RUN --discard drops them whatever they hold. --stale counts such a run by "
+                                "the start time of its record, and with --yes drops it unless its saved copy holds work that was never applied (kept and named). "
+                                "A clean marks the run's record cleaned and removes its saved copy."),
                           examples=["qargi local clean --applied --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch", "qargi local clean --stale 14 --scratch /tmp/scratch --yes"]),
             "list": verb("List the local runs: role, slug, age, whether applied and merged", [],
                          [opt("--scratch", "the directory the runs were prepared in (default: the runs of the registry that still exist)", "DIR", "dir")],
                          desc=("Read-only. One row per run: ROLE, SLUG, AGE, APPLIED (RUN/applied exists: review apply ran), MERGED (the applied tip is on a branch other than agent/*; ? for a run of a repository URL) and RUN. "
                                "It is the list that qargi local clean --applied --scratch DIR acts on. A directory is a run only when the lead's registry names it (a directory a member makes beside its own run is not one), "
-                               "and the AGE is ? when the run's started file is not a number.")),
+                               "and the AGE is ? when the run's started file is not a number. A run of the registry whose directory is gone and that clean did not remove "
+                               "is listed after the others as directory gone, with its saved copy and the review apply --from-saved command that applies it.")),
         },
     },
     "review": {
@@ -949,15 +981,17 @@ COMMANDS = {
                                 "Refuses a monolithic patch, a commit without a message body and a manifest that does not match the patches. "
                                 "A review run passes with a report.md (or PREFIXreport.md, as in a team run) that has a Findings section instead of patches. "
                                 "Prints OK, WARN or FAIL lines and a summary; exit 1 when any line is FAIL (warnings alone exit 0).")),
-            "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir")],
-                          [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch")],
+            "apply": verb("Apply a collected, checked run to a task branch of the repository", [("RUN_DIR", "dir", True)],
+                          [PROJECT_OPT, opt("--branch", "the branch to create (default agent/<slug> of the run)", "BRANCH", "branch"),
+                           opt("--from-saved", "apply the copy local verify saved of a passed run whose directory is gone (ID: qargi.XXXXXX), with the same checks", "ID")],
                           desc=("Refuses a run applied already, and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
                                 "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
                                 "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
                                 "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "
                                 "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
-                                "local clean still accepts the run."),
+                                "local clean still accepts the run. --from-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check "
+                                "of the saved OUT, local verify --saved ID, the registry's repository, slug and base, and the record in the saved copy, so it is applied once."),
                           examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
         },
     },
@@ -1289,10 +1323,10 @@ TOPICS = {
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign and site; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
-        "upstream status, sync; memory init, "
+        "upstream status, sync; ref record; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
-        "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
+        "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "
         "Reading stays allowed except the lead's signing key: copying, linking, archiving or searching its directory is refused. It refuses git push, git remote changes, git -c or config of keys that run programs (alias.*), gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text, "
