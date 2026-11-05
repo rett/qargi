@@ -363,10 +363,11 @@ class Skills(unittest.TestCase):
 
     def test_refuses_project_set_of_executed_answers_to_a_member(self):
         """The release answers (release.*), test_command and env.* are run or passed to a process by the lead later (release verify, the preflight,
-        the suite), so a member that could set them would run its own command with the lead's rights: project set refuses them, whole or by a
-        dotted path, in every form the models answers are refused in. Look-alikes (test_commands, releases.x) stay open."""
+        the suite), and qargi release site builds and commits the site the site answers (site.*) name, so a member that could set them would run
+        its own command with the lead's rights: project set refuses them, whole or by a dotted path, in every form the models answers are refused
+        in. Look-alikes (test_commands, releases.x, sites.x, website) stay open."""
         for path in ("release", "release.preflight", "release.test_command", "release.sign.verify_command", "release.changelog.released", "release.version_file",
-                     "test_command", "env", "env.PATH", "env.acme.x"):
+                     "test_command", "env", "env.PATH", "env.acme.x", "site", "site.enabled", "site.branch", "site.config"):
             for form in ("qargi project set p %s v", "/opt/q/bin/qargi project set p %s v", "sudo qargi project set p %s v", "cd src && qargi project set p %s v",
                          "bash -c 'qargi project set p %s v'", "env FOO=1 qargi project set p %s v", "echo $(qargi project set p %s v)",
                          "./lib/project.sh set p %s v", "bash lib/project.sh set p %s v", "qargi project --x set p %s v"):
@@ -374,11 +375,13 @@ class Skills(unittest.TestCase):
                 r = self.bash(c)
                 self.assertEqual(r.returncode, 2, c)
                 self.assertIn("qargi project set of %s changes a command or an environment the lead later runs" % path, r.stderr, c)
-        for c in ("qargi project set p $K v", "qargi project set p release.$K v", "qargi project set p `echo test_command` v", "qargi project set p $(echo release.preflight) v"):
+        for c in ("qargi project set p $K v", "qargi project set p release.$K v", "qargi project set p `echo test_command` v", "qargi project set p $(echo release.preflight) v",
+                  "qargi project set p site.$K v"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 2, c)
         for c in ("qargi project set p test_commands x", "qargi project set p releases.x y", "qargi project set p environment x", "qargi project set p budget_cents 500",
-                  "qargi project show p", "echo qargi project set p release.preflight x"):
+                  "qargi project set p sites.x y", "qargi project set p website x", "qargi project show p", "echo qargi project set p release.preflight x",
+                  "echo qargi project set p site.enabled true"):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
