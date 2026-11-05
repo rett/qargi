@@ -40,6 +40,9 @@ hooks:
 EOS
 sed 's|{skills_dir}|.claude/skills|' agents/member.body.md; } > "$T/forge.golden"
 cmp -s "$T/forge.golden" "$A/forge.md" && ok "the member file is the golden text, byte for byte" || no "golden: $(diff "$T/forge.golden" "$A/forge.md" | head -5)"
+# the canonical copy of the render lives in the configuration directory (agents/PROJECT/PATH, beside agents.json), outside every repository
+C=$T/c/agents/pbase
+cmp -s "$T/forge.golden" "$C/forge.md" && ok "the copy in config is the same text" || no "copy: $(ls -R "$T/c/agents" 2>&1)"
 ! grep -qi 'claude' agents/member.json agents/member.body.md && ok "the neutral definition names no runtime" || no "the neutral definition names a runtime"
 # the same member as the adapter's template renders it (the form before renderers): equal once the optional quotes of a value are set aside
 norm() { sed -E 's/^( *(- )?[A-Za-z]+: )"(.*)"$/\1\3/'; }
@@ -81,30 +84,49 @@ $DA agent add worker --project alpha >/dev/null 2>&1
 $DA agent remove worker --project alpha >/dev/null 2>&1
 
 $DA agent rename forge anvil >/dev/null 2>&1 && [ -f "$A/anvil.md" ] && [ ! -e "$A/forge.md" ] && grep -q '^name: anvil$' "$A/anvil.md" && jq -e '.projects.pbase | has("anvil") and (has("forge") | not)' "$T/c/agents.json" >/dev/null && ok "rename moves the definition and the record" || no "rename"
+{ [ -f "$C/anvil.md" ] && [ ! -e "$C/forge.md" ] && cmp -s "$C/anvil.md" "$A/anvil.md"; } && ok "and the copy in config" || no "rename copy: $(ls "$C")"
 $DA agent rename anvil scribe >/dev/null 2>&1 && no "rename onto a member" || ok "rename refuses a name in use"
 sed -i '/onFailure/d;/timeout: 20/d' "$A/anvil.md"; cp "$A/anvil.md" "$T/old.md"
 $DA agent refresh anvil >/dev/null 2>&1 && grep -q 'onFailure: block$' "$A/anvil.md" && grep -q '^name: anvil$' "$A/anvil.md" && grep -q 'build, test' "$A/anvil.md" && jq -e '.projects.pbase.anvil.roles == ["build","test"]' "$T/c/agents.json" >/dev/null && ok "refresh re-renders from the current definition, keeping name and abilities" || no "refresh"
 $DA agent refresh anvil 2>&1 | grep -q "is current" && ok "refresh of a current member says so" || no "refresh idempotent"
 $DA agent refresh nobody >/dev/null 2>&1 && no "refresh of an unknown member" || ok "refresh refuses an unknown member"
-$DA agent remove anvil >/dev/null 2>&1 && [ ! -e "$A/anvil.md" ] && jq -e '.projects.pbase | has("anvil") | not' "$T/c/agents.json" >/dev/null && ok "remove deletes the definition and the record" || no "remove"
+$DA agent remove anvil >/dev/null 2>&1 && [ ! -e "$A/anvil.md" ] && [ ! -e "$C/anvil.md" ] && jq -e '.projects.pbase | has("anvil") | not' "$T/c/agents.json" >/dev/null && ok "remove deletes the definition, its copy in config and the record" || no "remove"
 $DA agent remove omni >/dev/null 2>&1; $DA agent for review >/dev/null 2>&1 && no "for found a removed member" || ok "for fails, with a hint, when no member serves the ability"
 $DA agent for review 2>&1 | grep -q "qargi agent add reviewer --project pbase" && ok "the hint names the command" || no "hint"
 
 # DRIFT: the file was edited by hand; STALE: it is not what the definition renders today (or nothing is on record)
 $DA agent add drifty --project pbase --roles build >/dev/null 2>&1; cp "$A/drifty.md" "$T/drifty.keep"
 printf '\nA line added by hand.\n' >> "$A/drifty.md"
-$DA agent list | grep -q "drifty .*drifty.md (DRIFT)$" && ok "list: an edited file is DRIFT" || no "list drift: $($DA agent list | grep drifty)"
+$DA agent list | grep -q "drifty .*drifty.md (DRIFT: qargi agent refresh drifty --project pbase)$" && ok "list: an edited file is DRIFT, with the fix" || no "list drift: $($DA agent list | grep drifty)"
 $DA agent models --json | jq -e '.members[] | select(.name == "drifty") | .state == ["DRIFT"] and (.flags | any(startswith("DRIFT")))' >/dev/null && $DA agent models --json | jq -e '.warnings | any(.name == "drifty" and (.message | startswith("DRIFT")))' >/dev/null \
   && ok "models: the member has state DRIFT, a flag and a warning" || no "models drift: $($DA agent models --json | jq -c '.members[] | select(.name == "drifty")')"
 $DA agent models | grep drifty | grep -q 'DRIFT' && ok "and the text view shows it" || no "models text drift"
 out=$($DA agent refresh drifty 2>&1); grep -q 'edits made to the file by hand are gone' <<<"$out" && cmp -s "$A/drifty.md" "$T/drifty.keep" && ok "refresh replaces an edited file and says so" || no "refresh drift: $out"
 $DA agent list | grep drifty | grep -q 'DRIFT\|STALE' && no "still flagged after refresh" || ok "and the flag is gone"
 jq 'del(.projects.pbase.drifty.render) | del(.projects.pbase.drifty.provider)' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
-$DA agent list | grep -q "drifty .*drifty.md (STALE)$" && ok "list: a member with no render on record (made before) is STALE" || no "list stale: $($DA agent list | grep drifty)"
+$DA agent list | grep -q "drifty .*drifty.md (STALE: qargi agent refresh drifty --project pbase)$" && ok "list: a member with no render on record (made before) is STALE, with the fix" || no "list stale: $($DA agent list | grep drifty)"
 $DA agent models --json | jq -e '.members[] | select(.name == "drifty") | .state == ["STALE"] and (.flags | any(startswith("STALE") and contains("agent refresh drifty")))' >/dev/null && ok "models: STALE with the fix in the flag" || no "models stale"
 out=$($DA agent refresh drifty 2>&1); grep -q 'is current' <<<"$out" && jq -e '.projects.pbase.drifty.render.hash != null and .projects.pbase.drifty.provider == "claude-code"' "$T/c/agents.json" >/dev/null && ! $DA agent list | grep drifty | grep -q 'STALE' && ok "refresh of an identical file only records the render" || no "refresh stale: $out"
 jq '.projects.pbase.drifty.render.inputs_hash = "0000000000000000000000000000000000000000000000000000000000000000"' "$T/c/agents.json" > "$T/a.json" && mv "$T/a.json" "$T/c/agents.json"
-$DA agent list | grep -q "drifty .*(STALE)$" && ok "an inputs hash that is not today's is STALE" || no "stale hash"
+$DA agent list | grep -q "drifty .*(STALE: qargi agent refresh drifty --project pbase)$" && ok "an inputs hash that is not today's is STALE" || no "stale hash"
+$DA agent refresh drifty >/dev/null 2>&1
+# MISSING: the runtime's file is gone (a cleaned checkout, a fresh clone); the copy in config is what refresh writes it from
+cmp -s "$C/drifty.md" "$A/drifty.md" && ok "the copy in config is the render, byte for byte" || no "copy: $(ls -R "$T/c/agents" 2>&1)"
+rm -rf "$A" "$T/repop/.git/info/exclude"   # a cleaned checkout: no agents directory, no exclude file
+$DA agent list | grep -q "drifty .*drifty.md (MISSING: qargi agent refresh drifty --project pbase)$" && ok "list: a file that is gone is MISSING, with the fix" || no "list missing: $($DA agent list | grep drifty)"
+$DA agent models --json | jq -e '.members[] | select(.name == "drifty") | .state == ["MISSING"] and (.flags | any(startswith("MISSING") and contains("agent refresh drifty --project pbase")))' >/dev/null && ok "models: MISSING with the fix in the flag" || no "models missing: $($DA agent models --json | jq -c '.members[] | select(.name == "drifty")')"
+out=$($DA agent refresh drifty 2>&1); rc=$?
+{ [ $rc = 0 ] && grep -q 'refreshed member drifty' <<<"$out" && cmp -s "$C/drifty.md" "$A/drifty.md"; } && ok "refresh writes the file again, the same bytes as the copy" || no "refresh missing: rc=$rc $out"
+grep -qx '/.claude/agents/drifty.md' "$T/repop/.git/info/exclude" && [ -z "$(git -C "$T/repop" status --porcelain)" ] && ok "and hides it from git again" || no "refresh exclude: $(cat "$T/repop/.git/info/exclude" 2>&1)"
+$DA agent list | grep drifty | grep -q '(' && no "still flagged after the file came back: $($DA agent list | grep drifty)" || ok "and the member is current"
+$DA agent refresh scribe >/dev/null 2>&1
+# the copy in config is qargi's render: gone or edited, the member is STALE and refresh writes it again
+rm -f "$C/drifty.md"
+$DA agent list | grep -q "drifty .*drifty.md (STALE: qargi agent refresh drifty --project pbase)$" && ok "list: a copy gone from config is STALE, with the fix" || no "list no copy: $($DA agent list | grep drifty)"
+out=$($DA agent refresh drifty 2>&1); { grep -q 'is current' <<<"$out" && cmp -s "$C/drifty.md" "$A/drifty.md"; } && ok "refresh of a current file writes the copy again and says the member is current" || no "refresh copy: $out"
+echo "edited" >> "$C/drifty.md"
+$DA agent list | grep -q "drifty .*(STALE: " && ok "a copy edited by hand is STALE" || no "edited copy: $($DA agent list | grep drifty)"
+$DA agent refresh drifty >/dev/null 2>&1; cmp -s "$C/drifty.md" "$A/drifty.md" && ! $DA agent list | grep drifty | grep -q '(' && ok "and refresh replaces it" || no "refresh edited copy: $($DA agent list | grep drifty)"
 $DA agent remove drifty >/dev/null 2>&1
 
 # a second runtime, defined by data alone in the pack library: the same neutral member, rendered as TOML by its own renderers.agent
@@ -135,11 +157,11 @@ jq -e '.projects.tomlp.tomler | .provider == "faketoml" and .render.path == "tom
 out=$($DA agent add tomler2 --roles build --effort xhigh --project tomlp 2>&1); tj=$(toml "$T/repo-t/.fake/agents/tomler2.toml")
 { jq -e 'has("effort") | not' <<<"$tj" >/dev/null && grep -q "effort: omitted" <<<"$out"; } && ok "faketoml: an effort the runtime has no value for is left out, with a note" || no "xhigh: $out $tj"
 printf '# hand\n' >> "$F"
-$DA agent list | grep -q "tomler .*tomler.toml (DRIFT)$" && ok "faketoml: a hand edit is DRIFT" || no "faketoml drift: $($DA agent list | grep tomler)"
+$DA agent list | grep -q "tomler .*tomler.toml (DRIFT: qargi agent refresh tomler --project tomlp)$" && ok "faketoml: a hand edit is DRIFT" || no "faketoml drift: $($DA agent list | grep tomler)"
 $DA agent refresh tomler --project tomlp >/dev/null 2>&1; $DA agent list | grep 'tomler ' | grep -q 'DRIFT' && no "refresh kept DRIFT" || ok "faketoml: refresh clears it"
 jq '.renderers.agent.fields += [{from:"abilities", to:"serves", transform:[{join:" "}]}]' "$LIB/definition.json" > "$T/d.json" && mv "$T/d.json" "$LIB/definition.json"
 python3 -I tests/handseal.py "$LIB"                             # and the edit is sealed again: a changed definition, not a changed pack
-$DA agent list | grep -q "tomler .*tomler.toml (STALE)$" && ok "faketoml: a changed definition makes the member STALE" || no "faketoml stale: $($DA agent list | grep tomler)"
+$DA agent list | grep -q "tomler .*tomler.toml (STALE: qargi agent refresh tomler --project tomlp)$" && ok "faketoml: a changed definition makes the member STALE" || no "faketoml stale: $($DA agent list | grep tomler)"
 $DA agent models --project tomlp --json | jq -e '[.members[] | select(.state == ["STALE"] and (.name | startswith("tomler")))] | length == 2' >/dev/null && ok "models: and so are the other members of that runtime" || no "models stale count"
 $DA agent refresh tomler --project tomlp >/dev/null 2>&1; [ "$(toml "$F" | jq -r .serves)" = "build test" ] && ok "faketoml: refresh renders the new definition" || no "faketoml refresh: $(toml "$F")"
 $DA agent list | grep 'tomler ' | grep -q 'STALE' && no "tomler still STALE" || ok "and the member is current again"
@@ -265,6 +287,7 @@ out=$($DA agent add lk --roles build --project linkp 2>&1)
 { [ -f "$MD/lk.toml" ] && [ ! -e "$T/repo-l/.fake" ] && [ ! -e "$HOME/.fake" ] && [ ! -e "$A/lk.md" ]; } && ok "linked runtime: a project's member is rendered into the member render (not the checkout, not the user's directory)" || no "linked add: $out"
 grep -q "qargi project link linkp --resource agents" <<<"$out" && ok "linked runtime: add says how the checkout gets it" || no "link note: $out"
 jq -e --arg f "$MD/lk.toml" '.projects.linkp.lk | .file == $f and has("project") == false and .render.path == "lk.toml"' "$T/c/agents.json" >/dev/null && $DA agent list | grep -q "^linkp  *lk " && ok "linked runtime: recorded at the render, current" || no "linked record"
+cmp -s "$T/c/agents/linkp/lk.toml" "$MD/lk.toml" && ok "linked runtime: the copy in config is kept as well" || no "linked copy: $(ls -R "$T/c/agents")"
 [ -z "$(git -C "$T/repo-l" status --porcelain)" ] && ! grep -qs fake "$T/repo-l/.git/info/exclude" && ok "linked runtime: the repository's exclude file is not touched (project link prints the hint)" || no "exclude touched"
 mkdir -p "$T/repo-l/.fake/agents"; ln -s "$MD/lk.toml" "$T/repo-l/.fake/agents/lk.toml"
 out=$($DA agent refresh lk --project linkp 2>&1); grep -q "is current" <<<"$out" && ! grep -q "does not see" <<<"$out" && ok "linked runtime: no note once the checkout has the link" || no "link note when linked: $out"
@@ -273,6 +296,7 @@ mkdir -p "$T/repo-l/.fake/agents"; rm -f "$T/repo-l/.fake/agents/lk.toml"
 $DA agent add old1 --roles build --project linkp >/dev/null 2>&1
 out=$($DA agent remove old1 --project linkp 2>&1); grep -q "project link linkp --resource agents" <<<"$out" && [ ! -e "$MD/old1.toml" ] && ok "remove deletes the render's file and says to run project link" || no "remove: $out"
 $DA agent remove lk2 --project linkp >/dev/null 2>&1
+[ ! -e "$T/c/agents/linkp" ] && ok "the last member of a project leaves no copies directory" || no "copies dir left: $(ls -A "$T/c/agents/linkp")"
 
 # a base name takes only the abilities of its class
 $DA agent add worker --project pbase --roles review >/dev/null 2>&1 && no "worker accepted review" || ok "add worker refuses an ability of the read-only class"
