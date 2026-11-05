@@ -144,6 +144,21 @@ out=$(HOME=$H3 bash "$TL/install.sh" --project "$P3" 2>&1); rc=$?
 HOME=$H3 bash "$TL/install.sh" --project "$P3" --uninstall >/dev/null 2>&1
 HOME=$H3 XDG_CONFIG_HOME=$H3/.config bash "$TL/install.sh" --user --uninstall >/dev/null 2>&1
 { [ ! -e "$P3/.alt" ] && [ ! -e "$H3/.alt" ] && ! grep -q "alt/skills" "$P3/.git/info/exclude"; } && ok "and the uninstalls follow it" || no "uninstall with a changed layout left: $(find "$H3" "$P3" -path "$P3/.git" -prune -o -name '*alt*' -print)"
+
+# --- the config directory (~/.qargi/config) a project install made goes with its uninstall once it is empty, and only then ---
+H4=$T/h4; P4=$T/proj4; mkdir -p "$H4" "$P4"; git init -q "$P4"
+inst4() { env -u QARGI_CONF -u QARGI_HOME HOME="$H4" bash "$INSTALL" "$@"; }
+out=$(inst4 --project "$P4" 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ -d "$H4/.qargi/config" ] && grep -q "^c	$H4/.qargi/config$" "$H4"/.qargi/config/project-*.manifest; } && ok "a project install records the config directory it made" || no "project install config record (rc=$rc): $out"
+inst4 --project "$P4" >/dev/null 2>&1   # a reinstall keeps the record of the directory the first one made
+out=$(inst4 --project "$P4" --uninstall 2>&1); rc=$?
+{ [ "$rc" = 0 ] && [ ! -e "$H4/.qargi" ] && [ ! -e "$P4/.claude/skills/qargi-task" ]; } && ok "its uninstall removes the empty config directory it made, and ~/.qargi with it" || no "project uninstall left (rc=$rc): $(find "$H4" -mindepth 1) $out"
+inst4 --project "$P4" >/dev/null 2>&1; echo '{}' > "$H4/.qargi/config/answers.json"
+inst4 --project "$P4" --uninstall >/dev/null 2>&1
+{ [ -f "$H4/.qargi/config/answers.json" ] && [ -z "$(find "$H4/.qargi/config" -name 'project-*.manifest')" ]; } && ok "a config directory that holds anything else is kept" || no "config with a file of yours: $(find "$H4" -mindepth 1)"
+rm -rf "$H4/.qargi"; mkdir -p "$H4/.qargi/config"
+inst4 --project "$P4" >/dev/null 2>&1; inst4 --project "$P4" --uninstall >/dev/null 2>&1
+[ -d "$H4/.qargi/config" ] && ok "an empty config directory the install did not make is kept" || no "uninstall removed a config directory it did not make"
 out=$(HOME=$H3 bash "$INSTALL" --user --runtime claude-platform 2>&1); rc=$?
 { [ "$rc" != 0 ] && echo "$out" | grep -q "no user skills directory" && echo "$out" | grep -q "cannot take user_skills_dir"; } && ok "a runtime with no skills directory is refused, with the reason" || no "runtime without a skills directory: rc=$rc $out"
 out=$(HOME=$H3 bash "$INSTALL" --user --runtime nosuch 2>&1); rc=$?

@@ -11,7 +11,11 @@ import tempfile
 
 for _k in [k for k in os.environ if k.startswith(("ANTHROPIC_", "QARGI_"))]:
     del os.environ[_k]
-ROOT = tempfile.mkdtemp(prefix="hermetic.")
+# A TMPDIR that is gone (removed under the test) is not replaced by another directory: tempfile would quietly fall back to /tmp,
+# outside the temporary root the caller gave the test. The test does not run (the same rule as tests/hermetic.sh).
+if os.environ.get("TMPDIR") and not (os.path.isdir(os.environ["TMPDIR"]) and os.access(os.environ["TMPDIR"], os.W_OK)):
+    raise SystemExit("hermetic test: TMPDIR=%s is not a writable directory: the test does not run" % os.environ["TMPDIR"])
+ROOT =tempfile.mkdtemp(prefix="hermetic.")
 atexit.register(shutil.rmtree, ROOT, True)
 for _d in ("home", "bin"):
     os.makedirs(os.path.join(ROOT, _d))

@@ -574,6 +574,21 @@ class Check(Fixtures):
         self.assertEqual(sorted(tools), ["go"])
         self.assertEqual(tools["go"], [("go.mod", ">=1.22"), (".tool-versions", "1.22.3")])
 
+    def test_a_member_state_after_a_long_path_is_read(self):
+        """agent list puts a member's state after the path of its file; the line is not cut to the 160 characters of a printed line before it is read,
+        or a member file under a long directory reads as current whatever its state."""
+        from unittest import mock
+        import env_check as C
+        line = "acme  forge  build  m/high  /" + "deep/" * 60 + "forge.md (DRIFT: qargi agent refresh forge --project acme)"
+
+        def fake_sub(args, width=160):
+            return 0, [E.clean(line, width)] if args[:2] == ["agent", "list"] else []
+        with mock.patch.object(C, "sub", fake_sub), mock.patch.object(C, "links", lambda project, repo: []), \
+                mock.patch.object(C, "packs_target", lambda answers, project: None):
+            res = C.qargi_layer("acme", {}, self.t)
+        self.assertIn(("members", "0 current, forge DRIFT"), res["rows"])
+        self.assertTrue(any(k == "missing" and t.startswith("members not current: forge DRIFT") for k, t in res["items"]), res["items"])
+
     def test_the_qargi_layer_for_a_stored_project(self):
         d = self.doctor_repo("echo 'ok: git'\n")
         rc, out, _ = self.check(d)
@@ -593,6 +608,9 @@ class Check(Fixtures):
         self.assertIn("members", {x["part"] for x in j["qargi"]})
         self.assertTrue(any(x["part"] == "members" and x["text"].startswith("1 current") for x in j["qargi"]), j)
         self.assertFalse(any(m.startswith("skills") for m in j["missing"]), j["missing"])      # nothing is rendered yet: nothing to link
+        packs = [x["text"] for x in j["qargi"] if x["part"] == "packs"]
+        self.assertEqual(packs, ["not applied (qargi packs apply --target claude-code acme)"], j)   # never applied: not "no drift", and not a missing item
+        self.assertFalse(any(m.startswith("packs") for m in j["missing"]), j["missing"])
         os.makedirs(os.path.join(self.t, "state", "render", "acme", "claude-code", ".claude", "skills"))
         j = json.loads(self.check(d, "--json")[1])
         self.assertIn("skills are not linked in this checkout", j["missing"])

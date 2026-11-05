@@ -44,7 +44,7 @@ Skills: only a person, through qargi's own skills, changes a skill, so the guard
     the last two have names a project may use for its own scripts, so only the files in the lib directory of the tool or of the installed
     copy count, found from the directory the command runs in);
   - qargi project init (it stores a whole answers file, so it is a way to models.extensions and models.accept_no_barrier, which have gated verbs;
-    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.* (the commands and environment the lead later runs), of packs.* (the opt-out of the render check) and of
+    found like the skill verbs), and qargi project set of any models answer, of release.*, of test_command, of env.*, of site.* (the commands, environment and site the lead later runs or builds), of packs.* (the opt-out of the render check) and of
     roles.<role>.tools, a whole role or roles (the tools env apply installs and local prepare checks out; the other answers stay open). A project verb the guard cannot read is
     refused: set with a path that is missing or built by xargs, a variable, a substitution, a brace or a glob; and any command with the word project,
     link, unlink, set or init after it and a shell expansion or xargs in the segment (found again inside `sh -c` and `eval` strings with the quotes
@@ -123,7 +123,7 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     with the key), refused with their own reason; and a write to the allowed signers ($QARGI_STATE/marshal/<project>.signers, under
     the marshal/ root above) or to the acceptance marks ($QARGI_STATE/features/.accepted-<project>.json, under features/), which the
     refusal names;
-  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, unset or env -u in a command.
+  - setting or unsetting QARGI_LEAD (the lead identity): an assignment, export, declare, printf -v, read or mapfile, unset or env -u in a command.
 Signing key: the one credential a member may not even read is the lead's signing key for the marshal records,
   credentials/marshal_* (the private key and its public half) in any of the configuration directories above. The guard refuses
   the Read and Grep tools on it, and a Bash segment with any word that names it: after ~ and variables, braces,
@@ -201,7 +201,7 @@ HANDOFF_SUBST = re.compile(r"(?:marshal(?:\.sh)?[\"']*\s+[\"']*handoff|marshal_h
 PROJECT_SET_SUBST = re.compile(r"project(?:\.sh)?[\"']*\s+[\"']*set[\"']*\s")   # `project set ... $(...)`: the substitution may produce a models path, and splitting it off hides that
 AUDIT_SUBST = re.compile(r"packs_audit\.py[\"']*")   # `packs_audit.py ... $(...)`: the substitution may produce `store`, and splitting it off hides that
 UNREADABLE = "$`{}*?[]"                                     # in a word: a variable, a substitution, a brace or a glob builds it, so the guard cannot read what it is
-EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream")      # the answers the lead later runs, passes to a process or fetches from: a member may not set them (project set)
+EXECUTED_ANSWERS = ("release", "test_command", "env", "upstream", "site")   # the answers the lead later runs, passes to a process, fetches from or builds from (release site): a member may not set them (project set)
 ROLE_TOOLS_PATH = re.compile(r"roles|roles\.[^.]+|roles\.[^.]+\.tools(?:\..*)?")   # roles.<role>.tools: what env apply installs and local prepare checks out; a whole role, or all of them, holds it
 PROJECT_VERBS = ("set", "init", "link", "unlink")           # the project verbs a member may not run (set: the models answers; init: the whole file; link, unlink: what a session loads)
 XARGS_VALUE_OPTS = {"-I", "-a", "-d", "-E", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}   # take the next word
@@ -2202,14 +2202,17 @@ def separator_path_refusal(command, here):
 
 
 def names_lead(t):
-    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
+    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, -uQARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
     lhs, _, rhs = t.partition("=")
-    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD")
+    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD") or t == "-uQARGI_LEAD"
 
 
-def lead_refusal(prog, rest, pre):
-    """The reason a segment sets or unsets QARGI_LEAD, or None. pre: the words up to and with the program (VAR=x, env -u NAME)."""
-    if any(names_lead(t) for t in pre) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
+def lead_refusal(toks, i):
+    """The reason a segment (its words toks, the program at i) sets or unsets QARGI_LEAD, or None. The names it sets are env_names()'s, as for QARGI_NESTED
+    (VAR=x in front, export|declare|... NAME, printf -v NAME and -vNAME, read|mapfile NAME); names_lead() adds the words that unset it (unset NAME, env -u
+    NAME) and the operands of the builtins."""
+    prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
+    if "QARGI_LEAD" in env_names(toks, i) or any(names_lead(t) for t in toks[:i + 1]) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
         return MarshalReason("setting or unsetting QARGI_LEAD changes who the lead is and is not available to an agent; " + MARSHAL_NOTE)
     return None
 
@@ -2229,7 +2232,7 @@ def bash_skill_refusal(command, here, depth):
         if any(t.startswith("QARGI_NESTED=") for t in toks[:i]):
             return "setting QARGI_NESTED skips a plan-token check and is not available to an agent"
         prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
-        why = lead_refusal(prog, rest, toks[:i + 1])
+        why = lead_refusal(toks, i)
         if why:
             return why
         if "QARGI_NESTED" in env_names(toks, i):             # export|declare|typeset|readonly|local NAME, printf -v NAME, read NAME
@@ -2697,7 +2700,7 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         if path == "models" or path.startswith("models."):
             return "qargi project set of %s changes which runtime the project uses or what counts as its barrier and is not available to an agent (qargi provider enable and qargi provider accept have a plan token)" % path
         if path in EXECUTED_ANSWERS or path.startswith(tuple(a + "." for a in EXECUTED_ANSWERS)):
-            return "qargi project set of %s changes a command or an environment the lead later runs, or the remote it fetches from (the release answers, test_command, env, upstream) and is not available to an agent: propose the value in your report" % path
+            return "qargi project set of %s changes a command or an environment the lead later runs, the remote it fetches from or the site it builds (the release answers, test_command, env, upstream, the site answers qargi release site builds from) and is not available to an agent: propose the value in your report" % path
         if path == "packs" or path.startswith("packs."):
             return "qargi project set of %s opts the project out of the packs render check (packs.none) and is not available to an agent: propose the value in your report" % path
         if ROLE_TOOLS_PATH.fullmatch(path):
