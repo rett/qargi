@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
+  false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
+  develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
+
 ### Changed
 - `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task
   branch, a merge of develop, a plain commit) and names the next step, `qargi feature verify NAME`; a feature never verified names it

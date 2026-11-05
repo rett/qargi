@@ -153,12 +153,13 @@ if branch_name(pk):
     if pk in FLOW_NAMES or pk.startswith(FLOW_PREFIXES): bad.append("repo.parking_branch: %s is a git-flow branch; use a branch of its own such as scratch" % pk)
     if isinstance(ll, list) and pk in ll: bad.append("repo.parking_branch: %s is also in repo.long_lived; the parking branch is reset to develop, so it is not long-lived" % pk)
     if isinstance(det, list) and pk in det: bad.append("repo.parking_branch: %s is also in repo.detached" % pk)
-# branches.delete_merged and branches.push_features: what the flow does with feature branches on origin (lib/feature.sh)
+# branches.delete_merged, branches.push_features and branches.push_develop: what the flow does on origin (lib/feature.sh)
 brs = c.get("branches", {})
-need(isinstance(brs, dict), "branches: an object like {delete_merged: local, push_features: never}")
+need(isinstance(brs, dict), "branches: an object like {delete_merged: local, push_features: never, push_develop: true}")
 if isinstance(brs, dict):
     for k in brs:
-        if k not in ("delete_merged", "push_features"): bad.append("branches.%s: unknown key (delete_merged, push_features)" % k)
+        if k not in ("delete_merged", "push_features", "push_develop"): bad.append("branches.%s: unknown key (delete_merged, push_features, push_develop)" % k)
+    need(isinstance(brs.get("push_develop", True), bool), "branches.push_develop: true (default: feature finish pushes develop when the repository has an origin) or false (develop stays local)")
     need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
     need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
 # worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository

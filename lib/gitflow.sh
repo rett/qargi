@@ -330,6 +330,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch
   PUSH_FEATURES=$(jq -r '.branches.push_features // "never"' "$af")   # never | when-shared | always: whether the flow pushes feature branches
+  PUSH_DEVELOP=$(jq -r 'if .branches.push_develop == false then "false" else "true" end' "$af")   # true (default) | false: whether feature finish pushes develop
   WT_ROOT=$(jq -r '.worktrees.root // ""' "$af"); WT_ROOT=${WT_ROOT/#\~/$HOME}   # where qargi makes worktrees: ROOT/<branch>
   [ -n "$WT_ROOT" ] || WT_ROOT=$DA_STATE/worktrees/$PROJ
   PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop

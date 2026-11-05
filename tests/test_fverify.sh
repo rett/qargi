@@ -10,7 +10,7 @@ T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi
 trap 'rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
-export QARGI_PROJECT=app
+export QARGI_PROJECT=app QARGI_LEAD=lead-one
 mkdir -p "$HOME" "$T/c/projects" "$T/s"
 R=$T/app; git init -q -b master "$R"; git init -q --bare "$T/origin.git"
 echo 0.1.0 > "$R/VERSION"; printf '# Changelog\n\n## [Unreleased]\n' > "$R/CHANGELOG.md"
@@ -21,7 +21,7 @@ printf '#!/bin/sh\necho "ok   fine"\necho "FAIL the second check of the bad step
 printf 'fast | par | 30 | 5 | sh tests/test_good.sh\nfast | par | 30 | 5 | sh tests/test_bad.sh\n' > "$R/tests/suite.txt"
 git -C "$R" add -A && git -C "$R" commit -q -m one && git -C "$R" branch develop && git -C "$R" remote add origin "$T/origin.git" && git -C "$R" push -q origin master develop
 git -C "$R" checkout -q -b parked
-jq -n --arg p "$R" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+$DA project template app | jq --arg p "$R" '.repo.url = "https://github.com/acme/app" | .repo.path = $p | .test_command = "true"' > "$T/c/projects/app.json"
 F="$DA feature"
 task() { # name: a task branch with one commit, cut from develop
   git -C "$R" branch "agent/$1" develop; local w; w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "agent/$1"
@@ -80,6 +80,33 @@ setcmd 'bash tests/run.sh -j 2'
 out=$($REL verify 0.9.0 2>&1); rc=$?
 [ $rc = 1 ] && grep -qx '  sh tests/test_bad.sh' <<<"$out" && [ "$(tail -n 1 <<<"$out")" = "log of the whole run: $T/s/suite-logs/app.release-0.9.0.log" ] && ok "release verify ends the same way" || no "release verify: $out"
 setcmd 'exit 0'
+
+# --- 3. the finish plan says whether develop is pushed, by the answer branches.push_develop
+feat() { $F start "$1" >/dev/null 2>&1; task "$2"; $F merge "$1" "agent/$2" >/dev/null 2>&1; $F verify "$1" >/dev/null 2>&1; }
+feat pd1 e1
+out=$($F finish pd1 2>&1); t_true=$(tok <<<"$out")
+[ "$(head -n 1 <<<"$out")" = "will push develop to origin" ] && ok "the first line of the plan says develop will be pushed (the default)" || no "default plan: $out"
+out=$($DA project set app branches.push_develop false 2>&1) && grep -q 'branches.push_develop = false' <<<"$out" && ok "project set accepts branches.push_develop false" || no "project set: $out"
+out=$($DA project set app branches.push_develop maybe 2>&1); rc=$?
+[ $rc != 0 ] && grep -q 'branches.push_develop: true' <<<"$out" && [ "$(jq -r '.branches.push_develop' "$T/c/projects/app.json")" = false ] && ok "and refuses anything but true or false, changing nothing" || no "project set maybe rc=$rc: $out"
+d0=$(git -C "$R" rev-parse develop); od0=$(git -C "$T/origin.git" rev-parse develop)
+out=$($F finish pd1 2>&1); t_false=$(tok <<<"$out")
+[ "$(head -n 1 <<<"$out")" = "local only, will not push (branches.push_develop is false)" ] && ! grep -q ', push develop' <<<"$out" && [ -n "$t_false" ] && [ "$t_false" != "$t_true" ] && ok "false: the plan says local only, and its token is another plan" || no "false plan: $out"
+$F finish pd1 --plan "$t_true" --approved go >/dev/null 2>&1 && no "the token of the pushing plan was accepted after the policy changed" || ok "the token of the earlier plan is refused"
+[ "$(git -C "$R" rev-parse develop)" = "$d0" ] && ok "a refused token changes nothing" || no "develop moved on a refused token"
+out=$($F finish pd1 --plan "$t_false" --approved go 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(git -C "$R" rev-parse develop)" != "$d0" ] && [ "$(git -C "$T/origin.git" rev-parse develop)" = "$od0" ] && grep -q 'develop was not pushed (branches.push_develop is false)' <<<"$out" && ! grep -qx 'pushed develop' <<<"$out" \
+  && ok "finish merges locally and leaves origin's develop alone" || no "local finish rc=$rc: $out"
+$DA project set app branches.push_develop true >/dev/null 2>&1
+feat pd2 e2
+out=$($F finish pd2 2>&1); t=$(tok <<<"$out")
+[ "$(head -n 1 <<<"$out")" = "will push develop to origin" ] && ok "true: the plan says it will push" || no "true plan: $out"
+$F finish pd2 --plan "$t" --approved go >/dev/null 2>&1
+[ "$(git -C "$T/origin.git" rev-parse develop)" = "$(git -C "$R" rev-parse develop)" ] && ok "and finish pushes develop (the local-only merge of before goes with it)" || no "push after true"
+git -C "$R" remote remove origin
+feat pd3 e3
+out=$($F finish pd3 2>&1)
+[ "$(head -n 1 <<<"$out")" = "local only, will not push (the repository has no origin)" ] && ok "a repository with no origin: local only, whatever the answer" || no "no origin plan: $out"
 
 [ "$fail" = 0 ] && echo "all fverify tests passed"
 exit "$fail"

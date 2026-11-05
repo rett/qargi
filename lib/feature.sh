@@ -19,7 +19,8 @@
 #   feature.sh verify NAME [--project P]           the whole suite on the feature's head (the checkpoint before finishing)
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
-#                                                  origin exists. Needs a passing run at the feature's head. A feature behind develop is refused; when
+#                                                  origin exists and the answer branches.push_develop is not false (the plan's first line says which).
+#                                                  Needs a passing run at the feature's head. A feature behind develop is refused; when
 #                                                  both sides changed the same files, the message lists them and says to sync first.
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
 # (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
@@ -264,8 +265,14 @@ case $verb in
         unchecked) rnote="origin could not be asked ($RWHY): origin/$BR is not deleted";;
       esac
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" | plan_token)
-    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
+    # whether develop is pushed: origin exists and the answer branches.push_develop is not false (default true)
+    pushd='' pushwhy=''
+    if ! g remote get-url origin >/dev/null 2>&1; then pushwhy="the repository has no origin"
+    elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
+    else pushd=1; fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | plan_token)
+    if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
+    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"
@@ -277,7 +284,7 @@ case $verb in
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
     # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
-    if g remote get-url origin >/dev/null 2>&1; then
+    if [ -n "$pushd" ]; then
       rd0=$(remote_was develop)   # what origin has (fetched above): the journal line of the push starts there
       g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
       journal_push refs/heads/develop "$rd0" "$MERGED" feature:finish
@@ -297,8 +304,8 @@ case $verb in
         if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
         else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
       fi
-      echo "pushed develop"
     fi
+    if [ -n "$pushd" ]; then echo "pushed develop"; else echo "develop was not pushed ($pushwhy)"; fi
     lead_advice;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

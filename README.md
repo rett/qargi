@@ -224,7 +224,9 @@ Two answers decide what the flow does with a feature branch on origin. `branches
 under `always`, or under `when-shared` when origin already has it. Setting it is the standing approval for those pushes; develop,
 master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
-shows the deletion and its token covers origin's tip.
+shows the deletion and its token covers origin's tip. `branches.push_develop` is `true` (the default) or `false`: `feature finish`
+pushes develop to origin, when the repository has one, unless it is `false`. The first line of the finish plan says which ("will
+push develop to origin", or "local only, will not push" and why), and the token covers it.
 
 ### Pruning merged branches
 
