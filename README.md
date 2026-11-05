@@ -208,6 +208,12 @@ develop cannot be merged into the detached branch. `feature start` and the other
 from it as from any base (`local prepare --base docs-site`, `review apply`), and the finished `agent/<slug>` branch is merged
 into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, local only, nothing is pushed.
 
+A documentation site kept on such a branch is regenerated when a release ships. With `site.enabled` set to `true` (and
+`site.branch`, which defaults to `gh-pages` when `repo.detached` lists it, and `site.config`, default `site/site.json` with the
+hand pages in `site/pages/`), `release finish` ends with `next: qargi release site VERSION`. That verb builds the site of the
+tag with `lib/site.py` and commits it on the site branch (`_site/`), behind a plan and token; it never pushes and prints the
+push command. `release status VERSION` says whether the site of that version is built and pushed.
+
 ### Feature branches on origin
 
 Two answers decide what the flow does with a feature branch on origin. `branches.push_features` is `never` (the default),

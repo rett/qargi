@@ -79,9 +79,10 @@ read-only role run there) is refused to a member, found like the skill verbs, an
 definitions (new, import, seal, remove, rename, enable, disable, attest, and any verb added later: only the ones in
 PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
-Release: `qargi release publish` (it creates the GitHub release of a tag) and `qargi release sign` (it signs the release files with the
-lead's key) are refused to a member, found like the skill verbs, also as a verb held in a variable and through lib/release.sh and
-lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
+Release: `qargi release publish` (it creates the GitHub release of a tag), `qargi release sign` (it signs the release files with the
+lead's key) and `qargi release site` (it commits the built documentation site on the lead's site branch) are refused to a member, found
+like the skill verbs, also as a verb held in a variable and through lib/release.sh and lib/release_sign.py; the other release verbs stay
+allowed (they need a plan token and approval of their own).
 Changelog: `qargi changelog renumber` without --check (it rewrites the changelog of a work tree) is the lead's, found like the skill verbs, also through
 lib/changelog.sh and lib/changelog_numbers.py and when a word is held in a variable; `renumber --check` only reads and stays allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
@@ -2354,6 +2355,8 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi provider adapter-run runs the adapter of a runtime, and with --check makes a private copy of a library adapter, and is not available to an agent"
     if area == "provider" and verb not in PROVIDER_READ:
         return "qargi provider %s changes the provider definitions and is not available to an agent" % verb
+    if area == "release" and any(w == "site" for w in words[1:4]):
+        return "qargi release site commits the built documentation site on the lead's site branch and is not available to an agent; report that the site of the release needs building"
     if area == "release" and any(w == "sign" for w in words[1:4]):
         return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
     # qargi env: show only reads files, so a member may run it. plan runs the project's dry-run command (make -n still runs $(shell ...) and + lines) and

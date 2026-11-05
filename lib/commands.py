@@ -396,7 +396,10 @@ COMMANDS = {
                  "'## [Unreleased]'; it may carry the version, as in '## {version} (unreleased)', and is then renamed) and release.changelog.released (default '## [{version}] - {date}'), "
                  "release.man_pages (a list of paths; default the man/*.1 files), release.test_command (what release verify runs, a command line or a list of words; default test_command) "
                  "and release.preflight (a command as a list of words, {version} replaced, run by start and push before they change anything; a non-zero exit refuses and shows the tail of its output). "
-                 "A member may not set them: the lead runs them."),
+                 "A member may not set them: the lead runs them. "
+                 "A project with a documentation site on a detached branch sets site.enabled to true, and optionally site.branch (default gh-pages when repo.detached "
+                 "lists it) and site.config (the site.json on that branch, default site/site.json, with the hand pages in the folder pages/ beside it): then "
+                 "release finish ends with 'next: qargi release site VERSION' (the methodology's after_release step) and release status has a site line."),
         "scripts": ["release.sh"],
         "verbs": {
             "start": verb("Cut release/VERSION from develop (hotfix/VERSION from master) and bump the version", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, opt("--date", "the changelog and man page date (default today)", "YYYY-MM-DD"),
@@ -410,7 +413,9 @@ COMMANDS = {
                          desc=("The full-suite verdict names the command that produced it and when it ran, from the suite record. When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
                                "until qargi release sign recorded a signature that still holds (no signed file or signature changed), and then 'VERSION is ready for signing: "
-                               "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way.")),
+                               "qargi release sign VERSION' when the repository is at the tag with the files built, or what stands in the way. "
+                               "When site.enabled is true a site line says 'site: not built for VERSION', 'site: built at SHA, not pushed' or 'site: pushed' "
+                               "(the commit of qargi release site on the site branch, and whether the live origin has it).")),
             "verify": verb("Run the project's whole test suite on the release branch (develop's head before it starts) and record the result", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                            desc=TAG_NOTE + " The exit status stays the suite's result. The command is release.test_command when the project sets one, else test_command."),
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
@@ -419,7 +424,9 @@ COMMANDS = {
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
                            desc=("Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
-                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE)),
+                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
+                                 "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
+                                 "'next: qargi release site VERSION'.")),
             "sign": verb("Sign the release files from the tag with your own key, on your own terminal, and record that they verify", [("VERSION", "none")], [PROJECT_OPT],
                          desc=("Signing is optional and off by default: it applies only to a project whose answers hold release.sign (otherwise this exits 2 and nothing else changes). "
                                "Run it in your terminal, in the project's repository checked out at the tag (git checkout --detach VERSION, with the release files built from it): "
@@ -441,6 +448,17 @@ COMMANDS = {
                                   "It refuses when GitHub has the release already, when the tag is missing, when the notes are empty, and, when the answer release.sign is set, until "
                                   "qargi release sign recorded an ok for VERSION and none of the signed files or signatures changed since (without release.sign, which is the default, there is no such wait); --verify-tag makes gh refuse a tag that is not on origin. "
                                   "Needs the plan token and an approval; a member run cannot publish.")),
+            "site": verb("Build the documentation site of the tag VERSION and commit it on the detached site branch; never pushes", [("VERSION", "none")],
+                         [PROJECT_OPT, PLAN, APPROVED],
+                         desc=("Only when the answer site.enabled is true. The source is the tree of the tag VERSION (its CHANGELOG.md, VERSION, README.md and "
+                               "lib/commands.py, from which the reference is generated); the hand pages and site.json are those of the site branch (site.branch, "
+                               "default gh-pages when repo.detached lists it; site.config, default site/site.json, with the hand pages in pages/ beside it). "
+                               "lib/site.py builds it in a temporary worktree of the site branch: the site.json records release VERSION and _site/ holds the built "
+                               "site. The plan shows the build's warnings and the size of the change, and the token covers the tag, the branch's tip and the built tree; "
+                               "the apply commits it as 'Site: built from release VERSION' and moves the branch, touching no working tree, and prints the git push "
+                               "command for you to run. Nothing is committed when the build is already there. Refused when the branch is checked out somewhere, "
+                               "when the tag is missing and when the build reports an error; refused (exit 2) in a member run and when QARGI_NESTED is set."),
+                         examples=["qargi release site 0.2.1", "qargi release site 0.2.1 --plan TOKEN --approved \"yes, commit the site\""]),
         },
     },
     "env": {
@@ -1246,7 +1264,7 @@ TOPICS = {
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, packs, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
-        "read); release publish and sign; marshal claim, set, renew, release, take, "
+        "read); release publish, sign and site; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "

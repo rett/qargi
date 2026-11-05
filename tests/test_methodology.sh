@@ -37,6 +37,12 @@ $DA methodology list | grep -q "^lean .*user" && $DA methodology check lean >/de
 jq 'length' <<<"$($DA methodology files lean --param project=x)" | grep -qx 1 && ok "and renders" || no "render lean"
 jq '.scaffold=[{"src":"missing.md","dest":"../escape"}]' "$M/methodology.json" > "$M/m.tmp" && mv "$M/m.tmp" "$M/methodology.json"
 $DA methodology check lean >/dev/null 2>&1 && no "an escaping scaffold path passed" || ok "a scaffold path that leaves the project fails the check"
+$DA methodology show gitflow | grep -q "^  site  *when site.enabled: qargi release site {version}" && ok "show lists the after_release step" || no "show after_release: $($DA methodology show gitflow)"
+jq '.scaffold=[{"src":"README.md","dest":"README.md"}] | .after_release=[{"id":"site","when":"site.enabled","next":"rm -rf /"}]' methodologies/gitflow/methodology.json | jq '.name="lean"' > "$M/methodology.json"
+$DA methodology check lean 2>&1 | grep -q "after_release step site: next is the one qargi command line" && ok "an after_release step that is no qargi command fails the check" || no "after_release next"
+jq '.after_release=[{"id":"site","when":"Site Enabled","next":"qargi x"},{"id":"site","when":"a.b","next":"qargi y","extra":1}]' "$M/methodology.json" > "$M/m.tmp" && mv "$M/m.tmp" "$M/methodology.json"
+out=$($DA methodology check lean 2>&1)
+grep -q "when is the dotted name of a project answer" <<<"$out" && grep -q "an object {id, when, next, help}" <<<"$out" && ok "a bad when and an unknown key of an after_release step fail the check" || no "after_release check: $out"
 mkdir -p "$T/c/methodologies/gitflow"; cp methodologies/gitflow/methodology.json "$T/c/methodologies/gitflow/"
 $DA methodology check 2>&1 | grep -q "yours is never used" && ok "a methodology that shadows a built-in is reported" || no "shadow"
 rm -rf "$T"
