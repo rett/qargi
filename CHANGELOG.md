@@ -21,6 +21,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sidebar with exactly one current page, the script and the index (valid, bounded, an entry for every page, every entry pointing
   at a page or heading) and refuses an inline script.
 
+### Fixed
+- `tests/run.sh` printed nothing for a failed step that wrote to standard error (every failed Python test): the loop that closes a step's
+  stray descriptors also closed the saved copy of its standard error, which stayed pointed at /dev/null. The block now carries the
+  step's own output, and an `exit status N, M bytes of output` line.
+
 ## [0.2.1] - 2026-11-05
 
 ### Added
