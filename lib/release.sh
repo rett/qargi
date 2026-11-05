@@ -304,13 +304,15 @@ case $verb in
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
+    other_runs_warning
     busy_begin release-verify "$VER"
     t0=$SECONDS
-    if run_suite; then res=pass; else res=fail; fi
+    if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
     busy_end
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")"
     tag_checks
+    [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
   push)
     rel_valid

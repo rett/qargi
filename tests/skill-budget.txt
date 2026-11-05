@@ -22,7 +22,7 @@ roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 167
-skills/qargi-flow/SKILL.md 944
+skills/qargi-flow/SKILL.md 959 # raised: one clause in the advisor brief (no suite run beside a feature verify); for the lead's review
 skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933

@@ -34,7 +34,7 @@ review; `qargi methodology show gitflow` prints the model.
    sign-off, then `qargi feature finish NAME`. That is the only merge into
    develop; its run carries over to develop's new head, so a release needs no further run.
    **Advisor sign-off** (before `feature finish`): write a synthesized diff to a scratch file: the feature diff stat from
-   `qargi feature status NAME`, each task's report line, the gate and suite verdicts. Run `qargi agent for review --profile advisor`
+   `qargi feature status NAME`, each task's report line, the gate and suite verdicts, and the line "do not run the test suite while a feature verify is running". Run `qargi agent for review --profile advisor`
    and spawn it on that file as `qargi provider notes spawn` says. Finish only after reading its verdict.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version; only minor

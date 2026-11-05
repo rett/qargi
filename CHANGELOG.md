@@ -20,7 +20,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
   close it (`local clean`, or `local close --applied-by-am`). A run that was cleaned, discarded, closed, or applied and merged does not block.
 - The member text says that DONE of a write role requires `ls OUT/patches`.
-
 - The lead's lease on a feature no longer lapses during a long worker run: every command of the current lead on the feature renews
   it (`feature merge`, `sync`, `status`, `verify` and `finish`; `local prepare`, `verify` and `clean`; `review check` and `apply`),
   once a third of the lease has passed and also when it lapsed meanwhile, as long as nobody else took the feature over. Another
@@ -28,13 +27,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `marshal release NAME` after `feature finish` (or on a feature that is abandoned, already released, or has neither a record nor
   a branch) exits 0 with one line, "nothing to release", instead of "you are not the lead of NAME, which is without a lead"; it
   needs no `--note` then. A feature held by another lead, or one with a branch that was never claimed, is still refused.
+- `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task
+  branch, a merge of develop, a plain commit) and names the next step, `qargi feature verify NAME`; a feature never verified names it
+  too.
+- A failed `qargi feature verify` (and `qargi release verify`) ends its output with the failing steps and tests that the suite
+  runner's report names, where the runner kept the logs of the failed steps, and the path of a log of the whole run
+  (`STATE/suite-logs/PROJECT.feature-NAME.log`, mode 600, the last run of each). The suite's output is shown as before, now with its
+  error stream on standard output.
 
 ### Fixed
 - `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
   directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
 - `qargi local verify` fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and OUT has no
   patches and no report, instead of leaving the lead to read the refs and the empty directory. `local clean --discard` is not affected.
-
+- The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
+  false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
+  develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
+- `qargi feature verify` and `qargi release verify` warn on standard error, and go on, when another suite may be running: a
+  whole-suite run of the project in progress, a local run of the repository with a file changed in the last 10 minutes
+  (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
+- The advisor sign-off in the `qargi-flow` skill tells the lead to put "do not run the test suite while a feature verify is
+  running" in the brief it writes for the advisor.
 
 ## [0.2.2] - 2026-11-05
 
