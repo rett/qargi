@@ -2,7 +2,8 @@
 # Bounded poller for one cloud session. Run with the Bash tool's
 # run_in_background; it prints exactly one line when it ends:
 #   QARGI WATCH <sid> idle|terminated|budget_reached|budget_tight|timeout|auth|error [stop_reason]
-# Usage: watch.sh SID [MAX_SECONDS] [--warn PCT]   (default 7200, poll every 30 s)
+# Usage: watch.sh SID [MAX_SECONDS] [--warn PCT]   (default 7200, poll every 30 s;
+# QARGI_WATCH_INTERVAL sets the poll interval in seconds, so a test can poll quickly)
 # budget_tight: the session's cost reached PCT percent of its spend ceiling (default 85, 0 = never). It ends
 # the watch early, with the cost and the ceiling in cents, so the coordinator can offer to raise the ceiling
 # (qargi instances budget NAME CENTS --session SID) and watch again.
@@ -18,12 +19,14 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$sid" ] || usage_die "usage: watch.sh SID [MAX_SECONDS] [--warn PCT]"
 case $warn in ''|*[!0-9]*) die "--warn is a whole percent (0 turns it off)";; esac
+interval=${QARGI_WATCH_INTERVAL:-30}
+case $interval in ''|*[!0-9.]*|.|*.*.*) die "QARGI_WATCH_INTERVAL is a number of seconds";; esac
 
 start=$(date +%s); seen_running=
 while :; do
   if ! s=$(ant beta:sessions retrieve --session-id "$sid" 2>/dev/null); then
     ant auth status >/dev/null 2>&1 || { echo "QARGI WATCH $sid auth"; exit 3; }
-    sleep 30; continue
+    sleep "$interval"; continue
   fi
   st=$(jq -r .status <<<"$s"); why=$(jq -r '.stop_reason.type // "-"' <<<"$s")
   [ "$st" = running ] && seen_running=1
@@ -45,5 +48,5 @@ while :; do
   if [ "$elapsed" -ge "$max" ]; then
     echo "QARGI WATCH $sid timeout $why"; exit 2
   fi
-  sleep 30
+  sleep "$interval"
 done
