@@ -5,9 +5,11 @@
   help.py man [--keep-date F] the manual page (roff) on stdout; its .TH date is the one in F (default man/qargi.1, else the
                               copy committed at HEAD, as `> man/qargi.1` empties the file before this runs), empty when none
   help.py complete WORDS...   completion candidates for the last word (qargi __complete, used by the bash completion)
+  help.py preamble AREA ARGS  what bin/qargi does before every command, in one process: the dev-run banner on stderr, the
+                              arguments resolved (below) and the project's cloud binding; see preamble()
 
 The modules a plain run does not need (text wrapping, subprocess, glob) are imported where they are used: every qargi
-command imports this module before it runs.
+command runs the preamble, and its cost is the import of this module.
 """
 import json, os, sys
 
@@ -725,9 +727,41 @@ def resolve(argv):
     return head + out
 
 
+def cloud_binding(words):
+    """(project, profile, workspace id) of the project the words are about (lib/cloud.py), empty strings when there is no
+    project or no binding. A fault in the lookup is no reason to stop a command: it reads as no binding."""
+    try:
+        import cloud
+        p = cloud.project_of(words)
+        b = cloud.binding(p) if p else None
+        return (p or "", b["profile"] if b else "", b["workspace_id"] if b else "")
+    except Exception:  # noqa: BLE001  (the dispatcher ran this lookup with its errors discarded; it still does)
+        return ("", "", "")
+
+
+def preamble(argv):
+    """What bin/qargi does before every command, in one process: the dev-run banner on stderr; the arguments resolved
+    (resolve); the cloud binding of the project the command is about (none for qargi cloud itself, which manages the
+    bindings). On stdout, NUL-separated: project, profile, workspace id, then the resolved arguments. None (exit 2) when
+    resolve refused."""
+    if P.banner():
+        print("qargi: " + P.banner(), file=sys.stderr)
+    r = resolve(argv)
+    if r is None:
+        return None
+    binding = cloud_binding(r) if r and r[0] not in ("cloud", "help", "version") else ("", "", "")
+    return list(binding) + r
+
+
 def main(argv):
     if not argv:
         return show([])
+    if argv[0] == "preamble":
+        r = preamble(argv[1:])
+        if r is None:
+            return 2
+        sys.stdout.write("".join(a + "\0" for a in r))
+        return 0
     if argv[0] == "infer":
         print(infer_project() or "")
         return 0
@@ -758,7 +792,7 @@ def main(argv):
         else:
             print("\n".join(complete(words)))
         return 0
-    print("usage: help.py show|man|complete ...", file=sys.stderr)
+    print("usage: help.py show|man|complete|resolve|preamble ...", file=sys.stderr)
     return 2
 
 
