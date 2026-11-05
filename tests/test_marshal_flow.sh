@@ -3,14 +3,14 @@
 # Written from the SPEC of the wiring, not from its code. Fixtures and conventions follow tests/test_marshal.sh (identity from
 # QARGI_LEAD) and tests/test_flow.sh (a project with a bare origin and a fake gh). The leases are real (the default ttl is 15
 # minutes, so no lead goes stale during the run); only the verify tests take real time (a suite of about 3 seconds with
-# QARGI_MARSHAL_RENEW_SEC=1 and marshal.ttl 1 minute).
+# QARGI_MARSHAL_RENEW_SEC=1 and marshal.lease_minutes 1 minute).
 # Run: tests/test_marshal_flow.sh
 set -u
 cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
-trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T"' EXIT
+trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home QARGI_CONF=$T/c QARGI_STATE=$T/s QARGI_RUN_TMP=$T/shm GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
 export QARGI_PROJECT=app
@@ -42,7 +42,7 @@ mkfeat() { # NAME LEAD: branch feature/NAME and, for a LEAD, a record led by it,
   git -C "$R" branch "feature/$1" develop
   if [ -n "$2" ]; then "$DA" marshal claim "$1" --as "$2" >/dev/null 2>&1; fi
 }
-ttl() { jq --argjson n "$1" '.marshal.ttl = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
+ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tc() { jq --arg c "$1" '.test_command = $c' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }
 tok() { sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p'; }
 

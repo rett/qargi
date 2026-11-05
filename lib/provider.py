@@ -43,6 +43,8 @@ As a library (import provider; stdlib only, found beside the descriptors, so it 
                                        the same refusal when the skills capability is not yes or partial (verified) on local
   memory_dir(name, checkout) / checkout_key(rule, path) / launch_line(name, render)
                                        the layout's templates filled in
+  transcripts(name, checkout)          where the runtime keeps the transcripts of the sessions started in a checkout and how to read the
+                                       context in use from one: {dir, ext, usage, window} (resources.transcripts), or Unsupported
   adapter_exec(name, surface, verb) / run_adapter(name, surface, verb, data)
                                        the adapter of a runtime (a library pack's only as a sealed private copy; the verb must be one
                                        it lists); the second runs it and removes the copy
@@ -861,6 +863,23 @@ def _resource_problems(res, extension=False):
     for i, n in enumerate(ca if isinstance(ca, list) and not extension else ()):
         if isinstance(n, str) and not _plain_relative(n):
             bad.append("resources.contract_addenda[%d]: '%s' is not a file inside the definition's directory (a relative path, no .., no ~, no empty part)" % (i, n))
+    tr = res.get("transcripts")
+    if isinstance(tr, dict):
+        if isinstance(tr.get("user_dir"), str):
+            add(_path_problem("resources.transcripts.user_dir", tr["user_dir"], True, inside_ok=False))
+            if "{checkout_key}" in tr["user_dir"] and tr.get("checkout_key") is None:
+                bad.append("resources.transcripts.user_dir: uses {checkout_key} but checkout_key is null")
+        w = tr.get("window")
+        if w is not None and (not isinstance(w, int) or isinstance(w, bool) or w < 1000):
+            bad.append("resources.transcripts.window: %s is not a number of tokens (at least 1000)" % _show(w))
+        us = tr.get("usage") if isinstance(tr.get("usage"), dict) else {}
+        for k in ("select", "skip"):
+            for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
+                if not isinstance(ptr, str) or not ptr.startswith("/") or isinstance(want, (dict, list)):
+                    bad.append("resources.transcripts.usage.%s: '%s' is not a JSON pointer to a text, number or boolean" % (k, ptr))
+        for k in ("tokens", "model"):
+            if k in us and not (isinstance(us[k], str) and us[k].startswith("/")):
+                bad.append("resources.transcripts.usage.%s: %s is not a JSON pointer" % (k, _show(us[k])))
     mem = res.get("memory")
     if isinstance(mem, dict) and isinstance(mem.get("user_dir"), str):
         add(_path_problem("resources.memory.user_dir", mem["user_dir"], True, inside_ok=False))
@@ -898,7 +917,7 @@ def _notes_problems(notes):
 
 EXTENSION_KEYS = ("schema", "kind", "extension", "description", "extends", "surface", "provides", "requires", "adds")
 EXTENSION_ADDS = ("capabilities", "resources", "renderers", "dispatch", "barrier", "adapter_verbs")
-RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory")
+RESOURCES = ("skills", "agents", "instructions", "mcp", "settings", "memory", "transcripts")
 
 
 def validate_extension(d, name=None):
@@ -1396,12 +1415,12 @@ def extension_base(ext, project=None, root=None, library=None, conf=None):
 # ---- the layout -------------------------------------------------------------------------------------------------------
 
 LAYOUT_FIELDS = ("project_skills_dir", "user_skills_dir", "project_agents_dir", "user_agents_dir", "settings_files", "exclusion",
-                 "memory_dir", "checkout_key", "render_target", "session_launch")
+                 "memory_dir", "checkout_key", "render_target", "session_launch", "transcripts")
 FACILITY = {"project_skills_dir": "project skills directory", "user_skills_dir": "user skills directory",
             "project_agents_dir": "project agents directory", "user_agents_dir": "user agents directory",
             "settings_files": "settings files", "exclusion": "way to switch a skill off in a settings file",
             "memory_dir": "memory directory", "checkout_key": "checkout key rule", "render_target": "packs render target",
-            "session_launch": "session launch command"}
+            "session_launch": "session launch command", "transcripts": "session transcripts location"}
 _HOME_FIELDS = ("user_skills_dir", "user_agents_dir", "memory_dir")
 
 
@@ -1415,7 +1434,7 @@ def _layout_from(doc):
     """The layout fields of a definition, from its resources and session. Home is not expanded. An exclusion that is not a settings key
     with one pointer segment is None here."""
     res = _dict(doc.get("resources"))
-    sk, ag, st, mem = (_dict(res.get(k)) for k in ("skills", "agents", "settings", "memory"))
+    sk, ag, st, mem, tr = (_dict(res.get(k)) for k in ("skills", "agents", "settings", "memory", "transcripts"))
     ses = _dict(doc.get("session"))
     ex = _dict(sk.get("exclusion"))
     exclusion = None
@@ -1425,7 +1444,8 @@ def _layout_from(doc):
     return {"project_skills_dir": sk.get("project_dir"), "user_skills_dir": sk.get("user_dir"),
             "project_agents_dir": ag.get("project_dir"), "user_agents_dir": ag.get("user_dir"),
             "settings_files": files or None, "exclusion": exclusion, "memory_dir": mem.get("user_dir"), "checkout_key": mem.get("checkout_key"),
-            "render_target": ses.get("render_target"), "session_launch": ses.get("launch")}
+            "render_target": ses.get("render_target"), "session_launch": ses.get("launch"),
+            "transcripts": dict(tr) if isinstance(tr.get("user_dir"), str) else None}
 
 
 def layout(name, root=None, home=None, library=None, project=None, conf=None):
@@ -1450,6 +1470,8 @@ def layout(name, root=None, home=None, library=None, project=None, conf=None):
         out["settings_files"] = [{"scope": f["scope"], "path": _home(f["path"], home)} for f in out["settings_files"]]
     if out["exclusion"] is not None:
         out["exclusion"] = dict(out["exclusion"])
+    if out["transcripts"] is not None:
+        out["transcripts"]["user_dir"] = _home(out["transcripts"]["user_dir"], home)
     return out
 
 
@@ -1649,6 +1671,21 @@ def memory_dir(name, checkout, root=None, home=None, library=None, project=None,
     return tpl
 
 
+TRANSCRIPT_WINDOW = 200000   # the context window assumed when the definition names none
+
+
+def transcripts(name, checkout, root=None, home=None, library=None, project=None, conf=None):
+    """Where the runtime keeps the transcripts of the sessions started in a checkout, and how to read the context in use from one, or
+    Unsupported: {dir, ext, usage, window}. dir has {checkout_key} filled in; usage is the definition's reading rule (select, skip,
+    tokens, fields, model: JSON pointers into one record of a transcript, which is a file of JSON lines); window is the context window
+    in tokens (the definition's, else TRANSCRIPT_WINDOW)."""
+    tr = require(name, "transcripts", "find the transcripts of the runtime's sessions", root, home, library, project, conf)
+    d = tr["user_dir"]
+    if "{checkout_key}" in d:
+        d = d.replace("{checkout_key}", checkout_key(tr.get("checkout_key") or "nonalnum-dash", checkout))
+    return {"dir": d, "ext": tr.get("ext") or ".jsonl", "usage": dict(tr.get("usage") or {}), "window": tr.get("window") or TRANSCRIPT_WINDOW}
+
+
 def launch_line(name, render, root=None, library=None, project=None, conf=None):
     """The command that starts a session on the render directory, or Unsupported. A [...] group of the template stays only when
     the file named by its last word exists once {render} is filled in."""
@@ -1797,10 +1834,6 @@ def cmd_list():
     if lib:
         lib.list_other_kinds()
     return 0
-
-
-def _verified(cell):
-    return "verified %s" % cell["verified_on"] if cell.get("verified_on") else "not verified" + (", counts as no" if cell.get("value") != "no" else "")
 
 
 def _backing(name, surface, c, cell):

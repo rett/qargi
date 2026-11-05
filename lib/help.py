@@ -308,8 +308,15 @@ def man(date_from=None):
     w(".SH EXIT STATUS")
     w("0 on success. 1 when a check fails or a command is refused (the message says why). 2 for a usage error.")
     w(".SH SEE ALSO")
-    w("The skills qargi\\-task, qargi\\-team, qargi\\-project, qargi\\-instances, qargi\\-provision, qargi\\-memory, qargi\\-packs "
-      "and qargi\\-verify in Claude Code (qargi help roles for the abilities, which come as role text with the task block).")
+    # a copy of qargi without its skills directory (a partial copy, a packaged lib) still writes the page
+    sk = os.path.join(ROOT, "skills")
+    skills = sorted(n for n in os.listdir(sk) if os.path.isfile(os.path.join(sk, n, "SKILL.md"))) if os.path.isdir(sk) else []
+    if len(skills) > 1:
+        named = "The skills " + ", ".join(esc(n) for n in skills[:-1]) + " and " + esc(skills[-1])
+    else:
+        named = "The skill " + esc(skills[0]) if skills else "The qargi skills"
+    w(named + ", loaded by the lead's session "
+      "(qargi help roles for the roles, which come as role text with the task block).")
     return "\n".join(x for x in o if x != "") + "\n"
 
 
@@ -460,10 +467,12 @@ def branches(words):
 
 
 FIELD_VALUES = {"effort": C.EFFORTS, "model": C.MODELS, "local": ("true", "false"), "cloud": ("none", "branches"),
-                "merge": ("ask", "never"), "release": ("ask", "never"), "mode": ("none",)}
+                "merge": ("ask", "never"), "release": ("ask", "never"), "mode": ("none",), "numbered": ("true", "false")}
 # answers a project may hold that are not there yet, so a key can be typed before it exists
 EXTRA_KEYS = ("lead.model", "lead.effort", "lead.push.local", "lead.push.cloud", "lead.push.branch_pattern", "lead.push.merge",
-              "lead.push.release", "budget_cents") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "skills", "push.mode"))
+              "lead.push.release", "lead.context_window", "lead.compact_advice_pct", "budget_cents", "test_command", "release.version_file", "release.changelog.unreleased", "release.changelog.released", "release.changelog.numbered",
+              "release.man_pages", "release.test_command", "release.preflight",
+              "env.doctor_command", "env.bootstrap_command", "env.dry_run_command", "env.known_failures") + tuple("roles.%s.%s" % (r, k) for r in C.ROLES[:-1] for k in ("model", "effort", "base", "apt", "tools", "skills", "push.mode"))
 
 
 def flatten(d, prefix=""):

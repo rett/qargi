@@ -23,7 +23,7 @@ recommended; do not assume answers:
    `qargi credential check NAME`: it proves the token can read and warns if it can
    also push. Public repositories need none. The token is never typed into a command, a
    log, the tracker or a repository.
-2. **Roles.** Which of the abilities `build`, `write`, `review`, `test` this project uses.
+2. **Roles.** Which of the roles `build`, `write`, `review`, `test` this project uses.
 3. **Per role, base branch.** `@dispatcher` (the dispatching session's branch)
    for build; the documentation branch (for example `gh-pages`) for write.
 4. **Per role, push policy** (the question that matters most):
@@ -52,11 +52,11 @@ recommended; do not assume answers:
    `finding:` for it. A runtime with no read-only barrier cannot serve the review role until the
    person accepts that (`qargi provider accept`). For a runtime that is not shipped, see
    `/qargi-providers`.
-6. **Per role, model and effort** (the tiers come from the runtime's catalog), extra apt
-   packages, and hosted skills (`pdf`, `docx`, `pptx`, `xlsx`; the write role defaults to `pdf`).
+6. **Per role, model and effort** (tiers from the runtime's catalog), apt packages, pinned tools
+   (`roles.ROLE.tools`: go, binary, submodule), hosted skills (`pdf`, `docx`, `pptx`, `xlsx`; write defaults to `pdf`).
 7. **Budget** per cloud session in cents (default 500, set on the deployment).
 8. **Memory.** Create the project's stores or attach existing ones (ids).
-9. **Members, once.** The local workers are agents the user names: ask for their names and abilities, suggesting the two
+9. **Members, once.** The local workers are agents the user names: ask for their names and roles, suggesting the two
    base members (`worker`, `reviewer`; the rest are profiles). `qargi agent add` is in `/qargi-instances`.
 10. **Profile.** Which profile file holds the repository's gates and review steps
     (kept under the config directory, per role if the gates differ).

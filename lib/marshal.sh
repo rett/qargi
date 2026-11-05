@@ -4,6 +4,9 @@
 # the command line, finds the project, reads the lease length and audits a takeover.
 #
 #   marshal.sh claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] ...
+#   marshal.sh claim NAME --as-successor-of ID   continue as the lead after a restart: the record's lead is ID, its lease is stale, and its
+#                                                host, OS user and work tree are this session's (refused otherwise; audited as marshal:succession).
+#                                                marshal_start (feature start) does the same on its own; status and check name the command
 #   marshal.sh handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]   the note a fresh session starts from (read only, lib/marshal_handoff.py)
 #   marshal.sh enable [--project P] [--plan TOKEN --approved WORDS]   switch this machine to the shared refs backend
 #   marshal.sh disable [--project P] [--plan TOKEN --approved WORDS]   switch back to the local records (with integrity on: plan, then apply)
@@ -14,7 +17,7 @@
 #   marshal.sh forget NAME [--project P] [--plan TOKEN --approved WORDS]   drop this machine's accepted mark of NAME (integrity on)
 # enable without options prints the plan and a plan token; applying is --plan TOKEN --approved WORDS (audit line
 # marshal:enable). The switch is the file $DA_STATE/marshal/PROJECT.enabled, written by marshal_refs.py, never a project
-# answer (project set refuses marshal.* but marshal.ttl). enable and disable, like every verb that changes a record, are
+# answer (project set refuses marshal.* but marshal.lease_minutes). enable and disable, like every verb that changes a record, are
 # refused (exit 2) inside a member run. So are key, signers add|remove, enable --integrity and resign, which are owner verbs too:
 # key init, signers add|remove and enable print a plan and a plan token first and apply with --plan TOKEN --approved WORDS (audit
 # lines marshal:key-init, marshal:signers, marshal:enable); resign prints the head, the lead and the goal of the record it would sign and
@@ -29,7 +32,7 @@
 # inside a repository or the qargi directories), which the guard refuses to a member. A member may read none of them (lib/guard.py). status and check take --no-fetch: read the cache of the remote refs only (the
 # session hook uses it).
 #
-# The project answer marshal.ttl is the lease length in minutes (integer, default 15): qargi project set P marshal.ttl 20.
+# The project answer marshal.lease_minutes is the lease length in minutes (a whole number from 1 to 1440, default 15): qargi project set P marshal.lease_minutes 20.
 # The identity is --as ID, else $QARGI_LEAD, else user@host (anonymous: only ever warns).
 # Tests inject the clock with QARGI_MARSHAL_NOW=<epoch seconds> (honoured by marshal_store.py only) and shorten the
 # renewer's period with QARGI_MARSHAL_RENEW_SEC=<seconds>.
@@ -54,8 +57,9 @@ command -v die >/dev/null 2>&1 || . "$MARSHAL_LIB/lib.sh"
 
 marshal_ttl() { # PROJ -> the lease length in minutes
   local t
-  t=$(jq -r '.marshal.ttl // empty' "$DA_CONF/projects/$1.json" 2>/dev/null) || t=''
-  case $t in ''|*[!0-9]*|0) t=15;; esac
+  t=$(jq -r '.marshal.lease_minutes // empty' "$DA_CONF/projects/$1.json" 2>/dev/null) || t=''
+  case $t in ''|*[!0-9]*) t=15;; esac
+  { [ ${#t} -le 4 ] && [ "$t" -ge 1 ] && [ "$t" -le 1440 ]; } || t=15   # project set and project validate refuse anything else; a hand-edited value gets the default
   echo "$t"
 }
 marshal_repo() { # PROJ -> the repository path of the answers (REPO when the caller set it)
@@ -68,7 +72,13 @@ marshal_py() { # PROJ VERB [args...]
   python3 -I "$MARSHAL_LIB/marshal_store.py" "$verb" --state "$DA_STATE" --conf "$DA_CONF" --project "$proj" --repo "$(marshal_repo "$proj")" --ttl "$(marshal_ttl "$proj")" "$@"
 }
 
-marshal_start() { marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null; }
+marshal_start() { # a restarted session of the same lead (host, user, work tree; stale lease) continues without a takeover; that is audited
+  local af rc=0
+  af=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX") || af=/dev/null
+  QARGI_MARSHAL_AUDIT_OUT=$af marshal_py "$1" start "$2" --purpose "${3:-}" >/dev/null || rc=$?
+  if [ "$af" != /dev/null ]; then if [ "$rc" = 0 ] && [ -s "$af" ]; then audit_log "marshal:succession" "$(cat "$af")"; fi; rm -f "$af"; fi
+  return "$rc"
+}
 marshal_check() { marshal_py "$1" check "$2" >/dev/null; }
 marshal_finish() { marshal_py "$1" finish "$2" --lenient >/dev/null; }
 
@@ -110,7 +120,7 @@ marshal_main() {
   # (feature.sh and cred.sh do the same)
   APPROVED='' PLAN_ARG=''
   local verb=${1:-}; shift || true
-  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
+  local usage="usage: qargi marshal claim|status|set|check|renew|release|take|takeover|finish [NAME] [--project P] [--as ID] [--as-successor-of ID] [--goal T] [--plan T] [--note T] [--status S] [--approved WORDS] [--all] [--history] [--brief] [--json] [--no-fetch]
        qargi marshal handoff [NAME] [--project P] [--as ID] [--write FILE] [--json]
        qargi marshal enable [--project P] [--integrity off|advisory|strict] [--plan TOKEN --approved WORDS] | disable [--project P] [--plan TOKEN --approved WORDS]
        qargi marshal key init [--principal P] [--plan TOKEN --approved WORDS]
@@ -133,7 +143,7 @@ marshal_main() {
     signers) want=' --project --line --plan --approved ';;
     resign|forget) want=' --project --plan --approved ';;
     disable) want=' --project --plan --approved ';;
-    claim) want=' --project --as --goal ';;
+    claim) want=' --project --as --goal --as-successor-of ';;
     status) want=' --project --as --all --history --brief --json --no-fetch ';;
     handoff) want=' --project --as --write --json ';;
     set) want=' --project --as --goal --plan --note --status ';;
@@ -331,9 +341,23 @@ marshal_main() {
     rm -f "$af"
     exit "$rc"
   fi
+  if [ "$verb" = claim ]; then
+    local crc=0 caf
+    caf=$(mktemp "$DA_STATE/.marshal-audit.XXXXXX")
+    QARGI_MARSHAL_AUDIT_OUT=$caf marshal_py "$PROJ" claim "${opt[@]}" || crc=$?
+    if [ "$crc" = 0 ] && [ -s "$caf" ]; then audit_log "marshal:succession" "$(cat "$caf")"; fi
+    rm -f "$caf"
+    exit "$crc"
+  fi
   if [ "$verb" = handoff ]; then
-    # read only: no lease, no fetch, no record written; the file of --write is the only thing it may make
-    exec python3 -I "$MARSHAL_LIB/marshal_handoff.py" --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --repo "$(marshal_repo "$PROJ")" --ttl "$(marshal_ttl "$PROJ")" "${opt[@]}"
+    # read only: no lease, no fetch, no record written; the file of --write (and the line in $DA_STATE/handoff that says when it was written) is the only thing it may make
+    local hrc=0
+    python3 -I "$MARSHAL_LIB/marshal_handoff.py" --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --repo "$(marshal_repo "$PROJ")" --ttl "$(marshal_ttl "$PROJ")" "${opt[@]}" || hrc=$?
+    # the stage line (the lead's context, whether a compact is safe now): after the note, never inside --json; on stderr when stdout is the note itself
+    if [ "$hrc" = 0 ] && [ -z "$json" ]; then
+      case " ${opt[*]} " in *" --write "*) lead_advice;; *) lead_advice >&2;; esac
+    fi
+    exit "$hrc"
   fi
   marshal_py "$PROJ" "$verb" "${opt[@]}"
 }

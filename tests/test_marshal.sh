@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.." || exit 1
 # shellcheck source=hermetic.sh
 . tests/hermetic.sh
 T=$(mktemp -d); fail=0; DA=$PWD/bin/qargi; TOOL=$PWD
-trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T"' EXIT
+trap 'jobs -p | xargs -r kill 2>/dev/null; rm -rf "$T" "$HERMETIC"' EXIT
 ok() { echo "ok   $1"; }; no() { echo "FAIL $1"; fail=1; }
 export HOME=$T/home
 export QARGI_CONF=$T/c QARGI_STATE=$T/home/.qargi/state GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.net GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.net
@@ -28,7 +28,7 @@ feat() { # name file...: branch feature/NAME from develop with one commit per fi
 }
 for n in f1 f2 f3 f5 f6 f7 f8 f9 old; do feat "$n"; done
 feat ov1 shared.txt; feat ov2 shared.txt
-ttl() { jq --argjson n "$1" '.marshal.ttl = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }  # the project answer marshal.ttl, minutes
+ttl() { jq --argjson n "$1" '.marshal.lease_minutes = $n' "$T/c/projects/app.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/app.json"; }  # the project answer marshal.lease_minutes, minutes
 rec() { echo "$S/features/app-$1.json"; }
 j() { jq -r "$2" "$(rec "$1")"; }            # j NAME FILTER
 # M NOW ARGS...: marshal at the injected time; stdout and stderr in $T/o and $T/e, exit status returned
@@ -81,6 +81,46 @@ git -C "$R" update-ref refs/heads/agent/derivedtask "$(git -C "$R" commit-tree -
 M $t0 status f1 --as alice
 grep -q derivedtask "$T/o" && ! grep -q othertask "$T/o" && ok "status: derived tasks are the local runs whose base is feature/NAME" || no "SPEC derived tasks: $(out)"
 grep -q "agent/derivedtask" "$T/o" && ok "status: lists unmerged agent/* branches" || no "SPEC agent branches: $(out)"
+# an agent branch belongs to the feature its run was prepared against (the base the registry records): it is listed under that feature only;
+# one with no known feature base is said once, on one line after the features, never under each of them
+agent_from() { git -C "$R" update-ref "refs/heads/agent/$1" "$(git -C "$R" commit-tree -p "$2" -m "$1 work" "$2^{tree}")"; }   # agent/NAME: one commit on top of BRANCH
+agent_from othertask feature/f2; agent_from stray feature/f1; agent_from ondev develop
+printf '%s\n' '{"run":"r3","slug":"ondev","base":"develop"}' >> "$S/local-runs.jsonl"
+M $t0 status f1 --as alice
+grep -q "agent/derivedtask" "$T/o" && ! grep -q "agent/othertask" "$T/o" && ok "status NAME: an unmerged agent branch prepared against another feature is not listed under this one" || no "SPEC attribution: $(out)"
+M $t0 status f2 --as alice
+grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && ok "status NAME: the branch is listed under the feature it was prepared against" || no "SPEC attribution f2: $(out)"
+M $t0 status --all
+[ "$(grep -c "agent/stray" "$T/o")" = 1 ] && grep -q "^unattributed agent branches .*agent/stray" "$T/o" && ok "status --all: a branch with no known base is on one 'unattributed agent branches' line, not under every feature" || no "SPEC unattributed: $(grep -n "agent/stray" "$T/o")"
+grep -q "^unattributed agent branches .*agent/ondev (base develop)" "$T/o" && ok "status --all: a branch prepared against develop is unattributed too, with its base" || no "SPEC unattributed base: $(grep unattributed "$T/o")"
+[ "$(grep -c "agent/othertask" "$T/o")" = 1 ] && [ "$(grep -c "agent/derivedtask" "$T/o")" = 1 ] && ok "status --all: each attributed branch appears once, under its feature" || no "SPEC once: $(grep -n "agent/" "$T/o")"
+git -C "$R" update-ref refs/heads/feature/f1 agent/stray   # merged into a feature: no longer unattributed
+M $t0 status --all; grep -q "agent/stray" "$T/o" && no "SPEC an agent branch merged into a feature is still listed as unattributed: $(grep -n stray "$T/o")" || ok "status --all: a branch merged into a feature leaves the unattributed line"
+M $t0 status --all --json; jq -e '[.agent_unattributed[].branch] == ["agent/ondev"] and ([.features[] | select(.feature == "f1") | .agent_branches[]] == ["agent/derivedtask"])' "$T/o" >/dev/null 2>&1 && ok "status --all --json: agent_branches per feature, agent_unattributed once" || no "SPEC json attribution: $(out)"
+M $t0 status f2 --json; jq -e '.agent_branches == ["agent/othertask"] and (.agent_unattributed | length) == 1' "$T/o" >/dev/null 2>&1 && ok "status NAME --json: the feature's branches and the unattributed ones" || no "SPEC json NAME attribution: $(out)"
+"$DA" feature status f2 >"$T/o" 2>"$T/e"
+grep -q "agent/othertask" "$T/o" && ! grep -q "agent/derivedtask" "$T/o" && grep -q "^unattributed agent branches .*agent/ondev" "$T/o" && ok "feature status: the same attribution and the unattributed line" || no "SPEC feature status attribution: $(out)"
+git -C "$R" update-ref -d refs/heads/agent/othertask; git -C "$R" update-ref -d refs/heads/agent/ondev
+# task lines tell the truth: the registry's marks (verified by local verify, cleaned by local clean) and the run directory decide what a task reads
+mkdir -p "$T/run-open" "$T/run-ver"; : > "$T/run-ver/verified"
+printf '%s\n' "{\"run\":\"$T/run-open\",\"slug\":\"opentask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-ver\",\"slug\":\"vertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\"}" \
+  "{\"run\":\"$T/run-gone\",\"slug\":\"donetask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\",\"cleaned\":\"2026-01-01T02:00:00Z\"}" \
+  "{\"run\":\"$T/run-regver\",\"slug\":\"regvertask\",\"base\":\"feature/f5\",\"ability\":\"build\",\"started\":\"2026-01-01T00:00:00Z\",\"verified\":\"2026-01-01T01:00:00Z\"}" >> "$S/local-runs.jsonl"
+M $t0 status f5
+grep -q "opentask (build) started 2026-01-01T00:00:00Z, not verified$" "$T/o" && ok "status: a run with no passing verify reads not verified" || no "SPEC not verified: $(out)"
+grep -q "vertask (build) .*, verified$" "$T/o" && ok "status: RUN/verified reads verified" || no "SPEC verified file: $(out)"
+grep -q "regvertask (build) .*, verified, directory gone$" "$T/o" && ok "status: the registry's verified mark reads verified when the directory is gone" || no "SPEC verified mark: $(out)"
+! grep -q "donetask (build)" "$T/o" && grep -q "^  cleaned: donetask$" "$T/o" && ok "status: a cleaned run is no open task: listed only on the cleaned line" || no "SPEC cleaned: $(out)"
+M $t0 status f5 --json; jq -e '[.tasks[] | select(.slug == "donetask") | .state] == ["cleaned"] and ([.tasks[] | select(.slug == "vertask") | .verified] == [true]) and ([.tasks[] | select(.slug == "opentask") | .state] == ["not verified"])' "$T/o" >/dev/null 2>&1 && ok "status --json: each task has state, verified, applied, cleaned" || no "SPEC json tasks: $(out)"
+# feature merge warns of a run that exists and has no passing verify, and only of that
+agent_from opentask feature/f5; agent_from vertask feature/f5; agent_from donetask feature/f5
+"$DA" feature merge f5 agent/opentask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && grep -q "warning: the run $T/run-open of agent/opentask has no passing verify" "$T/e" && ok "feature merge: warns when the branch's run exists and was never verified (the merge goes on)" || no "SPEC merge warning: rc=$rc $(out)"
+"$DA" feature merge f5 agent/vertask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a verified run" || no "SPEC merge verified: rc=$rc $(out)"
+"$DA" feature merge f5 agent/donetask >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && ! grep -q "no passing verify" "$T/e" && ok "feature merge: no warning for a cleaned run" || no "SPEC merge cleaned: rc=$rc $(out)"
 M $t0 status ov1 --as alice; grep -q "shared.txt" "$T/o" && grep -q ov2 "$T/o" && ok "status: overlapping files with another open feature" || no "SPEC overlap: $(out)"
 M $t0 claim ov1 --as alice; M $t0 check ov1 --as alice; rc=$?
 [ $rc = 0 ] && grep -q shared.txt "$T/e" && ok "check: file overlap is a warning on stderr, exit 0" || no "SPEC overlap warning: rc=$rc $(out)"
@@ -177,13 +217,18 @@ id=$(j f5 .lead.id)
 QARGI_MARSHAL_NOW=$t0 "$DA" marshal check f5 >"$T/o" 2>"$T/e"; rc=$?
 [ $rc = 0 ] && grep -qi yours "$T/o" && [ -s "$T/e" ] && ok "identity: check as the anonymous lead is 'yours' with a stderr warning" || no "SPEC anonymous check: rc=$rc $(out)"
 
-# --- marshal.ttl changes the live/stale boundary
+# --- marshal.lease_minutes changes the live/stale boundary
 ttl 90
 M $t0 claim f6 --as alice
-M $((t0 + 60 * 60)) check f6 --as bob; [ $? = 1 ] && ok "marshal.ttl 90: still LIVE after 60 minutes" || no "SPEC ttl 90: live at 60 min (default 15 would be stale): $(out)"
-M $((t0 + 90 * 60 - 1)) check f6 --as bob; [ $? = 1 ] && ok "marshal.ttl 90: LIVE at 89m59s" || no "SPEC ttl 90 boundary: $(out)"
+M $((t0 + 60 * 60)) check f6 --as bob; [ $? = 1 ] && ok "marshal.lease_minutes 90: still LIVE after 60 minutes" || no "SPEC ttl 90: live at 60 min (default 15 would be stale): $(out)"
+M $((t0 + 90 * 60 - 1)) check f6 --as bob; [ $? = 1 ] && ok "marshal.lease_minutes 90: LIVE at 89m59s" || no "SPEC ttl 90 boundary: $(out)"
 M $((t0 + 90 * 60)) check f6 --as bob; rc=$?
-[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.ttl 90: STALE at 90 minutes" || no "SPEC ttl 90 stale: rc=$rc $(out)"
+[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.lease_minutes 90: STALE at 90 minutes" || no "SPEC ttl 90 stale: rc=$rc $(out)"
+# a hand-edited value outside 1 to 1440 is the default of 15 minutes
+ttl 99999
+feat f6b; M $t0 claim f6b --as alice
+M $((t0 + 16 * 60)) check f6b --as bob; rc=$?
+[ $rc = 0 ] && grep -qi takeover "$T/e" && ok "marshal.lease_minutes 99999: the default 15 applies (STALE at 16 minutes)" || no "SPEC ttl 99999: rc=$rc $(out)"
 ttl 1
 
 # --- hostile text is data: stored verbatim, printed fenced, never executed
@@ -204,6 +249,48 @@ M $t0 set f7 --as mallory --note "$LONG"
 [ "$(j f7 .note | wc -c)" -ge 5000 ] && ok "long note: the record keeps the text" || no "long note stored short: $(j f7 .note | wc -c)"
 M $t0 status f7 --as bob; c=$(grep -oE 'Q{100,}' "$T/o" | tr -d '\n' | wc -c)
 [ "$c" -le 2000 ] && [ "$c" -ge 1990 ] && ok "long note: status prints at most 2000 characters of it" || no "SPEC cap: status printed $c of 5000 characters (want about 2000)"
+
+# --- succession: a restarted lead (new id, same host, OS user and work tree, stale lease) continues without a takeover
+for n in sc1 sc2 sc3 sc4; do feat "$n"; done
+M $t0 claim sc1 --as alice --goal "keep the goal"; M $t0 set sc1 --as alice --plan "keep the plan" --note "keep the note"
+jq -e '.lead.worktree | test("^[0-9a-f]{16}$")' "$(rec sc1)" >/dev/null && ok "succession: the lead record carries a digest of the work tree, not a path" || no "SPEC lead worktree digest: $(j sc1 .lead)"
+M $((t0 + 10)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && grep -qi "still live" <(out) && [ "$(j sc1 .lead.id)" = alice ] && ok "succession: a live old lease is refused (the old session may still run)" || no "SPEC succession live: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob --as-successor-of carol; rc=$?
+[ $rc = 1 ] && grep -q "is alice, not carol" <(out) && [ "$(j sc1 .lead.id)" = alice ] && ok "succession: the old id must be the record's lead" || no "SPEC succession wrong id: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob; [ $? = 1 ] && ok "succession: a plain claim of a stale lead still needs a takeover" || no "SPEC plain claim"
+M $((t0 + TTL)) check sc1 --as bob; rc=$?
+[ $rc = 0 ] && grep -q "marshal claim sc1 --as-successor-of alice" "$T/e" && ok "succession: check names the command when you look like the restarted lead" || no "SPEC succession hint: rc=$rc $(out)"
+M $((t0 + TTL)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 0 ] && [ "$(j sc1 .lead.id)" = bob ] && [ "$(j sc1 .lead.succeeds)" = alice ] && [ "$(j sc1 .status)" = active ] && ok "succession: a stale lead on this host, user and work tree is succeeded" || no "SPEC succession: rc=$rc $(out)"
+[ "$(j sc1 .goal)" = "keep the goal" ] && [ "$(j sc1 .plan)" = "keep the plan" ] && [ "$(j sc1 .note)" = "keep the note" ] && ok "succession: goal, plan and note stay" || no "SPEC succession keeps text: $(cat "$(rec sc1)")"
+grep -q "marshal:succession" "$AUDIT" && grep -q "sc1 old=alice new=bob" "$AUDIT" && ok "succession: the audit log names the old and the new lead" || no "SPEC succession audit: $(cat "$AUDIT" 2>&1)"
+M $((t0 + TTL)) status sc1 --as bob; grep -q "succeeded alice" "$T/o" && ok "succession: status shows it" || no "SPEC succession status: $(out)"
+M $((t0 + TTL + 5)) claim sc1 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && ok "succession: the old lead is not the lead any more (refused)" || no "SPEC succession twice: rc=$rc"
+# anything that is not the same lead is the owner's takeover
+for what in host user worktree; do
+  rm -f "$(rec sc2)"; M $t0 claim sc2 --as alice >/dev/null
+  case $what in
+    host) jq '.lead.host = "other-machine"' "$(rec sc2)" > "$T/r.tmp";;
+    user) jq '.lead.user = "someone-else"' "$(rec sc2)" > "$T/r.tmp";;
+    worktree) jq '.lead.worktree = "0000000000000000"' "$(rec sc2)" > "$T/r.tmp";;
+  esac
+  mv "$T/r.tmp" "$(rec sc2)"
+  M $((t0 + TTL)) claim sc2 --as bob --as-successor-of alice; rc=$?
+  [ $rc = 1 ] && grep -qiE "another (host|user|work tree)" <(out) && [ "$(j sc2 .lead.id)" = alice ] && ok "succession: another $what is refused" || no "SPEC succession $what: rc=$rc $(out)"
+  M $((t0 + TTL)) check sc2 --as bob; grep -q "as-successor-of" "$T/e" && no "SPEC succession hint must not show for another $what" || ok "succession: no hint for another $what"
+done
+M $((t0 + TTL)) takeover sc2 --as bob --approved "the owner says so" >/dev/null; [ "$(j sc2 .lead.id)" = bob ] && ok "succession: the owner's takeover still covers what it refuses" || no "SPEC takeover after refused succession"
+M $t0 claim sc3 --as alice >/dev/null; jq 'del(.lead.worktree)' "$(rec sc3)" > "$T/r.tmp"; mv "$T/r.tmp" "$(rec sc3)"
+M $((t0 + TTL)) claim sc3 --as bob --as-successor-of alice; rc=$?
+[ $rc = 1 ] && grep -q "names no work tree" <(out) && ok "succession: a record without a work tree is not succeeded" || no "SPEC succession no worktree: rc=$rc $(out)"
+M $t0 claim sc3 --as alice >/dev/null; M $t0 release sc3 --as alice --note n >/dev/null
+M $t0 claim sc3 --as bob --as-successor-of alice; [ $? = 1 ] && ok "succession: a released feature has no lead to succeed" || no "SPEC succession released"
+M $t0 claim sc4 --as alice >/dev/null
+printf 'set -u\n. "%s/lib/lib.sh"; . "%s/lib/marshal.sh"\nmarshal_start app sc4 restart\n' "$TOOL" "$TOOL" > "$T/start.sh"
+QARGI_MARSHAL_NOW=$((t0 + TTL)) QARGI_LEAD=bob bash "$T/start.sh" >"$T/o" 2>"$T/e"; rc=$?
+[ $rc = 0 ] && [ "$(j sc4 .lead.id)" = bob ] && [ "$(j sc4 .lead.succeeds)" = alice ] && grep -q "sc4 old=alice new=bob" "$AUDIT" && ok "succession: marshal_start (feature start) continues on its own, and audits it" || no "SPEC succession start: rc=$rc $(out) $(cat "$(rec sc4)")"
 
 # --- the shell API and the renewer (real time; ttl 1 minute; renews every second)
 ttl 1

@@ -32,8 +32,12 @@
 #                                         lib/linker.py); one plan and one token for all of it. Run it inside a worktree of the project
 #                                         to link that worktree: nothing records the worktrees, the links are the record. unlink undoes
 #                                         the same links and puts back what they replaced
-#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line; it does not
-#                                         change the exit status, so storing and the flows after it work as before)
+#   project.sh profile check [NAME] [--profile FILE]   read only: the repository's profile (CONFIG/profiles/<repository>.md, or FILE): exit 1 when it still
+#                                         carries the shipped template header; a gate command the repository's instruction files and Makefile targets do not
+#                                         know is a warning (exit 0). project validate prints the header finding as a WARN line
+#   project.sh show NAME | list | validate FILE|NAME   (a missing or empty models.provider is reported as a `finding:` line, and a pack linked to
+#                                         a role of the project that is not in the pack library as a `WARN:` line; neither changes the exit
+#                                         status, so storing and the flows after it work as before)
 #
 # Push policy per role (push.mode). Only "none" is implemented: an agent never
 # pushes. The "coordinator" and "agent" policies below are designed but not built, so
@@ -129,6 +133,61 @@ repo = c.get("repo", {})
 need(isinstance(repo.get("url"), str) and repo["url"] and "OWNER/REPO" not in repo["url"], "repo.url is required (replace the placeholder)")
 ll = repo.get("long_lived", [])
 need(isinstance(ll, list) and ll and all(isinstance(x, str) and x for x in ll), "repo.long_lived: the branches no agent may ever touch (e.g. master, develop)")
+# repo.detached: long-lived branches that never meet develop, master, release, hotfix or feature branches (a documentation site, say).
+# Names only: qargi refuses the merges between them and the git-flow branches (lib/gitflow.sh detached_mix)
+def branch_name(x):
+    return isinstance(x, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", x) and ".." not in x and "//" not in x and not x.endswith(("/", ".", ".lock"))
+FLOW_NAMES = ("master", "develop")
+FLOW_PREFIXES = ("feature/", "agent/", "release/", "hotfix/")
+det = repo.get("detached", [])
+need(isinstance(det, list) and all(branch_name(x) for x in det) and len(set(det)) == len(det),
+     "repo.detached: a list of distinct branch names (for example a documentation site's branch) that never merge with develop, master, release, hotfix or feature branches")
+if isinstance(det, list):
+    for x in det:
+        if isinstance(x, str) and (x in FLOW_NAMES or x.startswith(FLOW_PREFIXES)):
+            bad.append("repo.detached: %s is a git-flow branch (master, develop, feature/*, agent/*, release/*, hotfix/*); a detached branch is another long-lived branch" % x)
+# repo.parking_branch: the branch the main checkout rests on (default scratch); qargi fast-forwards it to develop, never pushes or merges it
+pk = repo.get("parking_branch", "scratch")
+need(branch_name(pk), "repo.parking_branch: a branch name (default scratch): the branch the project's main checkout rests on while qargi moves develop")
+if branch_name(pk):
+    if pk in FLOW_NAMES or pk.startswith(FLOW_PREFIXES): bad.append("repo.parking_branch: %s is a git-flow branch; use a branch of its own such as scratch" % pk)
+    if isinstance(ll, list) and pk in ll: bad.append("repo.parking_branch: %s is also in repo.long_lived; the parking branch is reset to develop, so it is not long-lived" % pk)
+    if isinstance(det, list) and pk in det: bad.append("repo.parking_branch: %s is also in repo.detached" % pk)
+# branches.delete_merged and branches.push_features: what the flow does with feature branches on origin (lib/feature.sh)
+brs = c.get("branches", {})
+need(isinstance(brs, dict), "branches: an object like {delete_merged: local, push_features: never}")
+if isinstance(brs, dict):
+    for k in brs:
+        if k not in ("delete_merged", "push_features"): bad.append("branches.%s: unknown key (delete_merged, push_features)" % k)
+    need(brs.get("delete_merged", "local") in ("local", "local+remote"), "branches.delete_merged: local (default) or local+remote (feature finish also deletes the branch on origin)")
+    need(brs.get("push_features", "never") in ("never", "when-shared", "always"), "branches.push_features: never (default), when-shared (only a branch origin already has) or always")
+# worktrees.root: where qargi makes worktrees (ROOT/<branch>); an absolute path (or ~/...), not inside the repository
+wts = c.get("worktrees", {})
+need(isinstance(wts, dict) and set(wts) <= {"root"}, "worktrees: an object like {root: \"/path\"}")
+if isinstance(wts, dict) and "root" in wts:
+    import os
+    wr = wts["root"]
+    if not (isinstance(wr, str) and wr.strip() and (wr.startswith("/") or wr.startswith("~/"))):
+        bad.append("worktrees.root: an absolute path (or ~/...) such as /home/you/work/worktrees (default: the state directory's worktrees/PROJECT)")
+    elif isinstance(repo.get("path"), str) and repo["path"]:
+        rr = os.path.realpath(os.path.expanduser(repo["path"])); wp = os.path.realpath(os.path.expanduser(wr))
+        if wp == rr or wp.startswith(rr + os.sep): bad.append("worktrees.root: %s is inside the repository; a worktree inside the working tree is a mess" % wr)
+# upstream: a fork that follows an upstream repository (lib/upstream.sh): the remote, the branch it follows, the local branch that carries the
+# upstream line (default upstream; never a git-flow branch) and, optionally, the command array that checks the overlay
+up = c.get("upstream", {})
+need(isinstance(up, dict), "upstream: an object like {remote: \"upstream\", branch: \"main\", into: \"upstream\", overlay_check: [\"make\", \"check\"]}")
+if isinstance(up, dict):
+    for k in up:
+        if k not in ("remote", "branch", "into", "overlay_check"): bad.append("upstream.%s: unknown key (remote, branch, into, overlay_check)" % k)
+    if up:
+        need(isinstance(up.get("remote"), str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", up.get("remote") or ""), "upstream.remote: the name of a git remote of the repository, such as upstream")
+        need(branch_name(up.get("branch")), "upstream.branch: the upstream branch the fork follows, such as main")
+    into = up.get("into", "upstream")
+    need(branch_name(into), "upstream.into: a branch name (default upstream): the local branch that carries the upstream line and nothing else")
+    if branch_name(into) and (into in FLOW_NAMES or into.startswith(FLOW_PREFIXES)): bad.append("upstream.into: %s is a git-flow branch; the upstream line needs a branch of its own, such as upstream" % into)
+    if branch_name(into) and branch_name(pk) and into == pk: bad.append("upstream.into: %s is also the parking branch" % into)
+    oc = up.get("overlay_check", [])
+    need(isinstance(oc, list) and all(isinstance(x, str) and x for x in oc), "upstream.overlay_check: a command as an array of words, such as [\"make\", \"check\"]")
 cf = repo.get("credential_file", "")
 if cf:
     import os, subprocess
@@ -141,6 +200,12 @@ if cf:
         inside = subprocess.run(["git", "-C", os.path.dirname(pth) or ".", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True)
         if inside.returncode == 0 and inside.stdout.strip() == "true":
             bad.append("repo.credential_file: %s is inside a git working tree; keep it outside every repository" % cf)
+mz = c.get("marshal")
+if mz is not None:
+    need(isinstance(mz, dict), "marshal: an object (the only answer in it is lease_minutes)")
+    ls = mz.get("lease_minutes") if isinstance(mz, dict) else None
+    if ls is not None:
+        need(isinstance(ls, int) and not isinstance(ls, bool) and 1 <= ls <= 1440, "marshal.lease_minutes: a whole number of minutes from 1 to 1440 (default 15)")
 cl = c.get("cloud")
 if cl is not None:
     need(isinstance(cl, dict) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", str(cl.get("profile", ""))) and re.fullmatch(r"wrkspc_[A-Za-z0-9]{10,}", str(cl.get("workspace_id", ""))),
@@ -167,7 +232,13 @@ for name, cfg in (r.items() if isinstance(r, dict) else []):
     need(cfg.get("effort") in efforts, "%s.effort: %s" % (p, "|".join(sorted(efforts))))
     need(isinstance(cfg.get("apt", []), list), "%s.apt: a list of packages" % p)
     need(isinstance(cfg.get("pip", []), list), "%s.pip: a list of Python packages" % p)
-    need(isinstance(cfg.get("go", []), list), "%s.go: a list of Go modules, each with a version (module@version)" % p)
+    if "go" in cfg:
+        bad.append("%s.go: no such answer; a Go tool is an entry of %s.tools: {kind: go, name: PACKAGE, version: vX.Y.Z}" % (p, p))
+    import tools as _tools   # lib/tools.py: the pinned tools of a role (go, binary, submodule) and what each entry needs
+    bad.extend(_tools.problems(p, cfg.get("tools")))
+if isinstance(r, dict):
+    import tools as _tools
+    bad.extend(_tools.conflicts(r))
     off = cfg.get("tools_off", [])
     need(isinstance(off, list) and all(x in ("web_search", "web_fetch", "edit", "write", "read", "bash", "glob", "grep") for x in off), "%s.tools_off: built-in tools to disable (web_search, web_fetch, edit, ...)" % p)
     sk = cfg.get("skills", [])
@@ -223,7 +294,14 @@ if anb is not None:
             for k in ("by", "reason"):
                 need(isinstance(rec[k], str) and rec[k].strip(), "%s.%s: a non-empty string" % (p, k))
             need(isinstance(rec["at"], str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", rec["at"]), "%s.at: a UTC time like 2026-10-31T12:00:00Z" % p)
+pk_ = c.get("packs")
+if pk_ is not None:
+    need(isinstance(pk_, dict) and set(pk_) <= {"none"} and isinstance(pk_.get("none", False), bool),
+         "packs: an object like {none: true} (none: the project uses no project packs, so packs check passes without a render)")
 need(isinstance(c.get("budget_cents", 0), int) and c.get("budget_cents", 0) > 0, "budget_cents: a positive whole number (set on the deployment)")
+if "env" in c:
+    import env as _env   # lib/env.py: the keys of the environment overrides and what each takes
+    bad.extend(_env.problems(c["env"]))
 m = c.get("memory", {})
 for k in ("memory_store", "reference_store"):
     v = m.get(k)
@@ -279,9 +357,30 @@ if lp:
                         bad.append("lead.push.credential_file must not be the read-only repo.credential_file: the repository mount keeps a token that cannot write")
 if "lead" in (r if isinstance(r, dict) else {}):
     bad.append("roles.lead: the lead is defined by teams, not by a role")
+import release_sign   # the signing, assets and notes answers of a release (lib/release_sign.py)
+bad.extend(release_sign.problems(c.get("release")))
+import release_site   # the documentation site of a release: site.enabled, site.branch, site.config (lib/release_site.py)
+bad.extend(release_site.problems(c))
 print("\n".join(bad) if bad else "ok")
 sys.exit(1 if bad else 0)
 EOF
+}
+
+# pack_warn FILE: a `WARN:` line for each pack linked at a scope that reaches a role of the project but is not in the pack library (one
+# removed or never imported: the role loses it, or fails its check, at the next render). Never an error: validate still exits 0.
+pack_warn() {
+  local f=$1 prj links pack rs kind n
+  links=$DA_CONF/packs/links.json; [ -f "$links" ] || return 0
+  prj=$(jq -r '.project // empty' "$f" 2>/dev/null); [ -n "$prj" ] || return 0
+  while IFS=$'\t' read -r pack rs; do
+    [ -n "$pack" ] || continue; kind=${pack%%:*}; n=${pack#*:}
+    if [ "$kind" = skill ]; then [ -e "$DA_CONF/packs/skills/$n" ] && continue; else [ -e "$DA_CONF/packs/tools/$n.json" ] && continue; fi
+    echo "WARN: $pack is linked to $rs of $prj but is not in the pack library (qargi $kind list); import it, or unlink it: qargi $kind unlink $n"
+  done < <(jq -r --arg p "$prj" --slurpfile c "$f" '
+    ($c[0].roles // {} | keys - ["lead"]) as $rs
+    | [.links[] | select(.scope == "user" or .scope == "user-role" or .project == $p) | . as $l
+       | $rs[] | select($l.scope == "user" or $l.scope == "project" or $l.role == .) | [$l.pack, .]]
+    | group_by(.[0])[] | .[0][0] + "\t" + (map(.[1]) | unique | join(", "))' "$links" 2>/dev/null)
 }
 
 # no_provider FILE [NAME]: prints the findings and returns 0 when the answers name no provider (models.provider missing, not a string or an
@@ -364,7 +463,7 @@ gated_refuse() { # NEWFILE [STOREDFILE]: says so and returns 1 when the file wou
 
 case $verb in
   template)
-    n=${1:-}; valid_project "$n" || die "template needs a project name (lower-case letters and digits)"
+    n=${1:-}; valid_project "$n" || usage_die "template needs a project name (lower-case letters and digits)"
     # no model and no provider: the template names no vendor. A role's model is its provider's tier (project set models.provider.local NAME)
     # until you give one; the efforts are the table's, the same for every provider
     jq -n --arg n "$n" --slurpfile d "$(dirname "$(readlink -f "$0")")/model-defaults.json" \
@@ -372,17 +471,17 @@ case $verb in
       schema: 1, project: $n,
       repo: {url: "https://github.com/OWNER/REPO", path: "", credential_file: "", long_lived: ["master", "develop"]},
       roles: {
-        build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], skills: []},
-        write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], skills: ["pdf"]}
+        build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], tools: [], skills: []},
+        write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], tools: [], skills: ["pdf"]}
       },
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
   init)
-    n=${1:-}; shift || true; valid_project "$n" || die "init needs a project name"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "init needs a project name"
     ans='' force=''
-    while [ $# -gt 0 ]; do case $1 in --answers) need_val "$1" $#; ans=$2; shift 2;; --force) force=1; shift;; *) die "unknown option $1";; esac; done
-    [ -f "$ans" ] || die "init needs --answers FILE (see: project template $n)"
+    while [ $# -gt 0 ]; do case $1 in --answers) need_val "$1" $#; ans=$2; shift 2;; --force) force=1; shift;; *) usage_die "unknown option $1";; esac; done
+    [ -f "$ans" ] || usage_die "init needs --answers FILE (see: project template $n)"
     out=$(validate "$ans") || { echo "$out" >&2; die "the answers are not valid; nothing stored"; }
     [ "$(jq -r .project "$ans")" = "$n" ] || die "the answers are for project '$(jq -r .project "$ans")', not '$n'"
     mkdir -p "$PROJ_DIR"; chmod 700 "$PROJ_DIR"
@@ -394,12 +493,12 @@ case $verb in
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model // "provider tier")/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
-    n=${1:-}; shift || true; valid_project "$n" || die "new needs a project name (lower-case letters and digits)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "new needs a project name (lower-case letters and digits)"
     meth=gitflow dir='' url='' dep='' force='' prov='' provl='' provc='' PLAN_ARG='' APPROVED='' PARAMS=()
     while [ $# -gt 0 ]; do
       case $1 in --methodology) need_val "$1" $#; meth=$2; shift 2;; --dir) need_val "$1" $#; dir=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --deployment) need_val "$1" $#; dep=$2; shift 2;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
         --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
-        --param) need_val "$1" $#; PARAMS+=(--param "$2"); shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) die "unknown option $1";; esac
+        --param) need_val "$1" $#; PARAMS+=(--param "$2"); shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -466,7 +565,7 @@ PY
     while [ $# -gt 0 ]; do
       case $1 in --name) need_val "$1" $#; name=$2; shift 2;; --methodology) need_val "$1" $#; meth=$2; shift 2;; --url) need_val "$1" $#; url=$2; shift 2;; --force) force=1; shift;; --provider) need_val "$1" $#; prov=${2:-}; shift 2;;
         --provider-local) need_val "$1" $#; provl=${2:-}; shift 2;; --provider-cloud) need_val "$1" $#; provc=${2:-}; shift 2;;
-        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; -*) die "unknown option $1";; *) dir=$1; shift;; esac
+        --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;; --approved) need_val "$1" $#; APPROVED=$2; shift 2;; -*) usage_die "unknown option $1";; *) dir=$1; shift;; esac
     done
     export PLAN_ARG   # need_plan reads it
     PROVARGS=(); [ -z "$prov" ] || PROVARGS+=(--provider "$prov"); [ -z "$provl" ] || PROVARGS+=(--provider-local "$provl"); [ -z "$provc" ] || PROVARGS+=(--provider-cloud "$provc")
@@ -526,6 +625,7 @@ PY
     echo
     echo "gaps against the $meth methodology (nothing is changed in the repository; qargi project adopt $n closes the safe ones as a branch to review):"
     jq -r 'if (.gaps | length) == 0 then "  none" else .gaps[] | "  - \(.kind): \(.what) (\(.why))" end' <<<"$det"
+    jq -r '.found.env | "development environment found: section in \(.section // "none"); task runner \(.runner // "none"); bootstrap \(.bootstrap_command // "none"); doctor \(.doctor_command // "none"); \(.pins | length) pinned tool(s), \(.submodules) submodule(s) (qargi env show reads it in full)"' <<<"$det"
     # a hint only: the repository's own skills are read from the working tree, nothing is changed or stored. The directory is the project's
     # provider's (layout.project_skills_dir); a project with no provider yet (attach never guesses one) is hinted for every provider's.
     plib=$(dirname "$0"); pv=''; [ -z "$stored" ] || pv=$(python3 -I "$plib/provider.py" of "$n" --conf "$DA_CONF" --surface local 2>/dev/null </dev/null) || pv=''
@@ -562,10 +662,10 @@ PY
     no_provider "$sf" || true;;
   adopt)
     # an attached repository: create what the methodology has and the repository lacks, only where nothing exists yet; the plan first
-    n=${1:-}; shift || true; valid_project "$n" || die "adopt needs the name of an attached project (qargi project list)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "adopt needs the name of an attached project (qargi project list)"
     meth='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --methodology) need_val "$1" $#; meth=${2:-}; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG   # need_plan reads it
     lib=$(dirname "$0")
@@ -607,11 +707,11 @@ PY
   set)
     n=${1:-}; path=${2:-}; val=${3:-}
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
-    [ -n "$path" ] && [ -n "$val" ] || die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
+    [ -n "$path" ] && [ -n "$val" ] || usage_die "set needs NAME PATH VALUE (for example: set $n budget_cents 2500)"
     printf '%s' "$path" | grep -Eq '^[a-z_][a-z0-9_.]*$' || die "PATH: dotted keys such as roles.write.effort"
     # the shared marshal backend is a machine switch with a plan and an audit line, never an answer of the project file
-    case $path in marshal.ttl) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.ttl is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
-    jq -e . >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
+    case $path in marshal.lease_minutes) ;; marshal|marshal.*) die "$path is not a project answer: only marshal.lease_minutes is; to switch the shared backend use 'qargi marshal enable' or 'qargi marshal disable'";; esac
+    jq empty >/dev/null 2>&1 <<<"$val" || val=$(jq -Rn --arg v "$val" '$v')
     # the answers that decide what an agent may run on (extensions) and which surface may go without a read-only barrier (accept_no_barrier) are
     # changed with a plan token and an approval, by their own verbs; this verb has neither, so it refuses them (also as keys of a whole models
     # object), for every caller and always. Those verbs store them through lib/gated_answers.py, which this verb never calls and nothing a
@@ -659,11 +759,11 @@ PY
   link|unlink)
     # the project's resources, linked from where qargi keeps them: the plan first (one token for all), the change only for that plan. A link
     # changes what a session loads, so the token is always needed (an approved caller has not approved this plan) and a member never applies
-    n=${1:-}; shift || true; valid_project "$n" || die "$verb needs a project name (lower-case letters and digits)"
+    n=${1:-}; shift || true; valid_project "$n" || usage_die "$verb needs a project name (lower-case letters and digits)"
     res='' PLAN_ARG='' APPROVED=''
     while [ $# -gt 0 ]; do
-      case $1 in --resource) [ $# -ge 2 ] || die "--resource needs a list: skills, agents, memory"; res=${2// /}; shift 2;;
-        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) die "unknown option $1";; esac
+      case $1 in --resource) need_val "$1" $#; res=${2// /}; shift 2;;
+        --plan) need_val "$1" $#; PLAN_ARG=${2:-}; shift 2;; --approved) need_val "$1" $#; APPROVED=${2:-}; shift 2;; *) usage_die "unknown option $1";; esac
     done
     export PLAN_ARG; unset QARGI_NESTED
     [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"
@@ -680,6 +780,18 @@ PY
     python3 -I "$PLK" apply "$verb" "$n" "$res" "$tok" || exit $?;;
   show) n=${1:-}; [ -f "$PROJ_DIR/$n.json" ] || die "no project named '$n' (see: project list)"; jq . "$PROJ_DIR/$n.json";;
   list) ls "$PROJ_DIR" 2>/dev/null | sed -n 's/\.json$//p';;
-  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || die "validate needs a file or a project name"; validate "$f" && { no_provider "$f" || true; };;
-  *) die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate ...";;
+  validate) f=${1:-}; [ -f "$f" ] || f="$PROJ_DIR/$f.json"; [ -f "$f" ] || usage_die "validate needs a file or a project name"
+    validate "$f" && { no_provider "$f" || true; pack_warn "$f" || true; python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" warn "$DA_CONF" "$f" || true; };;
+  profile)
+    # profile check [NAME] [--profile FILE]: read only; the profile of the project's repository, the shipped template header (exit 1), gates the repository does not know (warnings)
+    [ "${1:-}" = check ] || usage_die "usage: project profile check [NAME] [--profile FILE]"; shift
+    n='' pf=''
+    while [ $# -gt 0 ]; do
+      case $1 in --profile) need_val "$1" $#; pf=$2; shift 2;; -*) usage_die "unknown option $1";; *) [ -z "$n" ] || usage_die "profile check takes one project name"; n=$1; shift;; esac
+    done
+    [ -n "$n" ] || n=$(python3 -I "$(dirname "$(readlink -f "$0")")/help.py" infer 2>/dev/null) || n=''
+    af=''
+    if [ -n "$n" ]; then af=$PROJ_DIR/$n.json; [ -f "$af" ] || die "no project named '$n' (see: project list)"; fi
+    exec python3 -I "$(dirname "$(readlink -f "$0")")/project_profile.py" check "$DA_CONF" "$af" "${pf/#\~/$HOME}";;
+  *) usage_die "usage: project.sh template|init|new|attach|adopt|set|link|unlink|show|list|validate|profile ...";;
 esac

@@ -46,13 +46,13 @@ while [ $# -gt 0 ]; do
     --role) need_val "$1" $#; ROLE=$2; shift 2;;
     --memory-store) need_val "$1" $#; MEMORY_STORE=$2; shift 2;;
     --reference-store) need_val "$1" $#; REFERENCE_STORE=$2; shift 2;;
-    *) die "unknown option $1";;
+    *) usage_die "unknown option $1";;
   esac
 done
 
 export PLAN_ARG
 [ -n "$NAME" ] || { [ -n "$PROJECT" ] && NAME=$PROJECT-$ROLE; }
-[ -n "$NAME" ] || die "give NAME (<project>-<role>) or --project P [--role R]"
+[ -n "$NAME" ] || usage_die "give NAME (<project>-<role>) or --project P [--role R]"
 split_instance "$NAME"
 # The project's stored answers (qargi project init) give the defaults; flags win.
 PCFG=$DA_CONF/projects/$PROJECT.json
@@ -92,7 +92,7 @@ ENV_APT=$APT
 ENV_PIP='' ENV_GO=''
 TOOLS_OFF=$(tools_off "$ROLE" "$PCFG")
 if [ -f "$PCFG" ]; then
-  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].go[]?] | unique | join(" ")' "$PCFG")
+  ENV_PIP=$(jq -r '[.roles[].pip[]?] | unique | join(" ")' "$PCFG"); ENV_GO=$(jq -r '[.roles[].tools[]? | select(.kind == "go") | .name + "@" + .version] | unique | join(" ")' "$PCFG")
 fi
 if [ -z "$MODEL" ]; then   # the balanced model of the project's provider on the cloud surface (models.provider; no default, a project with none for it is refused with exit 2)
   _prov=$(project_provider "$PROJECT" cloud) || exit $?
@@ -197,6 +197,17 @@ plan_hash() {
     [ -z "$FORCE" ] || printf 'force\n'; } | plan_token
 }
 
+# The project's bootstrap command (qargi env show), printed as text for the owner to paste into the environment's setup script. It is
+# only printed: the setup script lives with the cloud runtime, runs there before a session, and nothing here runs the command.
+setup_note() {
+  local cmd
+  [ -f "$PCFG" ] && [ "$ROLE" != lead ] || return 0
+  cmd=$(python3 -I "$here/env.py" show --project "$PROJECT" --json 2>/dev/null </dev/null | jq -r '.commands.bootstrap_command.command // empty' 2>/dev/null) || return 0
+  [ -n "$cmd" ] || return 0
+  echo "suggested setup script for the cloud environment (qargi does not run it; paste it into the environment's setup script yourself, after reading qargi env plan --project $PROJECT):"
+  echo "    $cmd"
+}
+
 # New stores get the canon layout and each enabled role's skeleton. The stores' ids are
 # recorded in the project's stored answers so `qargi canon` finds them.
 canonise() {
@@ -220,6 +231,7 @@ case $verb in
     store_note memory "$PROJECT-memory" "$MEMID"
     store_note reference "$PROJECT-reference" "$REFID"
     echo "plan token: $(plan_hash)   (apply with: --plan <token> --approved \"...\")"
+    setup_note
     if [ -n "$FORCE" ]; then
       echo "--force: the server's copy of any resource changed outside this config will be overwritten with this config"
       (cd "$W" && ant apply --dry-run -v --force --lock-file "$LOCK" "${FILES[@]}")
@@ -284,5 +296,5 @@ case $verb in
     json_update "$REG" '.[$n].resources = $r' --arg n "$NAME" --argjson r "$new"
     store=''; canonise
     echo "reference store $refstore ($PROJECT-reference) created, brought to the canon and attached read-only to $dep (approved: $APPROVED)";;
-  *) die "usage: provision.sh plan|apply NAME [options]";;
+  *) usage_die "usage: provision.sh plan|apply NAME [options]";;
 esac

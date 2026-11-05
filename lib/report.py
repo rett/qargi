@@ -103,8 +103,11 @@ def inspect_run(entry):
     """The facts about one local run directory; entry: {run, label, ability, started} (any may be None)."""
     run = entry["run"]
     f = {"run": run, "label": entry.get("label") or "-", "ability": entry.get("ability"), "started": entry.get("started"),
-         "exists": os.path.isdir(run), "manifest": None, "last_change": None, "log_bytes": None}
+         "exists": os.path.isdir(run), "manifest": None, "last_change": None, "log_bytes": None, "saved": None}
     if not f["exists"]:
+        saved = os.path.join(STATE, "runs", os.path.basename(run))   # what local verify saved of the run when it passed
+        if os.path.isdir(saved) and not os.path.islink(saved):
+            f["saved"] = saved
         return f
     mf = os.path.join(run, "out", "manifest.json")
     if os.path.isfile(mf):
@@ -132,7 +135,9 @@ def find_local_runs(state, root=None):
                     e = json.loads(line)
                 except ValueError:
                     continue
-                if isinstance(e, dict) and e.get("run") and e["run"] not in seen:
+                if isinstance(e, dict) and e.get("run") and e.get("cleaned"):
+                    seen.add(e["run"])                     # local clean removed it: not a run any more, and not a vanished one
+                elif isinstance(e, dict) and e.get("run") and e["run"] not in seen:
                     seen.add(e["run"])
                     out.append({"run": e["run"], "label": e.get("slug"), "ability": e.get("ability"), "started": e.get("started")})
     except OSError:
@@ -178,6 +183,7 @@ def local_section(facts, now, stale_after=1800, since=None):
                 state, key = "no manifest, still changing", "no_manifest_changing"
         counts[key] += 1
         runs.append({"run": f["run"], "label": f["label"], "ability": f["ability"], "started": f["started"], "state": state, "unfinished": key in ("possibly_stalled", "no_manifest_changing"),
+                     "saved": f.get("saved"),
                      "since_last_change_seconds": quiet, "log_bytes": f["log_bytes"], "age_seconds": age(now, f["started"])})
     runs.sort(key=lambda r: r["started"] or "")
     return {"stale_after_seconds": stale_after, "runs": runs, "counts": counts}
@@ -367,6 +373,13 @@ def render_local(loc, out):
         out.append("    %-24s started %s ago, last change %s ago, %s" % (r["label"], hms(r["age_seconds"]), hms(r["since_last_change_seconds"]), log))
         out.append("      %s" % r["state"])
         out.append("      %s" % r["run"])
+    gone = [r for r in loc["runs"] if r["state"] == "directory gone"]
+    if gone:
+        out.append("  directory gone (a reboot emptied a tmpfs, or it was removed by hand; local clean RUN --discard drops the record):")
+    for r in gone:
+        out.append("    %-24s started %s ago, %s" % (r["label"], hms(r["age_seconds"]), r["run"]))
+        if r.get("saved"):
+            out.append("      saved copy %s (review apply --from-saved %s)" % (r["saved"], os.path.basename(r["run"])))
 
 
 def render(rep):

@@ -12,22 +12,23 @@ session tracker (`~/.qargi/state/sessions.json`) are per user and never in a rep
 
 ## Models and members (local)
 
-There are two base members, one per guard class (`qargi help guard`): `worker` (abilities build, write and test; write class)
+There are two base members, one per guard class (`qargi help guard`): `worker` (roles build, write and test; write class)
 and `reviewer` (review; read-only). Everything else is a profile, resolved at dispatch: a base, a tier (fast, balanced, deep,
-frontier; the provider file of the project's `models.provider` maps tiers to models, and there is no default provider), an
+frontier; the project's `models.provider` maps tiers to models; there is no default provider), an
 effort and a purpose. Shipped profiles: `build`, `write`, `test` (worker); `review`, `auditor`, `advisor` (reviewer);
 `researcher`, `lead`. A project adds or overrides `profiles.<name>`.
 
-- `qargi agent models [--project P] [--json]`: the bases, the profiles and the members of one project (exit 2 with no project in effect). `qargi agent list` shows every project's members.
+- `qargi agent models [--project P] [--json]`: the bases, profiles and members of one project (exit 2 with none in effect). `qargi agent list` shows every project's members.
 - `qargi agent add NAME --roles LIST --project P` (`--project` is required; `worker` and `reviewer` default to their base's
-  abilities): a member is written, not copied. One neutral definition is rendered by the project's local runtime
-  (`models.provider.local`) into its own file, with the member profile's model and effort mapped through the runtime's catalog.
-  The file lands in the project's member render (`~/.qargi/state/render/P/RUNTIME.agents`, linked into a work tree by
-  `qargi project link P --resource agents`) or in the checkout's own agents directory, hidden from git. A project with no local
-  runtime or no agent files is refused (exit 2).
-- `agent list` and `agent models` flag a member `STALE` (its definition, the catalog, the renderer or an extension changed since
-  it was rendered), `DRIFT` (the file was edited by hand) or `MISSING`. `qargi agent refresh NAME` renders it again, keeping its
-  name, abilities and model; a `DRIFT` file is replaced, so look at the edit first.
+  roles): one neutral definition is rendered by the project's local runtime (`models.provider.local`), model and effort mapped
+  through its catalog. The render is kept in `~/.qargi/config/agents/P/`, outside every repository, and written to the
+  project's member render (`~/.qargi/state/render/P/RUNTIME.agents`, linked into a work tree by
+  `qargi project link P --resource agents`) or to the checkout's own agents directory, hidden from git. A project with no local
+  runtime or agent files is refused (exit 2).
+- `agent list` and `agent models` flag a member `MISSING` (the file is gone: a cleaned checkout, a fresh clone), `STALE` (the
+  copy in config is gone, or the definition, catalog, renderer or an extension changed since) or `DRIFT` (edited by hand), each
+  with its fix: `qargi agent refresh NAME --project P` writes copy and file again, keeping name, roles and model; a `DRIFT`
+  file is replaced, so look at the edit first.
 - **Dispatch**: `qargi agent for ROLE [--profile NAME] [--project P]` prints one line, `MEMBER MODEL EFFORT PROFILE` (MODEL is
   the alias, `-` when none). Spawn it as `qargi provider notes spawn` says. A profile whose base does not fit the role is
   refused. Per-task diff checks: `--profile auditor` on review (fast, low effort). Search is not a role:
