@@ -76,7 +76,7 @@ full | par | 804 | 134 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs
 fast | par | 300 | 13 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 173 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py
 full | par | 612 | 102 | bash tests/test_packs_claude_hostile.sh | lib/packs*.sh lib/packs*.py
-full | par | 300 | 19 | bash tests/test_review.sh | lib/review.sh
+full | par | 300 | 19 | bash tests/test_review.sh | lib/review.sh lib/review_check.py
 full | par | 306 | 51 | bash tests/test_marshal.sh | lib/marshal.sh
 full | par | 300 | 24 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 474 | 79 | bash tests/test_marshal_handoff.sh | lib/marshal*.sh lib/marshal*.py

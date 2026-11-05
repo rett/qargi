@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `qargi review check RUN_DIR` checks `RUN_DIR/out` when it is given a run directory (no patches or manifest.json in it, an `out`
+  directory in it) and says so in a note, so naming the run instead of its output directory is harmless. The `qargi-verify`
+  skill names `RUN_DIR/out`.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added
