@@ -79,7 +79,104 @@ worktree() { # commit-ish -> a detached temporary worktree there (WT)
   g worktree add -q --detach "$WT" "$1" 2>/dev/null || { rm -rf "$WT"; WT=''; die "could not make a temporary worktree of $1"; }
 }
 held() { g worktree list --porcelain | awk -v b="refs/heads/$1" '/^worktree /{w=substr($0,10)} $1=="branch" && $2==b {print w}' | head -1; }
-need_free() { local b w; for b in "$@"; do w=$(held "$b"); [ -z "$w" ] || die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"; done; }
+need_free() { # BRANCH... -> dies when one is checked out anywhere; for the project's main checkout it names the parking branch
+  local b w hint
+  for b in "$@"; do
+    w=$(held "$b"); [ -z "$w" ] && continue
+    if [ "$(readlink -f "$w")" = "$(readlink -f "$REPO")" ]; then
+      if branch_exists "${PARK:-scratch}"; then hint="git -C $w switch ${PARK:-scratch}, then qargi feature park"; else hint="git -C $w switch -c ${PARK:-scratch} develop"; fi
+      die "$b is checked out in $w, the project's main checkout: leave it on the parking branch (answers repo.parking_branch): $hint (qargi moves $b without touching a working tree)"
+    fi
+    die "$b is checked out in $w: check out another branch there first, for example git -C $w checkout --detach (qargi moves $b without touching a working tree)"
+  done
+}
+# Worktrees. qargi makes them under the root (answers worktrees.root, default <state>/worktrees/<project>), one per branch at ROOT/<branch>
+# (feature start --worktree), so every worktree of the project is found in one place.
+wt_path() { readlink -f -m -- "$1"; }
+wt_in_root() { case $(wt_path "$1") in "$(wt_path "$WT_ROOT")"/*) return 0;; esac; return 1; }   # PATH is under the root
+# wt_of BRANCH -> the worktree holding BRANCH, only when it is under the root (a worktree qargi made); nothing otherwise
+wt_of() { local w; w=$(held "$1"); [ -n "$w" ] && wt_in_root "$w" && echo "$w"; return 0; }
+# need_free_wt BRANCH -> like need_free, but a clean worktree under the root may hold it (it is brought up to date by wt_follow); a dirty one dies
+need_free_wt() {
+  local w; w=$(wt_of "$1")
+  if [ -n "$w" ]; then
+    [ -z "$(git -C "$w" status --porcelain 2>/dev/null)" ] || die "$1 is checked out in $w, which has uncommitted changes: commit or discard them there first"
+    return 0
+  fi
+  need_free "$1"
+}
+# wt_follow BRANCH NEW -> after BRANCH moved to NEW by update-ref: the clean worktree under the root that holds it is brought along
+wt_follow() { local w; w=$(wt_of "$1"); [ -z "$w" ] || git -C "$w" reset -q --hard "$2" || echo "qargi: warning: could not bring the worktree $w up to date with $1" >&2; }
+# wt_drop BRANCH -> detaches and removes the worktree under the root that holds BRANCH (it is clean: need_free_wt checked), before the branch is deleted
+wt_drop() {
+  local w; w=$(wt_of "$1"); [ -n "$w" ] || return 0
+  git -C "$w" checkout -q --detach 2>/dev/null
+  if g worktree remove "$w" 2>/dev/null; then echo "removed the worktree $w"; rmdir -p "$(dirname "$w")" 2>/dev/null || true
+  else echo "qargi: warning: could not remove the worktree $w; remove it yourself: git worktree remove $w" >&2; fi
+}
+# wt_outside_report -> a line for each worktree of the project that is not under the root, with the git worktree move that fixes it. Not
+# reported: the main checkout, any worktree inside it (the agent runtime makes its own there; qargi never does, validate forbids a root
+# inside the repository) and qargi's temporary worktrees under the state directory.
+wt_outside_report() {
+  local w first=1 b
+  while IFS=$'\t' read -r w b; do
+    if [ -n "$first" ]; then first=''; continue; fi
+    wt_in_root "$w" && continue
+    case $(wt_path "$w") in "$(wt_path "$REPO")"/*) continue;; "$(wt_path "$DA_STATE")"/*) continue;; esac
+    echo "worktree outside the root: $w (${b:-detached}): mkdir -p $(dirname "$WT_ROOT/${b:-$(basename "$w")}") && git worktree move $w $WT_ROOT/${b:-$(basename "$w")}"
+  done < <(g worktree list --porcelain | awk '/^worktree /{if (w != "") print w "\t" b; w=substr($0,10); b=""} $1=="branch"{b=$2; sub("^refs/heads/","",b)} END{if (w != "") print w "\t" b}')
+}
+# push_feature BRANCH -> pushes a feature branch the flow just created or moved, as the answers branches.push_features say: never (the
+# default), when-shared (only when origin already has the branch: it is live-checked) or always. A plain push, never forced; a failure
+# is a warning. Nothing but a feature branch is pushed here (develop and master keep their plans and tokens).
+push_feature() {
+  case ${PUSH_FEATURES:-never} in never) return 0;; when-shared|always) ;; *) return 0;; esac
+  g remote get-url origin >/dev/null 2>&1 || return 0
+  if [ "$PUSH_FEATURES" = when-shared ]; then remote_tip "$1"; [ "$RSTATE" = found ] || return 0; fi
+  if g push -q origin "refs/heads/$1:refs/heads/$1" 2>/dev/null; then echo "pushed $1 to origin (branches.push_features: $PUSH_FEATURES)"
+  else echo "qargi: warning: could not push $1 to origin (branches.push_features: $PUSH_FEATURES); origin is unchanged" >&2; fi
+}
+# parking_follow -> one status line. After qargi moved develop: the main checkout on the parking branch, clean and with no commit
+# of its own, is fast-forwarded to develop (git merge --ff-only in that checkout); otherwise the line says why it was left. The
+# parking branch is never pushed and never merged anywhere.
+parking_follow() {
+  local cur old n why
+  cur=$(git -C "$REPO" branch --show-current 2>/dev/null)
+  if [ "$cur" != "$PARK" ]; then why="the main checkout is on ${cur:-a detached head}"
+  elif [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then why="the main checkout has uncommitted changes"
+  else
+    n=$(g rev-list --count "develop..$PARK"); old=$(sha_of "$PARK")
+    if [ "$n" != 0 ]; then why="$PARK has $n commit(s) that develop lacks"
+    elif [ "$old" = "$(sha_of develop)" ]; then echo "parking branch $PARK: already at develop"; return 0
+    elif git -C "$REPO" merge -q --ff-only develop >/dev/null 2>&1; then
+      journal_ref "$REPO" "refs/heads/$PARK" "$old" "$(sha_of "$PARK")" park:follow
+      echo "parking branch $PARK: fast-forwarded to develop ($(g rev-parse --short develop))"; return 0
+    else why="the fast-forward failed"; fi
+  fi
+  echo "parking branch $PARK: not advanced ($why)"
+}
+# Detached long-lived branches (answers repo.detached) never meet the git-flow branches: no merge in either direction.
+is_detached() { [ -n "${DETACHED:-}" ] && printf '%s\n' "$DETACHED" | grep -Fxq -- "$1"; }
+# history_of SRC INTO OTHER -> 0 when merging SRC into INTO would bring in commits of OTHER that INTO lacks (a best common ancestor
+# of SRC and OTHER that INTO does not contain), so a branch cut from OTHER, or OTHER itself, is caught whatever it is called
+history_of() { local mb; for mb in $(g merge-base --all "$1" "$3" 2>/dev/null); do g merge-base --is-ancestor "$mb" "$2" || return 0; done; return 1; }
+# detached_mix SRC INTO -> dies when merging the branch SRC into the branch INTO would join a detached branch with develop, master,
+# a release, hotfix or feature branch. Nothing has changed when it dies. Merging an agent branch cut from a detached branch into it is fine.
+detached_mix() {
+  local src=$1 into=$2 x
+  [ -n "${DETACHED:-}" ] || return 0
+  if is_detached "$into"; then
+    is_detached "$src" || case $src in master|develop|release/*|hotfix/*|feature/*) die "$src is a git-flow branch and $into is a detached branch (repo.detached): they are never merged";; esac
+    for x in $(g for-each-ref --format='%(refname:short)' refs/heads/master refs/heads/develop 'refs/heads/release/*' 'refs/heads/hotfix/*' 'refs/heads/feature/*'); do
+      ! history_of "$src" "$into" "$x" || die "merging $src into $into would bring in history of $x; $into is a detached branch (repo.detached) and never meets develop, master, release, hotfix or feature branches. Task branches for it are cut from $into"
+    done
+  else
+    ! is_detached "$src" || die "$src is a detached branch (repo.detached) and $into is not: they are never merged"
+    for x in $DETACHED; do
+      ! branch_exists "$x" || ! history_of "$src" "$into" "$x" || die "merging $src into $into would bring in history of $x, a detached branch (repo.detached) that never meets develop, master, release, hotfix or feature branches"
+    done
+  fi
+}
 run_clean() { # DIR COMMAND...: runs a command in DIR without the project's cloud binding: a suite or a release check must not see it
   local dir=$1; shift
   (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
@@ -150,6 +247,12 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "the answers for $PROJ name no local repository (repo.path)"
   METH=$(jq -r '.methodology // "gitflow"' "$af")
   TESTCMD=$(jq -r '.test_command // ""' "$af")
+  DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
+  DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch
+  PUSH_FEATURES=$(jq -r '.branches.push_features // "never"' "$af")   # never | when-shared | always: whether the flow pushes feature branches
+  WT_ROOT=$(jq -r '.worktrees.root // ""' "$af"); WT_ROOT=${WT_ROOT/#\~/$HOME}   # where qargi makes worktrees: ROOT/<branch>
+  [ -n "$WT_ROOT" ] || WT_ROOT=$DA_STATE/worktrees/$PROJ
+  PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop
   RDIR=$DA_STATE/releases; mkdir -p "$RDIR"
 }
 

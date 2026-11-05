@@ -133,24 +133,13 @@ out=$($DA review apply "$R9" 2>&1); rc=$?
 R10=$(newrun spacey); mv "$R10"/out/patches/0001-*.patch "$R10/out/patches/0001-has a space.patch"; mv "$R10"/out/patches/0002-*.patch "$R10/out/patches/0002-it's  here.patch"
 out=$($DA review apply "$R10" 2>&1); rc=$?
 { [ $rc = 0 ] && [ "$(git -C "$A" rev-list --count "$dev..agent/spacey")" = 2 ] && echo "$out" | grep -q "applied 2 patch(es)"; } && ok "patch files whose names hold spaces are applied, as two patches" || no "spacey names: rc=$rc $out"
-# --- qargi review prune: only merged agent/* branches, only with --yes
-git -C "$A" branch -q -D agent/names agent/other agent/taken 2>/dev/null
-git -C "$A" branch agent/merged-dev develop; git -C "$A" branch agent/at-master master
-git -C "$A" branch agent/in-feature develop; git -C "$A" branch feature/x develop
-git -C "$A" worktree add -q "$T/fw" feature/x; echo f > "$T/fw/f.txt"; git -C "$T/fw" add -A; git -C "$T/fw" commit -q -m "feature work"
-git -C "$A" worktree remove --force "$T/fw"
-git -C "$A" checkout -q -b agent/unmerged develop; echo u > "$A/u.txt"; git -C "$A" add -A; git -C "$A" commit -q -m "unmerged work"; git -C "$A" checkout -q parked
-git -C "$A" branch agent/in-feature2 feature/x
-git -C "$A" branch other/merged develop
-git -C "$A" worktree add -q "$T/held" -b agent/held develop
+# --- review prune is gone (qargi branch prune replaces it): the verb and the --yes option are unknown, and no branch is touched
+git -C "$A" branch agent/merged-dev develop
 h1=$(heads)
 out=$($DA review prune 2>&1); rc=$?
-[ $rc = 0 ] && [ "$(heads)" = "$h1" ] && echo "$out" | grep -q "agent/merged-dev" && echo "$out" | grep -q "agent/in-feature2" && echo "$out" | grep -q "agent/at-master" && ! echo "$out" | grep -q "agent/unmerged" \
-  && ok "prune without --yes lists the merged agent/* branches and changes nothing" || no "prune list: $out"
+[ $rc != 0 ] && [ "$(heads)" = "$h1" ] && ok "review prune is not a verb any more (usage, nothing changes)" || no "review prune: rc=$rc $out"
 out=$($DA review prune --yes 2>&1); rc=$?
-git -C "$A" rev-parse -q --verify agent/merged-dev >/dev/null && no "a merged branch survived --yes" || ok "prune --yes deletes branches merged into develop"
-git -C "$A" rev-parse -q --verify agent/in-feature2 >/dev/null && no "a branch merged into a feature survived" || ok "prune --yes deletes branches merged into a feature/*"
-git -C "$A" rev-parse -q --verify agent/unmerged >/dev/null && git -C "$A" rev-parse -q --verify agent/held >/dev/null && git -C "$A" rev-parse -q --verify other/merged >/dev/null && git -C "$A" rev-parse -q --verify feature/x >/dev/null \
-  && ok "unmerged, checked-out and non-agent branches are never touched" || no "prune touched another branch: $out"
-echo "$out" | grep -q "deleted agent/merged-dev" && ok "prune prints what it deleted" || no "prune output: $out"
+[ $rc != 0 ] && [ "$(heads)" = "$h1" ] && ok "and --yes deletes nothing" || no "review prune --yes: rc=$rc $out"
+out=$($DA review apply --yes "$T/nosuchrun" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "unknown option --yes" <<<"$out" && ok "review apply has no --yes" || no "review apply --yes: rc=$rc $out"
 exit $fail

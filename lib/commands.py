@@ -75,7 +75,7 @@ HOTFIX_OPT = opt("--hotfix", "a hotfix: branch from master, finish into master a
 
 GROUPS = [
     ("Set up", ["project", "methodology", "cloud", "agent", "role", "provider", "provision", "env", "instances", "skill", "tool", "packs", "discover"]),
-    ("Run a task", ["feature", "marshal", "release", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
+    ("Run a task", ["feature", "marshal", "release", "branch", "start", "send", "status", "report", "noticed", "watch", "collect", "stop", "close", "mark", "track", "local", "supervise"]),
     ("Review and apply", ["review", "team"]),
     ("Memory", ["memory", "canon"]),
     ("Lead and credentials", ["lead", "credential", "hook"]),
@@ -220,18 +220,36 @@ COMMANDS = {
                  "and an approval."),
         "scripts": ["feature.sh"],
         "verbs": {
-            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT")],
-                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead."),
+            "start": verb("Cut feature/NAME from develop", [("NAME", "none")], [PROJECT_OPT, opt("--purpose", "what the feature is about; related work only goes into one feature", "TEXT"),
+                                                  opt("--worktree", "also make the feature's worktree at <worktrees.root>/feature/NAME and print its path")],
+                          desc="Refuses a name origin already has (asked live with git ls-remote), so another person's branch is not shadowed; fetch it instead. Refuses the name of a detached branch (repo.detached)."),
             "list": verb("List the open features: purpose, distance from develop, and the files two features both change", [], [PROJECT_OPT],
-                         desc="Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another."),
+                         desc=("Several features can be open at once. Two that change the same file will conflict whichever lands second: keep related work in one feature, unrelated work in another. "
+                               "It also flags each worktree of the project outside the worktree root (answers worktrees.root, default <state>/worktrees/PROJECT) with the git worktree move that "
+                               "fixes it; the main checkout, the worktrees inside it (the agent runtime makes its own there) and qargi's temporary worktrees are not flagged.")),
+            "park": verb("Put the project's main checkout on its parking branch, reset to develop", [], [PROJECT_OPT],
+                         desc=("qargi moves develop without touching a working tree, so develop cannot be checked out in the project's main checkout. The checkout rests on a "
+                               "parking branch instead (answers repo.parking_branch, default scratch). This makes it: git checkout -B BRANCH develop in the main checkout, creating the "
+                               "branch when missing. Refused when the working tree is not clean, or when the parking branch has commits develop lacks (they are listed; re-implement "
+                               "them with an agent task based on develop, or keep them on a branch of their own). After feature finish, release finish and hotfix finish moved "
+                               "develop, a clean main checkout on the parking branch with no commits of its own is fast-forwarded to develop, and one status line says why it was not. "
+                               "The parking branch is never pushed or merged.")),
             "sync": verb("Merge develop into the feature (after another feature landed, before this one's checkpoint)", [("NAME", "none")], [PROJECT_OPT, RESOLVED_OPT]),
-            "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, RESOLVED_OPT]),
+            "merge": verb("Merge a verified task branch into feature/NAME with --no-ff", [("NAME", "none"), ("BRANCH", "branch")], [PROJECT_OPT, PLAN, APPROVED, RESOLVED_OPT],
+                          desc=("NAME may be a detached long-lived branch of the answers (repo.detached) instead of a feature: BRANCH must then be an agent/* branch, "
+                                "and the merge, local only, prints a plan and token like a merge into develop (--plan, --approved). A detached branch never meets develop, master, "
+                                "release, hotfix or feature branches: a merge between them, in either direction and by name or by history, is refused here, in sync, in finish and in release finish. "
+                                "For a feature, --plan and --approved are not used.")),
             "status": verb("Show the feature: commits ahead of develop and whether the whole suite passed at its head", [("NAME", "none")], [PROJECT_OPT],
-                           desc=REMOTE_NOTE),
+                           desc=REMOTE_NOTE + " Flags worktrees outside the worktree root like list."),
             "verify": verb("Run the project's whole test suite on the feature's head and record the result", [("NAME", "none")], [PROJECT_OPT]),
             "finish": verb("Merge the feature into develop with --no-ff and delete it", [("NAME", "none")],
                            [PROJECT_OPT, opt("--keep", "keep the branch"), PLAN, APPROVED, RESOLVED_OPT],
-                           desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. " + REMOTE_NOTE + " A merge that conflicts changes "
+                           desc=("Needs a passing whole-suite run at the feature's head. Pushes develop if the repository has an origin. With the answer branches.delete_merged "
+                                 "local+remote (default local) it also deletes the feature branch on origin when origin has it (asked live) and holds nothing the feature lacks; the plan shows "
+                                 "it and its token covers origin's tip. The answer branches.push_features (never, when-shared, always; default never) decides whether feature start, "
+                                 "merge and sync push the feature branch: when-shared only when origin already has it. A plain push, never forced. A clean worktree of the feature under the "
+                                 "worktree root is detached and removed after the merge, when the branch is deleted. " + REMOTE_NOTE + " A merge that conflicts changes "
                                  "nothing: the merge is left in progress in a worktree under the state directory (exit 3), you or the lead resolve and commit it there, "
                                  "and the same command with --resolved applies exactly that merge.")),
         },
@@ -299,6 +317,21 @@ COMMANDS = {
                                   "Output is capped at 16 KiB. --write refuses an existing file, a path inside a git work tree or the qargi directories, and a member run. The qargi-session skill says what to do with the note.")),
             "disable": verb("Switch back to the local records; the refs already on the remote stay (audited as marshal:disable)", [], [PROJECT_OPT, opt("--plan", "the plan token printed by the first run", "TOKEN"), APPROVED],
                             desc="While integrity is advisory or strict it needs the plan token and your words (it drops the setting). Not available in a member run."),
+        },
+    },
+    "branch": {
+        "summary": "Branch housekeeping: delete the merged agent and feature branches and their worktrees",
+        "desc": ("Prune prints the merged agent/* and feature/* branches of the project (and with --remote the same branches on origin, asked live) and the worktrees "
+                 "qargi made for them, with a token; with --plan and --approved it deletes them. A branch is merged when it was merged with --no-ff into develop, "
+                 "or, for an agent branch, into an open feature, and is still in that branch's history; a branch that merely sits at the tip of develop or of a feature "
+                 "was never merged and is kept. It never deletes master, develop, the branches of repo.long_lived and repo.detached, the parking branch, an unmerged branch, "
+                 "or a branch checked out in a worktree qargi did not make (the main checkout, the runtime's own worktrees) or in a dirty one; each kept branch is listed with "
+                 "the reason. A remote branch is deleted as a lease on the tip the plan showed."),
+        "scripts": ["branch.sh"],
+        "verbs": {
+            "prune": verb("List, or with the token and an approval delete, the merged agent/* and feature/* branches and their worktrees", [],
+                          [PROJECT_OPT, opt("--remote", "also the merged agent/* and feature/* branches on origin"), PLAN, APPROVED],
+                          examples=["qargi branch prune", "qargi branch prune --remote --plan TOKEN --approved \"yes, prune them\""]),
         },
     },
     "release": {
@@ -819,12 +852,6 @@ COMMANDS = {
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run."),
                           examples=["qargi review apply ./run", "qargi feature merge search agent/fix-names", "qargi local clean ./run"]),
-            "prune": verb("List, or with --yes delete, the agent/* branches already merged into develop or a feature", [],
-                          [PROJECT_OPT, opt("--yes", "delete them (without it nothing changes)")],
-                          desc=("A branch is merged when it is an ancestor of develop or of any feature/* branch (the test git branch -d makes, against that target "
-                                "rather than the checked-out branch). Only local agent/* branches are considered; a branch checked out in a worktree is kept; "
-                                "no other branch is touched. Prints each branch it lists or deleted."),
-                          examples=["qargi review prune", "qargi review prune --yes"]),
         },
     },
     "team": {
@@ -1135,9 +1162,9 @@ TOPICS = {
         "qargi local verify is the backstop of the guard, a hook on a member's calls: a barrier, not a wall.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env), init, new, link and unlink; "
-        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (rest "
+        "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish and sign; marshal claim, set, renew, release, take, "
-        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish and verify; memory init, "
+        "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal and feature directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
@@ -1145,7 +1172,8 @@ TOPICS = {
         "Reading stays allowed except the lead's signing key: copying, linking or archiving its directory, or searching it, is refused; copying into the home "
         "directory is not. It refuses git push, git remote changes, git -c alias.*, gh, ssh, scp, sftp and rsync to a host.",
         "A command is cut at every ; && || | and newline, inside quotes and heredocs too, and a substitution is a command: no refused verb, push or tag in text "
-        "on the command line. Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
+        "on the command line, unless every command is echo, printf, cat, tee, grep or git commit and its kin (then text is data). "
+        "Commit with git commit -F FILE. A cd it cannot read refuses relative writes.",
         "The read-only class (review) writes only OUT and TMP: every change to the clone is refused, git included, and a write through "
         "a name the guard cannot read. Nobody copies, extracts or links into the run directory.",
         "Setting QARGI_NESTED, which skips a plan token check, or setting or unsetting QARGI_LEAD, is refused.",
