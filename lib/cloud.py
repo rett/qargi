@@ -15,8 +15,9 @@ Usage: cloud.py list
        cloud.py check [PROJECT]          the profile exists and reaches the workspace (local; one `ant profile` read)
        cloud.py login PROJECT            log the project's profile in, bound to its workspace (needs a terminal)
        cloud.py workspace PROFILE        the workspace the profile's login reaches (the dispatcher's check uses it)
-       cloud.py for-args WORDS...        (dispatcher) prints project, profile, workspace id, one per line"""
-import glob, json, os, re, subprocess, sys
+       cloud.py for-args WORDS...        prints project, profile, workspace id, one per line (what the dispatcher's preamble,
+                                         lib/help.py, exports before a command)"""
+import json, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths as P  # noqa: E402
@@ -36,7 +37,8 @@ def pfile(project):
 
 
 def projects():
-    return sorted(os.path.basename(f)[:-5] for f in glob.glob(os.path.join(P.conf(), "projects", "*.json")))
+    import help as H  # noqa: E402
+    return [os.path.basename(f)[:-5] for f in H.project_files()]
 
 
 def load(project):
@@ -89,6 +91,7 @@ def project_of(words):
 
 
 def ant(args, **kw):
+    import subprocess
     try:
         return subprocess.run(["ant"] + args, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60, **kw)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -222,6 +225,7 @@ def main(argv):
                 die("%s has no cloud binding: qargi cloud set %s --profile NAME --workspace-id ID" % (proj, proj))
             if not (sys.stdin.isatty() and sys.stdout.isatty()):
                 die("login needs your own terminal: run `qargi cloud login %s` yourself (a member or a script cannot)" % proj)
+            import subprocess
             return subprocess.call(["ant", "auth", "login", "--profile", b["profile"], "--workspace-id", b["workspace_id"], ANT_NO_BROWSER])
     die("usage: qargi cloud list|show|set|unset|check|login ...", 2)
 
