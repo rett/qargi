@@ -61,6 +61,7 @@ case $area in
   marshal) exec "$lib/marshal.sh" "$@";;
   release) exec "$lib/release.sh" "$@";;
   branch) exec "$lib/branch.sh" "$@";;
+  changelog) exec "$lib/changelog.sh" "$@";;
   methodology) exec python3 -I "$lib/methodology.py" "$@";;
   canon) exec "$lib/canon.sh" "$@";;
   memory) exec "$lib/memory.sh" "$@";;

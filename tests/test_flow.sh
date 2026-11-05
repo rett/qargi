@@ -83,11 +83,21 @@ $F verify d1 >/dev/null 2>&1; $F verify d2 >/dev/null 2>&1; t=$($F finish d1 | t
 dd0=$(git -C "$R" rev-parse develop); t=$($F finish d2 | tok)
 out=$($F finish d2 --plan "$t" --approved go 2>&1) && no "a feature behind develop was finished" || ok "a feature that does not contain develop is refused (sync first)"
 grep -q "feature sync d2" <<<"$out" && [ "$(git -C "$R" rev-parse develop)" = "$dd0" ] && ok "with the way forward named and develop unchanged" || no "message: $out"
+grep -q "both changed" <<<"$out" && no "the d2 refusal named files although none overlap" || ok "a feature behind develop with no file both changed gets the plain refusal, not the list"
 $F sync d2 >/dev/null 2>&1; $F verify d2 >/dev/null 2>&1; t=$($F finish d2 | tok); $F finish d2 --plan "$t" --approved go >/dev/null 2>&1 && ok "after sync and a fresh run it lands" || no "d2 after sync"
 [ "$(jq -r .sha "$T/s/releases/app-develop.json")" = "$(git -C "$R" rev-parse develop)" ] && ok "the feature's run carries over to develop's new head" || no "no carry-over"
 t=$($F finish d2 2>&1 | tok); $F start e1 >/dev/null 2>&1; $F verify e1 >/dev/null 2>&1
 a1=$($F finish e1 | tok); $F finish e1 --keep --plan "$a1" --approved go >/dev/null 2>&1 && no "--keep applied with a plan made without it" || ok "the plan covers --keep"
 $F finish e1 --keep >/dev/null 2>&1; git -C "$R" branch -D feature/e1 >/dev/null 2>&1
+# behind develop with a file both sides changed: finish refuses before it makes a plan, names the files and sync, and changes nothing
+$F start g1 >/dev/null 2>&1; $F start g2 >/dev/null 2>&1
+for n in g1 g2; do w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q "$w" "feature/$n"; echo "$n" > "$w/shared-g.txt"; echo "$n" > "$w/own-$n.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "$n"; git -C "$R" worktree remove --force "$w"; done
+$F verify g1 >/dev/null 2>&1; $F verify g2 >/dev/null 2>&1; t=$($F finish g1 | tok); $F finish g1 --plan "$t" --approved go >/dev/null 2>&1
+dg=$(git -C "$R" rev-parse develop); gg=$(git -C "$R" rev-parse feature/g2)
+out=$($F finish g2 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "^  shared-g.txt$" <<<"$out" && ! grep -q "own-g" <<<"$out" && grep -q "qargi feature sync g2 first" <<<"$out" && ok "finish of a feature behind develop that shares a changed file refuses (exit 1), lists that file and says to sync first" || no "overlap refusal rc=$rc: $out"
+t=$(tok <<<"$out"); [ -z "$t" ] && [ "$(git -C "$R" rev-parse develop)" = "$dg" ] && [ "$(git -C "$R" rev-parse feature/g2)" = "$gg" ] && ok "and no plan is made and nothing moved" || no "overlap refusal changed something"
+git -C "$R" branch -D feature/g2 >/dev/null 2>&1
 
 # --- a release
 w=$(mktemp -d "$T/w.XXXXXX"); git -C "$R" worktree add -q --detach "$w" develop; echo late > "$w/late.txt"; git -C "$w" add -A; git -C "$w" commit -q -m "a commit straight on develop"; git -C "$R" update-ref refs/heads/develop "$(git -C "$w" rev-parse HEAD)"; git -C "$R" worktree remove --force "$w"
