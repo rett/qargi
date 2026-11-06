@@ -8,6 +8,7 @@
 #                                        copy of their objects, offline, and printed as SUBMODULES=path,...; lib/tools.py)
 #   local.sh verify RUN_DIR
 #   local.sh verify RUN_DIR | --saved ID     (--saved: the lead's copy of a passed run whose directory is gone, $QARGI_STATE/runs/ID)
+#   local.sh close RUN_DIR --applied-by-am   mark a verified run whose patches the lead applied by hand (git am) closed: not open any more, files kept
 #   local.sh clean RUN_DIR [--discard]   remove a collected, verified run and its temporary directory (--discard: whatever verify says)
 #   local.sh clean --applied --scratch DIR   remove every run under DIR whose work is applied and merged; keep and name the others
 #   local.sh clean --stale DAYS --scratch DIR [--yes]   list the finished runs (verified or applied) under DIR older than DAYS; with --yes clean them
@@ -148,6 +149,25 @@ parking_of() {
   echo "${p:-scratch}"
 }
 
+# bridge_ref REPO NAME OLD NEW -> 0 when the change of the local branch NAME (refs/heads/worktree-bridge-S) is the harness's own. A branch that exists now
+# (NEW) is the harness's when the worktree that holds it is the real path <main worktree>/<the harness directory>/worktrees/bridge-S, is locked (the harness locks it), and
+# the move (OLD, when there was one) is a fast-forward. A branch that is gone (NEW empty) is the harness's only when no worktree named bridge-S is left
+# and none holds the branch. Anything else, a rewrite of the lead's own bridge branch or a worktree a member added elsewhere, is not.
+bridge_ref() {
+  local repo=$1 ref=$2 old=$3 new=$4 s main='' held=0 k p l
+  s=${ref#refs/heads/worktree-bridge-}
+  while IFS=$'\t' read -r k p l; do
+    case $k in M) main=$(readlink -f -- "$p");; H) held=1; [ -n "$new" ] || return 1
+      [ -n "$main" ] && [ "$(readlink -f -- "$p")" = "$main/.claude/worktrees/bridge-$s" ] && [ "$l" = locked ] && held=2;; esac
+  done < <(git -C "$repo" worktree list --porcelain 2>/dev/null | awk -v ref="$ref" -v tail="/worktrees/bridge-$s" '
+    function chk() { if (n++ == 0) printf "M\t%s\t\n", p; else if (br == ref || (length(p) > length(tail) && substr(p, length(p) - length(tail) + 1) == tail)) printf "H\t%s\t%s\n", p, (lk ? "locked" : "-")
+      p = ""; br = ""; lk = 0; open = 0 }
+    /^worktree / { if (open) chk(); p = substr($0, 10); open = 1; next } /^branch / { br = $2 } /^locked/ { lk = 1 } /^$/ { if (open) chk() } END { if (open) chk() }')
+  [ -n "$new" ] || return 0                       # gone: no worktree of that name is left
+  [ "$held" = 2 ] || return 1
+  [ -z "$old" ] || git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null
+}
+
 # compare REPO REF AFTER [strict] [ACCEPTED] -> prints each offending change, returns 1 if there is one; each change it accepts is named in
 # the file ACCEPTED, one line each. Refs under refs/qargi/ are not compared (see drop_qargi_refs). A change is accepted, in either phase, when
 #   - the lead's ref journal explains it (journal_steps): a branch or a tag of the repository, or a branch or tag of its origin, moved,
@@ -155,7 +175,9 @@ parking_of() {
 #     parking branch following develop, a rewrite the lead recorded ...); a peeled tag line of origin (TAG^{}) goes with its tag;
 #   - a remote-tracking ref refs/remotes/origin/X now says what origin has (a fetch or a push did that; origin's own ref is compared
 #     on its own line), or a tag of the repository is now origin's tag of the same name (fetched);
-#   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi.
+#   - the parking branch (answers repo.parking_branch, default scratch) was fast-forwarded to develop's tip, by hand or by qargi;
+#   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree, locked, at <main worktree>/<the harness directory>/worktrees/bridge-S, holds it and the move is a fast-forward, or when no such worktree is left).
+# A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
 # or a deletion nobody journaled, a tag or a push made by hand, any other ref, is offending.
@@ -184,6 +206,9 @@ compare() {
       refs/heads/?*|refs/tags/?*)
         if steps=$(journal_steps "$kind" "$name" "${old:-$zero}" "${new:-$zero}"); then ACC[$k]=1; echo "$short $a by $steps" >> "$acc"; continue; fi;;
     esac
+    if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$old" "$new"; then
+      ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
+    fi
     if [ "$kind" = local ]; then
       # a remote-tracking ref of origin that says what origin has now, and a tag fetched from origin
       case $name in
@@ -251,6 +276,7 @@ check_run() {
   fi
   : > "$dir/refs.accepted"
   if compare "$RUN_REPO" "$ref" "$dir/refs.after" "$strict" "$dir/refs.accepted" > "$dir/refs.diff"; then
+    [ -z "${NOREC:-}" ] || return 0   # NOREC: a verify that cannot pass (the member did not collect) compares the refs but records nothing
     cp "$dir/refs.after" "$dir/verified"
     return 0
   fi
@@ -293,19 +319,6 @@ render_warning() {
       echo "  fix: qargi packs apply --target $rt $prj"
       echo; } >&2
     return 0
-  done
-  return 0
-}
-
-# project_of REPO URL -> the stored project whose repo.path (or repo.url) is the one given; nothing when there is none
-project_of() {
-  local f rp ru
-  for f in "$DA_CONF"/projects/*.json; do
-    [ -f "$f" ] || continue
-    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
-    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
-    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
-    basename "$f" .json; return 0
   done
   return 0
 }
@@ -486,9 +499,31 @@ WRAP
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
-    reg_load; crc=0; check_run "$RUN" "$SRC" || crc=$?
+    marshal_touch_run "$RUN"   # the lead's verify keeps its lease on the feature the run is based on
+    # the member did not collect: the clone holds commits past BASE_SHA and OUT holds neither patches nor a report. The refs are compared all the same (a run
+    # that broke out and did not collect still gets its ref verdict) and said next to the message, but nothing is recorded: the run is not verified, and apply
+    # and close need a passing verify. (clean asks verify for the refs alone, QARGI_VERIFY_REFS_ONLY: it has its own check for the manifest.) Not for a saved
+    # copy, which exists only for a passed run.
+    NOREC='' EMPTY=''
+    if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
+      ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
+      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name '*report.md' \) 2>/dev/null | head -1)" ]; then
+        EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
+        NOREC=1
+      fi
+    fi
+    reg_load; crc=0; NOREC=$NOREC check_run "$RUN" "$SRC" || crc=$?
     if [ "$crc" = 3 ]; then
       exit 3   # run_record said why: the registry does not vouch for this run directory, so no repository was asked
+    elif [ -n "$EMPTY" ]; then
+      if [ "$crc" = 0 ]; then echo "refs: unchanged by the run (compared all the same; nothing was recorded)" >&2
+      else
+        echo "REFS CHANGED during the run (the agent must not have pushed):" >&2
+        cat "$SRC/refs.diff" >&2
+        if [ -s "$SRC/refs.accepted" ]; then echo "accepted as the lead's own moves:" >&2; sed 's/^/  /' "$SRC/refs.accepted" >&2; fi
+      fi
+      echo "$EMPTY" >&2
+      exit $((crc == 0 ? 1 : 2))
     elif [ "$crc" = 0 ]; then
       reg_mark "$RUN" verified "$(now)"   # the registry says so after the run directory is gone (marshal status, handoff: "verified", never "not verified")
       if [ -s "$SRC/refs.accepted" ]; then
@@ -567,8 +602,8 @@ WRAP
       scr=$(readlink -f "$SCR"); done_n=0; kept_n=0; bad_n=0; reg_load
       for d in "$scr"/qargi.??????; do
         [ -d "$d" ] && [ ! -L "$d" ] && [ -f "$d/refs.before" ] && [ -f "$d/ability" ] && reg_has "$d" || continue   # a directory prepare made (the registry says so), directly under DIR
-        if [ ! -f "$d/applied" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
-        if [ -z "$(reg_get "$d" repo)" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
+        if [ ! -f "$d/applied" ] && [ -z "$(reg_get "$d" closed)" ]; then echo "kept $d: its work is not recorded applied"; kept_n=$((kept_n + 1)); continue; fi
+        if [ -z "$(reg_get "$d" repo)" ] && [ -z "$(reg_get "$d" closed)" ]; then echo "kept $d: whether it is merged cannot be checked for a run of a repository URL"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         if ! why=$("$0" clean "$d" 2>&1 </dev/null); then echo "kept $d: ${why#qargi: }"; kept_n=$((kept_n + 1)); bad_n=$((bad_n + 1)); continue; fi
         echo "$why"; done_n=$((done_n + 1))
       done
@@ -580,13 +615,14 @@ WRAP
     reg_load
     RUN=$CLEAN_RUN
     while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done   # a trailing slash makes rm -rf follow a link
+    marshal_touch_run "$RUN"   # the lead's clean keeps its lease on the feature the run is based on
     if [ -n "$RUN" ] && [ ! -e "$RUN" ] && [ ! -L "$RUN" ]; then
       # the run directory is gone (a reboot that emptied a tmpfs, or removed by hand): only the registry's record and the saved copy are left
       case ${RUN##*/} in qargi.??????) ;; *) usage_die "clean needs a RUN dir made by prepare";; esac
       reg_has "$RUN" || usage_die "clean needs a RUN dir made by prepare ($RUN is gone and the lead's registry does not name it)"
       [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
       sv=$(saved_of "$RUN")
-      if [ -z "$DISCARD" ]; then
+      if [ -z "$DISCARD" ] && [ -z "$(reg_get "$RUN" closed)" ]; then   # a closed run (local close) is taken as applied by hand
         [ -n "$sv" ] || die "$RUN is gone (directory gone) and nothing of it was saved: qargi local clean $RUN --discard drops its record"
         [ -f "$sv/applied" ] || die "$RUN is gone (directory gone), and its saved copy $sv holds work that was never applied: qargi review apply --from-saved ${RUN##*/}, then qargi feature merge (--discard drops the record and the copy on purpose)"
         read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$RUN" repo)
@@ -605,7 +641,7 @@ WRAP
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
-    vrc=0; vout=$("$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository
       [ -n "$DISCARD" ] || die "${vout#qargi: }"
       echo "qargi: warning: the lead's registry does not vouch for $RUN; dropped on purpose:" >&2
@@ -619,7 +655,9 @@ WRAP
     # finished work is never dropped before it is merged: commits in the clone must be applied (review apply) and the applied tip must
     # be on a branch other than agent/*, in the real repository. --discard is the deliberate way to drop them.
     nc=$(git -C "$RUN/clone" rev-list --count HEAD --not --remotes=origin 2>/dev/null || echo 0)
-    if [ "${nc:-0}" -gt 0 ]; then
+    if [ "${nc:-0}" -gt 0 ] && [ -n "$(reg_get "$RUN" closed)" ]; then
+      echo "qargi: note: $RUN was closed as $(reg_get "$RUN" closed_by): its $nc commit(s) are taken as applied by hand" >&2
+    elif [ "${nc:-0}" -gt 0 ]; then
       if [ -n "$DISCARD" ]; then echo "qargi: dropped $nc unmerged commit(s) of $RUN on purpose" >&2
       else
         [ -f "$RUN/applied" ] || die "$RUN holds $nc commit(s) that were never applied: qargi review apply $RUN, then qargi feature merge, then clean (--discard drops them on purpose)"
@@ -663,6 +701,36 @@ WRAP
     reg_edit "$rrun" cleaned || echo "qargi: warning: could not mark $RUN cleaned in $DA_STATE/local-runs.jsonl (report and list may show it as directory gone)" >&2
     [ -z "$acc" ] || printf '%s\n' "$acc"
     echo "cleaned $RUN${rt:+ and $rt}";;
+  close)
+    # the lead took a verified run's patches in by hand (git am): the run is closed, so it is no longer open (compact-check, feature finish, marshal status). The
+    # mark is in the lead's registry (closed: a time, closed_by: applied-by-am), never in the run directory, which a member can write. The files are kept: clean removes them.
+    CLOSE_RUN='' HOW=''
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --applied-by-am) HOW=applied-by-am; shift;;
+        -*) usage_die "close: unknown option $1";;
+        *) [ -z "$CLOSE_RUN" ] || usage_die "close takes one RUN dir"; CLOSE_RUN=$1; shift;;
+      esac
+    done
+    [ -n "$CLOSE_RUN" ] && [ -n "$HOW" ] || usage_die "usage: qargi local close RUN_DIR --applied-by-am   (the way the run was taken in: its patches applied by hand with git am)"
+    RUN=$CLOSE_RUN
+    while [ "${RUN%/}" != "$RUN" ] && [ "$RUN" != / ]; do RUN=${RUN%/}; done
+    [ -d "$RUN" ] && [ ! -L "$RUN" ] && [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
+      || usage_die "close needs a RUN dir made by prepare"
+    reg_load; reg_has "$RUN" || die "$RUN is not in the lead's registry ($DA_STATE/local-runs.jsonl): only a run made by qargi local prepare on this machine is closed"
+    [ -z "$(reg_get "$RUN" cleaned)" ] || die "$RUN was cleaned already"
+    [ -z "$(reg_get "$RUN" closed)" ] || die "$RUN is closed already ($(reg_get "$RUN" closed_by)): qargi local clean $RUN removes its files"
+    [ "$(run_class "$RUN")" != read-only ] || die "$RUN is a read-only run: it has no patches to apply. qargi local clean $RUN removes it"
+    [ ! -f "$RUN/applied" ] || die "$RUN was applied with qargi review apply ($(cut -d' ' -f1 "$RUN/applied")): merge that branch (qargi feature merge), then qargi local clean $RUN"
+    [ -n "$(reg_get "$RUN" verified)" ] || [ -f "$RUN/verified" ] || die "$RUN has no passing verify: qargi local verify $RUN first (the refs of the repository must be checked before the run is closed)"
+    # the refs are checked again now (a ref may have changed since the first verify): changed refs are evidence, the run stays open
+    vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
+    [ "$vrc" = 0 ] || die "the refs of the repository changed, or could not be checked, since the run's passing verify: keep $RUN as evidence and look at it (qargi local verify $RUN)${vout:+
+$vout}"
+    reg_mark "$RUN" closed "$(now)"; reg_mark "$RUN" closed_by "$HOW"
+    reg_load; [ -n "$(reg_get "$RUN" closed)" ] || die "could not mark $RUN closed in $DA_STATE/local-runs.jsonl"
+    audit_log "local:close" "$HOW $RUN"
+    echo "closed $RUN: its patches were applied by hand ($HOW). It is no longer an open run (lead compact-check, feature finish); its files are kept: qargi local clean $RUN removes them";;
   list)
     # read-only: the runs under --scratch DIR (the directories prepare made), else the runs of the registry that still exist; then the runs of the
     # registry (under DIR) whose directory is gone and that clean did not remove, each marked "directory gone" with its saved copy
@@ -693,6 +761,7 @@ WRAP
         ap=yes; read -r _ab atip _ < "$d/applied"; rp=$(reg_get "$d" repo)
         if [ -z "$rp" ]; then mg='?'
         else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
+      elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-   # local close --applied-by-am: applied by hand, no tip to follow
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$( (cat "$d/ability" 2>/dev/null || echo '?') | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" "$(printf '%s' "$d" | plain)"
     done
@@ -708,6 +777,7 @@ WRAP
         ap=yes; read -r _ab atip _ < "$sv/applied"; rp=$(reg_get "$d" repo)
         if [ -z "$rp" ]; then mg='?'
         else mrc=0; merged_tip "$rp" "${atip:-}" || mrc=$?; case $mrc in 0) mg=yes;; 2) mg='?';; esac; fi
+      elif [ -n "$(reg_get "$d" closed)" ]; then ap=closed; mg=-
       fi
       printf '%-10s %-18s %-10s %-6s %-8s %s\n' "$(printf '%s' "$(reg_get "$d" ability)" | plain)" "$(printf '%s' "${sl:--}" | plain)" "$ag" "$ap" "$mg" \
         "$(printf '%s  directory gone%s' "$d" "${sv:+, saved copy $sv (qargi review apply --from-saved ${d##*/})}" | plain)"
@@ -722,5 +792,5 @@ WRAP
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
-  *) usage_die "usage: local.sh prepare|verify|clean|list|run ...";;
+  *) usage_die "usage: local.sh prepare|verify|close|clean|list|run ...";;
 esac

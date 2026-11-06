@@ -176,6 +176,9 @@ lib/guard.py:^LEAD_FILES = \(
 lib/guard.py:The lead's own session settings \(~/\.claude/settings\.json
 lib/guard.py:the rest of ~/\.claude \(projects
 
+# lib/local.sh: the directory of the local runtime's bridge worktree, where bridge_ref expects it
+lib/local.sh:main/\.claude/worktrees/bridge-
+
 # lib/agent.sh: the member's user-level directory and the plain hook test
 lib/agent.sh:for Claude Code ~/\.claude/agents
 lib/agent.sh:guard\.CLAUDE_HOOK

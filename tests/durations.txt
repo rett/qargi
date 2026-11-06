@@ -6,6 +6,7 @@
 228 bash tests/test_packs_render.sh
 245 bash tests/test_packs_audit.sh
 82 bash tests/test_flow.sh
+39 bash tests/test_fverify.sh
 101 bash tests/test_local.sh
 90 bash tests/test_packs.sh
 2 bash tests/test_watch.sh
@@ -21,6 +22,7 @@
 370 bash tests/test_marshal_sign.sh
 43 python3 tests/test_env_apply.py
 49 bash tests/test_journal.sh
+21 bash tests/test_runs_close.sh
 18 bash tests/test_valued_opts.sh
 41 bash tests/test_agent_cloud.sh
 39 python3 tests/test_provider_adapter.py
@@ -43,6 +45,8 @@
 24 bash tests/test_marshal_flow.sh
 19 bash tests/test_release_publish.sh
 20 bash tests/test_release_site.sh
+12 bash tests/test_release_assets.sh
+7 bash tests/test_release_after_steps.sh
 29 python3 tests/test_home.py
 17 bash tests/test_review.sh
 19 bash tests/test_tier_hook.sh
@@ -74,6 +78,7 @@
 3 bash tests/test_project_profile.sh
 3 bash tests/test_new.sh
 10 python3 tests/test_canon.py
+10 bash tests/test_release_ci.sh
 0 bash tests/test_changelog_section.sh
 9 bash tests/test_marshal_hook.sh
 2 python3 tests/test_help.py

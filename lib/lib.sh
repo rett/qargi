@@ -181,6 +181,18 @@ run_record() {
     [ "$got" = "$want" ] || { echo "qargi: $run/$name says '$got' but the lead's registry says '$want': the run directory was changed after prepare, nothing was run against it" >&2; return 1; }
   done
 }
+# project_of REPO URL -> the stored project whose repo.path (or repo.url) is the one given; nothing when there is none
+project_of() {
+  local f rp ru
+  for f in "$DA_CONF"/projects/*.json; do
+    [ -f "$f" ] || continue
+    rp=$(jq -r '.repo.path // ""' "$f" 2>/dev/null); rp=${rp/#\~/$HOME}; ru=$(jq -r '.repo.url // ""' "$f" 2>/dev/null)
+    if [ -n "$1" ]; then [ -n "$rp" ] && [ "$(readlink -f "$rp")" = "$(readlink -f "$1")" ] || continue
+    else [ -n "$ru" ] && [ "${ru%.git}" = "${2%.git}" ] || continue; fi
+    basename "$f" .json; return 0
+  done
+  return 0
+}
 DA_ROLES=${QARGI_ROLES:-$(role_names | tr '\n' ' ' | sed 's/ $//')}
 valid_project() { printf '%s' "$1" | grep -Eq '^[a-z][a-z0-9]{0,23}$'; }
 # "lead" is the team coordinator: an instance role of its own, defined by the project's teams, not a work role.

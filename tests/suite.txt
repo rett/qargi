@@ -26,7 +26,7 @@ fast | par | 300 | 18 | bash tests/test_tier_hook.sh
 full | par | 300 | 14 | bash tests/test_tier_packet.sh
 fast | par | 300 | 3 | python3 tests/test_help.py | lib/commands.py lib/help.py man/qargi.1 completions/*
 full | par | 360 | 60 | python3 tests/test_startup.py | bin/qargi lib/help.py lib/commands.py lib/cloud.py lib/paths.py
-full | par | 300 | 80 | python3 tests/test_site.py | lib/site.py lib/site/*
+full | par | 300 | 80 | python3 tests/test_site.py | lib/site.py lib/site_md.py lib/site/*
 full | par | 300 | 26 | python3 tests/test_membackend.py | lib/membackend.py
 full | par | 300 | 30 | python3 tests/test_transfer.py | lib/transfer.py
 full | par | 300 | 21 | python3 tests/test_discover.py | lib/discover.py
@@ -47,19 +47,23 @@ fast | par | 300 | 12 | python3 tests/test_guard.py Guard FailsClosed HookProtoc
 full | par | 678 | 113 | bash tests/test_agent.sh | lib/agent.sh
 full | par | 300 | 39 | bash tests/test_agent_cloud.sh | lib/agent*.sh
 full | par | 300 | 36 | bash tests/test_valued_opts.sh
-fast | par | 300 | 12 | bash tests/test_role.sh | lib/role.sh
+fast | par | 300 | 12 | bash tests/test_role.sh | lib/role.sh roles/*/ROLE.md
 full | par | 300 | 31 | bash tests/test_cloud_bases.sh
 fast | par | 300 | 3 | bash tests/test_methodology.sh | lib/methodology.py methodologies/*
 fast | par | 300 | 11 | bash tests/test_attach.sh | lib/attach.py
 fast | par | 300 | 4 | bash tests/test_new.sh
 full | par | 300 | 18 | bash tests/test_adopt.sh
 full | par | 480 | 80 | bash tests/test_flow.sh | lib/feature.sh lib/gitflow.sh
+full | par | 300 | 40 | bash tests/test_fverify.sh | lib/feature.sh lib/gitflow.sh lib/release.sh
 fast | par | 300 | 3 | bash tests/test_changelog_section.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 7 | bash tests/test_changelog_renumber.sh | lib/changelog*.sh lib/changelog*.py
 fast | par | 300 | 3 | bash tests/test_verify_env.sh
 full | par | 300 | 31 | bash tests/test_release_preflight.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
 full | par | 300 | 20 | bash tests/test_release_publish.sh | lib/release*.sh lib/release*.py
 fast | par | 300 | 12 | bash tests/test_release_gh.sh | lib/release*.sh lib/release*.py
+full | par | 300 | 12 | bash tests/test_release_ci.sh | lib/release*.sh lib/release*.py lib/gitflow.sh
+full | par | 300 | 7 | bash tests/test_release_after_steps.sh | lib/release*.sh lib/release*.py
+full | par | 300 | 12 | bash tests/test_release_assets.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 19 | bash tests/test_release_site.sh | lib/release*.sh lib/release*.py
 full | par | 300 | 24 | python3 tests/test_home.py
 full | par | 300 | 25 | bash tests/test_install.sh
@@ -76,9 +80,10 @@ full | par | 804 | 134 | bash tests/test_packs_link.sh | lib/packs*.sh lib/packs
 fast | par | 300 | 13 | bash tests/test_linker.sh | lib/linker.py
 full | par | 1038 | 173 | bash tests/test_packs_audit.sh | lib/packs*.sh lib/packs*.py
 full | par | 612 | 102 | bash tests/test_packs_claude_hostile.sh | lib/packs*.sh lib/packs*.py
-full | par | 300 | 19 | bash tests/test_review.sh | lib/review.sh
+full | par | 300 | 19 | bash tests/test_review.sh | lib/review.sh lib/review_check.py
 full | par | 306 | 51 | bash tests/test_marshal.sh | lib/marshal.sh
 full | par | 300 | 24 | bash tests/test_marshal_flow.sh | lib/marshal*.sh lib/marshal*.py
+full | par | 300 | 20 | bash tests/test_marshal_lease.sh | lib/marshal*.sh lib/marshal*.py lib/review.sh lib/local.sh lib/feature.sh
 full | par | 474 | 79 | bash tests/test_marshal_handoff.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 744 | 124 | bash tests/test_marshal_refs.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 1842 | 307 | bash tests/test_marshal_sign.sh | lib/marshal*.sh lib/marshal*.py
@@ -86,6 +91,7 @@ fast | par | 300 | 3 | python3 tests/test_marshal_sign_unit.py | lib/marshal*.sh
 full | par | 300 | 15 | bash tests/test_marshal_forget.sh | lib/marshal*.sh lib/marshal*.py
 fast | par | 300 | 8 | bash tests/test_marshal_hook.sh | lib/marshal*.sh lib/marshal*.py
 full | par | 300 | 43 | bash tests/test_journal.sh
+full | par | 300 | 21 | bash tests/test_runs_close.sh | lib/local.sh lib/ref.sh lib/feature.sh lib/review.sh lib/lead_usage.py
 fast | par | 300 | 12 | bash tests/test_upstream.sh | lib/upstream.sh
 fast | par | 300 | 12 | bash tests/test_team.sh | lib/team.sh
 fast | par | 300 | 4 | bash tests/test_leadcred.sh

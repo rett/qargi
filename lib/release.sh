@@ -18,15 +18,32 @@
 #                                           QARGI_GH), or its commit lacks .github/workflows/release.yml while the branch has it;
 #                                           with release.sign set and no release yet it says "awaiting signature" until `sign` recorded
 #                                           one that still holds, and "VERSION is ready for signing" when the repository is in the state sign needs
+#                                           With a branch: the pull request's checks (gh pr checks: name and pass/fail/pending). With a tag: the
+#                                           checklist after the release: tag on origin, GitHub release, the assets of release.assets, the signatures of
+#                                           release.sign.files, and the project's release.after_steps (an optional list of words; not tracked).
 #   release.sh verify VERSION [--hotfix]    run the whole suite on the branch head (develop's head before a release starts); same warnings
-#   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master
-#   release.sh finish VERSION [--hotfix] [--keep] [--plan T --approved W]
-#                                           after the checks pass: merge, tag, back-merge, delete the branch, push
+#   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
+#                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
+#   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
+#                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
+#                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
+#                                           Then it prints the steps of the answer release.after_steps ({version} replaced) as "after the release: STEP"
+#                                           lines, never runs them, and records them in STATE/release/PROJECT-VERSION.after.json ({steps: [...]}) for
+#                                           `status`, which shows the recorded steps (the answer as it is now when there is no record).
 #
+#   release.sh assets VERSION [--recreate]  build the release files of the tag VERSION: a clean detached worktree of the tag under STATE/release-assets/,
+#                                           the project's answer release.assets_command run in it (a command line, or a list of words with {version}
+#                                           replaced; QARGI_RELEASE_VERSION is set; refused with a message when unset), the worktree recorded under
+#                                           STATE/release/ so that `sign` and `publish` take the files from it. Prints where the files are and the next
+#                                           command (`qargi release sign VERSION` when release.sign is set). An existing asset worktree is kept unless
+#                                           --recreate. Lead only (refused in a member run and when QARGI_NESTED is set); no plan token: it runs the
+#                                           command the lead put in the answers, on the tag, and changes no branch.
 #   release.sh sign VERSION                 sign the files of the answer release.sign.files (ssh-keygen -Y sign -f KEY -n NAMESPACE FILE, one by one),
 #                                           run release.sign.verify_command and record the result under STATE/release/. Only from the tag, because the
 #                                           release files are built from the tagged commit: after `finish`, before `publish`. The repository's HEAD
-#                                           must be the commit of the tag VERSION, on master or detached, with no tracked file modified. ssh-keygen
+#                                           must be the commit of the tag VERSION, on master or detached, with no tracked file modified (when `assets`
+#                                           built the files, the files are those of its worktree, which must be at the tag instead). ssh-keygen
 #                                           runs on the person's own terminal (stdin, stdout and stderr are inherited; nothing is captured and no
 #                                           input is logged), so the passphrase is typed there and never passes through qargi; no ssh agent is
 #                                           asked (SSH_AUTH_SOCK and SSH_ASKPASS are removed from its environment). Refused when stdin is no
@@ -34,12 +51,13 @@
 #                                           optional and off by default; exit 2); the guard refuses it to a member too.
 #                                           The verify command is an argv list, run without a shell in the repository.
 #
-#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--notes-file FILE]
+#   release.sh publish VERSION [--plan T --approved W] [--asset FILE]... [--asset-dir DIR]... [--notes-file FILE]
 #                                           create the GitHub release of the tag VERSION (gh release create --verify-tag, through
 #                                           QARGI_GH) with the tag's changelog section as notes; for a tag pushed before the release
 #                                           workflow existed. Refuses when the release exists, the tag is missing or the section is empty.
-#                                           The files of --asset and of the answer release.assets (relative to the repository, inside it)
-#                                           are attached by the same gh release create. The notes are --notes-file, else the answer
+#                                           The files of --asset, of every regular file of --asset-dir and of the answer release.assets (names or globs,
+#                                           {version} replaced) are attached by the same gh release create. A relative name is taken in the asset worktree
+#                                           of `assets` when there is one, else in the repository; a full path must lie in a worktree of the repository. The notes are --notes-file, else the answer
 #                                           release.notes_file ({version} replaced), else the changelog section. When release.sign is
 #                                           set it refuses until `sign` recorded an ok for VERSION and no signed file changed since; the
 #                                           plan token covers the notes and the hash of every asset.
@@ -49,7 +67,7 @@
 #                                           default gh-pages when repo.detached lists it, and site.config, default site/site.json, whose folder pages/ holds
 #                                           the hand pages). Only when site.enabled is true. The source is the tag's tree (git archive), the generator is
 #                                           lib/site.py; the work is done in a temporary worktree of the site branch, which moves by update-ref only after
-#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json and regenerates _site/.
+#                                           the commit, so no working tree is touched. The commit sets "release" in the site.json; the build checks the site and its output (_site/) is not committed, a Pages build of the branch needing _site/ empty.
 #                                           It never pushes: it prints the push command. Refused in a member run and when QARGI_NESTED is set.
 #                                           `finish` ends with "next: qargi release site VERSION" (the methodology's after_release step) and `status`
 #                                           says whether the site of VERSION is built and pushed, both only when site.enabled is true.
@@ -63,20 +81,26 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
-VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT=''; ASSETS=()
+VER='' PROJ='' DATE='' PLAN_ARG='' APPROVED='' HOTFIX='' KEEP='' RESOLVED='' ALLOW_EMPTY='' NOTES_OPT='' FIXPUSH='' IGNORE_CHECKS='' IGNORE_SET='' IGNORED='' RECREATE=''; ASSETS=() ASSET_DIRS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --project) need_val "$1" $#; PROJ=$2; shift 2;; --date) need_val "$1" $#; DATE=$2; shift 2;; --plan) need_val "$1" $#; PLAN_ARG=$2; shift 2;;
     --approved) need_val "$1" $#; APPROVED=$2; shift 2;;
-    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
+    --asset) need_val "$1" $#; ASSETS+=("$2"); shift 2;; --asset-dir) need_val "$1" $#; ASSET_DIRS+=("$2"); shift 2;; --recreate) RECREATE=1; shift;; --notes-file) need_val "$1" $#; NOTES_OPT=$2; shift 2;;
+    --push) FIXPUSH=1; shift;; --ignore-checks) need_val "$1" $#; IGNORE_CHECKS=$2; IGNORE_SET=1; shift 2;;
     --hotfix) HOTFIX=1; shift;; --keep) KEEP=1; shift;; --resolved) RESOLVED=1; shift;; --allow-empty-notes) ALLOW_EMPTY=1; shift;;
     -*) die "unknown option $1";; *) VER=$1; shift;;
   esac
 done
-[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset and --notes-file belong to release publish"
+[ "$verb" = publish ] || { [ ${#ASSETS[@]} -eq 0 ] && [ ${#ASSET_DIRS[@]} -eq 0 ] && [ -z "$NOTES_OPT" ]; } || die "--asset, --asset-dir and --notes-file belong to release publish"
+[ "$verb" = assets ] || [ -z "$RECREATE" ] || die "--recreate belongs to release assets"
+[ "$verb" = fix ] || [ -z "$FIXPUSH" ] || die "--push belongs to release fix"
+[ "$verb" = finish ] || [ -z "$IGNORE_SET" ] || die "--ignore-checks belongs to release finish"
+[ -z "$IGNORE_SET" ] || printf '%s' "$IGNORE_CHECKS" | grep -q '[^[:space:]]' || die "--ignore-checks needs the reason, in the words you gave: --ignore-checks \"...\""
+[ "$verb" != fix ] || [ -z "$FIXPUSH" ] || verb=push   # fix --push is push
 export PLAN_ARG RESOLVED   # need_plan reads PLAN_ARG; merge_step reads RESOLVED
 
-[ -n "$VER" ] || die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]"
+[ -n "$VER" ] || die "usage: qargi release start|status|verify|fix|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]"
 printf '%s' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "'$VER' is not a version like 0.1.1"
 . "$(dirname "$0")/gitflow.sh"
 project_load
@@ -100,7 +124,7 @@ trap rel_exit EXIT
 # gh_release_state TAG -> sets GHS to found|missing|noauth|nogh|unchecked (and GHWHY): does GitHub have a release for the tag? Read-only.
 gh_release_state() {
   local out rc=0
-  GHWHY=''
+  GHWHY='' GHS_FOR=$1
   command -v "$GH" >/dev/null 2>&1 || { GHS=nogh; return 0; }
   out=$("$GH" -R "$(repo_slug)" release view "$1" 2>&1 </dev/null) || rc=$?
   if [ "$rc" = 0 ]; then GHS=found
@@ -149,6 +173,39 @@ suite_verdict() {
 RS=$(dirname "$0")/release_sign.py
 SIGNREC=$DA_STATE/release/$PROJ-$VER.sign.json
 sign_configured() { jq -e '(.release // {}) | has("sign")' "$af" >/dev/null 2>&1; }
+# The release asset worktree: `assets` builds the release files in a clean detached worktree of the tag, under the state directory, and records it
+# in ASSETREC. While it is there at the tag, `sign` and `publish` take the files from it (relative names) instead of the repository.
+ASSETREC=$DA_STATE/release/$PROJ-$VER.assets.json
+ASSETWT=$DA_STATE/release-assets/$PROJ-$VER
+# asset_wt: sets AWT to the recorded asset worktree of VER when it exists and is still at the tag (a note on stderr when the record is stale); else ''
+asset_wt() {
+  local p tc
+  AWT=''
+  [ -f "$ASSETREC" ] || return 0
+  p=$(jq -r '.worktree // empty' "$ASSETREC" 2>/dev/null); tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  if [ -n "$p" ] && [ -d "$p" ] && [ "$(git -C "$p" rev-parse -q --verify 'HEAD^{commit}' 2>/dev/null)" = "$tc" ]; then AWT=$p
+  else echo "note: the release asset worktree of $VER (${p:-none}) is gone or no longer at the tag: ignored (qargi release assets $VER --recreate makes it again)" >&2; fi
+}
+# sign_root: the directory the release files are signed and published from: the asset worktree when there is one, else the repository
+sign_root() { asset_wt; printf '%s' "${AWT:-$REPO}"; }
+# after_steps_record: the answer release.after_steps ({version} replaced) as "after the release: STEP" lines, kept in AFTERREC (one JSON file under
+# the state, {steps: [...]}) for `release status`. They are shown, never run. after_steps_list gives them back to `status`.
+AFTERREC=$DA_STATE/release/$PROJ-$VER.after.json
+after_steps_record() {
+  local st=()
+  mapfile -t st < <(python3 -I "$RS" after-steps "$af" "$VER" 2>/dev/null)
+  [ "${#st[@]}" -gt 0 ] || return 0
+  mkdir -p "$DA_STATE/release"
+  printf '%s\n' "${st[@]}" | jq -R . | jq -s --arg p "$PROJ" --arg v "$VER" --arg t "$(now)" '{schema:1, project:$p, version:$v, at:$t, steps:.}' > "$AFTERREC"
+  printf 'after the release: %s\n' "${st[@]}"
+}
+# after_steps_list: the steps for `release status`, one per line: those `finish` recorded in AFTERREC; when there is no (readable) record, the answer as it is now
+after_steps_list() {
+  local s
+  if [ -f "$AFTERREC" ] && s=$(jq -r '.steps[] | strings' "$AFTERREC" 2>/dev/null) && [ -n "$s" ]; then printf '%s\n' "$s"; return 0; fi
+  s=$(jq -r '(.release? // {}) | (.after_steps // []) | if type == "array" then .[] | strings else empty end' "$af" 2>/dev/null) || return 0
+  [ -z "$s" ] || printf '%s\n' "${s//\{version\}/$VER}"
+}
 # sign_status: for a tag that exists in a project that signs its releases (and has no GitHub release yet), whether the signature of VER is recorded
 # and still true; if not, "awaiting signature" and either that the release is ready for signing or what stands in the way. Read-only.
 sign_status() {
@@ -157,7 +214,7 @@ sign_status() {
   tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
   [ "${GHS:-}" != found ] || return 0
   python3 -I "$RS" config "$af" >/dev/null 2>&1 || { echo "warning: the release answers of $PROJ are not valid (qargi project validate $PROJ), so the signature of $VER was not checked"; return 0; }
-  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
+  if s=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$(sign_root)" --af "$af" --commit "$tc"); then echo "signature: $s"; return 0; fi
   echo "awaiting signature: $s"
   sign_gate
   if [ -z "$SG_WHY" ]; then echo "$VER is ready for signing: qargi release sign $VER"; else echo "  not ready for signing: $SG_WHY"; fi
@@ -168,6 +225,14 @@ sign_gate() {
   local tc head br f
   SG_WHY=''
   tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || { SG_WHY="no tag $VER yet (qargi release finish $VER makes it): sign from the tag, after finish and before publish"; return 0; }
+  asset_wt
+  if [ -n "$AWT" ]; then   # the release files were built in the asset worktree of the tag (qargi release assets): the repository's own checkout is not involved
+    if [ -n "$(git -C "$AWT" status --porcelain --untracked-files=no)" ]; then SG_WHY="tracked files of the asset worktree $AWT are modified: the release files must be built from the tag as it is"; return 0; fi
+    while IFS= read -r f; do
+      [ -f "$AWT/$f" ] || { SG_WHY="the file $f of release.sign.files does not exist in the asset worktree $AWT: qargi release assets $VER builds the release files"; return 0; }
+    done < <(jq -r '.release.sign.files[]' "$af")
+    return 0
+  fi
   head=$(g rev-parse -q --verify 'HEAD^{commit}') || head=''
   br=$(g symbolic-ref -q --short HEAD) || br=''
   if [ "$head" != "$tc" ]; then
@@ -230,6 +295,120 @@ run_preflight() {
   [ "$rc" = 0 ] || die "release.preflight failed (exit $rc): ${pre[*]}"$'\n'"$(printf '%s\n' "$out" | tail -n 15 | sed 's/^/  | /')"$'\n'"nothing was changed"
 }
 
+# --- the pull request and its CI checks (read-only calls through $GH)
+# pr_checks BRANCH -> PRC_STATE (pass|failing|pending|nopr|nochecks|noauth|nogh|unchecked), PRC_LINES ("name: pass|fail|pending|skipped" per check),
+# the counts PRC_PASS, PRC_FAIL, PRC_PEND and PRC_WHY. `pr checks` prints one tab-separated line per check (name, state, elapsed, url) when it is
+# not on a terminal, and exits 0 when all passed, 8 while some are pending, 1 otherwise. Never fails.
+pr_checks() {
+  local out rc=0 line name state st
+  PRC_STATE='' PRC_LINES='' PRC_WHY='' PRC_PASS=0 PRC_FAIL=0 PRC_PEND=0
+  command -v "$GH" >/dev/null 2>&1 || { PRC_STATE=nogh; return 0; }
+  out=$("$GH" -R "$(repo_slug)" pr checks "$1" 2>&1 </dev/null) || rc=$?
+  while IFS= read -r line; do
+    [[ $line == *$'\t'* ]] || continue
+    IFS=$'\t' read -r name state _ <<<"$line"
+    case $state in
+      pass) st=pass; PRC_PASS=$((PRC_PASS + 1));;
+      fail|failure|cancel|cancelled|error|timed_out) st=fail; PRC_FAIL=$((PRC_FAIL + 1));;
+      pending|queued|in_progress|waiting) st=pending; PRC_PEND=$((PRC_PEND + 1));;
+      skipping|skipped|neutral) st=skipped;;
+      *) st=${state:-unknown};;
+    esac
+    PRC_LINES+="$name: $st"$'\n'
+  done <<<"$out"
+  PRC_LINES=${PRC_LINES%$'\n'}
+  if [ "$rc" = 0 ]; then PRC_STATE=pass
+  elif [ "$PRC_FAIL" -gt 0 ]; then PRC_STATE=failing
+  elif [ "$PRC_PEND" -gt 0 ] || [ "$rc" = 8 ]; then PRC_STATE=pending
+  elif grep -qi 'no pull requests found' <<<"$out"; then PRC_STATE=nopr
+  elif grep -qi 'no checks reported' <<<"$out"; then PRC_STATE=nochecks
+  elif grep -qi 'auth login\|not logged in\|authentication' <<<"$out"; then PRC_STATE=noauth
+  else PRC_STATE=unchecked; PRC_WHY=$(printf '%s' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-120); fi
+  return 0
+}
+# pr_checks_print BRANCH: pr_checks, then the verdict and one line per check; what could not be read is a warning, never a refusal
+pr_checks_print() {
+  local l
+  pr_checks "$1"
+  case $PRC_STATE in
+    pass) echo "pull request checks of $1: all passed${PRC_LINES:+ ($PRC_PASS passed)}";;
+    failing) echo "pull request checks of $1: $PRC_FAIL failing, $PRC_PEND pending, $PRC_PASS passed";;
+    pending) echo "pull request checks of $1: $PRC_PEND pending, $PRC_PASS passed";;
+    nopr) echo "warning: no pull request for $1, so no CI ran on it (qargi release push $VER${HOTFIX:+ --hotfix})";;
+    nochecks) echo "warning: the pull request of $1 reports no checks";;
+    nogh) echo "warning: gh is not installed, so the pull request checks of $1 were not read";;
+    noauth) echo "warning: gh is not authenticated, so the pull request checks of $1 were not read (gh auth login)";;
+    *) echo "warning: could not read the pull request checks of $1 (${PRC_WHY:-no answer})";;
+  esac
+  [ -z "$PRC_LINES" ] || while IFS= read -r l; do echo "  check $l"; done <<<"$PRC_LINES"
+}
+# pr_find BRANCH -> PR_NUM and PR_URL of the open pull request whose head is BRANCH (empty: none, or it could not be asked). Read-only.
+pr_find() {
+  local out
+  PR_NUM='' PR_URL=''
+  command -v "$GH" >/dev/null 2>&1 || return 0
+  out=$("$GH" -R "$(repo_slug)" pr list --head "$1" --state open --json number,url --jq '.[] | "\(.number) \(.url)"' 2>/dev/null </dev/null | head -1) || return 0
+  read -r PR_NUM PR_URL <<<"$out"
+  case $PR_NUM in ''|*[!0-9]*) PR_NUM='' PR_URL='';; esac
+  return 0
+}
+# remote_tag_state TAG -> RTAG (pushed|absent|none|unchecked): does the live origin have the tag? Bounded like remote_tip. Never fails.
+remote_tag_state() {
+  local out rc=0
+  RTAG=unchecked
+  g remote get-url origin >/dev/null 2>&1 || { RTAG=none; return 0; }
+  command -v timeout >/dev/null 2>&1 || return 0
+  out=$(GIT_TERMINAL_PROMPT=0 timeout "${QARGI_REMOTE_TIMEOUT:-10}" git -C "$REPO" ls-remote --tags origin "refs/tags/$1" 2>&1) || rc=$?
+  [ "$rc" = 0 ] || return 0
+  if [ -n "$out" ]; then RTAG=pushed; else RTAG=absent; fi
+}
+# post_release: for a tag VER that exists, the checklist of what is left after `finish`: the tag on origin, the GitHub release, the assets the
+# project records (release.assets; the signatures of release.sign.files) and the project's own after-steps (release.after_steps, a list of
+# words; qargi does not record that they were done). Read-only; what cannot be asked is said, not guessed.
+post_release() {
+  local tc a base names='' step n=0
+  tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || return 0
+  echo "after the release $VER (tag at ${tc:0:7}):"
+  remote_tag_state "$VER"
+  case $RTAG in
+    pushed) echo "  tag $VER: pushed to origin";;
+    absent) echo "  tag $VER: NOT on origin (git -C $REPO push origin $VER)";;
+    none) echo "  tag $VER: no origin remote";;
+    *) echo "  tag $VER: origin not checked";;
+  esac
+  if g remote get-url origin >/dev/null 2>&1; then
+    [ "${GHS_FOR:-}" = "$VER" ] || gh_release_state "$VER"   # tag_checks asked already
+    case $GHS in
+      found) echo "  GitHub release: published";;
+      missing) echo "  GitHub release: MISSING (qargi release publish $VER)";;
+      nogh) echo "  GitHub release: not checked (gh is not installed)";;
+      noauth) echo "  GitHub release: not checked (gh is not authenticated)";;
+      *) echo "  GitHub release: not checked (${GHWHY:-no answer})";;
+    esac
+    if [ "$GHS" = found ]; then
+      names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
+      if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
+      else
+        # release.assets entries: {version} replaced, a glob matched by its base name against the names the release has
+        python3 -I "$RS" asset-status "$af" "$VER" <<<"$names" 2>/dev/null | sed 's/^/  /' || true
+        if sign_configured; then
+          while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            base=${a##*/}
+            if grep -qxF -- "$base.sig" <<<"$names"; then echo "  signature $base.sig: attached"; else echo "  signature $base.sig: UNSIGNED, not attached to the release"; fi
+          done < <(jq -r '(.release.sign.files // [])[]' "$af" 2>/dev/null)
+        fi
+      fi
+    fi
+  fi
+  while IFS= read -r step; do
+    [ -n "$step" ] || continue
+    [ "$n" -gt 0 ] || echo "  after-steps (release.after_steps; qargi does not record that they were done):"
+    n=$((n + 1)); echo "    - $step"
+  done < <(after_steps_list)
+  return 0
+}
+
 case $verb in
   start)
     rel_valid
@@ -285,6 +464,7 @@ case $verb in
       tag_checks
       sign_status
       site_status
+      post_release
       exit 0
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
@@ -294,9 +474,11 @@ case $verb in
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
     remote_report "$BR"; remote_report "$BASE"
     g rev-parse -q --verify "refs/tags/$VER" >/dev/null && echo "tag $VER exists" || true
+    if g remote get-url origin >/dev/null 2>&1; then pr_checks_print "$BR"; fi
     tag_checks
     sign_status
-    site_status;;
+    site_status
+    post_release;;
   verify)
     rel_valid
     [ -n "$TESTCMD" ] || die "no test_command (or release.test_command) in the answers for $PROJ: qargi project set $PROJ test_command '...'"
@@ -304,14 +486,32 @@ case $verb in
     h=$(sha_of "$on"); [ -n "$h" ] || die "no branch $on"
     worktree "$h"
     echo "running the whole suite on $on at $(g rev-parse --short "$on"): $TESTCMD"
+    other_runs_warning
     busy_begin release-verify "$VER"
     t0=$SECONDS
-    if run_suite; then res=pass; else res=fail; fi
+    if run_suite_logged "release-$VER"; then res=pass; else res=fail; fi
     busy_end
     record_suite "$on" "$h" "$res" "$((SECONDS - t0))"
     echo "full suite: $res at $(g rev-parse --short "$on")"
     tag_checks
+    [ "$res" = pass ] || suite_failure_report
     [ "$res" = pass ];;
+  fix)
+    # a worktree on the release branch to commit a fix in, once the pull request's checks failed or review asked for a change
+    h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
+    g rev-parse -q --verify "refs/tags/$VER" >/dev/null && die "the tag $VER exists already: $BR was finished, a fix is a hotfix now (qargi release start $VER --hotfix)"
+    fw=$(held "$BR")
+    if [ -z "$fw" ]; then
+      wtp=$WT_ROOT/$BR; [ ! -e "$wtp" ] || die "$wtp exists already but does not hold $BR: remove or move it"
+      mkdir -p "$(dirname "$wtp")" && g worktree add -q "$wtp" "$BR" || die "could not make the worktree of $BR at $wtp"
+      fw=$wtp; echo "created the worktree of $BR at $fw"
+    else
+      echo "$BR is checked out in $fw already"
+    fi
+    [ -z "$(git -C "$fw" status --porcelain 2>/dev/null)" ] || echo "note: $fw has uncommitted changes"
+    echo "worktree: $fw"
+    echo "next: fix there (minor fixes only) and commit on $BR; then push the fix with: qargi release fix $VER${HOTFIX:+ --hotfix} --push (the same as release push: a plan token and an approval; it updates the open pull request, whose checks run again)"
+    echo "when the checks pass: qargi release finish $VER${HOTFIX:+ --hotfix} (finish removes the worktree)";;
   push)
     rel_valid
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
@@ -320,6 +520,8 @@ case $verb in
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
     remote_report "$BR"
+    pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
+    pr_find "$BR"; [ -z "$PR_NUM" ] || echo "the pull request #$PR_NUM of $BR is open already: the push updates it${PR_URL:+ ($PR_URL)}"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
@@ -328,8 +530,18 @@ case $verb in
     journal_push "refs/heads/$BR" "$rb0" "$h" "$KIND:push"
     audit_log "release:push" "$PROJ $BR"
     command -v "$GH" >/dev/null 2>&1 || die "pushed $BR, but gh is not installed: open the pull request into master yourself"
-    url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || die "pushed $BR; gh pr create failed: $url"
-    echo "pushed $BR and opened: $url"
+    pr_find "$BR"
+    if [ -n "$PR_NUM" ]; then
+      echo "pushed $BR and updated PR #$PR_NUM${PR_URL:+: $PR_URL} (it was open already; its checks run on the new head)"
+    else
+      url=$(cd "$REPO" && "$GH" pr create --base master --head "$BR" --title "$PROJ $VER" --body "$KIND $VER" 2>&1) || {
+        # a pull request that could not be listed is still found by the refusal of pr create
+        PR_NUM=$(grep -o '/pull/[0-9]*' <<<"$url" | head -1 | tr -dc 0-9)
+        if grep -qi 'already exists' <<<"$url" && [ -n "$PR_NUM" ]; then echo "pushed $BR and updated PR #$PR_NUM (it was open already; its checks run on the new head)"; url=''
+        else die "pushed $BR; gh pr create failed: $url"; fi
+      }
+      [ -z "$url" ] || echo "pushed $BR and opened: $url"
+    fi
     echo "when its checks pass: qargi release finish $VER${HOTFIX:+ --hotfix}";;
   finish)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR"
@@ -360,11 +572,22 @@ case $verb in
       [ "$n" = 0 ] || second=$rels
     fi
     detached_mix "$BR" master; detached_mix "$BR" "$second"
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" | plan_token)
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"
     show_incoming master "$BR"
-    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep} --plan $tok --approved \"...\")"; exit 0; fi
+    if g remote get-url origin >/dev/null 2>&1; then   # the checks of the pull request at the head being released
+      pr_checks_print "$BR"
+      rw=$(remote_was "$BR"); [ -z "$rw" ] || [ "$rw" = "$h" ] || echo "warning: origin/$BR was at ${rw:0:7} at the last fetch, not at the head ${h:0:7} that is released: those checks may be of an older commit (qargi release push, then wait for the checks)"
+      case $PRC_STATE in
+        failing|pending)
+          if [ -n "$IGNORE_SET" ]; then echo "the checks are $PRC_STATE; ignored on your word: $IGNORE_CHECKS"
+          else die "the checks of the pull request of $BR are $PRC_STATE: wait for them, or fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}); to finish anyway, in your own words: --ignore-checks \"...\""; fi;;
+        pass) [ -z "$IGNORE_SET" ] || echo "note: the checks passed, so --ignore-checks changes nothing (nothing is ignored, so the words are not recorded unless the checks fail by the apply)";;
+        *) [ -z "$IGNORE_SET" ] || echo "the checks could not be read; ignored on your word: $IGNORE_CHECKS";;
+      esac
+    fi
+    if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release finish $VER${HOTFIX:+ --hotfix}${KEEP:+ --keep}${IGNORE_SET:+ --ignore-checks \"$IGNORE_CHECKS\"} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     if g remote get-url origin >/dev/null 2>&1; then
       g fetch -q origin || die "fetch failed"
@@ -375,13 +598,17 @@ case $verb in
           g merge-base --is-ancestor "origin/$b" "$b" || die "$b is behind or differs from origin/$b: reconcile them first"
         fi
       done
-      command -v "$GH" >/dev/null 2>&1 || die "gh is needed to read the pull request's checks"
-      "$GH" -R "$(repo_slug)" pr checks "$BR" >/dev/null 2>&1 || die "the pull request's checks have not all passed (or there is no pull request for $BR): nothing was merged or pushed"
+      pr_checks "$BR"   # read again: they may have changed since the plan
+      if [ "$PRC_STATE" != pass ]; then
+        if [ -n "$IGNORE_SET" ]; then echo "checks ${PRC_STATE}, ignored on your word: $IGNORE_CHECKS"; IGNORED=1
+        elif [ "$PRC_STATE" = nogh ]; then die "gh is needed to read the pull request's checks (or --ignore-checks \"...\" in your own words)"
+        else die "the pull request's checks have not all passed (${PRC_STATE}; or there is no pull request for $BR): nothing was merged or pushed. Fix and push again (qargi release fix $VER${HOTFIX:+ --hotfix}), or --ignore-checks \"...\" in your own words"; fi
+      fi
     else
       [ "$(verified "$BR")" = "$h pass" ] || die "the repository has no origin, so no CI: the whole suite must have a passing run at the head of $BR (qargi release verify $VER${HOTFIX:+ --hotfix})"
       echo "note: no origin remote, so no CI ran on $BR; the local whole-suite run stands in" >&2
     fi
-    need_free master "$second" "$BR"
+    need_free master "$second"; need_free_wt "$BR"   # a clean worktree that qargi made for the fix may hold BR: it is removed below
     m0=$(sha_of master); s0=$(sha_of "$second")
     rm0=$(remote_was master); rs0=$(remote_was "$second"); rb0=$(remote_was "$BR")   # what origin has (fetched above): where the journal lines of the pushes start
     k1="$KIND-$VER-into-master"; k2="$KIND-$VER-into-${second//\//_}"
@@ -404,8 +631,9 @@ case $verb in
     journal_ref "$REPO" refs/heads/master "$m0" "$nm" "$KIND:finish"
     journal_ref "$REPO" "refs/heads/$second" "$s0" "$ns" "$KIND:finish"
     merge_forget "$k1" "$k2"
-    if [ -z "$KEEP" ]; then g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
-    audit_log "release:finish" "$PROJ $VER"
+    if [ -z "$KEEP" ]; then wt_drop "$BR"; g update-ref -d "refs/heads/$BR" "$h"; journal_ref "$REPO" "refs/heads/$BR" "$h" "" "$KIND:finish"; fi
+    audit_log "release:finish" "$PROJ $VER${IGNORED:+ checks ignored: $IGNORE_CHECKS}"
+    [ -z "$IGNORED" ] || echo "checks ignored on your word: $IGNORE_CHECKS"
     echo "merged $BR into master (tagged $VER) and into $second${KEEP:+; kept $BR}$([ -n "$KEEP" ] || echo "; deleted $BR")"
     [ "$second" != develop ] || parking_follow
     if g remote get-url origin >/dev/null 2>&1; then
@@ -417,7 +645,36 @@ case $verb in
       echo "no origin remote: nothing was pushed"
     fi
     lead_advice
+    after_steps_record
     after_release;;
+  assets)
+    python3 -I "$RS" lead-only assets || exit $?
+    rel_valid
+    jq -e '(.release // {}) | has("assets_command")' "$af" >/dev/null 2>&1 || die "release.assets_command is not set for $PROJ: the command that builds the release files, run in a clean worktree of the tag (qargi project set $PROJ release.assets_command '[\"make\", \"dist\"]'; a command line or a list of words)"
+    tc=$(g rev-parse -q --verify "refs/tags/$VER^{commit}") || die "no tag $VER (qargi release finish $VER makes it): the release files are built from the tag"
+    if [ -e "$ASSETWT" ] || [ -f "$ASSETREC" ]; then
+      [ -n "$RECREATE" ] || die "the release asset worktree of $VER exists already ($ASSETWT): its files may be signed; to build again from the tag: qargi release assets $VER --recreate"
+      g worktree remove --force "$ASSETWT" >/dev/null 2>&1 || true; rm -rf "$ASSETWT" "$ASSETREC"
+    fi
+    g worktree prune
+    mkdir -p "$(dirname "$ASSETWT")" "$DA_STATE/release"
+    g worktree add -q --detach "$ASSETWT" "$tc" 2>/dev/null || die "could not make a worktree of tag $VER at $ASSETWT"
+    acmd=()
+    if [ "$(jq -r '.release.assets_command | type' "$af")" = array ]; then
+      mapfile -d '' -t acmd < <(jq -j --arg v "$VER" '.release.assets_command[] | split("{version}") | join($v), "\u0000"' "$af")
+    else acmd=(bash -c "$(jq -r '.release.assets_command' "$af")"); fi
+    echo "building the release files of $PROJ $VER in a clean worktree of the tag (${tc:0:7}): $ASSETWT"
+    echo "running: ${acmd[*]}"
+    arc=0
+    run_clean "$ASSETWT" env QARGI_RELEASE_VERSION="$VER" "${acmd[@]}" </dev/null || arc=$?
+    [ "$arc" = 0 ] || die "release.assets_command failed (exit $arc); the worktree is left at $ASSETWT to look at (qargi release assets $VER --recreate starts again)"
+    jq -n --arg p "$PROJ" --arg v "$VER" --arg c "$tc" --arg w "$ASSETWT" --arg t "$(now)" '{schema:1, project:$p, version:$v, commit:$c, worktree:$w, at:$t}' > "$ASSETREC"
+    audit_log "release:assets" "$PROJ $VER"
+    made=$( { git -C "$ASSETWT" ls-files --others; git -C "$ASSETWT" ls-files --modified; } | sort -u)
+    echo "the release files are in $ASSETWT ($(printf '%s' "$made" | grep -c . || true) file(s) made or changed by the command):"
+    printf '%s\n' "$made" | head -n 30 | sed -e '/^$/d' -e 's/^/  /'
+    if sign_configured; then echo "next: qargi release sign $VER   (signs release.sign.files from this worktree, then qargi release publish $VER)"
+    else echo "next: qargi release publish $VER   (release.assets and --asset FILE or --asset-dir DIR name the files; relative names are taken in this worktree)"; fi;;
   sign)
     python3 -I "$RS" lead-only || exit $?
     sign_configured || { echo "qargi: signing is not enabled for this project (set release.sign in the project answers)" >&2; exit 2; }
@@ -429,7 +686,8 @@ case $verb in
     ns=$(jq -r '.release.sign.namespace' "$af")
     [ -f "$key" ] || die "release.sign.key: $key is not a file"
     mapfile -t rels < <(jq -r '.release.sign.files[]' "$af")
-    mapfile -t sfiles < <(python3 -I "$RS" resolve "$REPO" "${rels[@]}") && [ "${#sfiles[@]}" = "${#rels[@]}" ] || die "a file of release.sign.files cannot be used"
+    sroot=$(sign_root)
+    mapfile -t sfiles < <(python3 -I "$RS" resolve "$sroot" "${rels[@]}") && [ "${#sfiles[@]}" = "${#rels[@]}" ] || die "a file of release.sign.files cannot be used"
     [ "${#sfiles[@]}" -gt 0 ] || die "release.sign.files names nothing to sign"
     rm -f "$SIGNREC"; mkdir -p "$DA_STATE/release"
     tc=$(g rev-parse "refs/tags/$VER^{commit}")
@@ -446,9 +704,9 @@ case $verb in
     if [ "$signrc" = 0 ] && jq -e '.release.sign.verify_command' "$af" >/dev/null 2>&1; then
       mapfile -d '' -t vcmd < <(jq -j '.release.sign.verify_command[] | ., "\u0000"' "$af")
       echo "verifying: ${vcmd[*]}"
-      (cd "$REPO" && "${vcmd[@]}" </dev/null) && vrc=0 || vrc=$?
+      (cd "$sroot" && "${vcmd[@]}" </dev/null) && vrc=0 || vrc=$?
     fi
-    res=$(python3 -I "$RS" record --state "$SIGNREC" --repo "$REPO" --af "$af" --project "$PROJ" --version "$VER" --commit "$tc" --sign-rc "$signrc" --verify-rc "$vrc") || true
+    res=$(python3 -I "$RS" record --state "$SIGNREC" --repo "$sroot" --af "$af" --project "$PROJ" --version "$VER" --commit "$tc" --sign-rc "$signrc" --verify-rc "$vrc") || true
     audit_log "release:sign" "$PROJ $VER ${res:-failed}"
     case ${res:-} in
       ok) echo "signed$([ "$vrc" = none ] && echo " (release.sign.verify_command is not set, so nothing verified it)" || echo " and verified"): $VER of $PROJ is recorded (${SIGNREC#"$DA_STATE/"})"
@@ -475,14 +733,18 @@ case $verb in
       printf '%s\n' "$sect" > "$notes"
       nsrc="the $VER section of CHANGELOG.md at the tag"
     fi
-    # the assets: release.assets and every --asset, each a regular file inside the repository; attached by the same gh release create
-    mapfile -t alist < <(jq -r '(.release.assets // [])[]' "$af")
-    alist+=("${ASSETS[@]}")
-    assets=(); ahash=; arel=; declare -A seen
-    if [ "${#alist[@]}" -gt 0 ]; then
-      out=$(python3 -I "$RS" resolve "$REPO" "${alist[@]}") || die "an asset cannot be used; nothing was published"
+    # the assets: release.assets, every --asset and every file of --asset-dir, each a regular file inside the release asset worktree (qargi release assets)
+    # or the repository (relative names are taken in the asset worktree when there is one), or inside another worktree of the repository (a full path);
+    # attached by the same gh release create
+    asset_wt
+    aargs=(assets --af "$af" --version "$VER" --base "${AWT:-$REPO}" --root "$REPO")
+    while IFS= read -r w; do [ -z "$w" ] || aargs+=(--root "$w"); done < <(g worktree list --porcelain | sed -n 's/^worktree //p')
+    for a in "${ASSETS[@]}"; do aargs+=(--asset "$a"); done
+    for a in "${ASSET_DIRS[@]}"; do aargs+=(--asset-dir "$a"); done
+    assets=(); ahash=; arel=
+    out=$(python3 -I "$RS" "${aargs[@]}") || die "an asset cannot be used; nothing was published"
+    if [ -n "$out" ]; then
       while IFS=$'\t' read -r h abs rel; do
-        [ -z "${seen[$abs]:-}" ] || continue; seen[$abs]=1   # named twice (the answers and --asset)
         assets+=("$abs"); ahash+="$h $rel"$'\n'; arel+="$rel"$'\n'
       done <<<"$out"
     fi
@@ -497,7 +759,7 @@ case $verb in
     # when the project signs its releases, nothing is published before the signature of this tag is recorded ok and the signed files are as signed
     signline=''; stok=''
     if sign_configured; then
-      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$REPO" --af "$af" --commit "$tc") \
+      signline=$(python3 -I "$RS" check --state "$SIGNREC" --repo "$(sign_root)" --af "$af" --commit "$tc") \
         || die "awaiting signature: $signline. Sign $VER first (qargi release sign $VER, in your terminal); nothing was published"
       stok=$(sha256sum < "$SIGNREC")
     fi
@@ -552,18 +814,21 @@ case $verb in
     bout=$(cd "$WT" && python3 -I "$(dirname "$0")/site.py" build --release "$VER" --source "$SITESRC" --pages "$WT/$SITE_PAGES" --config "$WT/$SITE_CONF" \
              --out "$WT/_site" --allow-root "$WT" </dev/null 2>&1) \
       || die "the site of $VER did not build; nothing was changed:"$'\n'"$(printf '%s\n' "$bout" | tail -n 25 | sed 's/^/  | /')"
-    git -C "$WT" add -A -- "$SITE_CONF" _site
+    # the build runs to check the site (a page that does not build refuses), but its output is not committed: a Pages build of the branch needs _site/
+    # empty. A _site/ that an earlier build committed is removed by the commit (the git rm above).
+    rm -rf "${WT:?}/_site"
+    git -C "$WT" add -A -- "$SITE_CONF"
     if git -C "$WT" diff --cached --quiet; then echo "the site on $SITE_BR (at ${s0:0:7}) is already the build of $VER: nothing to commit"; exit 0; fi
     tree=$(git -C "$WT" write-tree)
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$VER" "$tc" "$SITE_BR" "$s0" "$tree" | plan_token)
     echo "build the documentation site of $PROJ $VER: the tree of tag $VER (${tc:0:7}) with lib/site.py, and the hand pages of $SITE_BR (${s0:0:7}) in $SITE_PAGES"
-    echo "commit it on $SITE_BR: $SITE_CONF records release $VER and _site/ holds the built site; nothing is pushed"
+    echo "commit it on $SITE_BR: $SITE_CONF records release $VER; the build only checks the site, _site/ is not committed (and one an earlier build committed is removed); nothing is pushed"
     printf '%s\n' "$bout" | grep -E '^(warning|error|note):|^build:' | head -20 | sed 's/^/  | /'
     echo "  changes: $(git -C "$WT" diff --cached --shortstat | sed 's/^ *//')"
     remote_report "$SITE_BR"
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release site $VER --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
-    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER and _site/ is regenerated."
+    wcommit -m "$SITE_SUBJECT $VER" -m "Built by qargi release site from tag $VER (${tc:0:12}) with the hand pages of $SITE_BR at ${s0:0:12}: $SITE_CONF records release $VER; _site/ is not committed."
     new=$(git -C "$WT" rev-parse HEAD)
     g update-ref "refs/heads/$SITE_BR" "$new" "$s0" || die "$SITE_BR moved meanwhile; nothing was changed (run it again)"
     journal_ref "$REPO" "refs/heads/$SITE_BR" "$s0" "$new" "release:site"
@@ -572,5 +837,5 @@ case $verb in
     echo "preview it before you push: build the site locally and serve it (the site branch's build script, for example tools/build-local.sh REPO OUT, then python3 -m http.server --directory OUT)"
     if g remote get-url origin >/dev/null 2>&1; then echo "push it with: git -C $REPO push origin $SITE_BR"
     else echo "the repository has no origin remote: push $SITE_BR where the site is deployed from"; fi;;
-  *) die "usage: qargi release start|status|verify|push|finish|sign|publish|site VERSION [--hotfix] [--project P]";;
+  *) die "usage: qargi release start|status|verify|fix|push|finish|assets|sign|publish|site VERSION [--hotfix] [--project P]";;
 esac

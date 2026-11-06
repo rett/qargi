@@ -34,9 +34,9 @@ out=$(bash "$INSTALL" --user 2>&1); rc=$?
 miss=''; for s in $CURRENT; do [ "$(readlink "$S/$s")" = "$ROOT/skills/$s" ] && [ -d "$S/$s" ] || miss="$miss $s"; done
 [ -z "$miss" ] && ok "the skills are installed as links into the checkout" || no "skills missing:$miss"
 
-before=$(ls -l "$S" | sed 1d)
+before=$(find "$S" -maxdepth 1 -type l -printf "%f -> %l\n" | sort)
 bash "$INSTALL" --user >/dev/null 2>&1; rc=$?
-[ "$rc" = 0 ] && [ "$before" = "$(ls -l "$S" | sed 1d)" ] && ok "a second run changes nothing" || no "second run: rc=$rc"
+[ "$rc" = 0 ] && [ "$before" = "$(find "$S" -maxdepth 1 -type l -printf "%f -> %l\n" | sort)" ] && ok "a second run changes nothing" || no "second run: rc=$rc"
 
 # a real directory in the way is kept without --force and replaced with it
 rm -f "$S/qargi-task"; mkdir "$S/qargi-task"; echo mine > "$S/qargi-task/notes.md"

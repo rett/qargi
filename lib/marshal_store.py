@@ -1013,14 +1013,17 @@ def task_state(r):
     verified (the mark of a passing `local verify`, or RUN/verified) or not verified, with applied (RUN/applied) and a directory that is gone."""
     run = r["run"]
     cleaned = bool(r.get("cleaned"))
+    closed = bool(r.get("closed")) and not cleaned           # `local close --applied-by-am`: taken in by hand, no open task, the files kept
     verified = bool(r.get("verified")) or os.path.exists(os.path.join(run, "verified"))
     applied = os.path.exists(os.path.join(run, "applied"))
     if cleaned:
         state = "cleaned"
+    elif closed:
+        state = "closed (applied by hand)"
     else:
         parts = ["verified" if verified else "not verified"] + (["applied"] if applied else []) + ([] if os.path.isdir(run) else ["directory gone"])
         state = ", ".join(parts)
-    return {"verified": verified, "applied": applied, "cleaned": cleaned, "state": state}
+    return {"verified": verified, "applied": applied, "cleaned": cleaned, "closed": closed, "state": state}
 
 
 def tasks_of(ctx, name):
@@ -1172,12 +1175,15 @@ def print_full(d, raw_lens):
             print("  %s:" % k)
             print(indent(v + ("\n[truncated at %d characters]" % CAP if raw_lens.get(k, 0) > CAP else ""), 4))
     # the open tasks one each, as the registry and the run directory say they stand; the cleaned ones (no open task) on one line
-    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"]], [t for t in d["tasks"] if t["cleaned"]]
+    opened, cleaned = [t for t in d["tasks"] if not t["cleaned"] and not t["closed"]], [t for t in d["tasks"] if t["cleaned"]]
+    closed = [t for t in d["tasks"] if t["closed"]]
     print("tasks:" + ("" if opened else " none"))
     for t in opened:
         print("  %s  %s (%s) started %s, %s" % (t["run"], t["slug"], t["role"], t["started"], t["state"]))
     if cleaned:
         print("  cleaned: " + " ".join(t["slug"] or t["run"] for t in cleaned))
+    if closed:
+        print("  closed (applied by hand): " + " ".join(t["slug"] or t["run"] for t in closed))
     print("agent branches of feature/%s (prepared against it) not merged into it:%s" % (d["feature"], "" if d["agent_branches"] else " none"))
     for b in d["agent_branches"]:
         print("  " + b)
@@ -1375,17 +1381,27 @@ def v_renew(ctx, a):
 
 def v_release(ctx, a):
     check_name(a.name)
-    if not (a.note or "").strip():
-        raise Refuse("release needs --note TEXT: what the next lead must know")
 
     def fn(rec):
+        ld = lead_of(rec)
+        # nothing to give up: the feature was finished or abandoned (feature finish ends the claim and deletes the branch) or already released.
+        # Quiet success; a feature another lead holds, or one that was never claimed, is still refused below, and a name with no record and no
+        # branch is no feature at all (a typo): refused.
+        if not rec and not branch_exists(ctx, a.name):
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
+        if not ld and rec and rec.get("status") in ("finished", "abandoned", "released"):
+            return None, False
         mine(ctx, a.name, rec, "only the lead can release it")
+        if not (a.note or "").strip():
+            raise Refuse("release needs --note TEXT: what the next lead must know")
         r = fresh(ctx, a.name, rec)
         r["lead"], r["status"], r["note"] = None, "released", a.note
         r["updated_by"] = ctx.id
-        return r, None
-    update(ctx, a.name, fn)
-    print("released %s; the next lead takes it with: qargi marshal take %s" % (a.name, a.name))
+        return r, True
+    if update(ctx, a.name, fn):
+        print("released %s; the next lead takes it with: qargi marshal take %s" % (a.name, a.name))
+    else:
+        print("nothing to release: %s has no lead (finished, abandoned or released)" % a.name)
 
 
 def v_take(ctx, a):
@@ -1501,6 +1517,31 @@ def warnings_for(ctx, d, rec_exists):
     return w
 
 
+def renew_own(ctx, name, rec):
+    """check --renew (the shell API's marshal_check, so every flow verb of the lead): the lead of NAME is this identity, so the command
+    that asks renews the lease, whether or not it lapsed meanwhile (a worker run lasts longer than the lease; nobody else holds the feature,
+    or the lead would be someone else). Only when a third of the lease has passed, so a burst of commands writes once. Never a refusal:
+    a lease that cannot be renewed (remote not reached, a lost race) is a warning. A member run renews nothing. -> the record as it is now."""
+    if rec.get("status") in ("finished", "abandoned") or refs_mod().in_member_run():
+        return rec
+    age = ctx.be.age(ctx, rec)
+    if age is not None and age * 3 < ctx.ttl * 60:
+        return rec
+
+    def fn(r):
+        ld = lead_of(r)
+        if not ld or ld["id"] != ctx.id or r.get("status") in ("finished", "abandoned"):
+            return None, r
+        r = fresh(ctx, name, r)
+        r["renewed_at"] = iso(ctx.t)
+        return r, r
+    try:
+        return update(ctx, name, fn) or rec
+    except Refuse as e:
+        print("qargi: warning: the lease of %s was not renewed (%s)" % (name, e), file=sys.stderr)
+        return rec
+
+
 def v_check(ctx, a):
     ctx.warn_anon()
     if a.name:
@@ -1515,6 +1556,8 @@ def v_check(ctx, a):
             st, _ = lease(ctx, rec)
             if st == "live":
                 raise Refuse(led_by_msg(ctx, a.name, rec))
+        elif ld and a.renew:
+            rec = renew_own(ctx, a.name, rec)
         d = describe(ctx, a.name, rec, {})
         for w in warnings_for(ctx, d, rec is not None):
             print("qargi: warning: " + w, file=sys.stderr)
@@ -1569,7 +1612,7 @@ def choose_backend(a):
 
 def main(argv):
     # flags are single-quoted: tests/test_help.py treats a double-quoted option string as a user-facing option that commands.py must
-    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
+    # describe; --state, --repo, --conf, --ttl, --purpose, --lenient, --renew, --backend, --remote, --show and --expect-head are only passed by lib/marshal.sh (or come from the switch file)
     p = argparse.ArgumentParser(prog="marshal_store.py")
     p.add_argument("verb", choices=["claim", "start", "status", "set", "check", "renew", "release", "take", "takeover", "finish", "resign"])
     p.add_argument("name", nargs="?")
@@ -1586,6 +1629,7 @@ def main(argv):
     p.add_argument('--all', action="store_true"), p.add_argument('--brief', action="store_true"), p.add_argument('--json', action="store_true")
     p.add_argument('--history', action="store_true")
     p.add_argument('--lenient', action="store_true")
+    p.add_argument('--renew', action="store_true")
     p.add_argument('--no-fetch', dest="no_fetch", action="store_true")
     p.add_argument('--backend', choices=["local", "refs"])
     p.add_argument('--remote')
