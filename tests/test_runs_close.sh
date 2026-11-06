@@ -280,6 +280,38 @@ out=$($DA local close "$R2" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "read-only run" <<<"$out" && ok "close refuses a read-only run" || no "close read-only: rc=$rc $out"
 $DA local clean "$R2" --discard >/dev/null 2>&1
 
+# --- 3b. a read-only run (a report, no patches) closes with a plain clean
+$F start ro >/dev/null 2>&1
+R=$(mkrun ro-ok feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"
+out=$($DA lead compact-check --project app 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "a read-only local run is open: $R" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" && ok "compact-check names an open read-only run and its closing command" || no "compact-check read-only: rc=$rc $out"
+out=$($F finish ro 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "feature ro has 1 open run(s)" <<<"$out" && grep -q "$R (build ro-ok): prepared, not verified" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" \
+  && ok "feature finish names the open read-only run and the exact command that closes it" || no "finish read-only: rc=$rc $out"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && [ ! -e "$R" ] && ok "a read-only run with a report and unchanged refs closes with a plain clean (no manifest, no --discard)" || no "clean read-only: rc=$rc $out"
+out=$($F finish ro 2>&1); grep -q "open run" <<<"$out" && no "a cleaned read-only run still blocks finish: $out" || ok "and no longer blocks feature finish"
+R=$(mkrun ro-noreport feature/ro); echo read-only > "$R/class"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && grep -q "report.md" <<<"$out" && [ -d "$R" ] && ok "a read-only run with no report is still refused, and the message says what closes it" || no "read-only no report: rc=$rc $out"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "close it: qargi local clean $R (once the member has written OUT/report.md" <<<"$out" && ok "its closing command waits for the report" || no "closing without report: $out"
+echo "# report" > "$R/out/report.md"; git -C "$A" branch ro-stray develop
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "refs of the repository changed" <<<"$out" && [ -d "$R" ] && ok "a read-only run whose refs changed is kept as evidence" || no "read-only changed refs: rc=$rc $out"
+git -C "$A" branch -D ro-stray >/dev/null
+commits "$R" ro1.go
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "never applied" <<<"$out" && [ -d "$R" ] && ok "a read-only run whose clone holds commits is not dropped by a plain clean" || no "read-only with commits: rc=$rc $out"
+$DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun wr-report feature/ro); echo "# report" > "$R/out/report.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && [ -d "$R" ] && ok "a run of work (class write) with only a report still needs its manifest" || no "write with report: rc=$rc $out"
+$DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun ro-ok2 feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"; verify "$R" >/dev/null
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "a verified read-only run closes with a plain clean as well" || no "clean verified read-only: rc=$rc $out"
+
 # --- 4. feature finish is refused while a run of the feature is open
 $F start fn >/dev/null 2>&1
 R=$(mkrun fin-run feature/fn); commits "$R" c1.go; collect "$R"

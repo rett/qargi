@@ -306,6 +306,33 @@ class Check(Base):
         self.assertEqual(self.check()[0], 1)
         self.assertTrue(os.path.isdir(d))
 
+    def test_every_open_run_names_the_command_that_closes_it(self):
+        """open-runs (what feature finish lists) carries the exact closing command: a read-only run with its report closes with a plain clean, a run of
+        work by the next step it waits for."""
+        ro = self.run_dir("ro", ("class", "read-only\n"), slug="advice")
+        os.makedirs(os.path.join(ro, "out"))
+        with open(os.path.join(ro, "out", "report.md"), "w") as f:
+            f.write("# report\n")
+        ro2 = self.run_dir("ro2", ("class", "read-only\n"), slug="waiting")
+        wr = self.run_dir("wr", ("class", "write\n"), ("verified", "refs"), slug="work")
+        pr = self.run_dir("pr", slug="fresh")
+        rc, out, _ = self.run_cli("lead", "compact-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("a read-only local run is open: %s (build advice on feature/lc, prepared, not verified); read its report, then close it: qargi local clean %s\n" % (ro, ro), out)
+        self.assertIn("close it: qargi local clean %s (once the member has written OUT/report.md" % ro2, out)
+        self.assertIn("a local run is verified and not applied: " + wr, out)
+        rows = {}
+        for ln in subprocess.run([sys.executable, "-I", LEADPY, "open-runs", "--state", self.state, "--conf", self.conf, "--project", "app", "--feature", "lc"],
+                                 capture_output=True, text=True).stdout.splitlines():
+            f = ln.split("\t")
+            self.assertEqual(len(f), 5, ln)
+            rows[f[1]] = f
+        self.assertEqual(rows["advice"][4], "qargi local clean " + ro)
+        self.assertTrue(rows["waiting"][4].startswith("qargi local clean %s (once the member" % ro2))
+        self.assertTrue(rows["work"][4].startswith("qargi local close %s --applied-by-am" % wr))
+        self.assertIn("qargi review apply %s, qargi feature merge lc agent/work, qargi local clean %s" % (wr, wr), rows["work"][4])
+        self.assertTrue(rows["fresh"][4].startswith("qargi local verify %s" % pr))
+
     def test_runs_of_another_repository_and_cleaned_runs_are_not_counted(self):
         self.run_dir("other", repo=os.path.join(self.t, "elsewhere"))
         gone = self.run_dir("gone")

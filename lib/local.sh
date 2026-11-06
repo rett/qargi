@@ -660,8 +660,11 @@ WRAP
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
+    # a read-only run (RUN/class: an advisor, a review) returns a report and no manifest: its OUT holds a report.md and it closes with a plain clean, when
+    # its refs are unchanged (the check below) and its clone holds no commit (the check after that; a member that wrote the class file changes neither)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
-      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none"
+      || { [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 -name '*report.md' 2>/dev/null | head -1)" ]; } \
+      || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
     if [ "$vrc" = 3 ]; then   # the registry does not vouch for the run directory: nothing was asked of any repository

@@ -4,7 +4,7 @@
   lead_usage.py usage         [--project P] [--session ID | --transcript FILE] [--json]
   lead_usage.py compact-check [--project P] [--advise] [--json]
   lead_usage.py advice        [--project P] [--feature NAME]        (the one line the stage verbs print)
-  lead_usage.py open-runs     [--project P] --feature NAME          (the open runs of feature/NAME, one per line: run, slug, role, state; exit 1 when there are some)
+  lead_usage.py open-runs     [--project P] --feature NAME          (the open runs of feature/NAME, one per line: run, slug, role, state, the command that closes it; exit 1 when there are some)
 
 The lead's own context is the cost the owner cares about most, so qargi measures it and says when a compact (the owner's /compact; no
 hook can run it) is safe. Where the transcripts are and how to read the context in use from one come from the project's local runtime
@@ -389,6 +389,37 @@ def features_of(repo):
     return sorted(b[len("feature/"):] for b in (git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*") or "").split())
 
 
+def read_only(d):
+    """True when the run is a read-only one (RUN/class, which prepare writes): its product is a report, never patches."""
+    try:
+        return open(os.path.join(d, "class"), errors="replace").read().strip() == "read-only"
+    except OSError:
+        return False
+
+
+def has_report(d):
+    try:
+        return any(n.endswith("report.md") for n in os.listdir(os.path.join(d, "out")))
+    except OSError:
+        return False
+
+
+def closing(run):
+    """The exact command that closes an open run (run: a tuple of open_runs): a read-only run with its report closes with a plain clean; a run
+    of work closes by its next step, applied by hand (local close), applied and merged (clean), or dropped."""
+    d, slug, role, base, what = run
+    if read_only(d):
+        if has_report(d):
+            return "qargi local clean %s" % d
+        return "qargi local clean %s (once the member has written OUT/report.md; --discard drops the run)" % d
+    name = base[len("feature/"):] if base.startswith("feature/") else "NAME"
+    if what == "prepared, not verified":
+        return "qargi local verify %s (then take its work in, or drop it with qargi local clean %s --discard)" % (d, d)
+    if what == "verified, not applied":
+        return "qargi local close %s --applied-by-am (when you applied its patches by hand with git am); else qargi review apply %s, qargi feature merge %s agent/%s, qargi local clean %s" % (d, d, name, slug, d)
+    return "qargi feature merge %s agent/%s, then qargi local clean %s" % (name, slug, d)
+
+
 def check(a, conf, state):
     """-> {safe, reasons, restart: [lines], open_runs, features}"""
     project = a.project
@@ -397,7 +428,9 @@ def check(a, conf, state):
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     reasons, runs = [], open_runs(state, repo, url)
     for d, slug, role, base, what in runs:
-        if what == "prepared, not verified":
+        if read_only(d):
+            reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing((d, slug, role, base, what))))
+        elif what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))
         elif what == "verified, not applied":
             reasons.append("a local run is verified and not applied: %s (%s %s on %s); apply it (qargi review apply %s BRANCH) and merge it, or close it if you applied it by hand (qargi local close %s --applied-by-am), or clean it" % (d, role, slug, base, d, d))
@@ -481,13 +514,13 @@ def cmd_check(a, conf, state):
 
 
 def cmd_open_runs(a, conf, state):
-    """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE" each; exit 1 when there are some."""
+    """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE<TAB>CLOSING COMMAND" each; exit 1 when there are some."""
     answers = answers_of(conf, a.project or "")
     repo = repo_of(answers)
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     found = [r for r in open_runs(state, repo, url) if r[3] == "feature/" + a.feature]
     for d, slug, role, base, what in found:
-        print("%s\t%s\t%s\t%s" % (d, slug, role, what))
+        print("%s\t%s\t%s\t%s\t%s" % (d, slug, role, what, closing((d, slug, role, base, what))))
     return 1 if found else 0
 
 
