@@ -18,6 +18,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `user.email`; with neither, the member's author stays and the output says so. The committer and the dates are unchanged, history already applied is not
   rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. The answer `review.keep_author` (`true`;
   default `false`) keeps the member's author instead. The guard refuses `git.*` and `review.*` in `project set` to a member.
+- The line the stage verbs print and the verdict of `lead compact-check --advise` show the token count beside the percentage, for example
+  `lead: 90%, 180k tokens of context; compact is safe now: run /compact`.
+- `qargi project template` carries `lead.context_window` as `null` (derive the window from the model of the session) and `project init` says
+  which window the lead gets; `project validate` refuses a value that is not a number of tokens of at least 1000 (or null). The
+  `qargi-project` skill lists the question.
+
+### Fixed
+- `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window: the window is the answer
+  `lead.context_window`, else the one the runtime's definition gives for the model id of the session's last assistant turn
+  (`resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of characters; `claude-code`
+  ships `*[1m]` and `*-1m` as 1000000), else the definition's single `window`. A session on a 1,000,000 window no longer reads as 96% full.
+  `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
+- When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
+  `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
+  as fact; with the answer or a recognised model there is no such note.
 
 ## [0.2.3] - 2026-11-05
 

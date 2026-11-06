@@ -11,6 +11,9 @@ LEADPY = os.path.join(ROOT, "lib", "lead_usage.py")
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.net", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.net"}
 
 
+NOTE = " (window assumed 200,000; set lead.context_window)"      # what every percentage of the runtime's guessed window carries
+
+
 def turn(inp=3, read=0, create=0, model="model-a", side=False, kind="assistant"):
     return json.dumps({"type": kind, "isSidechain": side, "message": {"role": kind, "model": model,
                        "usage": {"input_tokens": inp, "cache_read_input_tokens": read, "cache_creation_input_tokens": create, "output_tokens": 77}}})
@@ -83,6 +86,7 @@ class Usage(Base):
         rc, out, _ = self.run_cli("lead", "usage", "--json")
         d = json.loads(out)
         self.assertEqual((rc, d["known"], d["tokens"], d["window"], d["percent"], d["session"]), (0, True, 50000, 200000, 25.0, "s1"))
+        self.assertEqual(d["window_source"], "assumed")
         self.assertGreater(d["bytes"], 0)
 
     def test_sidechain_and_empty_turns_do_not_count(self):
@@ -133,10 +137,47 @@ class Usage(Base):
         self.answers["lead"] = {"context_window": 1000000}
         self.write_answers()
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
-        self.assertEqual((d["window"], d["percent"]), (1000000, 10.0))
+        self.assertEqual((d["window"], d["percent"], d["window_source"]), (1000000, 10.0, "answer"))
         self.answers["lead"] = {"context_window": "big"}                                              # not a number: the runtime's window
         self.write_answers()
         self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window"], 200000)
+
+    def test_the_window_follows_the_model_of_the_last_turn(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-a"), turn(1, 192117, 0, model="model-b[1m]")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.2, "model-b[1m]"))
+        self.transcript("s1", [turn(1, 192117, 0, model="model-b-1m")])
+        self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window"], 1000000)
+        self.transcript("s1", [turn(1, 192117, 0, model="model-b[1m]"), turn(1, 99999, 0, model="model-a")])      # the last turn's model, not an earlier one
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"]), (200000, "assumed"))
+
+    def test_an_unknown_model_gets_the_runtimes_window_marked_assumed(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-a")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (200000, "assumed", 50.0))
+        for k in ("known", "tokens", "window", "percent", "model", "session", "transcript", "bytes", "why"):      # the keys that were there stay
+            self.assertIn(k, d)
+
+    def test_a_guessed_window_says_so_and_a_known_one_does_not(self):
+        self.transcript("s1", [turn(1, 192117, 0, model="model-a")])
+        out = self.run_cli("lead", "usage")[1]
+        self.assertIn("context: 192,118 of 200,000 tokens in use (96.1%)" + NOTE + "\n", out)
+        self.transcript("s1", [turn(1, 192117, 0, model="model-b[1m]")])
+        out = self.run_cli("lead", "usage")[1]
+        self.assertIn("context: 192,118 of 1,000,000 tokens in use (19.2%)\n", out)
+        self.assertNotIn("assumed", out)
+        self.transcript("s1", [turn(1, 192117, 0, model="model-a")])
+        self.answers["lead"] = {"context_window": 200000}                                                # the answer, even when it equals the guess
+        self.write_answers()
+        self.assertNotIn("assumed", self.run_cli("lead", "usage")[1])
+
+    def test_the_answer_wins_over_the_model(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-b[1m]")])
+        self.answers["lead"] = {"context_window": 400000}
+        self.write_answers()
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (400000, "answer", 25.0))
 
     def test_everything_that_cannot_be_read_is_unknown_with_exit_0(self):
         rc, out, _ = self.run_cli("lead", "usage")                                                    # an empty transcripts directory
@@ -326,8 +367,8 @@ class Check(Base):
         self.assertEqual(out.count("\n  - "), 3, out)
 
     def test_advise_combines_the_context_with_the_verdict(self):
-        for tokens, word in ((50000, "no compact needed (25% of the context)"), (100000, "compact advised (50% of the context)"),
-                             (140000, "compact strongly advised (70% of the context)")):
+        for tokens, word in ((50000, "no compact needed (25%, 50k tokens of the context)"), (100000, "compact advised (50%, 100k tokens of the context)"),
+                             (140000, "compact strongly advised (70%, 140k tokens of the context)")):
             self.pct(tokens)
             rc, out, _ = self.check("--advise")
             self.assertEqual(rc, 0)
@@ -336,11 +377,24 @@ class Check(Base):
         self.run_dir("r1")                                                                                 # not safe: the advice says so, the exit status is the check's
         rc, out, _ = self.check("--advise")
         self.assertEqual(rc, 1)
-        self.assertIn("compact strongly advised (70% of the context), but not safe yet", out)
+        self.assertIn("compact strongly advised (70%, 140k tokens of the context), but not safe yet", out)
         os.remove(os.path.join(self.tdir, "s1.jsonl"))
         rc, out, _ = self.check("--advise")
         self.assertIn("context unknown", out)
         self.assertNotIn("compact advised", out)
+
+    def test_advise_names_an_assumed_window_once_in_text_and_in_the_json_advice(self):
+        self.pct(140000)
+        rc, out, _ = self.check("--advise")
+        self.assertEqual(out.count("window assumed"), 1)
+        d = json.loads(self.check("--advise", "--json")[1])
+        self.assertEqual(d["usage"]["window_source"], "assumed")
+        self.assertIn("compact strongly advised (70%, 140k tokens of the context)" + NOTE, d["advice"])
+        self.transcript("s1", [turn(1, 139999, 0, model="model-b[1m]")])                                   # a recognised model: no label, 14% of 1,000,000
+        rc, out, _ = self.check("--advise")
+        self.assertNotIn("assumed", out)
+        self.assertIn("no compact needed (14%, 140k tokens of the context)", out)
+        self.assertNotIn("assumed", json.loads(self.check("--advise", "--json")[1])["advice"])
 
     def test_json_carries_the_reasons_and_the_restart_block(self):
         self.pct(100000)
@@ -371,7 +425,21 @@ class Advice(Base):
         self.pct(78000)                                                                                   # 39%
         self.assertEqual(self.advice(), "")
         self.pct(80000)                                                                                   # 40%
-        self.assertEqual(self.advice(), "lead: 40% context; compact is safe now: run /compact\n")
+        self.assertEqual(self.advice(), "lead: 40%%, 80k tokens of context%s; compact is safe now: run /compact\n" % NOTE)
+
+    def test_the_token_count_is_beside_the_percentage(self):
+        self.transcript("s1", [turn(1, 179999, 0, model="model-b[1m]")])
+        self.answers["lead"] = {"compact_advice_pct": 10}
+        self.write_answers()
+        self.assertEqual(self.advice(), "lead: 18%, 180k tokens of context; compact is safe now: run /compact\n")
+        self.answers["lead"] = {"compact_advice_pct": 10, "context_window": 4000000}
+        self.write_answers()
+        self.transcript("s1", [turn(1, 1199999, 0)])
+        self.assertEqual(self.advice(), "lead: 30%, 1.2M tokens of context; compact is safe now: run /compact\n")
+
+    def test_a_known_window_has_no_label_in_the_line(self):
+        self.transcript("s1", [turn(1, 499999, 0, model="model-b[1m]")])                                    # 50% of 1,000,000
+        self.assertEqual(self.advice(), "lead: 50%, 500k tokens of context; compact is safe now: run /compact\n")
 
     def test_the_threshold_is_an_answer_and_zero_turns_it_off(self):
         self.pct(100000)
@@ -380,7 +448,7 @@ class Advice(Base):
         self.assertEqual(self.advice(), "")
         self.answers["lead"] = {"compact_advice_pct": 50}
         self.write_answers()
-        self.assertIn("lead: 50% context;", self.advice())
+        self.assertIn("lead: 50%, 100k tokens of context" + NOTE + ";", self.advice())
         self.answers["lead"] = {"compact_advice_pct": 0}
         self.write_answers()
         self.assertEqual(self.advice(), "")
@@ -392,7 +460,7 @@ class Advice(Base):
         with open(os.path.join(self.state, "local-runs.jsonl"), "w") as f:
             f.write(json.dumps({"run": d, "slug": "r1", "ability": "build", "base": "feature/lc", "repo": self.repo}) + "\n")
         out = self.advice()
-        self.assertEqual(out, "lead: 50% context; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n")
+        self.assertEqual(out, "lead: 50%%, 100k tokens of context%s; compact is not safe yet: a local run is prepared and not verified (qargi lead compact-check)\n" % NOTE)
 
     def test_for_a_merge_it_waits_for_the_last_open_run_of_the_feature(self):
         self.pct(100000)
@@ -411,7 +479,7 @@ class Advice(Base):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
         os.makedirs(os.path.join(self.state, "ref-journal.jsonl"))                                          # a journal that is a directory
         self.pct(100000)
-        self.assertIn("lead: 50% context;", self.advice())
+        self.assertIn("lead: 50%, 100k tokens of context" + NOTE + ";", self.advice())
 
 
 if __name__ == "__main__":

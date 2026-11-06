@@ -10,7 +10,9 @@ The lead's own context is the cost the owner cares about most, so qargi measures
 hook can run it) is safe. Where the transcripts are and how to read the context in use from one come from the project's local runtime
 (resources.transcripts of lib/providers/NAME.json, lib/provider.py): a directory of JSON-line files named for the session id, and
 JSON pointers that pick the last assistant turn and add up its input, cache-read and cache-creation tokens. The window is the answer
-lead.context_window, else the runtime's. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
+lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
+definition's single window, which is only assumed: then every line that shows a percentage adds "(window assumed N; set lead.context_window)".
+--json says which in window_source: "answer", "model" or "assumed". Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
 verified and not applied (or applied and not merged), a merge waiting in the conflicts directory, a whole-suite run in progress
@@ -200,7 +202,7 @@ def find_transcript(a, answers, tr_for):
 
 def measure(a, conf):
     """-> the usage as a dict; known is False with why when it cannot be read."""
-    out = {"known": False, "tokens": None, "window": None, "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
+    out = {"known": False, "tokens": None, "window": None, "window_source": "", "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
     try:
         project = a.project
         if not project:
@@ -215,7 +217,8 @@ def measure(a, conf):
             tr0 = tr_for(os.getcwd())
         except P.ProviderError as e:
             raise Soft(clean(str(e)))
-        out["window"] = lead_answer(answers, "context_window", tr0["window"], 1000)
+        out["window"] = lead_answer(answers, "context_window", None, 1000)
+        out["window_source"] = "answer" if out["window"] else ""
         path, sid, why = find_transcript(a, answers, tr_for)
         out["session"] = sid
         if not path:
@@ -226,6 +229,8 @@ def measure(a, conf):
         if not t:
             raise Soft("no turn with a token count in the transcript yet")
         out["tokens"], out["model"] = t
+        if not out["window"]:
+            out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
         out["percent"] = round(t[0] * 100.0 / out["window"], 1)
         out["known"] = True
     except Soft as e:
@@ -242,13 +247,25 @@ def human_bytes(n):
         n /= 1024.0
 
 
+def assumed(u):
+    """The words that keep a percentage of a guessed window from reading as fact; empty when the window is the answer's or the model's."""
+    return " (window assumed %s; set lead.context_window)" % format(u["window"], ",") if u.get("window_source") == "assumed" else ""
+
+
+def short(n):
+    """A token count in a few characters: 950, 180k, 1.2M."""
+    if n >= 1000000:
+        return ("%.1f" % (n / 1e6)).rstrip("0").rstrip(".") + "M"
+    return "%dk" % round(n / 1000.0) if n >= 1000 else str(n)
+
+
 def show_usage(u):
     if not u["known"]:
         print("context: unknown (%s)" % u["why"])
         if u["transcript"]:
             print("transcript: %s" % clean(u["transcript"]))
         return
-    print("context: %s of %s tokens in use (%s%%)" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip(".")))
+    print("context: %s of %s tokens in use (%s%%)%s" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip("."), assumed(u)))
     print("transcript: %s (%s)" % (clean(u["transcript"]), human_bytes(u["bytes"])))
     if u["model"]:
         print("model: %s" % u["model"])
@@ -434,8 +451,8 @@ def check(a, conf, state):
     return {"safe": not reasons, "reasons": reasons, "restart": restart, "open_runs": [{"run": r[0], "slug": r[1], "role": r[2], "base": r[3], "state": r[4]} for r in runs], "features": feats}
 
 
-def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG):
-    """The advice on the context (a string), from the usage and whether a compact is safe."""
+def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG, note=True):
+    """The advice on the context (a string), from the usage and whether a compact is safe; note adds the words about an assumed window."""
     if not u["known"]:
         return "context unknown (%s): no advice on compacting" % u["why"]
     p = u["percent"]
@@ -444,8 +461,8 @@ def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG):
     elif p >= pct_advised:
         word = "compact advised"
     else:
-        return "no compact needed (%s%% of the context)" % ("%.0f" % p)
-    return "%s (%s%% of the context)%s" % (word, "%.0f" % p, "" if safe else ", but not safe yet: clear the reasons above first")
+        return "no compact needed (%s%%, %s tokens of the context)%s" % ("%.0f" % p, short(u["tokens"]), assumed(u) if note else "")
+    return "%s (%s%%, %s tokens of the context)%s%s" % (word, "%.0f" % p, short(u["tokens"]), assumed(u) if note else "", "" if safe else ", but not safe yet: clear the reasons above first")
 
 
 def cmd_usage(a, conf, state):
@@ -477,7 +494,7 @@ def cmd_check(a, conf, state):
         print("  - " + r)
     if u:
         show_usage(u)
-        print(verdict(u, c["safe"]))
+        print(verdict(u, c["safe"], note=False))
     print()
     print("\n".join(c["restart"]))
     return 0 if c["safe"] else 1
@@ -511,11 +528,11 @@ def cmd_advice(a, conf, state):
         if not u["known"] or u["percent"] < pct:
             return 0
         c = check(ns, conf, state)
-        p = "%.0f" % u["percent"]
+        p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
         if c["safe"]:
-            print("lead: %s%% context; compact is safe now: run /compact" % p)
+            print("lead: %s; compact is safe now: run /compact" % p)
         else:
-            print("lead: %s%% context; compact is not safe yet: %s (qargi lead compact-check)" % (p, c["reasons"][0].split(":")[0]))
+            print("lead: %s; compact is not safe yet: %s (qargi lead compact-check)" % (p, c["reasons"][0].split(":")[0]))
     except Exception:                                # noqa: BLE001  (an advice line never blocks a verb)
         pass
     return 0

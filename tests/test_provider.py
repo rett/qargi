@@ -568,10 +568,23 @@ class Layout(Tree):
         d = self.without("resources", "transcripts", "window")
         self.put("claude-code", d)
         self.assertEqual(P.transcripts("claude-code", "/x", root=self.root, home="/h")["window"], P.TRANSCRIPT_WINDOW)
+        self.put("claude-code", self.without("resources", "transcripts", "windows"))
+        self.assertEqual(P.transcripts("claude-code", "/x", root=self.root, home="/h")["windows"], [])
         self.put("claude-code", self.without("resources", "transcripts"))
         with self.assertRaises(P.Unsupported) as cm:
             P.transcripts("claude-code", "/x", root=self.root)
         self.assertIn("has no session transcripts location", str(cm.exception))
+
+    def test_the_window_of_a_model_comes_from_the_windows_table_else_it_is_assumed(self):
+        tr = P.transcripts("claude-code", "/x", root=self.root, home="/h")
+        for model, want in (("claude-x[1m]", (1000000, "model")), ("claude-x-1M", (1000000, "model")), ("claude-x", (200000, "assumed")),
+                            ("claude-x[1m]-y", (200000, "assumed")), ("", (200000, "assumed"))):
+            self.assertEqual(P.transcript_window(tr, model), want, model)
+        tr = {"window": 200000, "windows": [("big-*", 500000), ("*-small", 100000), ("big-small", 1)]}      # the first match wins; * is the only wildcard
+        self.assertEqual(P.transcript_window(tr, "big-small"), (500000, "model"))
+        self.assertEqual(P.transcript_window(tr, "x-small"), (100000, "model"))
+        self.assertEqual(P.transcript_window(tr, "bigger"), (200000, "assumed"))
+        self.assertEqual(P.transcript_window({"window": 7}, "m"), (7, "assumed"))
 
     def test_the_launch_line_keeps_an_optional_group_only_when_its_file_exists(self):
         render = os.path.join(self.tmp, "render")
@@ -782,6 +795,9 @@ class Schema2(unittest.TestCase):
         bad({"transcripts": {"user_dir": "/t"}}, "resources.transcripts.user_dir: '/t' does not start with ~/")
         bad({"transcripts": {"user_dir": "~/t/{checkout_key}", "checkout_key": None}}, "resources.transcripts.user_dir: uses {checkout_key} but checkout_key is null")
         bad({"transcripts": {"user_dir": "~/t", "window": 5}}, "resources.transcripts.window: 5 is not a number of tokens")
+        bad({"transcripts": {"user_dir": "~/t", "windows": [{"model": "m", "tokens": 5}]}}, "resources.transcripts.windows[0].tokens: 5 is not a number of tokens")
+        bad({"transcripts": {"user_dir": "~/t", "windows": [{"model": "m" * 81, "tokens": 5000}]}}, "resources.transcripts.windows[0].model:")
+        bad({"transcripts": {"user_dir": "~/t", "windows": [{"model": "m", "tokens": 5000}] * 33}}, "33 entries are more than the 32")
         bad({"transcripts": {"user_dir": "~/t", "usage": {"select": {"type": "assistant"}}}}, "resources.transcripts.usage.select: 'type' is not a JSON pointer")
         bad({"transcripts": {"user_dir": "~/t", "usage": {"tokens": "usage"}}}, "resources.transcripts.usage.tokens: 'usage' is not a JSON pointer")
         bad({"mcp": {"file": "../x.json"}}, "resources.mcp.file: '../x.json' is not a path inside the checkout")

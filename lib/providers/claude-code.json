@@ -116,6 +116,10 @@
       "checkout_key": "nonalnum-dash",
       "ext": ".jsonl",
       "window": 200000,
+      "windows": [
+        {"model": "*[1m]", "tokens": 1000000},
+        {"model": "*-1m", "tokens": 1000000}
+      ],
       "usage": {
         "select": {"/type": "assistant"},
         "skip": {"/isSidechain": true},

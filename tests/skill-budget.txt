@@ -30,7 +30,7 @@ skills/qargi-memory/curate.md 292
 skills/qargi-packs/SKILL.md 749
 skills/qargi-packs/apply.md 639
 skills/qargi-packs/seed.md 250
-skills/qargi-project/SKILL.md 877
+skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206
 skills/qargi-providers/SKILL.md 767
 skills/qargi-providers/definition.md 631

@@ -182,6 +182,13 @@ chkm "accept_no_barrier empty reason" ".models.accept_no_barrier.cloud=($ACC | .
 # line and still exits 0, so storing and every flow after it work as before
 jq -e '.models.provider == ""' <<<"$base" >/dev/null && echo "ok   the template has models.provider as an empty string" || { echo "FAIL template models.provider"; fail=1; }
 jq -e '.roles | all(.[]; has("model") and .model == null)' <<<"$base" >/dev/null && echo "ok   the template names no model for a role (the provider's tier applies once one is set)" || { echo "FAIL template role models"; fail=1; }
+# lead.context_window: the template carries it as null (the window is derived from the model of the session); a number of tokens fixes it
+jq -e '.lead | has("context_window") and .context_window == null' <<<"$base" >/dev/null && echo "ok   the template has lead.context_window as null (derive from the model)" || { echo "FAIL template lead.context_window"; fail=1; }
+chk "lead.context_window: a number" 0 '.lead.context_window=1000000'
+chk "lead.context_window: null"     0 '.lead.context_window=null'
+chk "lead.context_window: too small" 1 '.lead.context_window=500'
+chk "lead.context_window: a text"   1 '.lead.context_window="big"'
+chk "lead.context_window: a boolean" 1 '.lead.context_window=true'
 $DA project template demo | grep -qi claude && { echo "FAIL the template names a vendor"; fail=1; } || echo "ok   the template names no vendor"
 fnd() { # name jq-filter wanted(yes|no): does validate print the models.provider finding, with exit 0?
   local f=$T/a.json out rc; jq "$2" <<<"$base" > "$f"
@@ -210,6 +217,9 @@ out=$($DA project validate "$T/a.json" 2>&1); [ "$?" = 0 ] && ! grep -q '^WARN:'
 rm -rf "$T/c/packs"
 echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json >/dev/null 2>&1 || { echo "FAIL init"; fail=1; }
 out=$($DA project init demo --answers $T/ok.json --force 2>&1); grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   init tells that no provider is set" || { echo "FAIL init finding: $out"; fail=1; }
+grep -q '^lead context window: derived from the model of the session (qargi project set demo lead.context_window TOKENS' <<<"$out" && echo "ok   init says the lead's context window is derived from the model" || { echo "FAIL init context window: $out"; fail=1; }
+echo "$base" | jq '.lead.context_window=1000000' > $T/ok2.json; out=$($DA project init demo --answers $T/ok2.json --force 2>&1); grep -qx 'lead context window: 1000000 tokens' <<<"$out" && echo "ok   init says a fixed context window" || { echo "FAIL init fixed window: $out"; fail=1; }
+echo "$base" > $T/ok.json; $DA project init demo --answers $T/ok.json --force >/dev/null 2>&1
 grep -q 'role build: .*, provider tier/high' <<<"$out" && echo "ok   init says a role without a model takes its provider's tier" || { echo "FAIL init role line: $out"; fail=1; }
 out=$($DA project validate demo 2>&1); [ "$?" = 0 ] && grep -q '^finding: models.provider is not set' <<<"$out" && echo "ok   validate NAME reads the stored answers and reports the finding" || { echo "FAIL validate NAME: $out"; fail=1; }
 $DA project set demo models.provider.local claude-code >/dev/null 2>&1 && $DA project set demo models.provider.cloud claude-platform >/dev/null 2>&1 && out=$($DA project validate demo 2>&1) && ! grep -q '^finding:' <<<"$out" && echo "ok   project set models.provider clears the finding" || { echo "FAIL set provider: $out"; fail=1; }
