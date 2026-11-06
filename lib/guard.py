@@ -82,9 +82,10 @@ definitions (new, import, seal, remove, rename, enable, disable, attest, and any
 PROVIDER_READ, list, show, effective, require-barrier, skills-dirs, of, layout, require-skills, launch, addenda, notes and model, stay allowed;
 check records what it verified and may run a pack's code, and adapter-run runs the adapter, so both are refused with their own reasons).
 Release: `qargi release publish` (it creates the GitHub release of a tag), `qargi release sign` (it signs the release files with the
-lead's key) and `qargi release site` (it commits the built documentation site on the lead's site branch) are refused to a member, found
-like the skill verbs, also as a verb held in a variable and through lib/release.sh and lib/release_sign.py; the other release verbs stay
-allowed (they need a plan token and approval of their own).
+lead's key), `qargi release site` (it commits the built documentation site on the lead's site branch), `qargi release assets` (it runs the
+project's release.assets_command, project code, in a worktree of the tag) and `qargi release fix` (it makes a worktree on the release branch
+and, with --push, pushes it) are refused to a member, found like the skill verbs, also as a verb held in a variable and through
+lib/release.sh and lib/release_sign.py; the other release verbs stay allowed (they need a plan token and approval of their own).
 Changelog: `qargi changelog renumber` without --check (it rewrites the changelog of a work tree) is the lead's, found like the skill verbs, also through
 lib/changelog.sh and lib/changelog_numbers.py and when a word is held in a variable; `renumber --check` only reads and stays allowed.
 Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The guard refuses a member
@@ -2718,6 +2719,10 @@ def skill_verb(prog, rest, via_xargs=False, here=".", exe=None):
         return "qargi release site commits the built documentation site on the lead's site branch and is not available to an agent; report that the site of the release needs building"
     if area == "release" and any(w == "sign" for w in words[1:4]):
         return "qargi release sign signs the release files with the lead's key, whose passphrase only the person types, and is not available to an agent; report that the tag needs signing"
+    if area == "release" and any(w == "assets" for w in words[1:4]):
+        return "qargi release assets runs the project's release.assets_command, which is project code, with the lead's rights, and is not available to an agent; report that the release files need building"
+    if area == "release" and any(w == "fix" for w in words[1:4]):
+        return "qargi release fix makes a worktree on the release branch and can push it with the lead's credentials, and is not available to an agent; report the fix the release branch needs"
     # qargi env: show only reads files, so a member may run it. plan runs the project's dry-run command (make -n still runs $(shell ...) and + lines) and
     # apply runs its bootstrap: both run project code, with the lead's rights and terminal, and are the lead's. A verb held in a variable could be either
     if area == "env" and (verb in ENV_LEAD or builds_word(verb)):

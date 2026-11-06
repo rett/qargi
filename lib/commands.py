@@ -1407,7 +1407,7 @@ TOPICS = {
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
         "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
-        "read); release publish, sign and site; marshal claim, set, renew, release, take, "
+        "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
         "upstream status, sync; ref record; memory init, "
         "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",

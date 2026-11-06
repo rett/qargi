@@ -96,6 +96,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The verify rule of `local verify` and `local clean` accepts a `worktree-bridge-NAME` branch as the harness's own only when the worktree that holds it is
   the real path `<main worktree>/.claude/worktrees/bridge-NAME` and is locked, and a move of it is a fast-forward; a rewrite of the branch, a worktree of
   that name added elsewhere or left unlocked, and a deletion while a worktree of that name is still there are found.
+- The guard refuses `qargi release assets` (it runs the project's `release.assets_command` with the lead's rights) and `qargi release fix` (it makes a
+  worktree on the release branch and pushes it with `--push`) to a member, as it does `release publish`, `sign` and `site`; the guard's docstring, `qargi help
+  guard` and the manual page list them.
 
 ## [0.2.2] - 2026-11-05
 

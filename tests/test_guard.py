@@ -682,6 +682,22 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_assets_and_fix_to_a_member(self):
+        """release assets runs the project's release.assets_command (project code) and release fix makes a worktree on the release branch and pushes
+        it with --push; both verbs, and the script run directly, are refused, each with its own reason. The other release verbs and words in a quoted
+        string stay allowed."""
+        for verb, why in (("assets", "qargi release assets runs the project's release.assets_command"), ("fix", "qargi release fix makes a worktree on the release branch")):
+            for form in ("qargi release %s 0.2.0", "qargi release %s 0.2.0 --recreate --project p", "/opt/q/bin/qargi release %s 0.2.0", "sudo qargi release %s 0.2.0",
+                         "bash -c 'qargi release %s 0.2.0'", "cd src && qargi release %s 0.2.0", "qargi release --project p %s 0.2.0", "eval 'qargi release %s 0.2.0'",
+                         "bash lib/release.sh %s 0.2.0", "./lib/release.sh %s 0.2.0 --push"):
+                r = self.bash(form % verb)
+                self.assertEqual(r.returncode, 2, form % verb)
+                self.assertIn(why, r.stderr)
+        for c in ("qargi release status 0.2.0", "qargi release push 0.2.0", "echo qargi release assets", "grep -n 'release fix' lib/commands.py",
+                  "qargi help release assets", "qargi help release fix"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_env_plan_and_apply_to_a_member(self):
         """env plan runs the project's dry-run command and env apply its bootstrap: project code. Both verbs, a verb held in a variable, and the
         scripts run directly are refused; env show (it only reads) and words in a quoted string stay allowed."""
