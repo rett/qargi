@@ -27,5 +27,7 @@
     "github_pat_",
     "password:",
     "secret:"
-  ]
+  ],
+  "copyright": "© 2026 Everett C. Haimes III. MIT licensed.",
+  "license_url": "https://github.com/rett/qargi/blob/master/LICENSE"
 }
