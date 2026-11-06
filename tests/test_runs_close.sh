@@ -182,11 +182,19 @@ git -C "$A" branch -D agent-made >/dev/null; git -C "$A" push -q origin :agent-m
 # --- 1c. refs a runtime creates in the repository, declared by the lead (answers runs.owned_refs)
 own() { jq --argjson p "$1" '.runs = {owned_refs: $p}' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"; }
 OWNED="accepted: refs/heads/rt-* (owned by the runtime, per runs.owned_refs)"
-R=$(mkrun owned1)
+# the answers a run is checked by are the ones at its prepare (the lead's registry holds the copy): declare first, then prepare
+R=$(mkrun owned0)
 git -C "$A" branch rt-one develop
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch created: refs/heads/rt-one" <<<"$out" && ok "(setup) a branch a runtime made is found while no pattern declares it" || no "undeclared: rc=$rc $out"
 own '["refs/heads/rt-*"]'
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/rt-one" <<<"$out" && ok "a pattern declared after a run's prepare does not apply to that run (the registry's copy of the answers does)" || no "late declaration: rc=$rc $out"
+git -C "$A" branch -D rt-one >/dev/null; $DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun owned1)
+jq -e --arg p "$A" 'select(.slug == "owned1") | .project == "app" and .answers.runs.owned_refs == ["refs/heads/rt-*"] and .answers.repo.long_lived == ["master","develop"]' "$T/s/local-runs.jsonl" >/dev/null \
+  && ok "prepare records the project and the answers that decide verification in the lead's registry" || no "registry line: $(tail -1 "$T/s/local-runs.jsonl")"
+git -C "$A" branch rt-one develop
 out=$(verify "$R"); rc=$?
 [ $rc = 0 ] && grep -qF "rt-one created; $OWNED" <<<"$out" && grep -q "the refs the project declares the runtime's own" <<<"$out" && [ -f "$R/verified" ] && ok "a declared pattern accepts the ref in the strict phase and verify names the pattern and the answer" || no "declared: rc=$rc $out"
 git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
@@ -200,6 +208,17 @@ git -C "$A" branch other-made develop
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "refs/heads/other-made" <<<"$out" && ! grep -q "other-made.*owned by the runtime" <<<"$out" && ok "a ref the pattern does not match is still found" || no "other ref: rc=$rc $out"
 git -C "$A" branch -D other-made >/dev/null
+# a decoy project file made after prepare, and a change of the real one, change nothing for the run
+jq --arg p "$A" '.repo.path = $p | .runs = {owned_refs: ["refs/heads/evil-*"]} | .repo.long_lived = ["master"]' "$T/c/projects/app.json" > "$T/c/projects/aaa.json"
+own '[]'
+git -C "$A" branch evil-one develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "refs/heads/evil-one" <<<"$out" && ! grep -q "evil-one.*owned by the runtime" <<<"$out" && ok "a decoy projects/aaa.json for the same repository, created after prepare, accepts nothing" || no "decoy: rc=$rc $out"
+git -C "$A" branch -D evil-one >/dev/null
+git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one moved; $OWNED" <<<"$out" && ok "and the real answers emptied after prepare still apply to the run that was prepared with them" || no "snapshot kept: rc=$rc $out"
+rm -f "$T/c/projects/aaa.json"; own '["refs/heads/rt-*"]'
 # clean names it as well
 git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
 echo '{}' > "$R/out/manifest.json"
@@ -212,15 +231,19 @@ dv=$(git -C "$A" rev-parse develop)
 git -C "$A" update-ref refs/heads/develop "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ok "a rewrite of develop is found though a pattern is declared" || no "develop rewrite: rc=$rc $out"
+git -C "$A" update-ref refs/heads/develop "$dv"
 own '["refs/heads/dev*"]'
+R=$(mkrun owned2b)
+git -C "$A" update-ref refs/heads/develop "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a pattern that would match develop (hand-edited answers) is ignored" || no "develop pattern: rc=$rc $out"
+git -C "$A" update-ref refs/heads/develop "$dv"
 own '["refs/heads/*","refs/heads/ab*"]'
+R=$(mkrun owned2c)
 git -C "$A" branch abc-made "$dv"
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch created: refs/heads/abc-made" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a bare glob and a pattern with a short literal prefix are ignored" || no "short pattern: rc=$rc $out"
 git -C "$A" branch -D abc-made >/dev/null
-git -C "$A" update-ref refs/heads/develop "$dv"
 # the base of an open run is never owned
 git -C "$A" branch rt-base develop
 own '["refs/heads/rt-*"]'
@@ -237,8 +260,8 @@ for n in refs/heads/release/0.2 refs/heads/agent/foo-x refs/tags/v0.2 refs/heads
   $OM "$n" >/dev/null 2>&1 && no "match accepted $n" || ok "match refuses $n whatever the answer holds"
 done
 [ "$($OM refs/heads/foo-1 2>&1)" = "refs/heads/foo-*" ] && [ "$($OM refs/heads/worktree-other 2>&1)" = "refs/heads/worktree-*" ] && ok "and still accepts a branch the valid patterns name (foo-1, worktree-other)" || no "match valid patterns"
-R=$(mkrun owned4)
 own '["refs/heads/worktree-*","refs/heads/rel*/0*"]'
+R=$(mkrun owned4)
 git -C "$A" branch worktree-bridge-owned4 develop; git -C "$A" branch release/0.9 develop
 out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "refs/heads/worktree-bridge-owned4" <<<"$out" && grep -q "refs/heads/release/0.9" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a bridge branch no worktree holds and a release branch are found though patterns that reach them are declared" || no "bridge/release owned: rc=$rc $out"

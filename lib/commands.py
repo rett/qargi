@@ -1031,6 +1031,8 @@ COMMANDS = {
                                  "named (\"foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)\"). A pattern needs a literal prefix of at least 3 characters after refs/NAMESPACE/, "
                                  "may not match develop, master, a repo.long_lived branch, or be able to match anything inside the git-flow branches (agent/, feature/, release/, hotfix/) or the tags (rel*/0* is refused as release/ is), "
                                  "and a ref is never taken as owned when it is the base of a run that is not cleaned or closed, a worktree-bridge-* branch, a git-flow branch or a tag; a ref that matches no valid pattern is checked as before, in the strict phase too. "
+                                 "The answers verify and clean read (runs.owned_refs, repo.long_lived, repo.parking_branch) are the copy prepare took into your registry, "
+                                 "not the stored file of the day: a change of them takes effect on the runs prepared after it. "
                                  "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
                                  "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "

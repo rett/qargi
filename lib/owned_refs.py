@@ -2,6 +2,7 @@
 """Refs a runtime or harness creates in the repository, declared by the lead: the project answer runs.owned_refs.
 
   owned_refs.py match ANSWERS_FILE REFNAME [--base BRANCH]...     exit 0 and print the pattern when REFNAME is a declared owned ref, 1 when not
+                                                                  (ANSWERS_FILE - reads the answers from standard input)
 
 runs.owned_refs is a list of glob patterns for full ref names (["refs/heads/foo-*"]). `qargi local verify` and `local clean` accept a change of a
 ref that matches one, in either phase, and name the pattern ("accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)"). It is the
@@ -124,8 +125,11 @@ def match(patterns, name, protected=(), bases=()):
 
 def answers(path):
     try:
-        with open(path) as f:
-            d = json.load(f)
+        if path == "-":
+            d = json.load(sys.stdin)
+        else:
+            with open(path) as f:
+                d = json.load(f)
     except (OSError, ValueError):
         return [], []
     d = d if isinstance(d, dict) else {}

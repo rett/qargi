@@ -64,6 +64,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `runs.owned_refs` can no longer reach the git-flow branches or the tags by a glob: a pattern is refused when it can match anything inside `refs/heads/agent/`,
   `feature/`, `release/`, `hotfix/` or `refs/tags/` (`refs/heads/rel*/0*`, `refs/heads/age*t/foo-*` and `refs/tags/v0.*` passed validation before, because only one sample
   name was tried), and a name under those, a tag or a `worktree-bridge-*` branch is never accepted as owned at the time of the check, whatever a hand-edited answer says.
+- `local prepare` takes the answers that decide what verification accepts (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
+  `review.keep_author`) and the stored project's name into the lead's registry line of the run, and `local verify`, `local clean`, `local run` and `review apply`
+  read them from there. They used to read the first `projects/*.json` whose `repo.path` was the repository, and `<conf>/projects` is not protected, so a member
+  could add a `projects/aaa.json` naming the real repository with its own `runs.owned_refs` or `git.author`. A change of those answers now takes effect on
+  the runs prepared after it; a run recorded by an earlier version, which has no copy, is read as before.
 
 ## [0.2.3] - 2026-11-05
 

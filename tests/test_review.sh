@@ -200,6 +200,15 @@ out=$($DA review apply "$R21" 2>&1); rc=$?
   && grep -q "^author reset to Example Author <author@example.com> (answer git.author); member author recorded in the ref journal: agent <agent@example.invalid>$" <<<"$out"; } \
   && ok "the answer git.author is the author of the applied commits, the committer stays the repository's" || no "git.author: rc=$rc $(authors agent/auth2) $out"
 [ "$(git -C "$A" rev-parse agent/names)" = "$names_tip" ] && [ "$(authors agent/names)" = "lead <lead@example.net>" ] && ok "history applied before is not rewritten" || no "old history rewritten"
+# the answers are the run's own (the lead's registry holds the copy taken at prepare): an answer changed after prepare, or a decoy project file for the same
+# repository, changes neither the author nor keep_author of this run
+R25=$(newrun decoy)
+jq '.git.author = "Evil Author <evil@example.com>" | .review.keep_author = true' "$AF" > "$T/c/projects/aaa.json"
+jq '.git.author = "Late Author <late@example.com>"' "$AF" > "$T/af.late" && mv "$T/af.late" "$AF"
+out=$($DA review apply "$R25" 2>&1); rc=$?
+{ [ $rc = 0 ] && [ "$(authors agent/decoy)" = "Example Author <author@example.com>" ] && grep -q "^author reset to Example Author <author@example.com> (answer git.author)" <<<"$out"; } \
+  && ok "a decoy projects/aaa.json and a later change of git.author do not change the author a prepared run gets" || no "decoy author: rc=$rc $(authors agent/decoy) $out"
+rm -f "$T/c/projects/aaa.json"; jq '.git.author = "Example Author <author@example.com>"' "$AF0" > "$AF"
 # --from-saved uses the same rule
 RS4=$(newrun savedauth); IS4=$(basename "$RS4"); $DA local verify "$RS4" >/dev/null 2>&1; rm -rf "$RS4"
 out=$($DA review apply --from-saved "$IS4" 2>&1); rc=$?

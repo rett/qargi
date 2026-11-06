@@ -37,10 +37,12 @@ fi
 AUTH_RE='^([^<>]*[^<>[:space:]]) <([^<>[:space:]@]+@[^<>[:space:]@]+)>$'
 # shellcheck disable=SC2154  # af comes from project_load
 pick_author() {
-  local keep a n e
-  keep=$(jq -r '(.review // {}) | .keep_author // false | if type == "boolean" then tostring else "bad" end' "$af" 2>/dev/null) || keep=bad
+  local keep a n e aj
+  # the answers are the run's own, taken into the lead's registry at prepare (run_record: RUN_ANS); a run of an older record reads the stored file
+  if [ -n "${RUN_ANS:-}" ]; then aj=$RUN_ANS; else aj=$(cat -- "$af" 2>/dev/null) || aj='{}'; fi
+  keep=$(jq -r '(.review // {}) | .keep_author // false | if type == "boolean" then tostring else "bad" end' <<<"$aj" 2>/dev/null) || keep=bad
   [ "$keep" != bad ] || die "review.keep_author in the answers of $PROJ is not true or false (qargi project set $PROJ review.keep_author true); nothing was applied"
-  a=$(jq -r '(.git // {}) | .author // "" | if type == "string" then . else error("not a string") end' "$af" 2>/dev/null) \
+  a=$(jq -r '(.git // {}) | .author // "" | if type == "string" then . else error("not a string") end' <<<"$aj" 2>/dev/null) \
     || die "git.author in the answers of $PROJ is not a string like 'Example Author <author@example.com>' (qargi project set $PROJ git.author ...); nothing was applied"
   AUTH='' AUTH_MODE=keep AUTH_SRC=''
   if [ "$keep" = true ]; then AUTH_SRC='answer review.keep_author'; return 0; fi

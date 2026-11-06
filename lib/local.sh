@@ -27,7 +27,10 @@
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time, temporary directory, and the repository: its real path (repo), or its URL (url) and the path of its credential file (cred), never a token;
-# mode 600), so `qargi report` can list the local runs. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
+# the stored project of the repository (project) and a copy of the answers that decide what verification accepts (answers: runs.owned_refs, repo.long_lived,
+# repo.parking_branch, git.author, review.keep_author) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
+# review apply read those answers from this line and not from the stored project's file, which is not the lead's alone to write: an answer changed after
+# prepare takes effect on the runs prepared after it. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
 # about a run (lib.sh run_record): the repository, the URL and the credential path come from it, and a run whose own repo.path, repo.url or cred.path
 # (files a member can write) differ is refused, as is a directory the registry does not name. `clean` removes the temporary directory that this line names
 # for the run, not the one the run's own tmpdir file says (a member can write the run directory, and a file there could name another run's temporary directory).
@@ -134,11 +137,10 @@ scratch_of() {
   echo "$s"
 }
 
-# parking_of REPO -> the parking branch of the stored project of REPO (answers repo.parking_branch), else scratch
+# parking_of -> the parking branch of the answers of the run being checked (run_answers: repo.parking_branch), else scratch
 parking_of() {
-  local pj p=''
-  pj=$(project_of "$1" '')
-  [ -z "$pj" ] || p=$(jq -r '.repo.parking_branch // ""' "$DA_CONF/projects/$pj.json" 2>/dev/null) || p=''
+  local p
+  p=$(run_answers | jq -r '((.repo | objects | .parking_branch) // "") | strings' 2>/dev/null) || p=''
   echo "${p:-scratch}"
 }
 
@@ -161,16 +163,13 @@ bridge_ref() {
   [ -z "$old" ] || git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null
 }
 
-# owned_answers REPO -> prints the project's answers file when it declares runtime-owned refs (runs.owned_refs, a list of glob patterns the lead set), and
-# nothing when it does not (or the project is not stored); owned_bases -> one --base BRANCH pair per line for the base of every run of the registry that
-# is not cleaned or closed: the ref a run is based on is never taken as owned, whatever a pattern says. lib/owned_refs.py decides what a pattern may be
-# and whether a ref matches (hardened: a literal prefix of 3 characters, never develop, master, a long-lived branch or the git-flow branches).
-owned_answers() {
-  local pj f
-  pj=$(project_of "$1" "${RUN_URL:-}"); [ -n "$pj" ] || return 0
-  f=$DA_CONF/projects/$pj.json
-  jq -e '((.runs // {}).owned_refs // []) | type == "array" and length > 0' "$f" >/dev/null 2>&1 && printf '%s\n' "$f"
-  return 0
+# owned_declared -> succeeds when the answers of the run being checked (run_answers: the snapshot in the lead's registry, taken at prepare) declare
+# runtime-owned refs (runs.owned_refs, a list of glob patterns the lead set); owned_bases -> one --base BRANCH pair per line for the base of every run of
+# the registry that is not cleaned or closed: the ref a run is based on is never taken as owned, whatever a pattern says. lib/owned_refs.py decides what a
+# pattern may be and whether a ref matches (hardened: a literal prefix of 3 characters, never develop, master, a long-lived branch, the git-flow branches,
+# a tag or a bridge branch).
+owned_declared() {
+  run_answers | jq -e '((.runs | objects | .owned_refs) // []) | type == "array" and length > 0' >/dev/null 2>&1
 }
 owned_bases() {
   local d b
@@ -192,7 +191,8 @@ owned_bases() {
 #   - a branch worktree-bridge-S of the harness's bridge worktree, a directory worktrees/bridge-S (bridge_ref: while that worktree, locked, at <main worktree>/<the harness directory>/worktrees/bridge-S, holds it and the move is a fast-forward, or when no such worktree is left).
 # A branch, or a branch of origin, that the lead made and noted (qargi ref note) is the journal's case above: its line starts where the ref was absent.
 #   - a local ref that matches a pattern of the answer runs.owned_refs (refs a runtime or harness creates in the repository, set by the lead, validated by
-#     project validate; lib/owned_refs.py: a literal prefix of 3 characters, never develop, master, a long-lived or git-flow branch or the base of a run):
+#     project validate; lib/owned_refs.py: a literal prefix of 3 characters, never develop, master, a long-lived or git-flow branch, a tag, a bridge branch
+#     or the base of a run). The answers are the run's own: the copy prepare took into the lead's registry (run_answers), not the stored file of today:
 #     accepted in either phase and named with the pattern. A ref that matches none is checked as before, in the strict phase too.
 # Without strict (after the run's first passing verify, against RUN/verified) also: a fast-forward of develop, master or an
 # agent|feature|release|hotfix/* branch, and a new agent|feature|release|hotfix/* branch: the lead's own merges. Everything else, a rewrite
@@ -201,7 +201,7 @@ compare() {
   local repo=$1 ref=$2 aft=$3 strict=${4:-} acc=${5:-/dev/null} bad=0 k kind name old new steps park='' dev tgt short a b c uo='' un='' hasr=''
   local zero=0000000000000000000000000000000000000000 why=" (not in the lead's ref journal)"
   local -A O=() N=() ACC=()
-  local ownf='' pat='' obase=()
+  local ownf='' pat='' obase=() oans=''   # oans: the answers of the run (run_answers), read once
   while read -r a b c; do case $a in local) O["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then uo=1; else O["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$ref")
   while read -r a b c; do case $a in local) N["local $b"]=$c;; remote) if [ "$b" = unavailable ] && [ -z "$c" ]; then un=1; else N["remote $c"]=$b; fi;; esac; done < <(drop_qargi_refs < "$aft")
   if [ "$uo" != "$un" ]; then
@@ -209,7 +209,7 @@ compare() {
   fi
   [ -z "$repo" ] || ! git -C "$repo" remote get-url origin >/dev/null 2>&1 || [ -n "$un" ] || hasr=1
   dev=${N["local refs/heads/develop"]:-}
-  ownf=$(owned_answers "$repo"); [ -z "$ownf" ] || mapfile -t obase < <(owned_bases)
+  if owned_declared; then ownf=1; oans=$(run_answers); mapfile -t obase < <(owned_bases); fi
   allowed() { case $1 in refs/heads/develop|refs/heads/master|refs/heads/agent/*|refs/heads/feature/*|refs/heads/release/*|refs/heads/hotfix/*) return 0;; esac; return 1; }
   shortref() { case $1 in refs/heads/*) echo "${1#refs/heads/}";; refs/tags/*) echo "tag ${1#refs/tags/}";; *) echo "$1";; esac; }
   while read -r k; do
@@ -227,7 +227,7 @@ compare() {
     if [ "$kind" = local ] && [[ $name == refs/heads/worktree-bridge-?* ]] && bridge_ref "$repo" "$name" "$old" "$new"; then
       ACC[$k]=1; echo "$short $a (the harness's bridge branch of a worktree bridge-NAME)" >> "$acc"; continue
     fi
-    if [ "$kind" = local ] && [ -n "$ownf" ] && pat=$(python3 -I "$(dirname "$0")/owned_refs.py" match "$ownf" "$name" ${obase[@]+"${obase[@]}"}); then
+    if [ "$kind" = local ] && [ -n "$ownf" ] && pat=$(python3 -I "$(dirname "$0")/owned_refs.py" match - "$name" ${obase[@]+"${obase[@]}"} <<<"$oans"); then
       ACC[$k]=1; echo "$short $a; accepted: $pat (owned by the runtime, per runs.owned_refs)" >> "$acc"; continue
     fi
     if [ "$kind" = local ]; then
@@ -243,7 +243,7 @@ compare() {
       esac
       # the parking branch fast-forwarded to develop's tip
       if [ -n "$old" ] && [ -n "$new" ] && [ "$new" = "$dev" ] && [[ $name == refs/heads/?* ]]; then
-        [ -n "$park" ] || park=$(parking_of "$repo")
+        [ -n "$park" ] || park=$(parking_of)
         if [ "$name" = "refs/heads/$park" ] && git -C "$repo" merge-base --is-ancestor "$old" "$new" 2>/dev/null; then
           ACC[$k]=1; echo "$short (the parking branch) fast-forwarded to develop" >> "$acc"; continue
         fi
@@ -389,6 +389,15 @@ case $verb in
     # the contract addenda of the project's runtime on the local surface (resources.contract_addenda of its definition), read before anything
     # is made; a repository in no project, or a project with no local runtime, gets the core's contract alone (no runtime is assumed)
     ADDENDA='' CPJ=$(project_of "$REPO" "$URL")
+    # what verification and review apply will believe of the lead's answers is taken now, into the lead's registry line (the stored project's file is not read again for this run):
+    # the project's name and the answers runs.owned_refs, repo.long_lived, repo.parking_branch, git.author and review.keep_author, as they are today
+    ANS='{}'
+    if [ -n "$CPJ" ]; then
+      ANS=$(jq -c 'def at(f): first(f, null); def own(k): if type == "object" then {(k): at(.[k])} else . end;
+        {runs: ((at(.runs) | own("owned_refs"))), repo: {long_lived: at(.repo | objects | .long_lived), parking_branch: at(.repo | objects | .parking_branch)},
+         git: (at(.git) | own("author")), review: (at(.review) | own("keep_author"))}' "$DA_CONF/projects/$CPJ.json" 2>/dev/null) \
+        || die "the answers of project $CPJ cannot be read, so the run could not record them; nothing was made (qargi project validate $CPJ)"
+    fi
     if [ -n "$CPJ" ]; then
       # a provider that is set but does not resolve is refused here, not left out of the contract
       CPROV=$(project_provider_if_set "$CPJ" local) || die "the local provider of project $CPJ does not resolve, so the contract addenda of its runtime cannot be added; nothing was made (qargi project show $CPJ)"
@@ -462,8 +471,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" \
-      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d}
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" \
+      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, project:$pj, answers:$ans}
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
@@ -813,7 +822,8 @@ $vout}"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] || usage_die "run needs a RUN dir made by prepare"
     for a in "$@"; do case $a in --project|--runtime|--class) die "run: $a is not an option (the project and its runtime come from the run)";; esac; done
     reg_load; run_record "$RUN" || exit 2   # the project is found by the repository the lead's registry records, not by files in the run directory
-    RPJ=$(project_of "$RUN_REPO" "$RUN_URL")
+    RPJ=$(run_project "$RUN")   # the project prepare recorded in the lead's registry, not the first stored project whose repository it is
+    [ -f "$DA_CONF/projects/$RPJ.json" ] && valid_project "$RPJ" || RPJ=''   # a project stored since removed is no project
     [ -n "$RPJ" ] || { echo "qargi: no stored project has the repository of this run, so no runtime is known: store it (qargi project attach) and give it a local provider (qargi project set PROJECT models.provider.local NAME)" >&2; exit 2; }
     RPROV=$(project_provider "$RPJ" local) || exit $?
     exec python3 -I "$(dirname "$0")/local_run.py" "$RUN" --project "$RPJ" --runtime "$RPROV" --class "$(run_class "$RUN")" "$@";;
