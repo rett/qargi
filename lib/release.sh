@@ -25,6 +25,9 @@
 #   release.sh fix VERSION [--hotfix] [--push [--plan T --approved W]]
 #                                           a worktree on the release branch under the worktree root (prints its path), to commit a fix in; --push is `push`
 #   release.sh push VERSION [--hotfix] [--plan T --approved W]     push the branch, open the pull request into master (or say "updated PR #N" when it is open)
+#                                           When master and the branch have no merge base (master is one snapshot commit, say) the plan has the line "join the history
+#                                           of master": once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary
+#                                           worktree, as a commit of its own before the push, and only if the tree is unchanged; `start`, `status` and `finish` say so.
 #   release.sh finish VERSION [--hotfix] [--keep] [--ignore-checks WORDS] [--plan T --approved W]
 #                                           after the checks pass: merge, tag, back-merge, delete the branch, push. The plan lists the pull request's checks
 #                                           and refuses while one fails or is pending, unless --ignore-checks gives, in the person's words, why (recorded).
@@ -150,6 +153,27 @@ tag_checks() {
     noauth) echo "note: gh is not authenticated, so whether GitHub has a release for tag $VER was not checked (gh auth login)";;
     unchecked) echo "note: could not ask GitHub whether tag $VER has a release (${GHWHY:-no answer})";;
   esac
+}
+# The history of master. A master that shares no history with the release branch (for example one parentless snapshot commit) cannot be merged:
+# git refuses "unrelated histories". `push` joins them first, in its plan: master is merged into the release branch keeping the release's tree,
+# so the later `finish` is an ordinary --no-ff merge. unrelated_note says so in `start` and `status`; join_history does it.
+unrelated_note() { echo "master and $BR share no history (no merge base; master may be one snapshot commit): qargi release push $VER${HOTFIX:+ --hotfix} joins the history of master first (a merge of master that keeps the release tree, in its plan), before CI runs, so that finish is an ordinary --no-ff merge"; }
+# join_history SHA -> JOINED: a merge commit of master into the branch BR at SHA, made in a temporary worktree with -s ours
+# --allow-unrelated-histories, and BR moved to it only when its tree is the tree of SHA and its parents are SHA and master. Otherwise nothing moved.
+join_history() {
+  local old=$1 m t0 t1 out
+  m=$(sha_of master); t0=$(g rev-parse "$old^{tree}")
+  worktree "$old"
+  out=$(git -C "$WT" merge -q --no-ff -s ours --allow-unrelated-histories -m "Join the history of master" -m "master and $BR had no merge base. This merge keeps the tree of $BR as it was (-s ours), so the release changes nothing; it only makes the later merge into master an ordinary --no-ff merge." "$m" 2>&1) \
+    || { cleanup; die "joining the history of master failed: $out"$'\n'"nothing was changed"; }
+  JOINED=$(git -C "$WT" rev-parse HEAD); t1=$(git -C "$WT" rev-parse 'HEAD^{tree}')
+  if [ "$t0" != "$t1" ] || [ "$(git -C "$WT" rev-parse 'HEAD^1')" != "$old" ] || [ "$(git -C "$WT" rev-parse 'HEAD^2')" != "$m" ]; then
+    cleanup; die "the join with master would change the tree of $BR (${t0:0:7} before, ${t1:0:7} after) or is not a merge of $BR and master: refused, nothing was changed"
+  fi
+  cleanup
+  g update-ref "refs/heads/$BR" "$JOINED" "$old" || die "could not move $BR to the join commit (it moved meanwhile?); nothing was pushed"
+  journal_ref "$REPO" "refs/heads/$BR" "$old" "$JOINED" "$KIND:join"
+  wt_follow "$BR" "$JOINED"
 }
 open_release() { g for-each-ref --format='%(refname:short)' "refs/heads/${RELPREFIX}*"; }   # the open release branches
 # suite_verdict BRANCH -> SV_TEXT, the last whole-suite run recorded for the branch ("pass at this head (command: C; ran AT)"; empty when none was
@@ -452,6 +476,7 @@ case $verb in
       if [ -n "$feats" ]; then echo "features merged into develop since ${prev:-the first commit} ($(printf '%s\n' "$feats" | wc -l)):"; printf '%s\n' "$feats"
       else echo "no feature was merged into develop since ${prev:-the first commit}"; fi
     fi
+    if branch_exists master && no_merge_base master "$BR"; then echo "note: $(unrelated_note)"; fi
     echo "other files that carry the version (a manifest) are yours to bump on this branch"
     echo "only minor fixes belong here; new features wait for the next release. Then: qargi release push $VER${HOTFIX:+ --hotfix}";;
   status)
@@ -469,6 +494,7 @@ case $verb in
     fi
     echo "$KIND $VER of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "$BASE..$BR") commit(s) ahead of $BASE"
     g log --format='  %h %s' "$BASE..$BR" | head -20
+    if branch_exists master && no_merge_base master "$BR"; then echo "warning: $(unrelated_note)"; fi
     suite_verdict "$BR"
     echo "full suite: ${SV_TEXT:-not run on this branch}"
     [ -z "$SV_NOTE" ] || echo "$SV_NOTE"
@@ -516,8 +542,13 @@ case $verb in
     rel_valid
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi release start $VER${HOTFIX:+ --hotfix})"
     g remote get-url origin >/dev/null 2>&1 || die "the repository has no origin remote to push $BR to"
-    tok=$(printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h" | plan_token)
+    join=''; if branch_exists master && no_merge_base master "$BR"; then join=1; fi   # the plan joins the history of master first
+    tok=$( { printf '%s\n%s\n%s\n' "$PROJ" "$BR" "$h"; [ -z "$join" ] || printf 'join\n%s\n' "$(sha_of master)"; } | plan_token)
     echo "push $BR (at $(g rev-parse --short "$BR")) to origin and open a pull request into master, so CI runs on the commit that will be released"
+    if [ -n "$join" ]; then
+      echo "master (at $(g rev-parse --short master)) and $BR have no merge base: they share no history, so finish could not merge them (git refuses unrelated histories; master may be one snapshot commit)"
+      echo "join the history of master: merge master into the release branch keeping the release tree (-s ours --allow-unrelated-histories), as a new commit on $BR before the push; the tree of $BR must be the same before and after (checked: the branch does not move otherwise)"
+    fi
     jq -e '(.release? // {}) | has("preflight")' "$af" >/dev/null 2>&1 && echo "preflight (release.preflight, run in a copy of $BR before the push): $(jq -r '.release.preflight | join(" ")' "$af")"
     remote_report "$BR"
     pw=$(wt_of "$BR"); [ -z "$pw" ] || [ -z "$(git -C "$pw" status --porcelain 2>/dev/null)" ] || echo "warning: $pw has uncommitted changes: only what is committed on $BR is pushed"
@@ -525,6 +556,12 @@ case $verb in
     if [ -z "$APPROVED" ]; then echo "plan token: $tok   (apply with: qargi release push $VER${HOTFIX:+ --hotfix} --plan $tok --approved \"...\")"; exit 0; fi
     need_plan "$tok"
     worktree "$h"; run_preflight "$WT"; cleanup
+    if [ -n "$join" ]; then
+      need_free_wt "$BR"
+      join_history "$h"; h=$JOINED
+      echo "joined the history of master: $BR is at ${h:0:7} (a merge of master that keeps the tree)"
+      audit_log "release:join" "$PROJ $BR"
+    fi
     rb0=$RTIP; [ "$RSTATE" = found ] || [ "$RSTATE" = absent ] || rb0=$(remote_was "$BR")   # remote_report asked origin live
     g push -q -u origin "$BR" || die "pushing $BR failed"
     journal_push "refs/heads/$BR" "$rb0" "$h" "$KIND:push"
@@ -572,6 +609,12 @@ case $verb in
       [ "$n" = 0 ] || second=$rels
     fi
     detached_mix "$BR" master; detached_mix "$BR" "$second"
+    if no_merge_base master "$BR"; then
+      die "master and $BR share no history (no merge base; master may be one snapshot commit): git would refuse to merge them (unrelated histories) and nothing can be merged. Run qargi release push $VER${HOTFIX:+ --hotfix}: its plan joins the history of master into $BR (a merge that keeps the release tree), then wait for the checks of the pushed head and finish. Nothing was changed"
+    fi
+    if no_merge_base "$second" "$BR"; then
+      die "$second and $BR share no history (no merge base): git would refuse to merge them (unrelated histories). Usually the first release is not finished yet, and its push joins the history of master (qargi release push VERSION): finish that release first, or join them by hand. Nothing was changed"
+    fi
     tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$second" "$(sha_of master)" "$(sha_of "$second")" "$KEEP" "$IGNORE_CHECKS" | plan_token)
     echo "finish $KIND $VER of $PROJ: merge $BR into master with --no-ff, tag $VER on it, merge $BR into $second with --no-ff${KEEP:+, keep $BR}$([ -n "$KEEP" ] || echo ", delete $BR"), push master, $second and the tag together (all or none)"
     remote_report "$BR"; remote_report master; remote_report "$second"

@@ -144,7 +144,8 @@ COMMANDS = {
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
-                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited). "
+                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited), and long-lived branches "
+                                "that share no history (a master made as a snapshot has no merge base with develop): none is joined here, and the line says that release push joins the history of master. "
                                 "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
@@ -487,7 +488,8 @@ COMMANDS = {
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
                                 "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
-                                "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha.")),
+                                "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha. "
+                                "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
@@ -497,6 +499,7 @@ COMMANDS = {
                                "(the commit of qargi release site on the site branch, and whether the live origin has it). "
                                "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
                                "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
+                               "A branch that shares no history with master (no merge base) gets a warning that release push joins it. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
                                "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
                                "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
@@ -512,7 +515,12 @@ COMMANDS = {
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
                          desc=REMOTE_NOTE + " When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
                               "When a pull request for the branch is open already (found with gh pr list; a gh that cannot list it is caught by the refusal of gh pr create) the plan says so, "
-                              "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed."),
+                              "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed. "
+                              "When master and the branch share no history (no merge base: git would refuse to merge unrelated histories, as with a master that is one parentless snapshot commit) "
+                              "the plan has the line 'join the history of master': once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary worktree, "
+                              "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
+                              "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
+                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join."),
             "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
@@ -522,7 +530,8 @@ COMMANDS = {
                                  "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
                                  "Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
-                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
+                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. It also refuses, with the fix, a branch that shares no history with master (no merge base): "
+                                 "run release push first, whose plan joins the history of master. " + REMOTE_NOTE + " "
                                  "When the answer release.after_steps lists steps (commands or reminders, {version} replaced), it prints each as an 'after the release: STEP' line, never runs them, and "
                                  "records them under the state's release directory (PROJECT-VERSION.after.json) for release status. "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
