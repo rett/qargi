@@ -34,13 +34,15 @@ review; `qargi methodology show gitflow` prints the model.
    sign-off, then `qargi feature finish NAME`. That is the only merge into
    develop; its run carries over to develop's new head, so a release needs no further run.
    **Advisor sign-off** (before `feature finish`): write a synthesized diff to a scratch file: the feature diff stat from
-   `qargi feature status NAME`, each task's report line, the gate and suite verdicts. Run `qargi agent for review --profile advisor`
+   `qargi feature status NAME`, each task's report line, the gate and suite verdicts, and the line "do not run the test suite while a feature verify is running". Run `qargi agent for review --profile advisor`
    and spawn it on that file as `qargi provider notes spawn` says. Finish only after reading its verdict.
 5. **Release** when the user says develop is ready: `qargi release start VERSION` (refuses unless develop's head passed the
    whole suite; the first commit bumps VERSION and dates the changelog; bump any other file that carries the version; only minor
    fixes belong here), `qargi release push VERSION` (opens the pull request into master, so CI runs on the commit that will be
    released), wait for its checks, then `qargi release finish VERSION`: master `--no-ff`, an annotated tag, develop `--no-ff`,
-   branch deleted, master, develop and the tag pushed together.
+   branch deleted, master, develop and the tag pushed together. `release finish` refuses while a pull request
+   check fails or is pending; `--ignore-checks "<the user's words>"` overrides, on the user's words only. To fix: `qargi release fix VERSION`
+   (a worktree on the release branch), commit, then `release fix VERSION --push`.
 6. **Hotfix** a critical bug in production: `qargi release start VERSION --hotfix` (from master), fix, `release push`,
    `release finish --hotfix` (merges into the open release branch instead of develop when one exists).
 

@@ -19,8 +19,10 @@
 #   feature.sh verify NAME [--project P]           the whole suite on the feature's head (the checkpoint before finishing)
 #   feature.sh finish NAME [--project P] [--keep] [--plan T --approved W]
 #                                                  merge into develop with --no-ff and delete the branch; push develop if an
-#                                                  origin exists. Needs a passing run at the feature's head. A feature behind develop is refused; when
-#                                                  both sides changed the same files, the message lists them and says to sync first.
+#                                                  origin exists and the answer branches.push_develop is not false (the plan's first line says which).
+#                                                  Needs a passing run at the feature's head. A feature behind develop is refused; when
+#                                                  both sides changed the same files, the message lists them and says to sync first. Refused, with
+#                                                  the runs listed, while a run of the feature is open (not cleaned, discarded, closed or merged).
 # The marshal (lib/marshal.sh) records who leads each feature: start makes you the lead, merge, sync, verify and finish ask it first
 # (another live lead: refused, nothing changes; an anonymous identity or an unreachable marshal only warns), verify and finish keep
 # your lease alive while they run, finish marks the record finished, and list and status show the lead.
@@ -95,11 +97,43 @@ run_warning() {
     echo "qargi: warning: the run $d of $1 has no passing verify (qargi local verify $d): the refs of the repository were never checked for it" >&2
   done
 }
+# open_run_gate NAME -> dies, listing them, when a run of feature/NAME is open: prepared and not verified, verified and not applied, or applied and not
+# merged (lead_usage.py open-runs, the list compact-check reads). A cleaned run, a discarded one (clean --discard), a closed one (local close
+# --applied-by-am) and an applied run whose branch is merged are not open. Nothing is changed.
+open_run_gate() {
+  local out rc=0 d sl ro st n=0 lines=''
+  out=$(python3 -I "$(dirname "$0")/lead_usage.py" open-runs --state "$DA_STATE" --conf "$DA_CONF" --project "$PROJ" --feature "$1" </dev/null 2>/dev/null) || rc=$?
+  [ "$rc" != 0 ] || return 0
+  [ "$rc" = 1 ] || { echo "qargi: warning: could not list the open runs of feature/$1 (lead_usage.py exited $rc): finishing goes on without that check" >&2; return 0; }
+  while IFS=$'\t' read -r d sl ro st; do
+    [ -n "$d" ] || continue
+    n=$((n + 1)); lines+="  $d ($ro $sl): $st"$'\n'
+  done <<<"$out"
+  die "feature $1 has $n open run(s); finish it when they are taken in or dropped:"$'\n'"${lines%$'\n'}"$'\n'"close each one: qargi local clean RUN (after its work is applied and merged; --discard drops it on purpose), or qargi local close RUN --applied-by-am when you applied its patches by hand (git am). Nothing was changed."
+}
 # sync_numbers REF: with the answer release.changelog.numbered, a warning when the changelog at REF has duplicate item numbers (the sync is done either way;
 # feature finish refuses until they are renumbered)
 sync_numbers() {
   local r
   r=$(changelog_check "$1") || { echo "qargi: warning: $BR has duplicate changelog item numbers (release.changelog.numbered); feature finish refuses until they are renumbered:" >&2; printf '%s\n' "$r" | sed 's/^/  /' >&2; }
+}
+
+# stale_why BRANCH RAN -> why the whole-suite result at RAN no longer stands for BRANCH: the commits on its first-parent line since RAN
+# (a merge of develop is a sync, a merge of another branch is a task merge), oldest first, at most five
+stale_why() {
+  local sha subj n=0 total what
+  if ! g merge-base --is-ancestor "$2" "$1" 2>/dev/null; then echo "  why: the run's commit is not in the history of $1 (the branch was reset or rebuilt since)"; return 0; fi
+  total=$(g rev-list --first-parent --count "$2..$1")
+  echo "  why: $1 moved after that run by $total commit(s):"
+  while read -r sha subj; do
+    case $subj in
+      "Merge branch 'develop' into "*) what="develop was synced in";;
+      "Merge branch '"*) what="a branch was merged in";;
+      *) what="a commit";;
+    esac
+    echo "    $sha $subj ($what)"; n=$((n + 1))
+  done < <(g log --first-parent --reverse --format='%h %s' "$2..$1" | head -5)
+  [ "$total" -le "$n" ] || echo "    ... and $((total - n)) more"
 }
 
 case $verb in
@@ -194,9 +228,13 @@ case $verb in
     wt_outside_report;;
   status)
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
+    marshal_touch "$PROJ" "$NAME_ARG"   # the lead's own command keeps its lease (a read of the feature, never a refusal)
     echo "feature $NAME_ARG of $PROJ on $BR at $(g rev-parse --short "$BR"), $(g rev-list --count "develop..$BR") commit(s) ahead of develop, $(g rev-list --count "$BR..develop") behind"
     g log --format='  %h %s' "develop..$BR" | head -20
-    v=$(verified "$BR"); if [ -z "$v" ]; then echo "full suite: not run on this branch"; elif [ "${v%% *}" = "$h" ]; then echo "full suite: ${v##* } at this head"; else echo "full suite: ${v##* } at an older head"; fi
+    v=$(verified "$BR"); ran=${v%% *}
+    if [ -z "$v" ]; then echo "full suite: not run on this branch"; echo "  next: qargi feature verify $NAME_ARG"
+    elif [ "$ran" = "$h" ]; then echo "full suite: ${v##* } at this head"
+    else echo "full suite: ${v##* } at an older head ($(g rev-parse --short "$ran" 2>/dev/null || echo "$ran"))"; stale_why "$BR" "$ran"; echo "  next: qargi feature verify $NAME_ARG"; fi
     remote_report "$BR"; remote_report develop
     wt_outside_report
     if mout=$("$(dirname "$0")/marshal.sh" status "$NAME_ARG" --project "$PROJ" 2>/dev/null); then printf '%s\n' "$mout"; fi;;
@@ -206,15 +244,19 @@ case $verb in
     [ -n "$TESTCMD" ] || die "no test_command in the answers for $PROJ: qargi project set $PROJ test_command '...'"
     worktree "$h"
     echo "running the whole suite on $BR at $(g rev-parse --short "$BR"): $TESTCMD"
+    other_runs_warning
     hold_begin "$NAME_ARG"; busy_begin verify "$NAME_ARG"
     t0=$SECONDS
-    if run_suite; then res=pass; else res=fail; fi
+    if run_suite_logged "feature-$NAME_ARG"; then res=pass; else res=fail; fi
     busy_end; hold_end
     record_suite "$BR" "$h" "$res" "$((SECONDS - t0))"
-    echo "full suite: $res at $(g rev-parse --short "$BR")"; [ "$res" = pass ];;
+    echo "full suite: $res at $(g rev-parse --short "$BR")"
+    [ "$res" = pass ] || suite_failure_report
+    [ "$res" = pass ];;
   finish)
     marshal_gate "$NAME_ARG"
     h=$(sha_of "$BR"); [ -n "$h" ] || die "no branch $BR (qargi feature start $NAME_ARG)"
+    open_run_gate "$NAME_ARG"
     # behind develop, with files both sides changed since they parted: a sync is due, and the files are named. A feature behind develop
     # with no such file is not refused here: the check on develop below says the same without the list.
     if branch_exists develop && ! g merge-base --is-ancestor develop "$BR"; then
@@ -241,8 +283,14 @@ case $verb in
         unchecked) rnote="origin could not be asked ($RWHY): origin/$BR is not deleted";;
       esac
     fi
-    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" | plan_token)
-    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}$(g remote get-url origin >/dev/null 2>&1 && echo ", push develop")"
+    # whether develop is pushed: origin exists and the answer branches.push_develop is not false (default true)
+    pushd='' pushwhy=''
+    if ! g remote get-url origin >/dev/null 2>&1; then pushwhy="the repository has no origin"
+    elif [ "$PUSH_DEVELOP" = false ]; then pushwhy="branches.push_develop is false"
+    else pushd=1; fi
+    tok=$(printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$PROJ" "$BR" "$h" "$d0" "$KEEP" "$DELETE_MERGED" "$rdel" "$pushd" | plan_token)
+    if [ -n "$pushd" ]; then echo "will push develop to origin"; else echo "local only, will not push ($pushwhy)"; fi
+    echo "finish feature $NAME_ARG of $PROJ: merge $BR into develop with --no-ff${KEEP:+, keep the branch}$([ -n "$KEEP" ] || echo ", delete the branch")${rdel:+, delete origin/$BR (${rdel:0:7})}${pushd:+, push develop}"
     [ -z "$rnote" ] || echo "  note: $rnote"
     remote_report develop; remote_report "$BR"
     show_incoming develop "$BR"
@@ -254,7 +302,7 @@ case $verb in
     k="feature-$NAME_ARG-into-develop"
     merge_step "$d0" "refs/heads/$BR" "$k" "Merge branch '$BR' into develop"
     # develop contains the feature, so the merge has the tree the whole suite just passed: the same run stands for develop's new head
-    if g remote get-url origin >/dev/null 2>&1; then
+    if [ -n "$pushd" ]; then
       rd0=$(remote_was develop)   # what origin has (fetched above): the journal line of the push starts there
       g push -q --atomic origin "$MERGED:refs/heads/develop" || die "the push failed; nothing was changed locally or on origin (run it again)"
       journal_push refs/heads/develop "$rd0" "$MERGED" feature:finish
@@ -274,8 +322,8 @@ case $verb in
         if g push -q --force-with-lease="refs/heads/$BR:$rdel" origin ":refs/heads/$BR" 2>/dev/null; then journal_push "refs/heads/$BR" "$rdel" "" feature:finish; echo "deleted origin/$BR"
         else echo "note: could not delete origin/$BR (it moved, or origin refused)" >&2; fi
       fi
-      echo "pushed develop"
     fi
+    if [ -n "$pushd" ]; then echo "pushed develop"; else echo "develop was not pushed ($pushwhy)"; fi
     lead_advice;;
   *) usage_die "usage: qargi feature start|list|park|sync|merge|status|verify|finish NAME [BRANCH] [--project P]";;
 esac

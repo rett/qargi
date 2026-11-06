@@ -10,7 +10,7 @@ if ! command -v marshal_check >/dev/null 2>&1; then
   if [ -f "$(dirname "${BASH_SOURCE[0]}")/marshal.sh" ]; then . "$(dirname "${BASH_SOURCE[0]}")/marshal.sh"
   else
     marshal_start() { return 127; }; marshal_check() { return 127; }; marshal_finish() { return 127; }
-    marshal_hold_start() { :; }; marshal_hold_stop() { :; }
+    marshal_hold_start() { :; }; marshal_hold_stop() { :; }; marshal_touch() { :; }; marshal_touch_run() { :; }
   fi
 fi
 
@@ -222,6 +222,83 @@ run_clean() { # DIR COMMAND...: runs a command in DIR without the project's clou
   (cd "$dir" && env -u ANTHROPIC_PROFILE -u QARGI_CLOUD_WORKSPACE -u QARGI_CLOUD_PROJECT "$@")
 }
 run_suite() { run_clean "$WT" bash -c "$TESTCMD"; }   # the project's test command in the worktree WT
+# run_suite_logged NAME -> run_suite with its output (both streams, on stdout) shown as it comes and kept in
+# $DA_STATE/suite-logs/PROJECT.NAME.log (SUITE_LOG; mode 600; the last run of that name). The status is the suite's.
+run_suite_logged() {
+  local rc
+  SUITE_LOG=$DA_STATE/suite-logs/$PROJ.${1//\//_}.log
+  if ( umask 077; mkdir -p "$DA_STATE/suite-logs" && : > "$SUITE_LOG" ) 2>/dev/null; then
+    run_suite 2>&1 | tee "$SUITE_LOG"
+    rc=${PIPESTATUS[0]}
+  else SUITE_LOG=''; run_suite; rc=$?; fi
+  return "$rc"
+}
+# suite_failure_report -> after a failed run_suite_logged, the last lines of the verb's output: the failing steps (`FAILED: step` lines of
+# tests/run.sh) and failing tests (`FAIL name` lines) its report holds, where its own logs of the failed steps are, and the log of the
+# whole run. A test command that is no tests/run.sh has neither: its last lines stand in.
+suite_failure_report() {
+  local f=${SUITE_LOG:-} steps names dir
+  if [ -n "$f" ] && [ -s "$f" ]; then
+    steps=$(sed -n 's/^FAILED: //p' "$f" | awk '!s[$0]++')
+    names=$(grep -E '^FAIL( |:)' "$f" | awk '!s[$0]++')
+    dir=$(sed -n 's/^logs of the failed steps: //p' "$f" | tail -1)
+    if [ -n "$steps" ]; then echo "failing steps:"; printf '%s\n' "$steps" | head -20 | sed 's/^/  /'; fi
+    if [ -n "$names" ]; then echo "failing tests:"; printf '%s\n' "$names" | head -20 | sed 's/^/  /'; fi
+    if [ -z "$steps$names" ]; then echo "no failing test name in the output; its last lines:"; tail -5 "$f" | sed 's/^/  /'; fi
+    [ -z "$dir" ] || echo "logs of the failed steps: $dir"
+  fi
+  [ -z "$f" ] || echo "log of the whole run: $f"
+}
+# git_common DIR -> the real path of the common git directory of the repository DIR belongs to
+git_common() {
+  local c; c=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) || return 1
+  case $c in /*) ;; *) c=$1/$c;; esac
+  readlink -f -- "$c"
+}
+# suite_cmdline PID -> 0 when the process is a shell running a tests/run.sh
+suite_cmdline() {
+  local cl; cl=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null) || return 1
+  [[ $cl =~ ^(([^\ ]*/)?(bash|sh|dash|zsh)\ +(-[^\ ]+\ +)*)?([^\ ]*/)?tests/run\.sh(\ |$) ]]
+}
+# other_runs_warning -> warnings on stderr (the verb goes on) when something else of this project may be running a suite: a whole-suite
+# run of qargi in progress (a live pid in $DA_STATE/busy), a local run of the registry for this repository with a file changed in the
+# last QARGI_ACTIVE_MINUTES (default 10), or a tests/run.sh process whose directory belongs to this repository (Linux: /proc). Two suites
+# at once slow each other and fail on timeouts they would not meet alone.
+other_runs_warning() {
+  local rp mins=${QARGI_ACTIVE_MINUTES:-10} f b pid d line p cwd common anc q
+  rp=$(readlink -f -- "$REPO" 2>/dev/null) || rp=$REPO
+  case $mins in ''|*[!0-9]*) mins=10;; esac
+  for f in "$DA_STATE/busy/$PROJ."*.pid; do
+    [ -e "$f" ] || continue
+    pid=$(cat "$f" 2>/dev/null) || continue
+    case $pid in ''|*[!0-9]*) continue;; esac
+    kill -0 "$pid" 2>/dev/null || continue
+    b=${f##*/}; b=${b#"$PROJ".}; b=${b%.pid}
+    echo "qargi: warning: another whole-suite run of $PROJ is in progress ($b, pid $pid): two suites at once slow both and can fail on timeouts; going on" >&2
+  done
+  reg_load
+  for d in ${LRUNS_ORDER[@]+"${LRUNS_ORDER[@]}"}; do
+    line=${LRUNS[$d]}
+    [ "$(jq -r --arg p "$rp" 'select(.repo == $p and ((.cleaned // "") == "")) | "x"' <<<"$line" 2>/dev/null)" = x ] || continue
+    [ -d "$d" ] || continue
+    [ -n "$(find "$d" -maxdepth 4 -mmin "-$mins" -print -quit 2>/dev/null)" ] || continue
+    echo "qargi: warning: the local run $d of $PROJ had activity in the last $mins minutes: its member may be running tests; going on" >&2
+  done
+  [ -d "/proc/$$" ] || return 0
+  common=$(git_common "$REPO") || return 0
+  anc=" "; q=$$
+  while [ -n "$q" ] && [ "$q" -gt 1 ]; do anc="$anc$q "; q=$(awk '/^PPid:/ {print $2}' "/proc/$q/status" 2>/dev/null); done
+  for p in /proc/[0-9]*; do
+    pid=${p#/proc/}
+    case $anc in *" $pid "*) continue;; esac
+    suite_cmdline "$pid" || continue
+    q=$(awk '/^PPid:/ {print $2}' "$p/status" 2>/dev/null)
+    [ -z "$q" ] || ! suite_cmdline "$q" || continue   # a worker of a run counted already
+    cwd=$(readlink "$p/cwd" 2>/dev/null) || continue
+    [ "$(git_common "$cwd")" = "$common" ] || continue
+    echo "qargi: warning: tests/run.sh is running in this repository (pid $pid, in $cwd): two suites at once slow both and can fail on timeouts; going on" >&2
+  done
+}
 # suite_mode COMMAND -> how a suite command runs its steps, from its words: "-j N" and/or "shard I/K" ("" when it names neither)
 suite_mode() {
   local mode=''
@@ -303,6 +380,7 @@ project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   DETACHED=$(jq -r '(.repo.detached // [])[]' "$af")   # newline-separated: the detached long-lived branches
   DELETE_MERGED=$(jq -r '.branches.delete_merged // "local"' "$af")   # local | local+remote: where feature finish deletes the merged feature branch
   PUSH_FEATURES=$(jq -r '.branches.push_features // "never"' "$af")   # never | when-shared | always: whether the flow pushes feature branches
+  PUSH_DEVELOP=$(jq -r 'if .branches.push_develop == false then "false" else "true" end' "$af")   # true (default) | false: whether feature finish pushes develop
   WT_ROOT=$(jq -r '.worktrees.root // ""' "$af"); WT_ROOT=${WT_ROOT/#\~/$HOME}   # where qargi makes worktrees: ROOT/<branch>
   [ -n "$WT_ROOT" ] || WT_ROOT=$DA_STATE/worktrees/$PROJ
   PARK=$(jq -r '.repo.parking_branch // "scratch"' "$af")   # the branch the main checkout rests on while qargi moves develop

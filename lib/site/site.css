@@ -122,6 +122,8 @@ td:first-child code { white-space: nowrap; }
 .site-footer { border-top: 1px solid var(--border); background: var(--head-bg); color: var(--muted); font-size: 0.9rem; }
 .site-footer .wrap { padding-top: 1rem; padding-bottom: 1rem; }
 .site-footer p { margin: 0.25rem 0; }
+.site-footer .copyright { font-size: 0.8125rem; }
+.site-footer .copyright a { color: inherit; }
 
 @media (max-width: 48rem) {
   h1 { font-size: 1.6rem; }

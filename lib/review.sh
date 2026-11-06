@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The step between `qargi review check RUN_DIR` and `qargi feature merge NAME BRANCH`: put a collected, verified series on a
-# task branch of the real repository.
+# `qargi review check OUT` checks a collected series; `qargi review apply` is the step between it and `qargi feature merge NAME BRANCH`: put a collected,
+# verified series on a task branch of the real repository.
 #
+#   review.sh check OUT [--allow-empty]                       checks a member's output (RUN_DIR/out, or the run directory) with review_check.py; the
+#       lead's lease on the feature the run is based on is renewed first
 #   review.sh apply RUN_DIR [--branch BRANCH] [--project P]   agent/<slug> at the run's base with the patches applied
 #   review.sh apply --from-saved ID [--branch BRANCH] [--project P]
 #       the same from the copy `local verify` saved of the run when it passed ($QARGI_STATE/runs/ID: its OUT, its snapshots, its record),
@@ -14,6 +16,21 @@
 . "$(dirname "$0")/lib.sh"
 
 verb=${1:-}; shift || true
+if [ "$verb" = check ]; then
+  # qargi review check OUT [--allow-empty]: review_check.py reads one output directory; the lead's registry knows the run it belongs to, so the
+  # lead's lease on the feature that run is based on is renewed first (no project is needed, none is loaded)
+  . "$(dirname "$0")/marshal.sh"
+  # the argument is a run's OUT (the run is its parent directory) or the run directory itself, which review_check.py also takes (RUN/out)
+  for a in "$@"; do
+    case $a in -*) ;; *)
+      if o=$(readlink -f -- "$a" 2>/dev/null); then
+        if [ -d "$o/out" ] && [ ! -d "$o/patches" ] && [ ! -e "$o/manifest.json" ]; then marshal_touch_run "$o"; else marshal_touch_run "$(dirname "$o")"; fi
+      fi
+      break;;
+    esac
+  done
+  exec python3 -I "$(dirname "$0")/review_check.py" "$@"
+fi
 RUN_ARG='' BRANCH='' PROJ='' SAVED=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -44,10 +61,12 @@ case $verb in
       SRC=$RUN
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
+    marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
     [ "$(run_class "$SRC")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"
+    reg_load; [ -z "$(reg_get "$RUN" closed)" ] || die "this run was closed ($(reg_get "$RUN" closed_by)): its patches were applied by hand. qargi local clean $RUN removes it; nothing was applied"
     python3 -I "$lib/review_check.py" "$SRC/out" || die "review check refuses $SRC/out: nothing was applied"
     if [ -n "$SAVED" ]; then "$lib/local.sh" verify --saved "$SAVED" || die "local verify refuses the saved copy $SAVED: nothing was applied"
     else "$lib/local.sh" verify "$RUN" || die "local verify refuses $RUN: nothing was applied"; fi
@@ -108,5 +127,5 @@ case $verb in
     echo "next:"
     echo "  qargi feature merge NAME $BRANCH    (NAME: the feature this task belongs to)"
     echo "  qargi local clean $RUN${SAVED:+   (its directory is gone: once the work is merged, clean drops its record and the saved copy)}";;
-  *) usage_die "usage: qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
+  *) usage_die "usage: qargi review check OUT [--allow-empty] | qargi review apply RUN_DIR|--from-saved ID [--branch BRANCH] [--project P]";;
 esac

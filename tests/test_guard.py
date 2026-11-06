@@ -682,6 +682,22 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_release_assets_and_fix_to_a_member(self):
+        """release assets runs the project's release.assets_command (project code) and release fix makes a worktree on the release branch and pushes
+        it with --push; both verbs, and the script run directly, are refused, each with its own reason. The other release verbs and words in a quoted
+        string stay allowed."""
+        for verb, why in (("assets", "qargi release assets runs the project's release.assets_command"), ("fix", "qargi release fix makes a worktree on the release branch")):
+            for form in ("qargi release %s 0.2.0", "qargi release %s 0.2.0 --recreate --project p", "/opt/q/bin/qargi release %s 0.2.0", "sudo qargi release %s 0.2.0",
+                         "bash -c 'qargi release %s 0.2.0'", "cd src && qargi release %s 0.2.0", "qargi release --project p %s 0.2.0", "eval 'qargi release %s 0.2.0'",
+                         "bash lib/release.sh %s 0.2.0", "./lib/release.sh %s 0.2.0 --push"):
+                r = self.bash(form % verb)
+                self.assertEqual(r.returncode, 2, form % verb)
+                self.assertIn(why, r.stderr)
+        for c in ("qargi release status 0.2.0", "qargi release push 0.2.0", "echo qargi release assets", "grep -n 'release fix' lib/commands.py",
+                  "qargi help release assets", "qargi help release fix"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_env_plan_and_apply_to_a_member(self):
         """env plan runs the project's dry-run command and env apply its bootstrap: project code. Both verbs, a verb held in a variable, and the
         scripts run directly are refused; env show (it only reads) and words in a quoted string stay allowed."""
@@ -1267,13 +1283,13 @@ class Marshal(HookCase):
         cmds = ["qargi ref record --rewrite agent/x a b --why w", "qargi ref record", "qargi ref", "/opt/q/bin/qargi ref record --rewrite agent/x a b --why w",
                 "bin/qargi ref record", "env FOO=1 qargi ref record", "sudo qargi ref record", "bash -c 'qargi ref record'", "eval 'qargi ref record'",
                 "echo $(qargi ref record)", "true && qargi ref record", "ls; qargi ref record", "qargi 'ref' 'record'", "bash lib/ref.sh record --rewrite agent/x a b --why w",
-                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record"]
+                "lib/ref.sh record", "nohup qargi ref record", "v=record; qargi ref $v", "xargs qargi ref record", "qargi ref note feature/x", "bash lib/ref.sh note origin/x"]
         for c in cmds:
             res = self.bash(c)
             self.assertEqual(res.returncode, 2, (c, res.stderr))
             self.assertIn("qargi guard:", res.stderr, c)
         for c in ("qargi ref record --rewrite agent/x a b --why w", "bash lib/ref.sh record"):
-            self.assertIn("qargi ref record moves a branch of the lead's repository", self.bash(c).stderr, c)
+            self.assertIn("qargi ref record writes the lead's ref journal", self.bash(c).stderr, c)
         for c in ("echo qargi ref record", "grep -n 'ref record' lib/commands.py", "cat lib/ref.sh", "git log --grep 'ref record'"):
             res = self.bash(c)
             self.assertEqual(res.returncode, 0, (c, res.stderr))
@@ -1371,6 +1387,16 @@ class Marshal(HookCase):
                       "bash -c 'export QARGI_LEAD=me'", "sh -c 'QARGI_LEAD=me qargi marshal status'", "eval 'QARGI_LEAD=me ls'", "echo $(QARGI_LEAD=me ls)",
                       "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
                       "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
+
+    def test_the_member_mark_cannot_be_set_or_unset(self):
+        """QARGI_MEMBER_RUN tells the marshal a member is running, wherever it changes to; a member that sets or unsets it would renew the lead's lease."""
+        self.refused(["unset QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUN=", "QARGI_MEMBER_RUN= qargi feature status x", "env -u QARGI_MEMBER_RUN qargi feature status x",
+                      "env -uQARGI_MEMBER_RUN qargi feature status x", "env --unset=QARGI_MEMBER_RUN ls", "declare +x QARGI_MEMBER_RUN", "printf -v QARGI_MEMBER_RUN x",
+                      "bash -c 'unset QARGI_MEMBER_RUN; qargi feature status x'", "cd / && QARGI_MEMBER_RUN= qargi review check out", "readonly QARGI_MEMBER_RUN=",
+                      "sudo env -u QARGI_MEMBER_RUN ls"])
+        for c in ("echo $QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUNNER=1", "env | grep QARGI_MEMBER_RUN", "unset QARGI_MEMBER_RUN_X", "echo QARGI_MEMBER_RUN=1"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
 
     def test_the_lead_identity_is_found_as_env_names_finds_a_name(self):
         """lead_refusal reads the names a segment sets through env_names(), as the QARGI_NESTED check does: printf -v with the name glued to the option,
@@ -3972,7 +3998,7 @@ class FifthReview(HookCase):
 
     # --- G12: the lead's runs and agents
     def test_a_member_may_not_prepare_verify_clean_or_dispatch(self):
-        verbs = ["local clean RUN", "local clean RUN --discard", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
+        verbs = ["local clean RUN", "local clean RUN --discard", "local close RUN --applied-by-am", "local prepare P build", "local verify RUN", "agent remove m", "project new p", "team run t", "task x", "local run RUN"]
         bad = [form % v for v in verbs for form in ("qargi %s", "/opt/q/bin/qargi %s", "sudo qargi %s", "cd src && qargi %s", "bash -c 'qargi %s'", "eval 'qargi %s'", "echo $(qargi %s)",
                                                     "timeout 5 qargi %s")]
         bad += ["./lib/local.sh clean RUN", "bash lib/agent.sh remove m", "bash lib/team.sh run t", "qargi local $v RUN"]

@@ -6,6 +6,117 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `site.json` takes an optional `copyright` (one line of plain text, at most 200 characters, no markup; the forbidden words apply) that every page of the
+  site shows, escaped, in its footer, the 404 page included, and an optional `license_url` (an `https://` address) that the words "MIT licensed" in it link
+  to. With `copyright` unset the pages are unchanged. The fields of `site.json` are now listed in the header of `lib/site.py`.
+- `qargi ref note REF...` journals a branch the lead made by hand, or pushed (`origin/NAME` for a branch of origin, whose live value is asked), so
+  `qargi local verify` and `local clean` of a run prepared before accept it and name it a ref the lead noted. The journal line starts at an absent ref
+  (or at the lead's own earlier note of that ref, as with a second push), so a ref that existed when the run was prepared, and any ref nobody noted,
+  is still found. The guard refuses it to a member.
+- `qargi local close RUN --applied-by-am` closes a verified run whose patches the lead applied by hand (`git am`): the lead's registry records it (`closed`,
+  `closed_by`), the files are kept, and the run is no longer open: `lead compact-check` and the compaction advice stop counting it as applied and not merged,
+  `feature finish` is not blocked by it, `marshal status` and the handoff note list it as closed, `local list` shows `closed`, and `local clean` removes it
+  without asking for an applied tip. `review apply` refuses a closed run.
+- `lib/site.py check` and `build` refuse a line of a hand page, or of `CHANGELOG.md`, outside a code fence that starts (also behind `>` and list
+  markers) with an HTML-like tag, with the file, the line and the fix. A Kramdown (Jekyll) page reads such a line, for example a hard-wrapped code span
+  whose placeholder lands at the start of a line, as a raw HTML block and shows everything after it as plain text, while every other check stays green.
+  The site's own converter already refused raw HTML in a hand page, so its output cannot show the defect; its message now names the fix too.
+- `lib/site.py check-output DIR --pages PAGES` compares each built page with its source: the h2 and h3 headings in order, as many pre elements as fenced
+  blocks and table elements as tables. With or without `--pages` it refuses Markdown marks left in the text outside code (a backtick, `**`, `](`, `~~~`,
+  a line starting with `#` or `|`; a backtick is accepted in the command reference). `build` runs the same check on its output and removes a build that
+  does not show its pages.
+- The answer `branches.push_develop` (`true`, the default, or `false`; set it with `qargi project set PROJECT branches.push_develop
+  false`) decides whether `qargi feature finish` pushes develop to origin. The first line of the finish plan now says "will push
+  develop to origin" or "local only, will not push" with the reason (no origin, or the answer), and the plan token covers it.
+- `qargi feature verify` and `qargi release verify` warn on standard error, and go on, when another suite may be running: a
+  whole-suite run of the project in progress, a local run of the repository with a file changed in the last 10 minutes
+  (`QARGI_ACTIVE_MINUTES` changes that), or a `tests/run.sh` process in the repository (Linux).
+- `qargi release fix VERSION` makes a worktree on the release branch under the worktree root and prints its path; after the
+  fix is committed there, `release fix VERSION --push` (the same as `release push`) pushes it to the open pull request.
+  `release finish` removes that worktree with the branch.
+- `qargi release status` shows the checks of the release branch's pull request (name and pass, fail or pending), and for a tag a
+  checklist of what is left after the release: the tag on origin, the GitHub release published or missing, the assets of
+  `release.assets` present, the signatures of `release.sign.files` attached or unsigned, and the optional `release.after_steps`.
+- `qargi release finish` lists the pull request's checks in its plan and refuses, without a token, while one fails or is
+  pending, unless `--ignore-checks "<your words>"` is given (recorded in the output and the audit log when a check was actually ignored); a missing gh or
+  pull request is a warning in the plan, and the apply refuses then unless the words are given.
+- `qargi release assets VERSION` builds the release files from the tag: it makes a clean detached worktree of the tag under the
+  state directory, runs the project answer `release.assets_command` (a command line, or a list of words with `{version}` replaced)
+  in it, records the worktree, and prints where the files are and the next command (`qargi release sign`). `--recreate` builds
+  again. `release sign` and `release publish` take the files from that worktree, so the repository's own checkout is not used.
+- `release publish --asset-dir DIR` attaches every regular file of a directory; `--asset` also takes a full path inside any
+  worktree of the repository; the answer `release.assets` may list globs (and `{version}`), taken in the asset worktree when
+  there is one, else in the repository. A glob that matches nothing, a symbolic link that leaves the worktrees, a path with a `.git` component and two files of one base
+  name refuse.
+- The project answer `release.after_steps`: a list of commands or reminders (`{version}` replaced) that `qargi release finish`
+  prints as `after the release: STEP` lines and records under the state (`release/PROJECT-VERSION.after.json`) so `release status`
+  can show them. qargi never runs them.
+
+### Changed
+- `qargi feature finish` is refused first (exit 1, nothing changed) while a run prepared against the feature is open, with each open run listed and the way to
+  close it (`local clean`, or `local close --applied-by-am`). A run that was cleaned, discarded, closed, or applied and merged does not block.
+- The member text says that DONE of a write role requires `ls OUT/patches`.
+- The lead's lease on a feature no longer lapses during a long worker run: every command of the current lead on the feature renews
+  it (`feature merge`, `sync`, `status`, `verify` and `finish`; `local prepare`, `verify` and `clean`; `review check` and `apply`),
+  once a third of the lease has passed and also when it lapsed meanwhile, as long as nobody else took the feature over. Another
+  identity is still refused while the lease is live, and `marshal check` itself stays a read.
+- `marshal release NAME` after `feature finish` (or on a feature that is abandoned, already released, or has neither a record nor
+  a branch) exits 0 with one line, "nothing to release", instead of "you are not the lead of NAME, which is without a lead"; it
+  needs no `--note` then. A feature held by another lead, or one with a branch that was never claimed, is still refused.
+- `qargi feature status` says why a whole-suite result is stale: it lists the commits on the branch since the run (a merge of a task
+  branch, a merge of develop, a plain commit) and names the next step, `qargi feature verify NAME`; a feature never verified names it
+  too.
+- A failed `qargi feature verify` (and `qargi release verify`) ends its output with the failing steps and tests that the suite
+  runner's report names, where the runner kept the logs of the failed steps, and the path of a log of the whole run
+  (`STATE/suite-logs/PROJECT.feature-NAME.log`, mode 600, the last run of each). The suite's output is shown as before, now with its
+  error stream on standard output.
+- `qargi review check RUN_DIR` checks `RUN_DIR/out` when it is given a run directory (no patches or manifest.json in it, an `out`
+  directory in it) and says so in a note, so naming the run instead of its output directory is harmless. The `qargi-verify`
+  skill names `RUN_DIR/out`.
+- The `keep-a-changelog` pack tells a member to add an unnumbered bullet instead of numbering a changelog item itself, so parallel
+  tasks do not conflict on the same number; the lead renumbers at merge with `qargi changelog renumber` (a member may only run it with
+  `--check`), which `/qargi-verify` now names.
+- The write role's text says that documentation follows the code: when the brief and the code disagree, the member follows the code and
+  reports the disagreement.
+- The `docs-site-member` pack tells a member that no line may start with a less-than sign (keep a code span that holds a placeholder on one line, or put the
+  placeholder after other text) and to run the render check, not only the Markdown checks, before reporting.
+- A wrapped code span in `CONTRIBUTING.md` no longer starts a line with a less-than sign.
+
+### Fixed
+- `qargi local verify` no longer reports the harness's bridge branch as a changed ref: a branch `worktree-bridge-NAME` held by a worktree
+  directory `bridge-NAME` under a `worktrees` directory (or gone) is left out, and a branch of that name that no such worktree holds is still found.
+- `qargi local verify` fails first, with exit 1 and "OUT is empty: the member did not collect", when the clone holds commits past BASE_SHA and OUT has no
+  patches and no report, instead of leaving the lead to read the refs and the empty directory. `local clean --discard` is not affected.
+- The advisor sign-off in the `qargi-flow` skill tells the lead to put "do not run the test suite while a feature verify is
+  running" in the brief it writes for the advisor.
+- `qargi release push` for a branch whose pull request is open says `updated PR #N` instead of failing with `gh pr create failed`.
+- `qargi release site` no longer commits the built `_site/` on the site branch: a Pages build of the branch needs `_site/` empty.
+  The build still runs, so a page that does not build refuses; the commit now records the release in `site.json` and removes a
+  `_site/` that an earlier build committed.
+- The verify rule of `local verify` and `local clean` accepts a `worktree-bridge-NAME` branch as the harness's own only when the worktree that holds it is
+  the real path `<main worktree>/.claude/worktrees/bridge-NAME` and is locked, and a move of it is a fast-forward; a rewrite of the branch, a worktree of
+  that name added elsewhere or left unlocked, and a deletion while a worktree of that name is still there are found.
+- The guard refuses `qargi release assets` (it runs the project's `release.assets_command` with the lead's rights) and `qargi release fix` (it makes a
+  worktree on the release branch and pushes it with `--push`) to a member, as it does `release publish`, `sign` and `site`; the guard's docstring, `qargi help
+  guard` and the manual page list them.
+- `qargi ref note` refuses a second note of a ref whose earlier noted value is not an ancestor of its current one (the ref was rewritten between the notes),
+  says so and points to `ref record --rewrite` for an agent branch that keeps its tree, prints the author and subject of the tip it notes, and takes
+  `NAME@SHA` to note a ref only while it is at SHA.
+- `qargi local verify` of a run whose clone has commits and whose OUT is empty now also compares the refs and prints the verdict (exit 2 when they changed,
+  else 1) next to "OUT is empty: the member did not collect", so a run that both broke out and did not collect is not told only the second; nothing is
+  recorded, and the message says the run is not verified and that apply and close need a passing verify.
+- `qargi local close RUN --applied-by-am` runs the refs check again (the refs-only verify that `local clean` runs) before it marks the run closed, so a ref
+  that changed after the run's passing verify keeps the run open instead of being hidden by the close.
+- `qargi review check RUN_DIR`, given the run directory instead of its `out`, renews the lease of the feature the run is based on (it looked for the run in
+  the scratch directory before); the usage text and the header of `lib/review.sh` list `check`.
+- `qargi marshal release NAME` for a name with no record and no branch (a typo) now fails with "no feature NAME in PROJECT"; the quiet success ("nothing to
+  release", exit 0) stays for a feature that was finished, abandoned or released.
+- A member run no longer renews the lead's lease from another directory: `qargi local run` puts `QARGI_MEMBER_RUN` (the run directory) in the member's
+  environment, the marshal treats a process that has it as a member run as well as one working below a run directory (so `feature status|merge|sync` and
+  `review check` renew nothing for it), and the guard refuses a command that sets or unsets it. A member started some other way is still told by its working
+  directory alone. The comment on the guard's open `feature` verbs now says that status, merge and sync renew a lease.
+
 ## [0.2.2] - 2026-11-05
 
 ### Added

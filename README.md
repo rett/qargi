@@ -176,7 +176,10 @@ refusal changes nothing.
    `qargi feature merge NAME BRANCH`, `qargi local clean RUN`, then `qargi branch prune` to
    delete merged `agent/*` branches. Run `qargi local verify RUN` on every returned run before
    merging any of them; verify and clean accept and name qargi's own moves (`develop moved by qargi feature finish`, a fetch, the
-   parking branch fast-forwarded to develop), so a run need not be cleaned before the next `feature finish`. Keep `--scratch` on
+   parking branch fast-forwarded to develop), so a run whose work is merged need not be cleaned before the next `feature finish`. A branch you make or push yourself
+   while a run is out is accepted once you journal it with `qargi ref note BRANCH origin/BRANCH` (a ref that existed before the run still has to be explained), and the harness's own
+   `worktree-bridge-*` branches are left out. `feature finish` is refused while a run of the feature is open (the message lists it and the way to close it); a run whose
+   patches you applied by hand (`git am`) is closed with `qargi local close RUN --applied-by-am`. Keep `--scratch` on
    disk (prepare warns about a tmpfs, which a reboot empties); a passing verify also saves the run's output in `<state>/runs/`, and
    `qargi review apply --from-saved ID` applies it when the run directory is gone (`local list` shows such a run as directory gone). `qargi local list --scratch DIR` shows each run's role, slug, age and whether it is
    applied and merged; `qargi local clean --applied --scratch DIR` cleans those that are both and keeps the rest.
@@ -184,14 +187,22 @@ refusal changes nothing.
 3. When the feature is complete: `qargi feature sync NAME` (merges develop in), `qargi feature verify
    NAME` (the one whole-suite run per feature), then `qargi feature finish NAME`, the only merge into
    develop. `qargi feature status NAME` shows commits ahead and whether the whole-suite run is
-   current.
+   current (when it is not, it says which merge or sync moved the head). `verify` warns when another suite may be running, and a
+   failed one ends with the failing tests and the path of the log.
 4. `qargi release start VERSION` cuts `release/VERSION` from develop (only from a head that passed the
    suite) and bumps `VERSION` and the changelog date. `qargi release push VERSION` opens the pull
    request into master so CI runs on the commit to be released; `qargi release finish VERSION`
    merges into master, tags, merges back into develop and pushes. `release status` and `release
-   verify` work as for features.
+   verify` work as for features. `release status` shows the checks of the pull request and, after the finish, what
+   is left (tag on origin, GitHub release, assets, signatures); `release finish` lists the checks and refuses
+   while one fails or is pending, unless `--ignore-checks "<your words>"`. To fix a failed check, `qargi release
+   fix VERSION` makes a worktree on the release branch and `release fix VERSION --push` pushes the fix to the open
+   pull request.
    Pushing the tag publishes the GitHub release through the workflow; for a tag that predates it,
-   `qargi release publish TAG` creates the release from the changelog section (plan and token).
+   `qargi release publish TAG` creates the release from the changelog section (plan and token). The files to attach can be built
+   from the tag without touching your checkout: `qargi release assets VERSION` runs the project's `release.assets_command` in a clean
+   worktree of the tag, `release sign` signs there, and `release publish` attaches `release.assets` (globs), `--asset FILE` and
+   `--asset-dir DIR` from it.
 5. A hotfix is the same with `--hotfix`: `qargi release start VERSION --hotfix` (from master), then
    `release push` and `release finish --hotfix` (into the open release branch instead of develop,
    if there is one).
@@ -214,8 +225,13 @@ into it with `qargi feature merge docs-site agent/<slug>`: a plan and token, loc
 A documentation site kept on such a branch is regenerated when a release ships. With `site.enabled` set to `true` (and
 `site.branch`, which defaults to `gh-pages` when `repo.detached` lists it, and `site.config`, default `site/site.json` with the
 hand pages in `site/pages/`), `release finish` ends with `next: qargi release site VERSION`. That verb builds the site of the
-tag with `lib/site.py` and commits it on the site branch (`_site/`), behind a plan and token; it never pushes and prints the
-push command. `release status VERSION` says whether the site of that version is built and pushed.
+tag with `lib/site.py` to check it and commits the release it built on the site branch (`site.json`; the build's `_site/` is not
+committed, because a Pages build needs it empty), behind a plan and token; it never pushes and prints the push command. `release status VERSION` says whether the site of that version is built and pushed.
+
+Two optional fields of `site.json` add a line to the footer of every page, the 404 page included. `copyright` is one line of plain text (at most 200
+characters, no `<` or `>`, shown escaped), for example `"(c) 2026 Example Author. MIT licensed."`; the forbidden words of `site.json` apply to it.
+`license_url` is an `https://` address (no query or fragment) that the words "MIT licensed" in `copyright` link to; without those words it is not
+shown and `lib/site.py check` warns. With `copyright` unset the pages are unchanged. The fields of `site.json` are listed in the header of `lib/site.py`.
 
 ### Feature branches on origin
 
@@ -224,7 +240,9 @@ Two answers decide what the flow does with a feature branch on origin. `branches
 under `always`, or under `when-shared` when origin already has it. Setting it is the standing approval for those pushes; develop,
 master and release branches keep their plans and tokens. `branches.delete_merged` is `local` (the default) or `local+remote`: with
 `local+remote`, `feature finish` also deletes the branch on origin when origin has it and holds nothing the feature lacks; the plan
-shows the deletion and its token covers origin's tip.
+shows the deletion and its token covers origin's tip. `branches.push_develop` is `true` (the default) or `false`: `feature finish`
+pushes develop to origin, when the repository has one, unless it is `false`. The first line of the finish plan says which ("will
+push develop to origin", or "local only, will not push" and why), and the token covers it.
 
 ### Pruning merged branches
 
