@@ -4,19 +4,13 @@
  "goal": "0.2.4: README split into a short intro plus a docs index; ref-move accounting and merged-run test; unrelated-histories release; author reset on apply; lead context window per model",
  "plan": "",
  "note": "",
- "status": "active",
- "lead": {
-  "id": "rett@arc",
-  "user": "rett",
-  "host": "arc",
-  "since": "2026-11-06T03:04:23Z",
-  "worktree": "94b9af1305afafc4"
- },
+ "status": "finished",
+ "lead": null,
  "renewed_at": "2026-11-06T04:56:48Z",
- "finished_at": null,
+ "finished_at": "2026-11-06T04:59:28Z",
  "updated_by": "rett@arc",
- "rev": 11,
- "updated_at": "2026-11-06T04:56:48Z",
+ "rev": 12,
+ "updated_at": "2026-11-06T04:59:28Z",
  "feature": "rel-0-2-4",
  "project": "qargi"
 }
