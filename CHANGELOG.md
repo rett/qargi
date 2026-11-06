@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
+  into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
+  `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
+  point at the new pages.
+
 ## [0.2.3] - 2026-11-05
 
 ### Added
