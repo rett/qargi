@@ -13,7 +13,7 @@ JSON pointers that pick the last assistant turn and add up its input, cache-read
 lead.context_window, else the runtime's. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
-verified and not applied (or applied and not merged), a merge waiting in the conflicts directory, a whole-suite run in progress
+verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory, a whole-suite run in progress
 (a live pid file in $STATE/busy, which feature verify and release verify keep), a handoff note (the file `marshal handoff --write` records
 in $STATE/handoff/PROJECT.json) older than the last merge of the ref journal, and a release or hotfix branch that is open. Either way it
 prints the restart block: what the lead reads again after the compact to resume from stored state. --advise adds the verdict on the
@@ -272,12 +272,9 @@ def registry(state):
     return out
 
 
-def merged(repo, tip):
-    """True when the commit tip is on a local branch other than agent/*."""
-    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tip or ""):
-        return False
-    refs = git(repo, "for-each-ref", "--contains=" + tip, "--format=%(refname)", "--", "refs/heads") or ""
-    return any(r and not r.startswith("refs/heads/agent/") for r in refs.split())
+def merged(repo, tip, state):
+    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit)."""
+    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state)
 
 
 def open_runs(state, repo, url):
@@ -297,7 +294,7 @@ def open_runs(state, repo, url):
                 tip = open(os.path.join(d, "applied"), errors="replace").read().split()[1]
             except (OSError, IndexError):
                 tip = ""
-            if not merged(repo, tip):
+            if not merged(repo, tip, state):
                 res.append((d, slug, role, base, "applied, not merged"))
         elif os.path.exists(os.path.join(d, "verified")):
             res.append((d, slug, role, base, "verified, not applied"))

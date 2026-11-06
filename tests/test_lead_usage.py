@@ -247,6 +247,65 @@ class Check(Base):
             f.write("agent/x not-a-sha\n")
         self.assertEqual(self.check()[0], 1)
 
+    def journal_rewrite(self, old, new, repo=None, verb="ref:rewrite"):
+        with open(os.path.join(self.state, "ref-journal.jsonl"), "a") as f:
+            f.write(json.dumps({"at": "x", "epoch": 1, "verb": verb, "project": "app", "repo": repo or self.repo, "ref": "refs/heads/agent/x", "old": old, "new": new, "by": "t"}) + "\n")
+
+    def test_a_rewritten_and_merged_run_is_settled_here_as_in_local_list_and_clean(self):
+        """merged is one test (lib/merged.py) for local list, local clean and compact-check: a tip the lead rewrote (qargi ref record --rewrite,
+        journaled as ref:rewrite) counts by the commit it was rewritten to, and the run directory may sit in any (old) scratch directory."""
+        self.git("checkout", "-q", "-b", "agent/x")
+        self.git("commit", "-q", "--allow-empty", "-m", "work")
+        old = self.git("rev-parse", "HEAD")
+        self.git("commit", "-q", "--allow-empty", "--amend", "-m", "work, reworded")
+        new = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "master")
+        self.git("branch", "-D", "agent/x")                                                              # only the rewritten commit is left, on the feature branch
+        self.git("branch", "feature/lc", new)
+        old_scratch = os.path.join(self.t, "scratch-from-last-month")
+        os.makedirs(old_scratch)
+        d = os.path.join(old_scratch, "qargi.old001")
+        os.makedirs(d)
+        for fn, text in (("applied", "agent/x %s\n" % old), ("refs.before", ""), ("ability", "build\n")):                # what local list needs of a run directory
+            with open(os.path.join(d, fn), "w") as f:
+                f.write(text)
+        self.registry({"run": d, "slug": "old", "ability": "build", "base": "feature/lc", "started": "1", "repo": self.repo})
+        rc, out, _ = self.check()
+        self.assertEqual(rc, 1)                                                                          # not journaled: the old commit is nowhere, so the run is not merged
+        self.assertIn("a local run is applied and not merged: " + d, out)
+        self.journal_rewrite(old, new)
+        rc, out, _ = self.check()
+        self.assertEqual(rc, 0, out)                                                                     # journaled: merged, wherever its directory is
+        self.assertIn("open runs: none", out)
+        rc, out, _ = self.run_cli("feature", "finish", "lc")
+        self.assertNotIn("open run", out)
+        rc, out, _ = self.run_cli("local", "list")
+        self.assertRegex(out, r"build +old +\S+ +yes +yes +" + re.escape(d))                                    # the same verdict in local list
+        os.remove(os.path.join(self.state, "ref-journal.jsonl"))
+        self.journal_rewrite(old, new, repo=os.path.join(self.t, "elsewhere"))                           # a rewrite of another repository is not this run's
+        self.assertEqual(self.check()[0], 1)
+
+    def test_a_rewrite_chain_is_followed_and_only_a_rewrite_counts(self):
+        self.git("checkout", "-q", "-b", "agent/x")
+        self.git("commit", "-q", "--allow-empty", "-m", "work")
+        a = self.git("rev-parse", "HEAD")
+        self.git("commit", "-q", "--allow-empty", "--amend", "-m", "two")
+        b = self.git("rev-parse", "HEAD")
+        self.git("commit", "-q", "--allow-empty", "--amend", "-m", "three")
+        c = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "master")
+        self.git("branch", "-D", "agent/x")
+        self.git("branch", "feature/lc", c)
+        d = self.run_dir("r1", ("applied", "agent/x %s\n" % a))
+        self.journal_rewrite(a, b)
+        self.assertEqual(self.check()[0], 1)                                                             # a -> b: b is on no branch yet
+        self.journal_rewrite(b, c)
+        self.assertEqual(self.check()[0], 0)                                                             # a -> b -> c: c is on feature/lc
+        os.remove(os.path.join(self.state, "ref-journal.jsonl"))
+        self.journal_rewrite(a, c, verb="ref:note")                                                      # another verb is no rewrite
+        self.assertEqual(self.check()[0], 1)
+        self.assertTrue(os.path.isdir(d))
+
     def test_runs_of_another_repository_and_cleaned_runs_are_not_counted(self):
         self.run_dir("other", repo=os.path.join(self.t, "elsewhere"))
         gone = self.run_dir("gone")

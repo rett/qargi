@@ -445,7 +445,7 @@ COMMANDS = {
                            desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
                                  "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
                                  "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
-                                 "local clean and local list follow the applied tip of a run to NEW. No working tree, other ref or origin is touched. Not available in a member run."),
+                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. Not available in a member run."),
                            examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
             "note": verb("Journal a branch you made by hand, or pushed to origin, so that local verify accepts it", [("REF", "none")],
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
@@ -1258,7 +1258,7 @@ COMMANDS = {
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
-                                        "than the last merge; or a release or hotfix branch is open. It prints the restart block: the handoff note, qargi marshal status, "
+                                        "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
                                         "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
                                         "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
                                         "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off)."),

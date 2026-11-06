@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
+  for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
+  a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
+
 ## [0.2.3] - 2026-11-05
 
 ### Added
