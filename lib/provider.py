@@ -872,6 +872,18 @@ def _resource_problems(res, extension=False):
         w = tr.get("window")
         if w is not None and (not isinstance(w, int) or isinstance(w, bool) or w < 1000):
             bad.append("resources.transcripts.window: %s is not a number of tokens (at least 1000)" % _show(w))
+        ws = tr.get("windows")
+        if isinstance(ws, list):
+            if len(ws) > WINDOWS_MAX:
+                bad.append("resources.transcripts.windows: %d entries are more than the %d a definition may hold" % (len(ws), WINDOWS_MAX))
+            for i, e in enumerate(ws):
+                if not isinstance(e, dict):
+                    continue                                   # the schema reports the type
+                m, n = e.get("model"), e.get("tokens")
+                if isinstance(m, str) and (len(m) > 80 or _addendum_has_bad_character(m)):
+                    bad.append("resources.transcripts.windows[%d].model: %s is not a pattern (plain text of at most 80 characters)" % (i, _show(m)))
+                if n is not None and (not isinstance(n, int) or isinstance(n, bool) or n < 1000):
+                    bad.append("resources.transcripts.windows[%d].tokens: %s is not a number of tokens (at least 1000)" % (i, _show(n)))
         us = tr.get("usage") if isinstance(tr.get("usage"), dict) else {}
         for k in ("select", "skip"):
             for ptr, want in (us.get(k) or {}).items() if isinstance(us.get(k), dict) else ():
@@ -1672,18 +1684,49 @@ def memory_dir(name, checkout, root=None, home=None, library=None, project=None,
 
 
 TRANSCRIPT_WINDOW = 200000   # the context window assumed when the definition names none
+WINDOWS_MAX = 32             # entries of resources.transcripts.windows
 
 
 def transcripts(name, checkout, root=None, home=None, library=None, project=None, conf=None):
     """Where the runtime keeps the transcripts of the sessions started in a checkout, and how to read the context in use from one, or
     Unsupported: {dir, ext, usage, window}. dir has {checkout_key} filled in; usage is the definition's reading rule (select, skip,
     tokens, fields, model: JSON pointers into one record of a transcript, which is a file of JSON lines); window is the context window
-    in tokens (the definition's, else TRANSCRIPT_WINDOW)."""
+    in tokens that is only assumed (the definition's, else TRANSCRIPT_WINDOW); windows is the definition's list of (model pattern, window)
+    pairs, which transcript_window matches against a model id."""
     tr = require(name, "transcripts", "find the transcripts of the runtime's sessions", root, home, library, project, conf)
     d = tr["user_dir"]
     if "{checkout_key}" in d:
         d = d.replace("{checkout_key}", checkout_key(tr.get("checkout_key") or "nonalnum-dash", checkout))
-    return {"dir": d, "ext": tr.get("ext") or ".jsonl", "usage": dict(tr.get("usage") or {}), "window": tr.get("window") or TRANSCRIPT_WINDOW}
+    return {"dir": d, "ext": tr.get("ext") or ".jsonl", "usage": dict(tr.get("usage") or {}), "window": tr.get("window") or TRANSCRIPT_WINDOW,
+            "windows": [(e["model"], e["tokens"]) for e in (tr.get("windows") or ()) if isinstance(e, dict) and isinstance(e.get("model"), str) and isinstance(e.get("tokens"), int)]}
+
+
+def _glob(pat, text):
+    """Whether pat matches the whole text, * standing for any run of characters and every other character for itself, case ignored. Two
+    pointers and one place to go back to, so the time is at most the product of the lengths whatever the pattern."""
+    pat, text = pat.lower(), text.lower()
+    p = t = 0
+    star = mark = -1
+    while t < len(text):
+        if p < len(pat) and pat[p] == "*":
+            star, mark, p = p, t, p + 1
+        elif p < len(pat) and pat[p] == text[t]:
+            p, t = p + 1, t + 1
+        elif star >= 0:
+            mark += 1
+            p, t = star + 1, mark
+        else:
+            return False
+    return pat[p:].strip("*") == ""
+
+
+def transcript_window(tr, model):
+    """(tokens, source) for the model id of a session: source is "model" when an entry of tr["windows"] (the first whose pattern matches the
+    whole id) names it, else "assumed" with tr["window"], which is only a guess."""
+    for pat, tokens in tr.get("windows") or ():
+        if model and _glob(pat, model):
+            return tokens, "model"
+    return tr["window"], "assumed"
 
 
 def launch_line(name, render, root=None, library=None, project=None, conf=None):

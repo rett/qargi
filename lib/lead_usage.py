@@ -10,7 +10,9 @@ The lead's own context is the cost the owner cares about most, so qargi measures
 hook can run it) is safe. Where the transcripts are and how to read the context in use from one come from the project's local runtime
 (resources.transcripts of lib/providers/NAME.json, lib/provider.py): a directory of JSON-line files named for the session id, and
 JSON pointers that pick the last assistant turn and add up its input, cache-read and cache-creation tokens. The window is the answer
-lead.context_window, else the runtime's. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
+lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
+definition's single window, which is only assumed. --json says which in window_source: "answer", "model" or "assumed". Nothing is written;
+a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
 verified and not applied (or applied and not merged), a merge waiting in the conflicts directory, a whole-suite run in progress
@@ -200,7 +202,7 @@ def find_transcript(a, answers, tr_for):
 
 def measure(a, conf):
     """-> the usage as a dict; known is False with why when it cannot be read."""
-    out = {"known": False, "tokens": None, "window": None, "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
+    out = {"known": False, "tokens": None, "window": None, "window_source": "", "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
     try:
         project = a.project
         if not project:
@@ -215,7 +217,8 @@ def measure(a, conf):
             tr0 = tr_for(os.getcwd())
         except P.ProviderError as e:
             raise Soft(clean(str(e)))
-        out["window"] = lead_answer(answers, "context_window", tr0["window"], 1000)
+        out["window"] = lead_answer(answers, "context_window", None, 1000)
+        out["window_source"] = "answer" if out["window"] else ""
         path, sid, why = find_transcript(a, answers, tr_for)
         out["session"] = sid
         if not path:
@@ -226,6 +229,8 @@ def measure(a, conf):
         if not t:
             raise Soft("no turn with a token count in the transcript yet")
         out["tokens"], out["model"] = t
+        if not out["window"]:
+            out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
         out["percent"] = round(t[0] * 100.0 / out["window"], 1)
         out["known"] = True
     except Soft as e:

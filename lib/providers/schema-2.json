@@ -306,7 +306,7 @@
       }
     },
     "res_transcripts": {
-      "description": "where the runtime keeps the transcripts of its sessions (a file of JSON lines per session, named for the session id, in user_dir; {checkout_key} as for memory) and how to read the context in use from one. usage names JSON pointers into one line: select and skip are maps from a pointer to the value that picks a line (select) or drops it (skip); tokens points at the object holding the counts, fields lists the counts that add up to the context in use, model points at the model id. window is the context window in tokens.",
+      "description": "where the runtime keeps the transcripts of its sessions (a file of JSON lines per session, named for the session id, in user_dir; {checkout_key} as for memory) and how to read the context in use from one. usage names JSON pointers into one line: select and skip are maps from a pointer to the value that picks a line (select) or drops it (skip); tokens points at the object holding the counts, fields lists the counts that add up to the context in use, model points at the model id. window is the context window in tokens that is assumed when the answer lead.context_window is not set and no entry of windows matches the model id; windows is a list, first match wins, of {model, tokens}: model is a pattern for the whole model id in which * stands for any run of characters and every other character is itself (case does not matter), tokens the window of a model that matches.",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
@@ -314,6 +314,18 @@
         "checkout_key": {"enum": ["nonalnum-dash", "sha256-16", "none", null]},
         "ext": {"type": "string", "pattern": "^\\.[a-z0-9]{1,8}$"},
         "window": {"type": ["integer", "null"]},
+        "windows": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["model", "tokens"],
+            "properties": {
+              "model": {"type": "string", "minLength": 1},
+              "tokens": {"type": "integer"}
+            }
+          }
+        },
         "usage": {
           "type": ["object", "null"],
           "additionalProperties": false,

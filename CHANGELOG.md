@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window: the window is the answer
+  `lead.context_window`, else the one the runtime's definition gives for the model id of the session's last assistant turn
+  (`resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of characters; `claude-code`
+  ships `*[1m]` and `*-1m` as 1000000), else the definition's single `window`. A session on a 1,000,000 window no longer reads as 96% full.
+  `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
+
 ## [0.2.3] - 2026-11-05
 
 ### Added

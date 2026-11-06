@@ -83,6 +83,7 @@ class Usage(Base):
         rc, out, _ = self.run_cli("lead", "usage", "--json")
         d = json.loads(out)
         self.assertEqual((rc, d["known"], d["tokens"], d["window"], d["percent"], d["session"]), (0, True, 50000, 200000, 25.0, "s1"))
+        self.assertEqual(d["window_source"], "assumed")
         self.assertGreater(d["bytes"], 0)
 
     def test_sidechain_and_empty_turns_do_not_count(self):
@@ -133,10 +134,34 @@ class Usage(Base):
         self.answers["lead"] = {"context_window": 1000000}
         self.write_answers()
         d = json.loads(self.run_cli("lead", "usage", "--json")[1])
-        self.assertEqual((d["window"], d["percent"]), (1000000, 10.0))
+        self.assertEqual((d["window"], d["percent"], d["window_source"]), (1000000, 10.0, "answer"))
         self.answers["lead"] = {"context_window": "big"}                                              # not a number: the runtime's window
         self.write_answers()
         self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window"], 200000)
+
+    def test_the_window_follows_the_model_of_the_last_turn(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-a"), turn(1, 192117, 0, model="model-b[1m]")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"], d["model"]), (1000000, "model", 19.2, "model-b[1m]"))
+        self.transcript("s1", [turn(1, 192117, 0, model="model-b-1m")])
+        self.assertEqual(json.loads(self.run_cli("lead", "usage", "--json")[1])["window"], 1000000)
+        self.transcript("s1", [turn(1, 192117, 0, model="model-b[1m]"), turn(1, 99999, 0, model="model-a")])      # the last turn's model, not an earlier one
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"]), (200000, "assumed"))
+
+    def test_an_unknown_model_gets_the_runtimes_window_marked_assumed(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-a")])
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (200000, "assumed", 50.0))
+        for k in ("known", "tokens", "window", "percent", "model", "session", "transcript", "bytes", "why"):      # the keys that were there stay
+            self.assertIn(k, d)
+
+    def test_the_answer_wins_over_the_model(self):
+        self.transcript("s1", [turn(1, 99999, 0, model="model-b[1m]")])
+        self.answers["lead"] = {"context_window": 400000}
+        self.write_answers()
+        d = json.loads(self.run_cli("lead", "usage", "--json")[1])
+        self.assertEqual((d["window"], d["window_source"], d["percent"]), (400000, "answer", 25.0))
 
     def test_everything_that_cannot_be_read_is_unknown_with_exit_0(self):
         rc, out, _ = self.run_cli("lead", "usage")                                                    # an empty transcripts directory
