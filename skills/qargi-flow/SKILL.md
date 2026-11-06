@@ -43,6 +43,7 @@ review; `qargi methodology show gitflow` prints the model.
    branch deleted, master, develop and the tag pushed together. `release finish` refuses while a pull request
    check fails or is pending; `--ignore-checks "<the user's words>"` overrides, on the user's words only. To fix: `qargi release fix VERSION`
    (a worktree on the release branch), commit, then `release fix VERSION --push`.
+   A master that shares no history with the release branch is joined by `release push` (a plan line; the tree is unchanged).
 6. **Hotfix** a critical bug in production: `qargi release start VERSION --hotfix` (from master), fix, `release push`,
    `release finish --hotfix` (merges into the open release branch instead of develop when one exists).
 
