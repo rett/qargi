@@ -76,7 +76,7 @@ out=$(verify "$RB"); rc=$?
 $DA review apply "$RB" >/dev/null 2>&1 && $F merge fa agent/b >/dev/null 2>&1 && $DA local verify "$RB" >/dev/null 2>&1 && ok "and B itself can then be applied and merged, and still verifies" || no "B after A: $(verify "$RB")"
 
 # the journal's shape: one JSON line per move with every field
-bad=$(jq -c 'select((keys | sort) != ["at","by","epoch","new","old","project","ref","repo","verb"] or (.old|test("^[0-9a-f]{40}$")|not) or (.new|test("^[0-9a-f]{40}$")|not) or (.epoch|type) != "number" or .project != "app" or (.by|length) == 0 or (.verb|length) == 0)' "$J" 2>&1 | head -3)
+bad=$(jq -c 'select((keys - ["why"] | sort) != ["at","by","epoch","new","old","project","ref","repo","verb"] or (.old|test("^[0-9a-f]{40}$")|not) or (.new|test("^[0-9a-f]{40}$")|not) or (.epoch|type) != "number" or .project != "app" or (.by|length) == 0 or (.verb|length) == 0)' "$J" 2>&1 | head -3)
 [ -f "$J" ] && [ -z "$bad" ] && ok "every journal line has at, epoch, verb, project, repo, ref, old, new and by" || no "journal lines: $bad"
 [ "$(jq -r '.repo' "$J" | sort -u | wc -l)" = 1 ] && ok "every line names the same repository" || no "repo field"
 jq -e 'select(.verb | test("merge"))' "$J" >/dev/null && ok "the verb of a merge says so" || no "verb"
@@ -190,6 +190,8 @@ git -C "$A" branch -f scratch develop; git -C "$A" branch zz2 develop~1
 R=$(fresh r-park3); git -C "$A" branch -f zz2 develop
 refused "$R" "a hand fast-forward to develop of a branch that is not the parking branch"
 jq '.repo.parking_branch = "zz2"' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"
+git -C "$A" branch -f zz2 develop~1
+R=$(fresh r-park4); git -C "$A" branch -f zz2 develop   # the answers of a run are the ones at its prepare, so the run is made after the change
 out=$($DA local verify "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "zz2 (the parking branch)" <<<"$out" && ok "the parking branch is the one the answers name (repo.parking_branch)" || no "answers parking: rc=$rc $out"
 jq 'del(.repo.parking_branch)' "$T/c/projects/app.json" > "$T/app.json" && mv "$T/app.json" "$T/c/projects/app.json"

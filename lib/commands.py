@@ -144,7 +144,8 @@ COMMANDS = {
                           desc=("Prints the plan and a token: the local branches it would create (at the default branch tip; main stands for master; none is moved) and the files from the "
                                 "methodology that do not exist, written as one commit on agent/adopt-NAME cut from develop. With --plan and --approved it creates exactly that. Existing "
                                 "branches and files are never changed, nothing is pushed or checked out, and a second run finds nothing to do. Changelog format, tag format and CI content "
-                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited). "
+                                "are listed as left for you, and so are the bootstrap and doctor targets a repository with a task runner lacks (an existing file is not edited), and long-lived branches "
+                                "that share no history (a master made as a snapshot has no merge base with develop): none is joined here, and the line says that release push joins the history of master. "
                                 "The AGENTS.md section it drafts names the repository's own runner. Refused (exit 2) with a dirty working tree, a detached HEAD, no commits, a project that is not attached, and in a member run."),
                           examples=["qargi project adopt acme", 'qargi project adopt acme --plan TOKEN --approved "go ahead"']),
             "set": verb("Change one answer", [("NAME", "project"), ("PATH", "key"), ("VALUE", "value")],
@@ -152,8 +153,11 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*."),
-                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true",
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
+                              "git.author ('Name <email>') is the author qargi review apply gives the commits it applies, and review.keep_author true keeps the member's author instead; a member's guard refuses setting them. "
+                              "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
+                              "the guard refuses it to a member too."),
+                        examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true", "qargi project set acme git.author 'Example Author <author@example.com>'",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
             "list": verb("List the stored projects"),
@@ -445,7 +449,7 @@ COMMANDS = {
                            desc=("REF is an agent/* branch (agent/NAME or refs/heads/agent/NAME). It refuses NEW unless git rev-parse OLD^{tree} and NEW^{tree} are the same, "
                                  "and REF unless it is at OLD now; the move is then a compare-and-swap (git update-ref REF NEW OLD), so nothing moves when REF changed meanwhile. "
                                  "The journal line has verb ref:rewrite and the reason, and a run prepared before the move verifies and is cleaned with it named as a rewrite; "
-                                 "local clean and local list follow the applied tip of a run to NEW. No working tree, other ref or origin is touched. Not available in a member run."),
+                                 "local clean, local list, lead compact-check and feature finish follow the applied tip of a run to NEW (one test, lib/merged.py). No working tree, other ref or origin is touched. Not available in a member run."),
                            examples=["qargi ref record --rewrite agent/fix-names 1a2b3c4 5d6e7f8 --why \"reworded two messages\""]),
             "note": verb("Journal a branch you made by hand, or pushed to origin, so that local verify accepts it", [("REF", "none")],
                          [opt("--why", "a reason, journaled with a local branch", "TEXT"), PROJECT_OPT],
@@ -486,7 +490,8 @@ COMMANDS = {
                                 "with a date and a version field, which the first commit sets to the date and VERSION (the pages are release.man_pages, else man/*.1); a CHANGELOG.md needs content under "
                                 "its unreleased heading ('## [Unreleased]', or release.changelog.unreleased). The version file is release.version_file (default VERSION; none: no file is bumped). "
                                 "release.preflight runs before anything changes. A project without a man page or changelog is not checked for that part. A release (not a hotfix) ends by listing what it contains: "
-                                "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha.")),
+                                "the features merged into develop since the previous tag, the --no-ff merges whose message is \"Merge branch 'feature/...'\", one per line with the short sha. "
+                                "When master and the new branch share no history (no merge base: master is one snapshot commit, say) it says so and that release push joins them.")),
             "status": verb("Show the branch, its commits and whether the whole suite passed at its head", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT],
                          desc=("The full-suite verdict names the command that produced it, when it ran, how long it took and the mode the command names (-j N, shard I/K), from the suite record (a record made before the duration was kept shows the command and the time only). When release.test_command is set and is not that command, "
                                "a line of its own says so: the pass is then not the release gate (release verify runs release.test_command). " + REMOTE_NOTE + " " + TAG_NOTE + " Only when the optional answer release.sign is set (the default is not) and the tag has no GitHub release, it also says 'awaiting signature' "
@@ -496,6 +501,7 @@ COMMANDS = {
                                "(the commit of qargi release site on the site branch, and whether the live origin has it). "
                                "While the release branch exists and the repository has an origin it shows the checks of the branch's pull request (gh pr checks, through QARGI_GH): "
                                "a verdict and one line per check with its state, pass, fail or pending; a missing gh, no pull request or no checks is a warning. "
+                               "A branch that shares no history with master (no merge base) gets a warning that release push joins it. "
                                "For a tag that exists it ends with a checklist of what is left after the release: whether origin has the tag, whether the GitHub release is published or missing, "
                                "for each entry of the answer release.assets ({version} replaced; a glob by its base name) whether the release has it, for each file of release.sign.files whether its .sig is attached (UNSIGNED when not), "
                                "and the project's own after-steps: the ones release finish recorded, else the optional answer release.after_steps (a list of words, {version} replaced); qargi lists them but does not track that they were done.")),
@@ -511,7 +517,12 @@ COMMANDS = {
             "push": verb("Push the branch and open the pull request into master", [("VERSION", "none")], [PROJECT_OPT, HOTFIX_OPT, PLAN, APPROVED],
                          desc=REMOTE_NOTE + " When release.preflight is set it runs in a copy of the branch once the plan is approved, before anything is pushed; a non-zero exit refuses. "
                               "When a pull request for the branch is open already (found with gh pr list; a gh that cannot list it is caught by the refusal of gh pr create) the plan says so, "
-                              "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed."),
+                              "nothing is opened and the result reads 'updated PR #N'; a worktree of the branch with uncommitted changes is a warning, only what is committed is pushed. "
+                              "When master and the branch share no history (no merge base: git would refuse to merge unrelated histories, as with a master that is one parentless snapshot commit) "
+                              "the plan has the line 'join the history of master': once approved, master is merged into the branch with -s ours --allow-unrelated-histories, in a temporary worktree, "
+                              "as a new commit after the version bump and before the push, so CI runs on the joined head and release finish is an ordinary --no-ff merge. The tree of the branch must be the same "
+                              "before and after (checked, with the parents of the commit); otherwise nothing moves and nothing is pushed. The plan token covers the join and master's head. "
+                              "A branch that is checked out in a worktree with uncommitted changes is refused for the join."),
             "finish": verb("After the checks pass: merge into master, tag, merge back, delete the branch, push", [("VERSION", "none")],
                            [PROJECT_OPT, HOTFIX_OPT, opt("--keep", "keep the branch"),
                             opt("--ignore-checks", "finish although the pull request's checks fail, are pending or cannot be read; WORDS are your reason, in your own words, recorded in the output and the audit log", "WORDS"),
@@ -521,7 +532,8 @@ COMMANDS = {
                                  "(the checks are read again) unless --ignore-checks is given. A clean worktree that release fix made is removed with the branch. "
                                  "Merging back may conflict, usually over the version number (the model says so). Nothing moves then: resolve in the worktree "
                                  "the message names, commit, and run the same command with --resolved. It refuses a branch whose manual page has an empty .TH date or version, "
-                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. " + REMOTE_NOTE + " "
+                                 "and, when release.version_file is none, one whose changelog has no section for VERSION. It also refuses, with the fix, a branch that shares no history with master (no merge base): "
+                                 "run release push first, whose plan joins the history of master. " + REMOTE_NOTE + " "
                                  "When the answer release.after_steps lists steps (commands or reminders, {version} replaced), it prints each as an 'after the release: STEP' line, never runs them, and "
                                  "records them under the state's release directory (PROJECT-VERSION.after.json) for release status. "
                                  "It ends with a 'next: ...' line for each after_release step of the methodology whose answer is true: with site.enabled, "
@@ -987,7 +999,7 @@ COMMANDS = {
                             [opt("--repo", "the local repository", "DIR", "dir"), opt("--repo-url", "clone a private repository from this https URL (no user name or password in it: that is --credential-file)", "URL"),
                              opt("--credential-file", "token file for --repo-url", "FILE", "file"), opt("--base", "the base branch", "BRANCH", "branch"),
                              opt("--slug", "the task slug (branch agent/<slug>)", "SLUG"), opt("--scratch", "where to put the run", "DIR", "dir"),
-                             opt("--role", "the task's role, written to RUN/ability with its class in RUN/class; a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
+                             opt("--role", "the task's role, written to RUN/ability, with its class in RUN/class and in your registry (the registry's decides); a read-only role keeps the clone unchanged (default build)", "ROLE", "workrole"),
                              opt("--profile", "the profile to dispatch under (for example advisor or auditor for review); resolved before any clone, refused when its class does not fit the role, recorded in RUN/profile and printed with MEMBER, MODEL and EFFORT", "NAME")],
                             desc=("Prints KEY=value lines: RUN, ROLE, CLASS, PROFILE (the role's own unless --profile), MEMBER, MODEL and EFFORT (only with --profile), CLONE, OUT, TMP, GIT, "
                                   "BASE_SHA, CONTRACT (the run's own copy of the member contract, with the contract addenda of the project's local runtime as runtime-addenda.md) and, when the role declares "
@@ -1014,6 +1026,13 @@ COMMANDS = {
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
+                                 "The refs a runtime or harness creates in the repository can be declared in the project answer runs.owned_refs, a list of glob patterns for full ref names "
+                                 "(qargi project set PROJECT runs.owned_refs '[\"refs/heads/foo-*\"]'; only the lead sets it, and project validate checks it): a local ref that matches one is accepted in either phase and "
+                                 "named (\"foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)\"). A pattern needs a literal prefix of at least 3 characters after refs/NAMESPACE/, "
+                                 "may not match develop, master, a repo.long_lived branch, or be able to match anything inside the git-flow branches (agent/, feature/, release/, hotfix/) or the tags (rel*/0* is refused as release/ is), "
+                                 "and a ref is never taken as owned when it is the base of a run that is not cleaned or closed, a worktree-bridge-* branch, a git-flow branch or a tag; a ref that matches no valid pattern is checked as before, in the strict phase too. "
+                                 "The answers verify and clean read (runs.owned_refs, repo.long_lived, repo.parking_branch) are the copy prepare took into your registry, "
+                                 "not the stored file of the day: a change of them takes effect on the runs prepared after it. "
                                  "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
                                  "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
@@ -1036,7 +1055,8 @@ COMMANDS = {
                            opt("--scratch", "with --applied or --stale: the directory the runs were prepared in; only the run directories directly under it are looked at", "DIR", "dir")],
                           desc=("Prepare makes a private temporary directory for the run (TMP, on /dev/shm when it exists) that the agent puts its test "
                                 "sandboxes in; clean removes it with the clone, the bare copy and the output (only when it is a qargi-run.XXXXXX directory under /dev/shm or QARGI_RUN_TMP, or inside the run). "
-                                "It refuses a run whose output has no manifest (collect first) and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
+                                "It refuses a run whose output has no manifest (collect first), except a read-only run (an advisor or a review: its product is a report, never patches) whose output holds a report.md (or NAME-report.md; a regular file, directly in OUT), "
+                                "which closes with a plain clean when its refs are unchanged and its clone holds no commit; and one whose repository refs changed (that is evidence); the lead's own moves that verify accepts "
                                 "(a feature finish since the run was prepared, for one) are no change and are named in its output. It also refuses a run whose clone holds commits that were "
                                 "never applied (review apply) or whose applied tip is on no branch but agent/* in the repository (feature merge first), so "
                                 "finished work is not deleted by mistake. --discard is the deliberate way past all of these; it still refuses anything that prepare did not make. "
@@ -1075,7 +1095,10 @@ COMMANDS = {
                           desc=("Refuses a run applied already or closed (local close --applied-by-am), and unless review check passes for RUN_DIR/out (warnings allowed) and local verify accepts the run (a refs-changed result "
                                 "prints the diff). Creates the branch at the commit the run's base branch had when the run was prepared and applies every patch "
                                 "of out/patches in order with git am, in a temporary worktree of the project's repository: your checkout is never touched and no "
-                                "other ref changes. The committer is the one the repository has configured, else the author of the patches. It refuses a "
+                                "other ref changes. The committer is the one the repository has configured, else the author of the patches. "
+                                "The author of every applied commit is reset to the lead's: the answer git.author ('Name <email>'), else the repository's user.name and user.email "
+                                "(with neither, the member's author stays and the output says so); the answer review.keep_author true keeps the member's author instead. The date "
+                                "stays, history already applied is not rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. It refuses a "
                                 "branch that exists; a patch that does not apply removes the worktree and the branch and names the patch. On success it prints "
                                 "the commits and the next commands, and records branch and tip in RUN_DIR/applied and the branch in the run's ref snapshot, so "
                                 "local clean still accepts the run. --from-saved ID applies from <state>/runs/ID instead (refused while the run directory exists): review check "
@@ -1252,13 +1275,15 @@ COMMANDS = {
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
-                                "lead.context_window (tokens), else the runtime's. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
+                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries of the shipped definition match ids that end in [1m] or -1m, so an id without such a suffix matches none), else the "
+                                "definition's single window, which is only a guess: the lines that show a percentage then say (window assumed N; set lead.context_window), "
+                                "and --json says window_source answer, model or assumed. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
                                   desc=("Not safe while a local run is prepared and not verified, verified and not applied, or applied and not merged; a merge waits for its "
                                         "resolution; a whole-suite run (feature verify, release verify) is running; the handoff note written by marshal handoff --write is older "
-                                        "than the last merge; or a release or hotfix branch is open. It prints the restart block: the handoff note, qargi marshal status, "
+                                        "than the last merge; or a release or hotfix branch is open. An applied run counts as merged by the test local list and local clean use: its applied tip is on a branch other than agent/*, or the commit the tip was rewritten to (ref record --rewrite) is, wherever the run directory lies. It prints the restart block: the handoff note, qargi marshal status, "
                                         "qargi feature status and the open runs, so the lead resumes from stored state. Read only. qargi cannot run /compact itself: the "
                                         "lead (or the person) does. feature finish, the last feature merge of a feature's runs, release finish and marshal handoff print "
                                         "one line when the context is at or above the project answer lead.compact_advice_pct (default 40; 0 turns it off)."),
@@ -1407,7 +1432,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, runs, upstream, git, review, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "

@@ -27,7 +27,8 @@ roles are not skills: each role's text is `roles/<role>/ROLE.md`, which a member
 gets with its task block); `agents/member.json` and `agents/member.body.md` are the one neutral
 member definition `qargi agent add` renders, through the project's runtime, under the names users
 choose; `lib/providers/` holds the shipped runtime definitions and model catalogs; `provision/` the resource and memory
-templates; `examples/` sample repository profiles; `packs/` the baseline packs shipped
+templates; `examples/` sample repository profiles; `docs/` the documentation by topic (`README.md` links to each topic's `README.md`, and
+`tests/test_docs_links.py` checks every relative link); `packs/` the baseline packs shipped
 with qargi (`baseline.json` and `skills/<name>/SKILL.md`).
 
 To add a baseline pack, write `packs/skills/<name>/SKILL.md` with front matter of
@@ -84,7 +85,7 @@ never interleaved; the end of the output has the failed steps, the slowest ten a
 
 A test is safe to run next to other tests and next to another whole suite: it sources `tests/hermetic.sh` (a python test imports `hermetic`), which gives it a fresh HOME, TMPDIR, config and state, a fixed locale, time zone and umask, and git without the host's configuration, and it works only under `mktemp` directories, starts nothing it does not stop by pid (`spawn_bg`, `kill_bg`), waits for a condition with a deadline and not with a bare `sleep`, and binds port 0. `tests/test_hermetic.sh` runs `tests/hermetic_lint.py` over the tests and fails on a file that breaks one of these rules; a justified case carries `hermetic: allow RULE (reason)` on its line.
 
-Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` (README, Running a branch checkout). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
+Test a branch from its own worktree with `bin/qargi`: once `install.sh --user` has recorded the installed copy it is a dev run with its own data under `.qargi/` ([Running a branch checkout](docs/install-and-upgrade/README.md#running-a-branch-checkout)). To test the guard or the hooks, put `<worktree>/bin` first on `PATH`: members call `qargi __guard` from `PATH`, which is otherwise the installed copy.
 
 ## Changing the canon
 

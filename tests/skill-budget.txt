@@ -22,7 +22,7 @@ roles/build/ROLE.md 144
 roles/review/ROLE.md 170
 roles/test/ROLE.md 169
 roles/write/ROLE.md 186 # raised: the line that documentation follows the code and a disagreement is reported; for the lead's review
-skills/qargi-flow/SKILL.md 999 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; for the lead's review
+skills/qargi-flow/SKILL.md 1021 # raised: advisor brief clause (no suite run beside a feature verify); release fix, the checks the finish plan lists and --ignore-checks; the history join of a snapshot master; for the lead's review
 skills/qargi-flow/marshal.md 449 # raised: says to raise marshal.lease_minutes before a run longer than the lease
 skills/qargi-instances/SKILL.md 898
 skills/qargi-memory/SKILL.md 933
@@ -30,7 +30,7 @@ skills/qargi-memory/curate.md 292
 skills/qargi-packs/SKILL.md 749
 skills/qargi-packs/apply.md 639
 skills/qargi-packs/seed.md 250
-skills/qargi-project/SKILL.md 877
+skills/qargi-project/SKILL.md 896 # raised: one line naming the answer lead.context_window (null derives the window from the model); for the lead's review
 skills/qargi-project/repository.md 206
 skills/qargi-providers/SKILL.md 767
 skills/qargi-providers/definition.md 631

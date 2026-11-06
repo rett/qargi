@@ -4,16 +4,18 @@
   lead_usage.py usage         [--project P] [--session ID | --transcript FILE] [--json]
   lead_usage.py compact-check [--project P] [--advise] [--json]
   lead_usage.py advice        [--project P] [--feature NAME]        (the one line the stage verbs print)
-  lead_usage.py open-runs     [--project P] --feature NAME          (the open runs of feature/NAME, one per line: run, slug, role, state; exit 1 when there are some)
+  lead_usage.py open-runs     [--project P] --feature NAME          (the open runs of feature/NAME, one per line: run, slug, role, state, the command that closes it; exit 1 when there are some)
 
 The lead's own context is the cost the owner cares about most, so qargi measures it and says when a compact (the owner's /compact; no
 hook can run it) is safe. Where the transcripts are and how to read the context in use from one come from the project's local runtime
 (resources.transcripts of lib/providers/NAME.json, lib/provider.py): a directory of JSON-line files named for the session id, and
 JSON pointers that pick the last assistant turn and add up its input, cache-read and cache-creation tokens. The window is the answer
-lead.context_window, else the runtime's. Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
+lead.context_window, else the one the runtime's definition (resources.transcripts.windows) gives for the model id of that turn, else the
+definition's single window, which is only assumed: then every line that shows a percentage adds "(window assumed N; set lead.context_window)".
+--json says which in window_source: "answer", "model" or "assumed". Nothing is written; a transcript that cannot be found or read is "unknown" (exit 0).
 
 compact-check exits 0 when a compact is safe and 1 when it is not, naming every reason: a local run prepared and not verified, a run
-verified and not applied (or applied and not merged), a merge waiting in the conflicts directory, a whole-suite run in progress
+verified and not applied (or applied and not merged: lib/merged.py, the test local list and local clean use, so a tip rewritten with a recorded rewrite counts by its new commit), a merge waiting in the conflicts directory, a whole-suite run in progress
 (a live pid file in $STATE/busy, which feature verify and release verify keep), a handoff note (the file `marshal handoff --write` records
 in $STATE/handoff/PROJECT.json) older than the last merge of the ref journal, and a release or hotfix branch that is open. Either way it
 prints the restart block: what the lead reads again after the compact to resume from stored state. --advise adds the verdict on the
@@ -24,7 +26,7 @@ safe now, or why not. With --feature NAME it prints only when no open run of fea
 
 Environment: QARGI_LEAD (the session id, which names the transcript), QARGI_LEAD_NOW (epoch seconds; tests). Run through lib/lead.sh;
 python3 -I, standard library only."""
-import argparse, importlib.util, json, os, re, subprocess, sys, time
+import argparse, importlib.util, json, os, re, stat, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -200,7 +202,7 @@ def find_transcript(a, answers, tr_for):
 
 def measure(a, conf):
     """-> the usage as a dict; known is False with why when it cannot be read."""
-    out = {"known": False, "tokens": None, "window": None, "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
+    out = {"known": False, "tokens": None, "window": None, "window_source": "", "percent": None, "model": "", "session": "", "transcript": "", "bytes": None, "why": ""}
     try:
         project = a.project
         if not project:
@@ -215,7 +217,8 @@ def measure(a, conf):
             tr0 = tr_for(os.getcwd())
         except P.ProviderError as e:
             raise Soft(clean(str(e)))
-        out["window"] = lead_answer(answers, "context_window", tr0["window"], 1000)
+        out["window"] = lead_answer(answers, "context_window", None, 1000)
+        out["window_source"] = "answer" if out["window"] else ""
         path, sid, why = find_transcript(a, answers, tr_for)
         out["session"] = sid
         if not path:
@@ -226,6 +229,8 @@ def measure(a, conf):
         if not t:
             raise Soft("no turn with a token count in the transcript yet")
         out["tokens"], out["model"] = t
+        if not out["window"]:
+            out["window"], out["window_source"] = P.transcript_window(tr0, out["model"])
         out["percent"] = round(t[0] * 100.0 / out["window"], 1)
         out["known"] = True
     except Soft as e:
@@ -242,13 +247,25 @@ def human_bytes(n):
         n /= 1024.0
 
 
+def assumed(u):
+    """The words that keep a percentage of a guessed window from reading as fact; empty when the window is the answer's or the model's."""
+    return " (window assumed %s; set lead.context_window)" % format(u["window"], ",") if u.get("window_source") == "assumed" else ""
+
+
+def short(n):
+    """A token count in a few characters: 950, 180k, 1.2M."""
+    if n >= 1000000:
+        return ("%.1f" % (n / 1e6)).rstrip("0").rstrip(".") + "M"
+    return "%dk" % round(n / 1000.0) if n >= 1000 else str(n)
+
+
 def show_usage(u):
     if not u["known"]:
         print("context: unknown (%s)" % u["why"])
         if u["transcript"]:
             print("transcript: %s" % clean(u["transcript"]))
         return
-    print("context: %s of %s tokens in use (%s%%)" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip(".")))
+    print("context: %s of %s tokens in use (%s%%)%s" % (format(u["tokens"], ","), format(u["window"], ","), ("%.1f" % u["percent"]).rstrip("0").rstrip("."), assumed(u)))
     print("transcript: %s (%s)" % (clean(u["transcript"]), human_bytes(u["bytes"])))
     if u["model"]:
         print("model: %s" % u["model"])
@@ -272,16 +289,19 @@ def registry(state):
     return out
 
 
-def merged(repo, tip):
-    """True when the commit tip is on a local branch other than agent/*."""
-    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", tip or ""):
-        return False
-    refs = git(repo, "for-each-ref", "--contains=" + tip, "--format=%(refname)", "--", "refs/heads") or ""
-    return any(r and not r.startswith("refs/heads/agent/") for r in refs.split())
+def merged(repo, tip, state, branch=None, answers=None):
+    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit; the tip
+    the lead's journal records for BRANCH's review:apply replaces the file's; a bridge branch and a ref the run's answers declare owned settle nothing)."""
+    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state, branch, answers)
+
+
+class OpenRun(tuple):
+    """(run dir, slug, role, base, what), with the class of the run (cls) from the lead's registry record, or None for a record that has none."""
+    cls = None
 
 
 def open_runs(state, repo, url):
-    """The runs of this project that still need the lead: [(run dir, slug, role, base, what)]."""
+    """The runs of this project that still need the lead: [OpenRun (run dir, slug, role, base, what)]."""
     rp = os.path.realpath(repo) if repo else ""
     res = []
     for r in registry(state):
@@ -292,17 +312,23 @@ def open_runs(state, repo, url):
         if not same:
             continue
         base, slug, role = clean(str(r.get("base") or "")), clean(str(r.get("slug") or "")), clean(str(r.get("ability") or r.get("role") or ""))
+
+        def add(what):
+            run = OpenRun((d, slug, role, base, what))
+            run.cls = r.get("class") if r.get("class") in ("write", "read-only") else None
+            res.append(run)
         if os.path.exists(os.path.join(d, "applied")):
             try:
-                tip = open(os.path.join(d, "applied"), errors="replace").read().split()[1]
-            except (OSError, IndexError):
-                tip = ""
-            if not merged(repo, tip):
-                res.append((d, slug, role, base, "applied, not merged"))
+                words = open(os.path.join(d, "applied"), errors="replace").read().split()
+            except OSError:
+                words = []
+            tip, branch = (words[1] if len(words) > 1 else ""), (words[0] if words else None)
+            if not merged(repo, tip, state, branch, r.get("answers") if isinstance(r.get("answers"), dict) else None):
+                add("applied, not merged")
         elif os.path.exists(os.path.join(d, "verified")):
-            res.append((d, slug, role, base, "verified, not applied"))
+            add("verified, not applied")
         else:
-            res.append((d, slug, role, base, "prepared, not verified"))
+            add("prepared, not verified")
     return res
 
 
@@ -392,6 +418,50 @@ def features_of(repo):
     return sorted(b[len("feature/"):] for b in (git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*") or "").split())
 
 
+def read_only(d, cls=None):
+    """True when the run is a read-only one: its product is a report, never patches. The class is the lead's registry record's (cls: prepare writes it); only a
+    record with none falls back to RUN/class, a member's file, and a run with neither is a run of work (write)."""
+    if cls in ("write", "read-only"):
+        return cls == "read-only"
+    try:
+        return open(os.path.join(d, "class"), errors="replace").read().strip() == "read-only"
+    except OSError:
+        return False
+
+
+def has_report(d):
+    """True when OUT holds a report: a regular file (not a link) named report.md or NAME-report.md directly in it (lib.sh out_has_report is the same test)."""
+    out = os.path.join(d, "out")
+    try:
+        names = os.listdir(out)
+    except OSError:
+        return False
+    for n in names:
+        if n == "report.md" or n.endswith("-report.md"):
+            try:
+                if stat.S_ISREG(os.lstat(os.path.join(out, n)).st_mode):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def closing(run):
+    """The exact command that closes an open run (run: a tuple of open_runs): a read-only run with its report closes with a plain clean; a run
+    of work closes by its next step, applied by hand (local close), applied and merged (clean), or dropped."""
+    d, slug, role, base, what = run
+    if read_only(d, getattr(run, "cls", None)):
+        if has_report(d):
+            return "qargi local clean %s" % d
+        return "qargi local clean %s (once the member has written OUT/report.md; --discard drops the run)" % d
+    name = base[len("feature/"):] if base.startswith("feature/") else "NAME"
+    if what == "prepared, not verified":
+        return "qargi local verify %s (then take its work in, or drop it with qargi local clean %s --discard)" % (d, d)
+    if what == "verified, not applied":
+        return "qargi local close %s --applied-by-am (when you applied its patches by hand with git am); else qargi review apply %s, qargi feature merge %s agent/%s, qargi local clean %s" % (d, d, name, slug, d)
+    return "qargi feature merge %s agent/%s, then qargi local clean %s" % (name, slug, d)
+
+
 def check(a, conf, state):
     """-> {safe, reasons, restart: [lines], open_runs, features}"""
     project = a.project
@@ -399,8 +469,11 @@ def check(a, conf, state):
     repo = repo_of(answers)
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     reasons, runs = [], open_runs(state, repo, url)
-    for d, slug, role, base, what in runs:
-        if what == "prepared, not verified":
+    for run in runs:
+        d, slug, role, base, what = run
+        if read_only(d, run.cls):
+            reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing(run)))
+        elif what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))
         elif what == "verified, not applied":
             reasons.append("a local run is verified and not applied: %s (%s %s on %s); apply it (qargi review apply %s BRANCH) and merge it, or close it if you applied it by hand (qargi local close %s --applied-by-am), or clean it" % (d, role, slug, base, d, d))
@@ -434,8 +507,8 @@ def check(a, conf, state):
     return {"safe": not reasons, "reasons": reasons, "restart": restart, "open_runs": [{"run": r[0], "slug": r[1], "role": r[2], "base": r[3], "state": r[4]} for r in runs], "features": feats}
 
 
-def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG):
-    """The advice on the context (a string), from the usage and whether a compact is safe."""
+def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG, note=True):
+    """The advice on the context (a string), from the usage and whether a compact is safe; note adds the words about an assumed window."""
     if not u["known"]:
         return "context unknown (%s): no advice on compacting" % u["why"]
     p = u["percent"]
@@ -444,8 +517,8 @@ def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG):
     elif p >= pct_advised:
         word = "compact advised"
     else:
-        return "no compact needed (%s%% of the context)" % ("%.0f" % p)
-    return "%s (%s%% of the context)%s" % (word, "%.0f" % p, "" if safe else ", but not safe yet: clear the reasons above first")
+        return "no compact needed (%s%%, %s tokens of the context)%s" % ("%.0f" % p, short(u["tokens"]), assumed(u) if note else "")
+    return "%s (%s%%, %s tokens of the context)%s%s" % (word, "%.0f" % p, short(u["tokens"]), assumed(u) if note else "", "" if safe else ", but not safe yet: clear the reasons above first")
 
 
 def cmd_usage(a, conf, state):
@@ -477,20 +550,21 @@ def cmd_check(a, conf, state):
         print("  - " + r)
     if u:
         show_usage(u)
-        print(verdict(u, c["safe"]))
+        print(verdict(u, c["safe"], note=False))
     print()
     print("\n".join(c["restart"]))
     return 0 if c["safe"] else 1
 
 
 def cmd_open_runs(a, conf, state):
-    """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE" each; exit 1 when there are some."""
+    """The open runs of feature/NAME, which finishing the feature refuses on: "RUN<TAB>SLUG<TAB>ROLE<TAB>STATE<TAB>CLOSING COMMAND" each; exit 1 when there are some."""
     answers = answers_of(conf, a.project or "")
     repo = repo_of(answers)
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     found = [r for r in open_runs(state, repo, url) if r[3] == "feature/" + a.feature]
-    for d, slug, role, base, what in found:
-        print("%s\t%s\t%s\t%s" % (d, slug, role, what))
+    for run in found:
+        d, slug, role, base, what = run
+        print("%s\t%s\t%s\t%s\t%s" % (d, slug, role, what, closing(run)))
     return 1 if found else 0
 
 
@@ -511,11 +585,11 @@ def cmd_advice(a, conf, state):
         if not u["known"] or u["percent"] < pct:
             return 0
         c = check(ns, conf, state)
-        p = "%.0f" % u["percent"]
+        p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
         if c["safe"]:
-            print("lead: %s%% context; compact is safe now: run /compact" % p)
+            print("lead: %s; compact is safe now: run /compact" % p)
         else:
-            print("lead: %s%% context; compact is not safe yet: %s (qargi lead compact-check)" % (p, c["reasons"][0].split(":")[0]))
+            print("lead: %s; compact is not safe yet: %s (qargi lead compact-check)" % (p, c["reasons"][0].split(":")[0]))
     except Exception:                                # noqa: BLE001  (an advice line never blocks a verb)
         pass
     return 0

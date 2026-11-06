@@ -6,6 +6,87 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `qargi project adopt` names, among what is left for you, long-lived branches that share no history (a master made as a snapshot of the code has no merge
+  base with develop): it changes no existing branch, so it does not join them, and the line says that `qargi release push` joins the history of master into
+  the release branch. The branches adopt creates start at the tip of the default branch, so they are related to it and to each other.
+- The `gitflow` methodology says what a master created as a snapshot of the code means: it has no merge base with develop, and the release branch is joined
+  to it before the push by a merge of master that keeps the release tree. The release steps of `methodology.json` say that `qargi release push` does it, and
+  the `CONTRIBUTING.md` scaffold (which never names qargi) describes the same merge for a person doing it by hand.
+- `tests/test_docs_links.py` checks that every relative link of `README.md`, `CONTRIBUTING.md` and `docs/` resolves (to a heading, when it has a fragment), that
+  the Documentation table of `README.md` lists each `docs/<topic>/README.md`, that `README.md` stays short, and that the `qargi` commands of its quick start exist.
+- `qargi review apply` resets the author of every commit it applies to the lead's identity: the answer `git.author` (a string `Name <email>`, checked by
+  `project validate` and set with `qargi project set PROJECT git.author 'Example Author <author@example.com>'`), else the repository's `user.name` and
+  `user.email`; with neither, the member's author stays and the output says so. The committer and the dates are unchanged, history already applied is not
+  rewritten, and the member's author is recorded in the ref journal and the audit log, not in the commit. The answer `review.keep_author` (`true`;
+  default `false`) keeps the member's author instead. The guard refuses `git.*` and `review.*` in `project set` to a member.
+- `qargi project template` carries `lead.context_window` as `null` (derive the window from the model of the session) and `project init` says
+  which window the lead gets; `project validate` refuses a value that is not a number of tokens of at least 1000 (or null). The
+  `qargi-project` skill lists the question.
+- The runtime definition takes `resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of
+  characters (`claude-code` ships `*[1m]` and `*-1m` as 1000000). `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
+- When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
+  `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
+  as fact; with the answer or a recognised model there is no such note.
+- The project answer `runs.owned_refs` (a list of glob patterns for full ref names, such as `refs/heads/foo-*`; only the lead sets it, the guard refuses
+  `project set` of it to a member) declares the refs a runtime or harness creates in the repository. `qargi local verify` and `local clean` accept a local
+  ref that matches one, in either phase, and name it (`foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)`). A pattern
+  needs a literal prefix of at least 3 characters after `refs/NAMESPACE/` and may not match `develop`, `master`, a `repo.long_lived` branch or the git-flow
+  branches (`project validate` says so); a ref is never taken as owned when it is the base of a run that is not cleaned or closed, and a ref that matches
+  no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
+
+### Changed
+- `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
+  into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
+  `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections
+  point at the new pages.
+- The line the stage verbs print and the verdict of `lead compact-check --advise` show the token count beside the percentage, for example
+  `lead: 90%, 180k tokens of context; compact is safe now: run /compact`.
+- A read-only run (an advisor or a review: a report, no patches) closes with a plain `qargi local clean RUN` once its output holds a `report.md`, its
+  refs are unchanged and its clone holds no commit; `--discard` is no longer needed and no manifest is asked for. A run of work still needs its manifest.
+- `feature finish`, refused while a run of the feature is open, now names each open run with the exact command that closes it (a read-only run: `qargi
+  local clean RUN`; a run of work: the step it is waiting for), and `lead compact-check` does the same for a read-only run.
+
+### Fixed
+- `qargi lead usage` and `lead compact-check --advise` no longer divide the context in use by a fixed 200000 window. The window is the answer
+  `lead.context_window`, else the one the runtime's table gives for the model id of the session's last assistant turn (the entries `claude-code` ships
+  match ids that end in `[1m]` or `-1m`), else an assumed 200,000 that the output labels as assumed, with the way to set the answer. A plain model id with no
+  such suffix (for example `claude-sonnet-5-5`) matches no entry and gets the assumed window.
+- `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
+  `release status` say that master and the branch have no merge base, and `release finish` refuses with the fix instead of printing
+  `fatal: ... no merge base` and stopping at `refusing to merge unrelated histories` with nothing to resolve. `release push` joins the histories first: its plan
+  has the line `join the history of master: merge master into the release branch keeping the release tree (-s ours --allow-unrelated-histories)`, covered by the
+  plan token; once approved it makes that merge as a commit of its own on the branch, before the push, so CI runs on the joined head and the finish is an
+  ordinary `--no-ff` merge. The tree of the branch must be the same before and after, and the commit must merge exactly the branch and master; otherwise the
+  branch does not move and nothing is pushed. A repository whose histories are related gets no extra commit.
+- `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
+  for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
+  a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
+- `runs.owned_refs` can no longer reach the git-flow branches or the tags by a glob: a pattern is refused when it can match anything inside `refs/heads/agent/`,
+  `feature/`, `release/`, `hotfix/` or `refs/tags/` (`refs/heads/rel*/0*`, `refs/heads/age*t/foo-*` and `refs/tags/v0.*` passed validation before, because only one sample
+  name was tried), and a name under those, a tag or a `worktree-bridge-*` branch is never accepted as owned at the time of the check, whatever a hand-edited answer says.
+- `local prepare` takes the answers that decide what verification accepts (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
+  `review.keep_author`) and the stored project's name into the lead's registry line of the run, and `local verify`, `local clean`, `local run` and `review apply`
+  read them from there. They used to read the first `projects/*.json` whose `repo.path` was the repository, and `<conf>/projects` is not protected, so a member
+  could add a `projects/aaa.json` naming the real repository with its own `runs.owned_refs` or `git.author`. A change of those answers now takes effect on
+  the runs prepared after it; a run recorded by an earlier version, which has no copy, is read as before.
+- A run is settled as merged (`local list`, `local clean`, `lead compact-check`, `feature finish`) only by a branch that settles it: a `worktree-bridge-*`
+  branch and a ref the run's answers declare owned (`runs.owned_refs`) no longer count, so a member cannot create one at the applied tip and have the run
+  closed as merged. The applied tip is the one the lead's ref journal records for the `review:apply` of the run's branch; `RUN/applied`, which a member can
+  write, is read only for a run with no such line.
+- The join of `release push` is made against the master its plan showed: it is refused when master moved between the plan and the join (a preflight, say), where
+  it read master again. The merge no longer runs the lead's hooks or signs (`core.hooksPath=/dev/null`, `--no-gpg-sign`, as `review apply` makes its commits),
+  and the plan warns when the release branch is checked out where the join would be refused (the main checkout, a worktree outside qargi's root, uncommitted changes).
+  A hotfix whose develop shares no history with master and with no release open is told so, instead of being told to finish a release that does not exist.
+- `review apply` resets the author of an applied commit with `--cleanup=verbatim`, so a repository with `commit.cleanup=strip` no longer drops the message lines
+  that start with `#`; and the identity it takes from the repository's `user.name` and `user.email` (no `git.author`) is checked as `git.author` is (no angle
+  bracket or control character in the name) and refused, with nothing applied, when it is not a plain `Name <email>`.
+- Whether a local run is read-only is the lead's registry's to say: `local prepare` records the class of the run there, and `local clean`, `local verify`,
+  `local close`, `local run`, `review apply` and `lead compact-check` read it from there. They read `RUN/class`, a file a member can write, and counted a run
+  with none as read-only, so a write run could be closed with a plain clean and a fake report. Only a record of an earlier version, which has no class, falls back
+  to the file, and a run with neither is a run of work. `local clean` and `lead compact-check` agree on what a report is: a regular file (not a link) named
+  `report.md` or `NAME-report.md` directly in OUT.
+
 ## [0.2.3] - 2026-11-05
 
 ### Added

@@ -124,7 +124,7 @@ def show_overview():
         out.append("  " + title)
         out += ["    " + l for l in lines]
     out += ["", "A cloud verb needs --asked \"<your request>\"; a change to shared resources prints a plan and needs --plan and --approved (qargi help approvals).",
-            "Manual page: qargi help --man | man -l -        Completion: see the README."]
+            "Manual page: qargi help --man | man -l -        Completion: see docs/reference/README.md."]
     return "\n".join(out)
 
 
