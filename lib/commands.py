@@ -1273,7 +1273,7 @@ COMMANDS = {
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
-                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows), else the "
+                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries claude-code ships match ids that end in [1m] or -1m, so a plain id such as claude-sonnet-5-5 matches none), else the "
                                 "definition's single window, which is only a guess: the lines that show a percentage then say (window assumed N; set lead.context_window), "
                                 "and --json says window_source answer, model or assumed. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),

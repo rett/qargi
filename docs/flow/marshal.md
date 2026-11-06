@@ -35,7 +35,7 @@ you look like the restarted lead; any other case stays the owner's takeover.
 
 The lead's own context is the cost to keep low. `qargi lead usage` says how much of it is in use: the input, cache-read and
 cache-creation tokens of the last assistant turn of the session transcript, as a share of the window (the project answer
-`lead.context_window`, else the entry for the model of the last turn in the runtime's table of windows, else an assumed 200000 that the output labels as assumed). Where the transcripts are and how to read them is part of the runtime's definition
+`lead.context_window`, else the entry for the model of the last turn in the runtime's table of windows, else an assumed 200000 that the output labels as assumed; the entries `claude-code` ships match model ids that end in `[1m]` or `-1m`, so a plain id gets the assumed window until the answer is set). Where the transcripts are and how to read them is part of the runtime's definition
 (`resources.transcripts`), not of the code. `qargi lead compact-check [--advise]` exits 0 when a `/compact` is safe now and 1 when it is
 not, naming the reasons (a local run prepared and not verified, verified and not applied, or applied and not merged; a merge waiting in
 the conflicts directory; a whole-suite run in progress; a handoff note older than the last merge; an open release or hotfix branch),
