@@ -89,7 +89,7 @@ at $((LATE + 2)) "$DA" marshal release f1 --note "done"; rc=$?
 at $((LATE + 3)) "$DA" marshal release f1; rc=$?
 [ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release after finish needs no note" || no "SPEC release after finish without note: rc=$rc $(out)"
 at $((LATE + 4)) "$DA" marshal release never-existed --note n; rc=$?
-[ $rc = 0 ] && grep -q "nothing to release" "$T/o" && ok "release of a name with no record and no branch: nothing to release" || no "SPEC release unknown: rc=$rc $(out)"
+[ $rc = 1 ] && grep -q "no feature never-existed" "$T/e" && ! grep -q "nothing to release" "$T/o" && ok "release of a name with no record and no branch (a typo) fails: no feature NAME" || no "SPEC release unknown: rc=$rc $(out)"
 mkfeat h1
 QARGI_LEAD=bob at $((t0 + 100)) "$DA" marshal release h1 --note n; rc=$?
 [ $rc = 1 ] && [ "$(j h1 .lead.id)" = alice ] && ok "release of a feature another live lead holds is still refused" || no "SPEC release by non-lead: rc=$rc $(out)"

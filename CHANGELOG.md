@@ -109,6 +109,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that changed after the run's passing verify keeps the run open instead of being hidden by the close.
 - `qargi review check RUN_DIR`, given the run directory instead of its `out`, renews the lease of the feature the run is based on (it looked for the run in
   the scratch directory before); the usage text and the header of `lib/review.sh` list `check`.
+- `qargi marshal release NAME` for a name with no record and no branch (a typo) now fails with "no feature NAME in PROJECT"; the quiet success ("nothing to
+  release", exit 0) stays for a feature that was finished, abandoned or released.
 
 ## [0.2.2] - 2026-11-05
 

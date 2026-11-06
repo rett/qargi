@@ -1384,9 +1384,12 @@ def v_release(ctx, a):
 
     def fn(rec):
         ld = lead_of(rec)
-        # nothing to give up: the feature was finished or abandoned (feature finish ends the claim and deletes the branch), already released,
-        # or has no record and no branch. Quiet success; a feature another lead holds, or one that was never claimed, is still refused below.
-        if not ld and (rec.get("status") in ("finished", "abandoned", "released") if rec else not branch_exists(ctx, a.name)):
+        # nothing to give up: the feature was finished or abandoned (feature finish ends the claim and deletes the branch) or already released.
+        # Quiet success; a feature another lead holds, or one that was never claimed, is still refused below, and a name with no record and no
+        # branch is no feature at all (a typo): refused.
+        if not rec and not branch_exists(ctx, a.name):
+            raise Refuse("no feature %s in %s (no branch feature/%s and no record)" % (a.name, ctx.project, a.name))
+        if not ld and rec and rec.get("status") in ("finished", "abandoned", "released"):
             return None, False
         mine(ctx, a.name, rec, "only the lead can release it")
         if not (a.note or "").strip():
@@ -1398,7 +1401,7 @@ def v_release(ctx, a):
     if update(ctx, a.name, fn):
         print("released %s; the next lead takes it with: qargi marshal take %s" % (a.name, a.name))
     else:
-        print("nothing to release: %s has no lead (finished, abandoned, released or never claimed)" % a.name)
+        print("nothing to release: %s has no lead (finished, abandoned or released)" % a.name)
 
 
 def v_take(ctx, a):
