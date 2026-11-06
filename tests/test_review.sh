@@ -192,6 +192,27 @@ grep -q "^author reset to lead <lead@example.net> (the repository's user.name an
 jq -e -s 'map(select(.verb == "review:apply" and .ref == "refs/heads/agent/auth1")) | length == 1 and (.[0].why | contains("agent <agent@example.invalid>"))' "$T/s/ref-journal.jsonl" >/dev/null \
   && grep -q '"verb":"review:apply".*agent <agent@example.invalid>' "$T/s/audit.log" && ok "the member's author is in the ref journal and the audit log, and not in the commit" || no "journal: $(tail -2 "$T/s/ref-journal.jsonl")"
 [ -z "$(git -C "$A" log --format=%B "$dev..agent/auth1" | grep -i 'agent@example.invalid\|co-authored\|signed-off')" ] && ok "no trailer or member name in the commit messages" || no "trailers"
+# a commit.cleanup=strip in the repository does not drop the message lines that start with #: the amend that resets the author keeps the message as it is
+R26=$(newrun hashmsg)
+( cd "$R26/clone" || exit 1; export GIT_AUTHOR_NAME=agent GIT_AUTHOR_EMAIL=agent@example.invalid GIT_COMMITTER_NAME=agent GIT_COMMITTER_EMAIL=agent@example.invalid
+  echo d >> internal/a.go; git add -A; git commit -q -m "keep the heading" -m "# Heading line stays
+plain line stays"
+  BASE=$(git rev-parse origin/develop); rm -f "$R26"/out/patches/*; git format-patch -q -o "$R26/out/patches" "$BASE..HEAD"; manifest "$R26/out" )
+git -C "$A" config commit.cleanup strip
+out=$($DA review apply "$R26" 2>&1); rc=$?
+git -C "$A" config --unset commit.cleanup
+{ [ $rc = 0 ] && [ "$(authors agent/hashmsg)" = "lead <lead@example.net>" ] && git -C "$A" log -1 --format=%B agent/hashmsg | grep -qx '# Heading line stays'; } \
+  && ok "the author reset keeps a message line that starts with # (commit.cleanup=strip in the repository)" || no "cleanup: rc=$rc $(git -C "$A" log -1 --format=%B agent/hashmsg 2>&1) $out"
+# an identity read from the repository is checked as git.author is: no < > or control character
+for bad in 'Evil <evil@example.com>' $'Ab\tcd'; do
+  git -C "$A" config user.name "$bad"
+  R27=$(newrun badid)
+  out=$($DA review apply "$R27" 2>&1); rc=$?
+  { [ $rc != 0 ] && grep -q "user.name and user.email .* are not a plain 'Name <email>'" <<<"$out" && grep -q "nothing was applied" <<<"$out" && ! git -C "$A" rev-parse -q --verify agent/badid >/dev/null && [ "$(git -C "$A" worktree list | wc -l)" = 1 ]; } \
+    && ok "a repository user.name that is not a plain name is refused before anything is applied" || no "bad identity: rc=$rc $out"
+  $DA local clean "$R27" --discard >/dev/null 2>&1 || rm -rf "$R27"
+done
+git -C "$A" config user.name lead
 # git.author set with project set: it wins over the repository's identity
 jq '.git.author = "Example Author <author@example.com>"' "$AF0" > "$AF"   # (project set stores it the same way; tests/test_project.sh covers the verb)
 R21=$(newrun auth2)

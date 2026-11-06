@@ -77,6 +77,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   it read master again. The merge no longer runs the lead's hooks or signs (`core.hooksPath=/dev/null`, `--no-gpg-sign`, as `review apply` makes its commits),
   and the plan warns when the release branch is checked out where the join would be refused (the main checkout, a worktree outside qargi's root, uncommitted changes).
   A hotfix whose develop shares no history with master and with no release open is told so, instead of being told to finish a release that does not exist.
+- `review apply` resets the author of an applied commit with `--cleanup=verbatim`, so a repository with `commit.cleanup=strip` no longer drops the message lines
+  that start with `#`; and the identity it takes from the repository's `user.name` and `user.email` (no `git.author`) is checked as `git.author` is (no angle
+  bracket or control character in the name) and refused, with nothing applied, when it is not a plain `Name <email>`.
 
 ## [0.2.3] - 2026-11-05
 

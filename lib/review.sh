@@ -52,7 +52,13 @@ pick_author() {
     AUTH=$a AUTH_MODE=reset AUTH_SRC='answer git.author'; return 0
   fi
   n=$(g config user.name 2>/dev/null || true); e=$(g config user.email 2>/dev/null || true)
-  if [ -n "$n" ] && [ -n "$e" ]; then AUTH="$n <$e>" AUTH_MODE=reset AUTH_SRC="the repository's user.name and user.email; no answer git.author"; return 0; fi
+  if [ -n "$n" ] && [ -n "$e" ]; then
+    # read from the repository's configuration, which a member can also write when it can write the repository: checked as git.author is
+    a="$n <$e>"
+    { [[ $a =~ $AUTH_RE ]] && [[ $a != *[[:cntrl:]]* ]]; } \
+      || die "the repository's user.name and user.email ($a) are not a plain 'Name <email>' (no < > or control characters in the name, no spaces or extra @ in the address): fix them in $REPO, or give git.author (qargi project set $PROJ git.author 'Example Author <author@example.com>'); nothing was applied"
+    AUTH=$a AUTH_MODE=reset AUTH_SRC="the repository's user.name and user.email; no answer git.author"; return 0
+  fi
   AUTH_SRC='no answer git.author and no user.name and user.email in the repository'
 }
 # apply_series WT PATCH...: git am of each patch in the worktree, in order; with AUTH_MODE=reset every applied commit then has its author set to AUTH
@@ -66,8 +72,9 @@ apply_series() {
     m=$(git -C "$wt" log -1 --format='%an <%ae>')
     case "; $MEMBERS;" in *"; $m;"*) ;; *) MEMBERS=${MEMBERS:+$MEMBERS; }$m;; esac
     if [ "$AUTH_MODE" = reset ] && [ "$m" != "$AUTH" ]; then
-      # a mechanical rewrite of the commit just made: the lead's hooks do not run on it, and it is never signed (no passphrase prompt)
-      git -C "$wt" -c core.hooksPath=/dev/null commit -q --amend --no-edit --no-gpg-sign --author="$AUTH" >/dev/null 2>&1 \
+      # a mechanical rewrite of the commit just made: the lead's hooks do not run on it, it is never signed (no passphrase prompt), and its message is kept
+      # as it is (--cleanup=verbatim: a commit.cleanup=strip would drop the lines that start with #)
+      git -C "$wt" -c core.hooksPath=/dev/null commit -q --amend --no-edit --cleanup=verbatim --no-gpg-sign --author="$AUTH" >/dev/null 2>&1 \
         || { fail=$p; failmsg="could not reset the author of $(basename "$p") to $AUTH"; return 0; }
     fi
   done
