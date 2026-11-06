@@ -127,7 +127,7 @@ out=$(B lead compact-check --project beta 2>&1); rc=$?
 out=$(B feature merge lc agent/t1 --project beta 2>&1)
 grep -q "^lead:" <<<"$out" && no "a stage line after a merge while another run of the feature is open: $out" || ok "feature merge of a run that is not the last prints no stage line"
 out=$(B feature merge lc agent/t2 --project beta 2>&1)
-grep -qxF "lead: 50% context$AS; compact is safe now: run /compact" <<<"$out" && ok "feature merge of the last open run prints the stage line" || no "merge line: $out"
+grep -qxF "lead: 50%, 100k tokens of context$AS; compact is safe now: run /compact" <<<"$out" && ok "feature merge of the last open run prints the stage line" || no "merge line: $out"
 jq '.lead = {compact_advice_pct: 60}' "$T/c/projects/beta.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/beta.json"
 task t3; run_of t3; B feature merge lc agent/t3 --project beta 2>&1 | grep -q "^lead:" && no "the stage line ignored lead.compact_advice_pct" || ok "lead.compact_advice_pct above the usage silences the stage line"
 jq 'del(.lead)' "$T/c/projects/beta.json" > "$T/c/p.tmp" && mv "$T/c/p.tmp" "$T/c/projects/beta.json"
@@ -136,10 +136,10 @@ grep -q "do not compact now" "$DURING" && grep -q "the whole suite is running (v
 [ -z "$(ls "$S/busy" 2>/dev/null)" ] && ok "the busy marker is removed when the verify ends" || no "busy left: $(ls "$S/busy")"
 tk=$(B feature finish lc --project beta | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 out=$(B feature finish lc --project beta --plan "$tk" --approved go 2>&1)
-grep -qxF "lead: 50% context$AS; compact is safe now: run /compact" <<<"$out" && ok "feature finish prints the stage line" || no "finish line: $out"
+grep -qxF "lead: 50%, 100k tokens of context$AS; compact is safe now: run /compact" <<<"$out" && ok "feature finish prints the stage line" || no "finish line: $out"
 note=$T/note.md
 out=$(B marshal handoff --project beta --write "$note" 2>&1)
-[ "$(tail -1 <<<"$out")" = "lead: 50% context$AS; compact is safe now: run /compact" ] && [ -s "$note" ] && ok "marshal handoff --write ends with the stage line" || no "handoff line: $out"
+[ "$(tail -1 <<<"$out")" = "lead: 50%, 100k tokens of context$AS; compact is safe now: run /compact" ] && [ -s "$note" ] && ok "marshal handoff --write ends with the stage line" || no "handoff line: $out"
 jq -e --arg f "$note" '.file == $f and (.epoch | type == "number")' "$S/handoff/beta.json" >/dev/null && ok "handoff --write records when and where the note was written" || no "handoff record: $(cat "$S/handoff/beta.json" 2>&1)"
 B marshal handoff --project beta 2>"$T/err" | grep -q "^lead:" && no "the stage line is in the note on stdout" || { grep -q "^lead:" "$T/err" && ok "marshal handoff without --write keeps the stage line out of the note (stderr)" || no "no stderr line"; }
 B marshal handoff --project beta --json 2>&1 | jq -e . >/dev/null && ok "marshal handoff --json stays pure JSON" || no "handoff json"
@@ -147,7 +147,7 @@ jq -nc '{epoch: 1, verb: "feature:merge", project: "beta"}' >> "$S/ref-journal.j
 jq '.epoch = 0' "$S/handoff/beta.json" > "$T/h.tmp" && mv "$T/h.tmp" "$S/handoff/beta.json"
 out=$(B lead compact-check --project beta 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "the handoff note (written 1970-01-01 00:00:00Z) is older than the last merge" <<<"$out" && ok "compact-check: a handoff note older than the last merge is not safe" || no "stale note: rc=$rc $out"
-B lead compact-check --project beta --advise 2>&1 | grep -q "compact advised (50% of the context), but not safe yet" && ok "compact-check --advise at 50% says advised, not safe yet" || no "advise"
+B lead compact-check --project beta --advise 2>&1 | grep -q "compact advised (50%, 100k tokens of the context), but not safe yet" && ok "compact-check --advise at 50% says advised, not safe yet" || no "advise"
 # a release in progress, and its finish
 jq 'del(.test_command)' "$T/c/projects/beta.json" > "$T/c/p.tmp" && jq '.test_command = "true"' "$T/c/p.tmp" > "$T/c/projects/beta.json"
 git -C "$RB" checkout -q parked 2>/dev/null; rm -f "$S/ref-journal.jsonl"; rm -rf "$S/handoff"
@@ -157,5 +157,5 @@ out=$(B lead compact-check --project beta 2>&1); rc=$?
 B release verify 0.2.0 --project beta >/dev/null 2>&1
 tk=$(B release finish 0.2.0 --project beta | sed -n 's/^plan token: \([0-9a-f]*\).*/\1/p')
 out=$(B release finish 0.2.0 --project beta --plan "$tk" --approved go 2>&1)
-grep -qxF "lead: 50% context$AS; compact is safe now: run /compact" <<<"$out" && ok "release finish prints the stage line" || no "release line: $out"
+grep -qxF "lead: 50%, 100k tokens of context$AS; compact is safe now: run /compact" <<<"$out" && ok "release finish prints the stage line" || no "release line: $out"
 exit $fail

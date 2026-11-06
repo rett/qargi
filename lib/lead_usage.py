@@ -252,6 +252,13 @@ def assumed(u):
     return " (window assumed %s; set lead.context_window)" % format(u["window"], ",") if u.get("window_source") == "assumed" else ""
 
 
+def short(n):
+    """A token count in a few characters: 950, 180k, 1.2M."""
+    if n >= 1000000:
+        return ("%.1f" % (n / 1e6)).rstrip("0").rstrip(".") + "M"
+    return "%dk" % round(n / 1000.0) if n >= 1000 else str(n)
+
+
 def show_usage(u):
     if not u["known"]:
         print("context: unknown (%s)" % u["why"])
@@ -454,8 +461,8 @@ def verdict(u, safe, pct_advised=ADVISED, pct_strong=STRONG, note=True):
     elif p >= pct_advised:
         word = "compact advised"
     else:
-        return "no compact needed (%s%% of the context)%s" % ("%.0f" % p, assumed(u) if note else "")
-    return "%s (%s%% of the context)%s%s" % (word, "%.0f" % p, assumed(u) if note else "", "" if safe else ", but not safe yet: clear the reasons above first")
+        return "no compact needed (%s%%, %s tokens of the context)%s" % ("%.0f" % p, short(u["tokens"]), assumed(u) if note else "")
+    return "%s (%s%%, %s tokens of the context)%s%s" % (word, "%.0f" % p, short(u["tokens"]), assumed(u) if note else "", "" if safe else ", but not safe yet: clear the reasons above first")
 
 
 def cmd_usage(a, conf, state):
@@ -521,7 +528,7 @@ def cmd_advice(a, conf, state):
         if not u["known"] or u["percent"] < pct:
             return 0
         c = check(ns, conf, state)
-        p = "%.0f%% context%s" % (u["percent"], assumed(u))
+        p = "%.0f%%, %s tokens of context%s" % (u["percent"], short(u["tokens"]), assumed(u))
         if c["safe"]:
             print("lead: %s; compact is safe now: run /compact" % p)
         else:
