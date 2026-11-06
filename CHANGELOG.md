@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `qargi release` works with a master that shares no history with the release branch (for example one parentless snapshot commit). `release start` and
+  `release status` say that master and the branch have no merge base, and `release finish` refuses with the fix instead of printing
+  `fatal: ... no merge base` and stopping at `refusing to merge unrelated histories` with nothing to resolve. `release push` joins the histories first: its plan
+  has the line `join the history of master: merge master into the release branch keeping the release tree (-s ours --allow-unrelated-histories)`, covered by the
+  plan token; once approved it makes that merge as a commit of its own on the branch, before the push, so CI runs on the joined head and the finish is an
+  ordinary `--no-ff` merge. The tree of the branch must be the same before and after, and the commit must merge exactly the branch and master; otherwise the
+  branch does not move and nothing is pushed. A repository whose histories are related gets no extra commit.
+
 ## [0.2.3] - 2026-11-05
 
 ### Added

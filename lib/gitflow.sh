@@ -358,16 +358,24 @@ merge_step() {
 }
 merge_forget() { local k; for k in "$@"; do rm -f "$DA_STATE/conflicts/$PROJ-$k.done"; done; }   # after the refs moved
 
-# what a merge would bring in, for the plan the person approves: BASE BRANCH
+# no_merge_base A B -> 0 when the branches A and B share no history (git merge-base finds nothing, exit 1: for example a master that is
+# one parentless snapshot commit); a missing ref is not that (it fails the other way)
+no_merge_base() { local rc=0; g merge-base "$1" "$2" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ]; }
+# what a merge would bring in, for the plan the person approves: BASE BRANCH. With no merge base the files are the difference of the two
+# trees (git diff BASE...BRANCH has nothing to compare with and stops with "no merge base")
 show_incoming() {
-  local base=$1 br=$2 n
+  local base=$1 br=$2 n range="$1...$2"
+  if no_merge_base "$base" "$br"; then range="$base $br"; echo "  note: $base and $br share no history (no merge base): the files below are the difference of their trees"; fi
   n=$(g rev-list --count "$base..$br")
   echo "  brings $n commit(s) into $base:"
   g log --format='    %h %s' "$base..$br" | head -30
   [ "$n" -le 30 ] || echo "    ... and $((n - 30)) more"
-  echo "  files changed: $(g diff --shortstat "$base...$br" | sed 's/^ *//')"
-  g diff --name-only "$base...$br" | head -30 | sed 's/^/    /'
-  [ "$(g diff --name-only "$base...$br" | wc -l)" -le 30 ] || echo "    ... (more files)"
+  # shellcheck disable=SC2086  # RANGE is one range or two refs
+  echo "  files changed: $(g diff --shortstat $range | sed 's/^ *//')"
+  # shellcheck disable=SC2086
+  g diff --name-only $range | head -30 | sed 's/^/    /'
+  # shellcheck disable=SC2086
+  [ "$(g diff --name-only $range | wc -l)" -le 30 ] || echo "    ... (more files)"
 }
 project_load() { # PROJ (or inferred) -> af, REPO, TESTCMD, METH
   [ -n "$PROJ" ] || PROJ=$(python3 -I "$(dirname "$0")/help.py" infer)
