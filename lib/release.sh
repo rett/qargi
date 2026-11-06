@@ -389,11 +389,8 @@ post_release() {
       names=$("$GH" -R "$(repo_slug)" release view "$VER" --json assets --jq '.assets[].name' 2>/dev/null </dev/null) || names='?'
       if [ "$names" = '?' ]; then echo "  assets: not checked (the asset list could not be read)"
       else
-        while IFS= read -r a; do
-          [ -n "$a" ] || continue
-          base=${a##*/}
-          if grep -qxF -- "$base" <<<"$names"; then echo "  asset $base: present"; else echo "  asset $base: MISSING from the release"; fi
-        done < <(jq -r '(.release? // {}) | (.assets // [])[]' "$af" 2>/dev/null)
+        # release.assets entries: {version} replaced, a glob matched by its base name against the names the release has
+        python3 -I "$RS" asset-status "$af" "$VER" <<<"$names" 2>/dev/null | sed 's/^/  /' || true
         if sign_configured; then
           while IFS= read -r a; do
             [ -n "$a" ] || continue

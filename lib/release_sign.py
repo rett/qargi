@@ -26,13 +26,15 @@ result of the signing and of verify_command. Nothing the person types (the passp
                                                  print "sha256<TAB>absolute path<TAB>path in its root" per file to attach: the release.assets of AF
                                                  (globs expanded), every --asset and every regular file of every --asset-dir. A relative name is taken
                                                  in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository)
+  release_sign.py asset-status AF VERSION        read the names of the assets of a GitHub release on stdin; print a line per entry of release.assets
+                                                 ({version} replaced; a glob matched by its base name, with fnmatch): "asset X: present" or "asset X: MISSING from the release"
   release_sign.py after-steps AF VERSION         print the steps of release.after_steps, {version} replaced, one per line
   release_sign.py resolve REPO FILE...           print "sha256<TAB>absolute path<TAB>path in the repository" per file; exit 1 if one is no regular
                                                  file inside the repository
   release_sign.py record --state F --repo R --af AF --project P --version V --commit C --sign-rc N --verify-rc N|none
   release_sign.py check --state F --repo R --af AF --commit C     print the verdict; exit 0 only when the record is ok and still true
 """
-import glob, hashlib, json, os, re, sys, time
+import fnmatch, glob, hashlib, json, os, re, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import release_layout   # the layout answers of a release (version_file, changelog, man_pages, test_command, preflight)
@@ -306,6 +308,20 @@ def main(argv):
             return 2
         for step in ((load_release(rest[0]) or {}).get("after_steps") or []):
             print(step.replace("{version}", rest[1]))
+        return 0
+    if cmd == "asset-status":
+        if len(rest) != 2:
+            return 2
+        names = [n for n in sys.stdin.read().splitlines() if n]
+        for pat in ((load_release(rest[0]) or {}).get("assets") or []):
+            if not isinstance(pat, str):
+                continue
+            base = pat.replace("{version}", rest[1]).rsplit("/", 1)[-1]
+            if glob.has_magic(base):
+                hits = [n for n in names if fnmatch.fnmatchcase(n, base)]
+                print("asset %s: present (%s)" % (base, ", ".join(hits)) if hits else "asset %s: MISSING from the release (no asset matches)" % base)
+            else:
+                print("asset %s: present" % base if base in names else "asset %s: MISSING from the release" % base)
         return 0
     if cmd == "assets":
         a, i = {}, 0

@@ -150,6 +150,16 @@ grep -q "signature app.tar.gz.sig: attached" <<<"$out" && ok "an attached signat
 : > "$T/assets.out"
 out=$($REL status 0.2.0 2>&1)
 grep -q "asset app.tar.gz: MISSING from the release" <<<"$out" && ok "an asset that is not on the release is missing" || no "checklist asset missing: $out"
+# a glob and a {version} entry are matched by their base name against the release's assets
+setans '.release.assets=["dist/*.tar.gz","dist/app-{version}.zip","out/none-*.txt"]'
+printf 'app.tar.gz\napp-0.2.0.zip\n' > "$T/assets.out"
+out=$($REL status 0.2.0 2>&1)
+grep -q "asset \*.tar.gz: present (app.tar.gz)" <<<"$out" && grep -q "asset app-0.2.0.zip: present" <<<"$out" && grep -q "asset none-\*.txt: MISSING from the release" <<<"$out" && ! grep -q "asset app-{version}" <<<"$out" \
+  && ok "a glob and a {version} entry of release.assets are matched against the assets of the release" || no "glob assets: $out"
+: > "$T/assets.out"
+out=$($REL status 0.2.0 2>&1)
+grep -q "asset \*.tar.gz: MISSING from the release" <<<"$out" && grep -q "asset app-0.2.0.zip: MISSING from the release" <<<"$out" && ok "and are missing when no asset matches" || no "glob assets missing: $out"
+setans '.release.assets=["dist/app.tar.gz"]'
 git -C "$R" push -q origin :refs/tags/0.2.0 2>/dev/null || git -C "$T/origin.git" tag -d 0.2.0 >/dev/null
 out=$($REL status 0.2.0 2>&1)
 grep -q "tag 0.2.0: NOT on origin" <<<"$out" && ok "a tag that origin does not have is said so" || no "checklist tag: $out"
