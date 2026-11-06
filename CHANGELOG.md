@@ -15,8 +15,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
   `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
   as fact; with the answer or a recognised model there is no such note.
+
+### Changed
 - The line the stage verbs print and the verdict of `lead compact-check --advise` show the token count beside the percentage, for example
   `lead: 90%, 180k tokens of context; compact is safe now: run /compact`.
+- `qargi project template` carries `lead.context_window` as `null` (derive the window from the model of the session) and `project init` says
+  which window the lead gets; `project validate` refuses a value that is not a number of tokens of at least 1000 (or null). The
+  `qargi-project` skill lists the question.
 
 ## [0.2.3] - 2026-11-05
 

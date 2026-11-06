@@ -329,6 +329,9 @@ if isinstance(teams, dict) and teams:
         sc = t.get("scopes", {})
         need(isinstance(sc, dict) and all(k in mem and isinstance(v, list) and all(isinstance(x, str) and x and not x.startswith("/") and ".." not in x for x in v) for k, v in sc.items()),
              "%s.scopes: {member role: [paths it may change]}" % p)
+cw = (c.get("lead") or {}).get("context_window") if isinstance(c.get("lead"), dict) else None
+need(cw is None or (isinstance(cw, int) and not isinstance(cw, bool) and cw >= 1000),
+     "lead.context_window: a number of tokens (at least 1000), or null to derive the window from the model of the session (its runtime's table); set it when your session's window is known, for example 1000000")
 lp = (c.get("lead") or {}).get("push", {})
 if lp:
     need(isinstance(lp, dict), "lead.push: an object")
@@ -475,6 +478,7 @@ case $verb in
         build: {base: "@dispatcher", push: {mode: "none"}, model: null, effort: $t.build.effort, apt: [], tools: [], skills: []},
         write: {base: "gh-pages", push: {mode: "none"}, model: null, effort: $t.write.effort, apt: [], tools: [], skills: ["pdf"]}
       },
+      lead: {context_window: null},
       models: {provider: ""},
       memory: {memory_store: "", reference_store: "", tiers: {}},
       budget_cents: 500}';;
@@ -491,6 +495,7 @@ case $verb in
     jq . "$ans" > "$PROJ_DIR/$n.json.tmp" && chmod 600 "$PROJ_DIR/$n.json.tmp" && mv "$PROJ_DIR/$n.json.tmp" "$PROJ_DIR/$n.json"
     echo "project $n stored in $PROJ_DIR/$n.json"
     no_provider "$PROJ_DIR/$n.json" || true
+    jq -r '"lead context window: " + (if (.lead.context_window // null) == null then "derived from the model of the session (qargi project set \($n) lead.context_window TOKENS to fix it)" else "\(.lead.context_window) tokens" end)' --arg n "$n" "$PROJ_DIR/$n.json"
     jq -r '.roles | to_entries[] | "  role \(.key): base \(.value.base), push \(.value.push.mode)" + (if .value.push.branch_pattern then " (\(.value.push.branch_pattern))" else "" end) + ", \(.value.model // "provider tier")/\(.value.effort)"' "$PROJ_DIR/$n.json";;
   new)
     # a new project: its directory, a git repository on the methodology's branches and the generic files; the plan first
