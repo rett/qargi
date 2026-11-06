@@ -61,6 +61,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
   for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
   a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
+- `runs.owned_refs` can no longer reach the git-flow branches or the tags by a glob: a pattern is refused when it can match anything inside `refs/heads/agent/`,
+  `feature/`, `release/`, `hotfix/` or `refs/tags/` (`refs/heads/rel*/0*`, `refs/heads/age*t/foo-*` and `refs/tags/v0.*` passed validation before, because only one sample
+  name was tried), and a name under those, a tag or a `worktree-bridge-*` branch is never accepted as owned at the time of the check, whatever a hand-edited answer says.
 
 ## [0.2.3] - 2026-11-05
 

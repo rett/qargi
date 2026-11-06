@@ -230,6 +230,19 @@ out=$(verify "$R"); rc=$?
 [ $rc = 2 ] && grep -q "branch moved: refs/heads/rt-base" <<<"$out" && ok "the base of an open run is not accepted as owned, whatever the pattern says" || no "base owned: rc=$rc $out"
 git -C "$A" update-ref refs/heads/rt-base "$dv"
 out=$(verify "$R"); [ $? = 0 ] || no "(setup) base restored: $out"
+# the match itself refuses the git-flow branches, the tags and the harness's bridge branches, whatever pattern a hand-edited answer holds
+echo '{"runs":{"owned_refs":["refs/heads/rel*/0*","refs/heads/age*t/foo-*","refs/tags/v0.*","refs/heads/worktree-*","refs/heads/foo-*"]}}' > "$T/own.json"
+OM="python3 -I $PWD/lib/owned_refs.py match $T/own.json"
+for n in refs/heads/release/0.2 refs/heads/agent/foo-x refs/tags/v0.2 refs/heads/worktree-bridge-cse_1; do
+  $OM "$n" >/dev/null 2>&1 && no "match accepted $n" || ok "match refuses $n whatever the answer holds"
+done
+[ "$($OM refs/heads/foo-1 2>&1)" = "refs/heads/foo-*" ] && [ "$($OM refs/heads/worktree-other 2>&1)" = "refs/heads/worktree-*" ] && ok "and still accepts a branch the valid patterns name (foo-1, worktree-other)" || no "match valid patterns"
+R=$(mkrun owned4)
+own '["refs/heads/worktree-*","refs/heads/rel*/0*"]'
+git -C "$A" branch worktree-bridge-owned4 develop; git -C "$A" branch release/0.9 develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "refs/heads/worktree-bridge-owned4" <<<"$out" && grep -q "refs/heads/release/0.9" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a bridge branch no worktree holds and a release branch are found though patterns that reach them are declared" || no "bridge/release owned: rc=$rc $out"
+git -C "$A" branch -D worktree-bridge-owned4 release/0.9 >/dev/null
 # the answer is checked by project validate
 $DA project template demo | jq '.repo.url = "https://github.com/example/demo" | .runs = {owned_refs: ["refs/heads/dev*"]}' > "$T/bad.json"
 out=$($DA project validate "$T/bad.json" 2>&1); rc=$?
