@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`resources.transcripts.windows`, a first-match list of `{model, tokens}` where `*` in the pattern stands for any run of characters; `claude-code`
   ships `*[1m]` and `*-1m` as 1000000), else the definition's single `window`. A session on a 1,000,000 window no longer reads as 96% full.
   `lead usage --json` keeps its keys and adds `window_source`: `answer`, `model` or `assumed`.
+- When the window is only the runtime's single `window` (no answer, no model in its table), `lead usage`, `lead compact-check --advise` (also its
+  `--json` advice) and the line the stage verbs print say `(window assumed 200,000; set lead.context_window)`, so the percentage is not presented
+  as fact; with the answer or a recognised model the lines are unchanged.
 
 ## [0.2.3] - 2026-11-05
 

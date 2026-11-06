@@ -1252,7 +1252,9 @@ COMMANDS = {
                            opt("--transcript", "read this transcript file", "FILE", "file"), opt("--json", "machine-readable")],
                           desc=("The runtime of the project says where its session transcripts are and how to read them (resources.transcripts of its definition): "
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
-                                "lead.context_window (tokens), else the runtime's. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
+                                "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows), else the "
+                                "definition's single window, which is only a guess: the lines that show a percentage then say (window assumed N; set lead.context_window), "
+                                "and --json says window_source answer, model or assumed. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
