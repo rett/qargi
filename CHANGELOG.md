@@ -36,6 +36,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
 
 ### Changed
+- When the window of `lead usage` is only assumed and the tokens in use exceed it, the real window is larger, so no percentage is printed as fact: the text,
+  the `lead compact-check --advise` advice and the stage-verb line say `tokens exceed the assumed window 200,000; set lead.context_window`. `lead usage --json`
+  keeps `percent` and adds `window_exceeded` (`true` only in that case; `false` otherwise). The `(window assumed N; ...)` label is unchanged for the rest.
 - `README.md` is a front page: a short description, a quick start, a table of the documentation and the license. Its detail moved, text unchanged,
   into `docs/` by topic (`docs/install-and-upgrade/`, `flow/`, `members-and-providers/`, `skills-tools-and-memory/`, `reference/` and
   `development/`, each with a `README.md`, and `docs/README.md` for the overview). The comments and the help line that pointed at README sections

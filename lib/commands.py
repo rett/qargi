@@ -1277,7 +1277,8 @@ COMMANDS = {
                                 "the context in use is the input, cache-read and cache-creation tokens of the last assistant turn. The window is the project answer "
                                 "lead.context_window (tokens), else the one the runtime's definition gives for the model id of that turn (resources.transcripts.windows; the entries of the shipped definition match ids that end in [1m] or -1m, so an id without such a suffix matches none), else the "
                                 "definition's single window, which is only a guess: the lines that show a percentage then say (window assumed N; set lead.context_window), "
-                                "and --json says window_source answer, model or assumed. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
+                                "and --json says window_source answer, model or assumed. When the tokens in use exceed that guessed window the real window is larger: the text then "
+                                "says tokens exceed the assumed window N instead of a percentage, and --json keeps percent and sets window_exceeded to true. Read only; a transcript that cannot be found or read prints unknown and exits 0."),
                           examples=["qargi lead usage", "qargi project set acme lead.context_window 1000000"]),
             "compact-check": verb("Is a /compact safe now? Exit 0 safe, 1 not, with every reason and the block to re-read after it", [],
                                   [PROJECT_OPT, opt("--advise", "also say whether a compact is advised: from 50% of the window, strongly from 70%"), opt("--json", "machine-readable")],
