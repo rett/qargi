@@ -1388,6 +1388,16 @@ class Marshal(HookCase):
                       "export 'QARGI_LEAD'=me", "export QARGI_LEAD\\\n=me", "sudo env QARGI_LEAD=me ls", "export A=1 QARGI_LEAD=me", "QARGI_LEAD+=x ls",
                       "command export QARGI_LEAD=me", "unset A QARGI_LEAD"])
 
+    def test_the_member_mark_cannot_be_set_or_unset(self):
+        """QARGI_MEMBER_RUN tells the marshal a member is running, wherever it changes to; a member that sets or unsets it would renew the lead's lease."""
+        self.refused(["unset QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUN=", "QARGI_MEMBER_RUN= qargi feature status x", "env -u QARGI_MEMBER_RUN qargi feature status x",
+                      "env -uQARGI_MEMBER_RUN qargi feature status x", "env --unset=QARGI_MEMBER_RUN ls", "declare +x QARGI_MEMBER_RUN", "printf -v QARGI_MEMBER_RUN x",
+                      "bash -c 'unset QARGI_MEMBER_RUN; qargi feature status x'", "cd / && QARGI_MEMBER_RUN= qargi review check out", "readonly QARGI_MEMBER_RUN=",
+                      "sudo env -u QARGI_MEMBER_RUN ls"])
+        for c in ("echo $QARGI_MEMBER_RUN", "export QARGI_MEMBER_RUNNER=1", "env | grep QARGI_MEMBER_RUN", "unset QARGI_MEMBER_RUN_X", "echo QARGI_MEMBER_RUN=1"):
+            res = self.bash(c)
+            self.assertEqual(res.returncode, 0, (c, res.stderr))
+
     def test_the_lead_identity_is_found_as_env_names_finds_a_name(self):
         """lead_refusal reads the names a segment sets through env_names(), as the QARGI_NESTED check does: printf -v with the name glued to the option,
         read, mapfile and readarray into it are refused too, and env -u glued to the name unsets it."""

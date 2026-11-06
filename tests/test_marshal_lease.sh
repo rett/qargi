@@ -40,6 +40,15 @@ at $LATE $F status l1; rc=$?
 QARGI_LEAD=bob at $((LATE + 600)) "$DA" marshal check l1; rc=$?
 [ $rc = 1 ] && grep -q "is led by alice" "$T/e" && ok "after the renewal another identity is refused (the lead is live)" || no "SPEC refusal after renewal: rc=$rc $(out)"
 
+# a member that left its run directory is told by the environment mark (QARGI_MEMBER_RUN): the lead's identity renews nothing for it
+mkfeat lm
+QARGI_MEMBER_RUN=$T/some-run at $LATE $F status lm; rc=$?
+[ $rc = 0 ] && [ "$(j lm .renewed_at)" = "$(iso $t0)" ] && ok "feature status with the member mark renews nothing, whatever the working directory" || no "SPEC member mark: rc=$rc $(out) $(j lm .renewed_at)"
+QARGI_MEMBER_RUN=$T/some-run at $LATE "$DA" marshal check lm --renew; rc=$?
+[ "$(j lm .renewed_at)" = "$(iso $t0)" ] && ok "marshal check --renew with the member mark renews nothing" || no "SPEC member mark check: rc=$rc $(out) $(j lm .renewed_at)"
+at $LATE $F status lm; rc=$?
+[ $rc = 0 ] && [ "$(j lm .renewed_at)" = "$(iso $LATE)" ] && ok "the same command without the mark renews (the mark is what made the difference)" || no "SPEC member mark absent: rc=$rc $(out) $(j lm .renewed_at)"
+
 git -C "$R" branch agent/t1 develop; commit_on agent/t1 t1.txt
 now=$LATE
 for step in "merge l1 agent/t1" "sync l1" "verify l1"; do

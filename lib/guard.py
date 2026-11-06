@@ -96,8 +96,10 @@ Marshal: the feature marshal (`qargi marshal`) is changed only by the lead. The 
     none, or one held in a variable is refused (fail closed);
   - the feature verbs that write the marshal: qargi feature start|finish|verify (start and finish create and finish the lead's record
     and push it with the lead's credentials, verify keeps the lease renewed), found the same way. list, status, merge and sync stay
-    allowed (merge and sync only ask the marshal); any other verb or one held in a variable is refused. The marshal itself tells a
-    member run only by the working directory, so this refusal covers a member whose directory lies outside its run;
+    allowed (merge and sync ask the marshal, and status, merge and sync renew the lease of a feature this identity leads); any other verb or one held in
+    a variable is refused. The marshal tells a member run by the working directory (below a run directory) and by the variable QARGI_MEMBER_RUN
+    that `qargi local run` puts in the member's environment (a member that changes directory still renews nothing); the guard refuses a command that sets or
+    unsets that variable, as it does QARGI_LEAD. A member started some other way carries no variable and is told by its directory alone;
     `qargi feature park` (it resets the parking branch to develop in the main checkout) and `qargi branch prune` (it deletes merged branches
     and the worktrees qargi made, and with --remote branches on origin; also through lib/branch.sh, and a verb held in a variable) are the
     lead's too, and are refused with wording of their own; so are `qargi upstream status` (it fetches into the lead's repository, which changes
@@ -243,7 +245,8 @@ MEMORY_NOTE = "propose it in your report"
 MARSHAL_READ = ("status", "check", "handoff")                # handoff only reads; with --write it makes a file and is refused (skill_verb)
 MARSHAL_SIGNING = {"key": "manages the marshal's signing key", "signers": "manages the marshal's allowed signers",
                    "resign": "signs a marshal record with the lead's key"}      # the verbs of the signed records, each refused with its own reason
-FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that do not write the marshal (the rest does, or is unknown)
+MEMBER_MARK = "QARGI_MEMBER_RUN"                             # the variable `qargi local run` puts in a member's environment (marshal_refs.in_member_run reads it): setting or unsetting it is refused
+FEATURE_OPEN = ("", "list", "status", "merge", "sync")       # the feature verbs that start, finish or verify nothing; status, merge and sync still renew the lead's own lease (check --renew), so what keeps a member from renewing it is the member mark (QARGI_MEMBER_RUN) and the run directory it works in, not this list (the rest writes, or is unknown)
 UPSTREAM_OPEN = ("", "review")                               # the upstream verbs that only read: status fetches into the lead's repository and sync moves a branch (the rest is unknown)
 LEAD_BUILTINS = {"export", "declare", "typeset", "readonly", "local", "unset", "env", "read", "printf", "set", "let"}
 MARSHAL_NOTE = "the lead changes the marshal; report it in your task output"
@@ -2203,10 +2206,10 @@ def separator_path_refusal(command, here):
     return None
 
 
-def names_lead(t):
-    """True when a word assigns, exports or unsets QARGI_LEAD (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, -uQARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
+def names_lead(t, name="QARGI_LEAD"):
+    """True when a word assigns, exports or unsets NAME, QARGI_LEAD by default (QARGI_LEAD=x, QARGI_LEAD+=x, -u QARGI_LEAD, -uQARGI_LEAD, --unset=QARGI_LEAD, bare name)."""
     lhs, _, rhs = t.partition("=")
-    return lhs.rstrip("+") == "QARGI_LEAD" or (lhs in ("--unset", "-u") and rhs == "QARGI_LEAD") or t == "-uQARGI_LEAD"
+    return lhs.rstrip("+") == name or (lhs in ("--unset", "-u") and rhs == name) or t == "-u" + name
 
 
 def lead_refusal(toks, i):
@@ -2216,6 +2219,9 @@ def lead_refusal(toks, i):
     prog, rest = (os.path.basename(toks[i]), toks[i + 1:]) if i < len(toks) else ("", [])
     if "QARGI_LEAD" in env_names(toks, i) or any(names_lead(t) for t in toks[:i + 1]) or (prog in LEAD_BUILTINS and any(names_lead(t) for t in rest)):
         return MarshalReason("setting or unsetting QARGI_LEAD changes who the lead is and is not available to an agent; " + MARSHAL_NOTE)
+    if MEMBER_MARK in env_names(toks, i) or any(names_lead(t, MEMBER_MARK) for t in toks[:i + 1]) or (prog in LEAD_BUILTINS and any(names_lead(t, MEMBER_MARK) for t in rest)):
+        return MarshalReason("setting or unsetting %s removes the mark that tells the marshal a member is running, so that its commands renew nothing, and is not available to an agent; %s"
+                             % (MEMBER_MARK, MARSHAL_NOTE))
     return None
 
 

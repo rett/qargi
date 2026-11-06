@@ -71,7 +71,10 @@ def timeout_secs():
 
 def in_member_run(path=None):
     """True when path (default: the current directory) is at or below a directory `qargi local prepare` made (it holds the
-    files ability and refs.before): that is a member's run. Same rule as lib/guard.py run_dir."""
+    files ability and refs.before): that is a member's run. Same rule as lib/guard.py run_dir. Without a path the environment counts too: the variable
+    QARGI_MEMBER_RUN (put there when the member is started, and kept by the guard from being set or unset) marks a member that has changed to another directory."""
+    if path is None and os.environ.get("QARGI_MEMBER_RUN"):
+        return True
     p = os.path.realpath(path or os.getcwd())
     while p and p != os.path.dirname(p):
         if os.path.isfile(os.path.join(p, "ability")) and os.path.isfile(os.path.join(p, "refs.before")):

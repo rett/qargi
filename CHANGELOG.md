@@ -111,6 +111,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the scratch directory before); the usage text and the header of `lib/review.sh` list `check`.
 - `qargi marshal release NAME` for a name with no record and no branch (a typo) now fails with "no feature NAME in PROJECT"; the quiet success ("nothing to
   release", exit 0) stays for a feature that was finished, abandoned or released.
+- A member run no longer renews the lead's lease from another directory: `qargi local run` puts `QARGI_MEMBER_RUN` (the run directory) in the member's
+  environment, the marshal treats a process that has it as a member run as well as one working below a run directory (so `feature status|merge|sync` and
+  `review check` renew nothing for it), and the guard refuses a command that sets or unsets it. A member started some other way is still told by its working
+  directory alone. The comment on the guard's open `feature` verbs now says that status, merge and sync renew a lease.
 
 ## [0.2.2] - 2026-11-05
 
