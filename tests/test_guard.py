@@ -646,6 +646,21 @@ class Skills(HookCase):
             r = self.bash(c)
             self.assertEqual(r.returncode, 0, (c, r.stderr))
 
+    def test_refuses_review_apply_to_a_member(self):
+        """qargi review apply creates a branch in the lead's repository from a run's patches and records it in the lead's ref journal: the lead's,
+        in every spelling, however the run is named. Reading the reviews (review check, review list) and talking about it stays allowed."""
+        for form in ("qargi review apply %s", "/opt/q/bin/qargi review apply %s", "sudo qargi review apply %s", "bash -c 'qargi review apply %s'", "env FOO=1 qargi review apply %s",
+                     "cd src && qargi review apply %s", "echo $(qargi review apply %s)", "true && qargi review apply %s", "eval 'qargi review apply %s'",
+                     "qargi 'review' 'apply' %s", "xargs qargi review apply %s"):
+            for tail in ("/tmp/r", "--from-saved 2026-11-06-x", "/tmp/r --branch agent/x"):
+                c = form % tail
+                r = self.bash(c)
+                self.assertEqual(r.returncode, 2, c)
+                self.assertIn("qargi review apply is the lead's", r.stderr, c)
+        for c in ("echo qargi review apply", "grep -n 'review apply' lib/commands.py", "qargi review check /tmp/r", "git log --grep 'review apply'"):
+            r = self.bash(c)
+            self.assertEqual(r.returncode, 0, (c, r.stderr))
+
     def test_refuses_provider_accept_to_a_member(self):
         for form in ("qargi provider accept claude --surface cloud --no-barrier --asked x", "/opt/q/bin/qargi provider accept claude --surface local --no-barrier",
                      "sudo qargi provider accept nobarrier", "bash -c 'qargi provider accept claude --surface cloud'", "env FOO=1 qargi provider accept x",

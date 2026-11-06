@@ -1438,7 +1438,7 @@ TOPICS = {
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
         "upstream status, sync; ref record; memory init, "
-        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; team run; env plan and apply; task.",
+        "move, split, merge and copy; cloud set, unset and login; upgrade; local run, prepare, verify and clean; agent remove; review apply; team run; env plan and apply; task.",
         "It refuses writes in the pack library, credentials, the install record, the runtime's skills, agents and plugin directories, the installed copy, "
         "the state's render, providers, marshal, feature and saved-run directories, its ref journal, the memory tiers, ~/.config/anthropic, and the "
         "lead's git configuration and session files. "

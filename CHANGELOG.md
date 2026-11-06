@@ -92,6 +92,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   to the file, and a run with neither is a run of work. `local clean` and `lead compact-check` agree on what a report is: a regular file (not a link) named
   `report.md` or `NAME-report.md` directly in OUT.
 
+### Security
+- A member's guard refuses `qargi review apply`: it creates a branch in the lead's repository from a run's patches, with the lead's identity, and records it in the
+  lead's ref journal, so it is the lead's like `local verify` and `local close`. (`qargi ref record` and `qargi branch prune` were already refused.)
+
 ## [0.2.3] - 2026-11-05
 
 ### Added
