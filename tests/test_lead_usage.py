@@ -228,13 +228,16 @@ class Check(Base):
             for r in runs:
                 f.write(json.dumps(r) + "\n")
 
-    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None):
+    def run_dir(self, name, *files, base="feature/lc", repo=None, slug=None, cls=None):
         d = os.path.join(self.t, name)
         os.makedirs(d)
         for fn, text in files:
             with open(os.path.join(d, fn), "w") as f:
                 f.write(text)
-        self.registry({"run": d, "slug": slug or name, "ability": "build", "base": base, "started": "1", "repo": repo or self.repo})
+        rec = {"run": d, "slug": slug or name, "ability": "build", "base": base, "started": "1", "repo": repo or self.repo}
+        if cls:
+            rec["class"] = cls                                                                            # the class prepare records in the lead's registry
+        self.registry(rec)
         return d
 
     def check(self, *args, **env):
@@ -373,6 +376,26 @@ class Check(Base):
         self.assertTrue(rows["work"][4].startswith("qargi local close %s --applied-by-am" % wr))
         self.assertIn("qargi review apply %s, qargi feature merge lc agent/work, qargi local clean %s" % (wr, wr), rows["work"][4])
         self.assertTrue(rows["fresh"][4].startswith("qargi local verify %s" % pr))
+
+    def test_the_class_is_the_registrys_and_a_report_is_a_regular_file_named_report_md(self):
+        """The class file of a run directory is a member's: the registry's class wins; a record with none falls back to the file, and a run with neither is a
+        run of work. A report is a regular file named report.md or NAME-report.md directly in OUT, as lib.sh out_has_report says."""
+        fg = self.run_dir("fg", ("class", "read-only\n"), cls="write", slug="forged")
+        old = self.run_dir("old", ("class", "read-only\n"), slug="oldrec")
+        none = self.run_dir("none", slug="nothing")
+        sym = self.run_dir("sym", cls="read-only", slug="symrep")
+        pre = self.run_dir("pre", cls="read-only", slug="prerep")
+        for d, make in ((sym, lambda o: os.symlink("/etc/hostname", os.path.join(o, "report.md"))),
+                        (pre, lambda o: open(os.path.join(o, "review-report.md"), "w").close())):
+            os.makedirs(os.path.join(d, "out"))
+            make(os.path.join(d, "out"))
+        rc, out, _ = self.run_cli("lead", "compact-check")
+        self.assertEqual(rc, 1)
+        self.assertNotIn("a read-only local run is open: " + fg, out)          # the registry says write; the member's file does not matter
+        self.assertNotIn("a read-only local run is open: " + none, out)        # neither: a run of work
+        self.assertIn("a read-only local run is open: " + old, out)            # an older record: the file
+        self.assertIn("close it: qargi local clean %s (once the member has written OUT/report.md" % sym, out)   # a link is no report
+        self.assertIn("close it: qargi local clean %s\n" % pre, out)           # NAME-report.md is
 
     def test_runs_of_another_repository_and_cleaned_runs_are_not_counted(self):
         self.run_dir("other", repo=os.path.join(self.t, "elsewhere"))

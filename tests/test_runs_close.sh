@@ -20,9 +20,9 @@ A=$T/app; git init -q -b master "$A"; git init -q --bare "$T/origin.git"
 mkdir -p "$A/internal"; echo 0.1.0 > "$A/VERSION"; printf '# Changelog\n\n## [Unreleased]\n\n- a change\n' > "$A/CHANGELOG.md"; echo a > "$A/internal/a.go"
 git -C "$A" add -A && git -C "$A" commit -q -m base && git -C "$A" branch develop && git -C "$A" remote add origin "$T/origin.git" && git -C "$A" push -q origin master develop
 git -C "$A" checkout -q -b parked
-jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, test_command:"true"}' > "$T/c/projects/app.json"
+jq -n --arg p "$A" '{schema:1, project:"app", methodology:"gitflow", repo:{url:"https://github.com/acme/app", path:$p, long_lived:["master","develop"]}, models:{provider:{local:"claude-code", cloud:"claude-platform"}}, test_command:"true"}' > "$T/c/projects/app.json"
 F="$DA feature"
-mkrun() { $DA local prepare --repo "$A" --base "${2:-develop}" --slug "$1" --scratch "$T/scr" | sed -n 's/^RUN=//p'; }
+mkrun() { $DA local prepare --repo "$A" --base "${2:-develop}" --slug "$1" --scratch "$T/scr" ${3:+--role "$3"} | sed -n 's/^RUN=//p'; }
 verify() { $DA local verify "$1" 2>&1; }
 hand() { git -C "$A" commit-tree -p "$1" -m "by hand" "$1^{tree}"; }
 mk() { GIT_AUTHOR_DATE="2026-10-27T10:00:00" GIT_COMMITTER_DATE="2026-10-27T10:00:00" git commit -q -m "$1" -m "$2"; }
@@ -311,23 +311,23 @@ out=$($DA review apply "$R" 2>&1); rc=$?
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "clean removes a closed run without asking for an applied tip" || no "clean closed: rc=$rc $out"
 # a read-only run is not closed this way, and a discarded or cleaned run does not block finish
-R2=$(mkrun ro-run feature/cl); echo "# report" > "$R2/out/report.md"; echo read-only > "$R2/class"
+R2=$(mkrun ro-run feature/cl review); echo "# report" > "$R2/out/report.md"
 out=$($DA local close "$R2" --applied-by-am 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "read-only run" <<<"$out" && ok "close refuses a read-only run" || no "close read-only: rc=$rc $out"
 $DA local clean "$R2" --discard >/dev/null 2>&1
 
 # --- 3b. a read-only run (a report, no patches) closes with a plain clean
 $F start ro >/dev/null 2>&1
-R=$(mkrun ro-ok feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"
+R=$(mkrun ro-ok feature/ro review); echo "# report" > "$R/out/report.md"
 out=$($DA lead compact-check --project app 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "a read-only local run is open: $R" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" && ok "compact-check names an open read-only run and its closing command" || no "compact-check read-only: rc=$rc $out"
 out=$($F finish ro 2>&1); rc=$?
-[ $rc = 1 ] && grep -q "feature ro has 1 open run(s)" <<<"$out" && grep -q "$R (build ro-ok): prepared, not verified" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" \
+[ $rc = 1 ] && grep -q "feature ro has 1 open run(s)" <<<"$out" && grep -q "$R (review ro-ok): prepared, not verified" <<<"$out" && grep -q "close it: qargi local clean $R\$" <<<"$out" \
   && ok "feature finish names the open read-only run and the exact command that closes it" || no "finish read-only: rc=$rc $out"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && [ ! -e "$R" ] && ok "a read-only run with a report and unchanged refs closes with a plain clean (no manifest, no --discard)" || no "clean read-only: rc=$rc $out"
 out=$($F finish ro 2>&1); grep -q "open run" <<<"$out" && no "a cleaned read-only run still blocks finish: $out" || ok "and no longer blocks feature finish"
-R=$(mkrun ro-noreport feature/ro); echo read-only > "$R/class"
+R=$(mkrun ro-noreport feature/ro review)
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && grep -q "report.md" <<<"$out" && [ -d "$R" ] && ok "a read-only run with no report is still refused, and the message says what closes it" || no "read-only no report: rc=$rc $out"
 out=$($DA lead compact-check --project app 2>&1)
@@ -344,9 +344,49 @@ R=$(mkrun wr-report feature/ro); echo "# report" > "$R/out/report.md"
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && [ -d "$R" ] && ok "a run of work (class write) with only a report still needs its manifest" || no "write with report: rc=$rc $out"
 $DA local clean "$R" --discard >/dev/null 2>&1
-R=$(mkrun ro-ok2 feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"; verify "$R" >/dev/null
+R=$(mkrun ro-ok2 feature/ro review); echo "# report" > "$R/out/report.md"; verify "$R" >/dev/null
 out=$($DA local clean "$R" 2>&1); rc=$?
 [ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "a verified read-only run closes with a plain clean as well" || no "clean verified read-only: rc=$rc $out"
+
+# --- 3c. the class of a run is the lead's registry's: a member's class file, and a report it fakes, change nothing
+jq -e 'select(.slug == "ro-ok2") | .class == "read-only"' "$T/s/local-runs.jsonl" >/dev/null && jq -e 'select(.slug == "wr-report") | .class == "write"' "$T/s/local-runs.jsonl" >/dev/null \
+  && ok "prepare records the class of the run in the lead's registry" || no "registry class: $(tail -2 "$T/s/local-runs.jsonl")"
+R=$(mkrun forged-ro feature/ro); echo read-only > "$R/class"; echo "# report" > "$R/out/report.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && [ -d "$R" ] && ok "a write run whose class file a member set to read-only still needs its manifest" || no "forged read-only: rc=$rc $out"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "a read-only local run is open: $R" <<<"$out" && no "a forged class file makes a write run read-only for compact-check: $out" || ok "and compact-check does not call it a read-only run"
+$DA local clean "$R" --discard >/dev/null 2>&1
+R=$(mkrun forged-wr feature/ro review); echo write > "$R/class"; rm -f "$R/class"; echo "# report" > "$R/out/report.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -q "cleaned $R" <<<"$out" && ok "a read-only run whose class file a member removed is still read-only (plain clean with its report)" || no "removed class file: rc=$rc $out"
+R=$(mkrun ro-patches feature/ro review); mkdir -p "$R/out/patches"; echo x > "$R/out/patches/0001-x.patch"; echo write > "$R/class"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "is a read-only run" <<<"$out" && ok "a read-only run's patches are refused though a member set the class file to write" || no "ro with patches: rc=$rc $out"
+$DA local clean "$R" --discard >/dev/null 2>&1
+# a record with no class (a run prepared by an earlier version) falls back to the file, and with neither counts as a run of work
+R=$(mkrun oldrec feature/ro); echo "# report" > "$R/out/report.md"; rm -f "$R/class"
+jq -c --arg r "$R" 'if .run == $r then del(.class) else . end' "$T/s/local-runs.jsonl" > "$T/reg.new" && mv "$T/reg.new" "$T/s/local-runs.jsonl"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "an older record with no class and no class file is a run of work, not a read-only one" || no "no class at all: rc=$rc $out"
+echo read-only > "$R/class"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && ok "an older record falls back to the class file" || no "old record file fallback: rc=$rc $out"
+# what counts as a report: a regular file named report.md or NAME-report.md directly in OUT, for clean and for compact-check alike
+R=$(mkrun rep-kinds feature/ro review)
+ln -s /etc/hostname "$R/out/report.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a link named report.md is no report" || no "link report: rc=$rc $out"
+rm -f "$R/out/report.md"; mkdir "$R/out/sub"; echo "# r" > "$R/out/sub/report.md"; echo "# r" > "$R/out/xreport.md"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "holds no manifest" <<<"$out" && ok "a report in a subdirectory, or a file named xreport.md, is no report" || no "sub/other report: rc=$rc $out"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "close it: qargi local clean $R (once the member has written OUT/report.md" <<<"$out" && ok "compact-check agrees: it waits for the report" || no "compact-check kinds: $out"
+echo "# r" > "$R/out/review-report.md"
+out=$($DA lead compact-check --project app 2>&1)
+grep -q "close it: qargi local clean $R\$" <<<"$out" && ok "a NAME-report.md file is a report for compact-check" || no "compact-check prefixed report: $out"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && ok "and for clean" || no "prefixed report clean: rc=$rc $out"
 
 # --- 4. feature finish is refused while a run of the feature is open
 $F start fn >/dev/null 2>&1

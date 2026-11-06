@@ -80,6 +80,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `review apply` resets the author of an applied commit with `--cleanup=verbatim`, so a repository with `commit.cleanup=strip` no longer drops the message lines
   that start with `#`; and the identity it takes from the repository's `user.name` and `user.email` (no `git.author`) is checked as `git.author` is (no angle
   bracket or control character in the name) and refused, with nothing applied, when it is not a plain `Name <email>`.
+- Whether a local run is read-only is the lead's registry's to say: `local prepare` records the class of the run there, and `local clean`, `local verify`,
+  `local close`, `local run`, `review apply` and `lead compact-check` read it from there. They read `RUN/class`, a file a member can write, and counted a run
+  with none as read-only, so a write run could be closed with a plain clean and a fake report. Only a record of an earlier version, which has no class, falls back
+  to the file, and a run with neither is a run of work. `local clean` and `lead compact-check` agree on what a report is: a regular file (not a link) named
+  `report.md` or `NAME-report.md` directly in OUT.
 
 ## [0.2.3] - 2026-11-05
 

@@ -84,9 +84,24 @@ class_abilities() { # BASE [PROJECT_JSON] -> a JSON array: the abilities of a ba
   jq -nc --arg b "$1" --slurpfile d "$_QARGI_DEFAULTS" --argjson p "$([ -n "$f" ] && cat "$f" || echo '{}')" \
     '(($d[0].bases[$b].abilities // []) + [($p.profiles // {})[] | select(.base == $b) | (.abilities // [])[]]) | unique' 2>/dev/null || echo '[]'
 }
-run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare writes); a directory with none counts as read-only
-  local c; c=$(cat "$1/class" 2>/dev/null) && [ -n "$c" ] && { echo "$c"; return 0; }
-  echo read-only
+# run_class RUN [FILE_DIR] -> the class of a local run: write or read-only. The lead's registry says (prepare records it: the run directory is a member's to
+# write, and a class file there would let a write run pass for a read-only one); only a record that has none (a run prepared by an earlier version) falls
+# back to FILE_DIR/class (default RUN/class), and a run with neither counts as write, never as read-only.
+run_class() {
+  local c
+  reg_has "$1" || reg_load
+  c=$(reg_get "$1" class)
+  case $c in write|read-only) echo "$c"; return 0;; esac
+  c=$(cat -- "${2:-$1}/class" 2>/dev/null) || c=''
+  case $c in write|read-only) echo "$c"; return 0;; esac
+  echo write
+}
+# out_has_report OUT -> 0 when OUT holds a report: a regular file (not a link) named report.md or *-report.md directly in it. The one test local.sh and
+# lib/lead_usage.py (has_report) share.
+out_has_report() {
+  local f
+  for f in "$1"/report.md "$1"/*-report.md; do [ -f "$f" ] && [ ! -L "$f" ] && return 0; done
+  return 1
 }
 # The lead's registry of local runs ($DA_STATE/local-runs.jsonl, one JSON line per run, written by `local prepare`, mode 600) is what decides what a run is
 # and where it came from: its directory, slug, base, temporary directory and the repository (repo: a real path; or url and cred: a repository URL and the path
@@ -98,8 +113,8 @@ run_class() { # RUN_DIR -> the class of a local run (RUN/class, which prepare wr
 #   reg_record DIR      run_record from the registry alone, for a run whose directory is gone (its saved copy: local verify --saved)
 #   reg_id ID           the run directory of the registry whose name is ID (qargi.XXXXXX), when exactly one has it
 #   reg_edit DIR drop|cleaned   rewrites the registry under its lock: drops the lines of DIR, or marks them cleaned (a time), mode 600
-# The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the stored project of its
-# repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
+# The line also holds what prepare took from the lead's answers, the one copy that verify, clean and review apply believe: the class of the run (class:
+# write or read-only), the stored project of its repository (project) and answers, an object with the answers that decide what verification accepts (runs.owned_refs, repo.long_lived,
 # repo.parking_branch, git.author, review.keep_author). A record without answers is an older run (see run_answers).
 # A path is compared by its real path; the run directory of a line may be gone (a reboot that emptied a tmpfs, a clean), and the path is then
 # taken as written, resolved as far as it exists (readlink -m).

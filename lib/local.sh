@@ -27,7 +27,7 @@
 # is made; warnings go to stderr. The lead of X is recorded in the run line as "lead" (null when nobody leads it).
 # prepare also appends one JSON line per run to $QARGI_STATE/local-runs.jsonl (run directory, slug, ability, base,
 # start time, temporary directory, and the repository: its real path (repo), or its URL (url) and the path of its credential file (cred), never a token;
-# the stored project of the repository (project) and a copy of the answers that decide what verification accepts (answers: runs.owned_refs, repo.long_lived,
+# the class of the run (class: write or read-only; the class file of the run directory is a member's), the stored project of the repository (project) and a copy of the answers that decide what verification accepts (answers: runs.owned_refs, repo.long_lived,
 # repo.parking_branch, git.author, review.keep_author) as they are at prepare; mode 600), so `qargi report` can list the local runs. Verify, clean and
 # review apply read those answers from this line and not from the stored project's file, which is not the lead's alone to write: an answer changed after
 # prepare takes effect on the runs prepared after it. The registry is the lead's and the only record `verify`, `clean`, `run` and `review apply` believe
@@ -475,8 +475,8 @@ exec env -i HOME="$RUN/home" PATH="\$PATH" LANG=C.UTF-8 TERM=dumb \\
   git "\$@"
 WRAP
     chmod 755 "$RUN/git"
-    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" \
-      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, project:$pj, answers:$ans}
+    jq -nc --arg r "$RUN" --arg s "$SLUG" --arg a "$ROLE" --arg b "$BASE" --arg t "$(now)" --arg l "$LEAD" --arg p "$PROFILE" --arg d "$TMPD" --arg rp "$REPO" --arg ru "$URL" --arg rc "$CRED" --arg pj "$CPJ" --argjson ans "$ANS" --arg cl "$CLASS" \
+      '{run:$r, slug:$s, ability:$a, profile:$p, base:$b, started:$t, lead:(if $l == "" then null else $l end), tmpdir:$d, class:$cl, project:$pj, answers:$ans}
        + (if $ru == "" then {repo:$rp} else {url:$ru} + (if $rc == "" then {} else {cred:$rc} end) end)' | ( umask 077; flock 9 && cat >> "$DA_STATE/local-runs.jsonl" ) 9> "$DA_STATE/local-runs.jsonl.lock"
     chmod 600 "$DA_STATE/local-runs.jsonl" 2>/dev/null || true
     render_warning "$REPO" "$URL"
@@ -529,7 +529,7 @@ WRAP
       SRC=$RUN
     fi
     # a read-only run's product is a report, never patches: patches in its output are not to be applied or accepted
-    if [ "$(run_class "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
+    if [ "$(run_class "$RUN" "$SRC")" = read-only ] && [ -n "$(find "$SRC/out" -maxdepth 2 \( -name '*.patch' -o -name run.bundle \) 2>/dev/null | head -1)" ]; then
       echo "qargi: $RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)) and its output holds patches. A read-only run's product is a report, never patches: read $SRC/out/report.md, and do not apply or accept the patches." >&2
       exit 2
     fi
@@ -541,7 +541,7 @@ WRAP
     NOREC='' EMPTY=''
     if [ -z "$SAVED" ] && [ -z "${QARGI_VERIFY_REFS_ONLY:-}" ]; then
       ncm=$(git -C "$RUN/clone" rev-list --count --branches HEAD --not --remotes=origin 2>/dev/null || echo 0)
-      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 \( -name '*.patch' -o -name '*report.md' \) 2>/dev/null | head -1)" ]; then
+      if [ "${ncm:-0}" -gt 0 ] && [ -z "$(find "$RUN/out" -maxdepth 2 -name '*.patch' 2>/dev/null | head -1)" ] && ! out_has_report "$RUN/out"; then
         EMPTY="qargi: OUT is empty: the member did not collect. $RUN/clone holds $ncm commit(s) past BASE_SHA, but $RUN/out holds no patches and no report. The member's DONE needs \`ls OUT/patches\` to list the patches (git format-patch --binary BASE_SHA..HEAD into OUT/patches, then the manifest and report). This run is not verified, and apply and close need a passing verify: send it back to collect and verify again, or take the commits from the clone yourself and drop the run with qargi local clean RUN --discard."
         NOREC=1
       fi
@@ -673,10 +673,10 @@ WRAP
     [ ! -L "$RUN" ] || die "clean: $RUN is a link, not a directory prepare made"
     [ -f "$RUN/refs.before" ] && [ -f "$RUN/ability" ] && case $(basename "$RUN") in qargi.??????) ;; *) false;; esac \
       || usage_die "clean needs a RUN dir made by prepare"
-    # a read-only run (RUN/class: an advisor, a review) returns a report and no manifest: its OUT holds a report.md and it closes with a plain clean, when
-    # its refs are unchanged (the check below) and its clone holds no commit (the check after that; a member that wrote the class file changes neither)
+    # a read-only run (its class in the lead's registry: an advisor, a review) returns a report and no manifest: its OUT holds a report.md (or NAME-report.md, a
+    # regular file) and it closes with a plain clean, when its refs are unchanged (the check below) and its clone holds no commit (the check after that)
     [ -n "$DISCARD" ] || [ -f "$RUN/out/manifest.json" ] || [ -n "$(find "$RUN/out" -name '*manifest.json' 2>/dev/null | head -1)" ] \
-      || { [ "$(run_class "$RUN")" = read-only ] && [ -n "$(find "$RUN/out" -maxdepth 2 -name '*report.md' 2>/dev/null | head -1)" ]; } \
+      || { [ "$(run_class "$RUN")" = read-only ] && out_has_report "$RUN/out"; } \
       || die "$RUN/out holds no manifest: collect the work first, or --discard to drop a run that produced none$([ "$(run_class "$RUN")" != read-only ] || echo " (a read-only run closes with a plain clean once its OUT holds report.md)")"
     # changed refs are evidence: kept, unless the run is dropped on purpose (--discard), which says so and goes on
     vrc=0; vout=$(QARGI_VERIFY_REFS_ONLY=1 "$0" verify "$RUN" 2>&1 </dev/null) || vrc=$?
