@@ -37,10 +37,12 @@ fi
 AUTH_RE='^([^<>]*[^<>[:space:]]) <([^<>[:space:]@]+@[^<>[:space:]@]+)>$'
 # shellcheck disable=SC2154  # af comes from project_load
 pick_author() {
-  local keep a n e
-  keep=$(jq -r '(.review // {}) | .keep_author // false | if type == "boolean" then tostring else "bad" end' "$af" 2>/dev/null) || keep=bad
+  local keep a n e aj
+  # the answers are the run's own, taken into the lead's registry at prepare (run_record: RUN_ANS); a run of an older record reads the stored file
+  if [ -n "${RUN_ANS:-}" ]; then aj=$RUN_ANS; else aj=$(cat -- "$af" 2>/dev/null) || aj='{}'; fi
+  keep=$(jq -r '(.review // {}) | .keep_author // false | if type == "boolean" then tostring else "bad" end' <<<"$aj" 2>/dev/null) || keep=bad
   [ "$keep" != bad ] || die "review.keep_author in the answers of $PROJ is not true or false (qargi project set $PROJ review.keep_author true); nothing was applied"
-  a=$(jq -r '(.git // {}) | .author // "" | if type == "string" then . else error("not a string") end' "$af" 2>/dev/null) \
+  a=$(jq -r '(.git // {}) | .author // "" | if type == "string" then . else error("not a string") end' <<<"$aj" 2>/dev/null) \
     || die "git.author in the answers of $PROJ is not a string like 'Example Author <author@example.com>' (qargi project set $PROJ git.author ...); nothing was applied"
   AUTH='' AUTH_MODE=keep AUTH_SRC=''
   if [ "$keep" = true ]; then AUTH_SRC='answer review.keep_author'; return 0; fi
@@ -50,7 +52,13 @@ pick_author() {
     AUTH=$a AUTH_MODE=reset AUTH_SRC='answer git.author'; return 0
   fi
   n=$(g config user.name 2>/dev/null || true); e=$(g config user.email 2>/dev/null || true)
-  if [ -n "$n" ] && [ -n "$e" ]; then AUTH="$n <$e>" AUTH_MODE=reset AUTH_SRC="the repository's user.name and user.email; no answer git.author"; return 0; fi
+  if [ -n "$n" ] && [ -n "$e" ]; then
+    # read from the repository's configuration, which a member can also write when it can write the repository: checked as git.author is
+    a="$n <$e>"
+    { [[ $a =~ $AUTH_RE ]] && [[ $a != *[[:cntrl:]]* ]]; } \
+      || die "the repository's user.name and user.email ($a) are not a plain 'Name <email>' (no < > or control characters in the name, no spaces or extra @ in the address): fix them in $REPO, or give git.author (qargi project set $PROJ git.author 'Example Author <author@example.com>'); nothing was applied"
+    AUTH=$a AUTH_MODE=reset AUTH_SRC="the repository's user.name and user.email; no answer git.author"; return 0
+  fi
   AUTH_SRC='no answer git.author and no user.name and user.email in the repository'
 }
 # apply_series WT PATCH...: git am of each patch in the worktree, in order; with AUTH_MODE=reset every applied commit then has its author set to AUTH
@@ -64,8 +72,9 @@ apply_series() {
     m=$(git -C "$wt" log -1 --format='%an <%ae>')
     case "; $MEMBERS;" in *"; $m;"*) ;; *) MEMBERS=${MEMBERS:+$MEMBERS; }$m;; esac
     if [ "$AUTH_MODE" = reset ] && [ "$m" != "$AUTH" ]; then
-      # a mechanical rewrite of the commit just made: the lead's hooks do not run on it, and it is never signed (no passphrase prompt)
-      git -C "$wt" -c core.hooksPath=/dev/null commit -q --amend --no-edit --no-gpg-sign --author="$AUTH" >/dev/null 2>&1 \
+      # a mechanical rewrite of the commit just made: the lead's hooks do not run on it, it is never signed (no passphrase prompt), and its message is kept
+      # as it is (--cleanup=verbatim: a commit.cleanup=strip would drop the lines that start with #)
+      git -C "$wt" -c core.hooksPath=/dev/null commit -q --amend --no-edit --cleanup=verbatim --no-gpg-sign --author="$AUTH" >/dev/null 2>&1 \
         || { fail=$p; failmsg="could not reset the author of $(basename "$p") to $AUTH"; return 0; }
     fi
   done
@@ -101,7 +110,7 @@ case $verb in
     fi
     [ -f "$SRC/refs.before" ] && [ -d "$SRC/out" ] || usage_die "apply needs a RUN dir made by qargi local prepare"
     marshal_touch_run "$RUN"   # the lead's apply keeps its lease on the feature the run is based on
-    [ "$(run_class "$SRC")" != read-only ] \
+    [ "$(run_class "$RUN" "$SRC")" != read-only ] \
       || die "$RUN is a read-only run ($(cat "$SRC/ability" 2>/dev/null || echo review)): its product is a report, never patches. Read $SRC/out/report.md; nothing was applied"
     [ ! -L "$SRC/applied" ] && { [ ! -e "$SRC/applied" ] || [ -f "$SRC/applied" ]; } || die "$SRC/applied is a link or not a plain file: a member put it there (look at the run; nothing was applied)"
     [ ! -f "$SRC/applied" ] || die "this run was applied already ($(cut -d' ' -f1 "$SRC/applied")): qargi feature merge, then qargi local clean $RUN"

@@ -62,6 +62,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
   for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on
   a branch other than `agent/*`, so a long-merged run in an old scratch directory is no longer listed as applied and not merged.
+- `runs.owned_refs` can no longer reach the git-flow branches or the tags by a glob: a pattern is refused when it can match anything inside `refs/heads/agent/`,
+  `feature/`, `release/`, `hotfix/` or `refs/tags/` (`refs/heads/rel*/0*`, `refs/heads/age*t/foo-*` and `refs/tags/v0.*` passed validation before, because only one sample
+  name was tried), and a name under those, a tag or a `worktree-bridge-*` branch is never accepted as owned at the time of the check, whatever a hand-edited answer says.
+- `local prepare` takes the answers that decide what verification accepts (`runs.owned_refs`, `repo.long_lived`, `repo.parking_branch`, `git.author`,
+  `review.keep_author`) and the stored project's name into the lead's registry line of the run, and `local verify`, `local clean`, `local run` and `review apply`
+  read them from there. They used to read the first `projects/*.json` whose `repo.path` was the repository, and `<conf>/projects` is not protected, so a member
+  could add a `projects/aaa.json` naming the real repository with its own `runs.owned_refs` or `git.author`. A change of those answers now takes effect on
+  the runs prepared after it; a run recorded by an earlier version, which has no copy, is read as before.
+- A run is settled as merged (`local list`, `local clean`, `lead compact-check`, `feature finish`) only by a branch that settles it: a `worktree-bridge-*`
+  branch and a ref the run's answers declare owned (`runs.owned_refs`) no longer count, so a member cannot create one at the applied tip and have the run
+  closed as merged. The applied tip is the one the lead's ref journal records for the `review:apply` of the run's branch; `RUN/applied`, which a member can
+  write, is read only for a run with no such line.
+- The join of `release push` is made against the master its plan showed: it is refused when master moved between the plan and the join (a preflight, say), where
+  it read master again. The merge no longer runs the lead's hooks or signs (`core.hooksPath=/dev/null`, `--no-gpg-sign`, as `review apply` makes its commits),
+  and the plan warns when the release branch is checked out where the join would be refused (the main checkout, a worktree outside qargi's root, uncommitted changes).
+  A hotfix whose develop shares no history with master and with no release open is told so, instead of being told to finish a release that does not exist.
+- `review apply` resets the author of an applied commit with `--cleanup=verbatim`, so a repository with `commit.cleanup=strip` no longer drops the message lines
+  that start with `#`; and the identity it takes from the repository's `user.name` and `user.email` (no `git.author`) is checked as `git.author` is (no angle
+  bracket or control character in the name) and refused, with nothing applied, when it is not a plain `Name <email>`.
+- Whether a local run is read-only is the lead's registry's to say: `local prepare` records the class of the run there, and `local clean`, `local verify`,
+  `local close`, `local run`, `review apply` and `lead compact-check` read it from there. They read `RUN/class`, a file a member can write, and counted a run
+  with none as read-only, so a write run could be closed with a plain clean and a fake report. Only a record of an earlier version, which has no class, falls back
+  to the file, and a run with neither is a run of work. `local clean` and `lead compact-check` agree on what a report is: a regular file (not a link) named
+  `report.md` or `NAME-report.md` directly in OUT.
 
 ## [0.2.3] - 2026-11-05
 

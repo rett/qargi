@@ -2,6 +2,7 @@
 """Refs a runtime or harness creates in the repository, declared by the lead: the project answer runs.owned_refs.
 
   owned_refs.py match ANSWERS_FILE REFNAME [--base BRANCH]...     exit 0 and print the pattern when REFNAME is a declared owned ref, 1 when not
+                                                                  (ANSWERS_FILE - reads the answers from standard input)
 
 runs.owned_refs is a list of glob patterns for full ref names (["refs/heads/foo-*"]). `qargi local verify` and `local clean` accept a change of a
 ref that matches one, in either phase, and name the pattern ("accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)"). It is the
@@ -11,10 +12,12 @@ A pattern is hardened so that it cannot become a way round the ref check:
   - it is a full ref name: refs/NAMESPACE/REST, NAMESPACE with no glob character, and only letters, digits, . _ - / and the globs * and ?
     (* matches any characters, a slash too, as in a shell `case`);
   - REST starts with a literal prefix of at least 3 characters (so refs/heads/* and refs/heads/ab* are refused);
-  - it may not match refs/heads/develop, refs/heads/master or a branch in repo.long_lived, and may not reach into the git-flow namespaces
-    (agent/, feature/, release/, hotfix/): a member's rewrite of those is what the ref check is for;
-  - at the time of the check a ref is also never accepted when it is the base of a run that is not cleaned or closed (--base), whatever the
-    pattern says; a pattern that fails any of these is ignored there (project validate names it).
+  - it may not match refs/heads/develop, refs/heads/master or a branch in repo.long_lived, and may not be able to match anything inside the git-flow
+    namespaces (refs/heads/agent/, feature/, release/, hotfix/) or the tags (refs/tags/): a member's rewrite of those is what the ref check is for.
+    That is tested on the pattern itself, not on a sample name: refs/heads/rel*/0* and refs/heads/age*t/foo-* are refused as refs/heads/rel* is;
+  - at the time of the check a ref is also never accepted when it is under one of those namespaces, a worktree-bridge-* branch (the harness's own
+    bridge branches have their own, stricter rule that no pattern overrides), or the base of a run that is not cleaned or closed (--base),
+    whatever the pattern says; a pattern that fails any of these is ignored there (project validate names it).
 A ref that matches no valid pattern is checked as before, in the strict phase too. Read-only; python3 -I, standard library only."""
 import fnmatch, json, re, sys
 
@@ -24,6 +27,35 @@ MIN_LITERAL = 3
 MAX_PATTERNS = 32
 ALWAYS = ("develop", "master")
 FLOW_PREFIXES = ("agent/", "feature/", "release/", "hotfix/")
+# the names no pattern may reach: the git-flow branches and the tags (as ref-name prefixes), and the harness's bridge branches (match time only)
+RESERVED = tuple("refs/heads/" + p for p in FLOW_PREFIXES) + ("refs/tags/",)
+BRIDGE = "refs/heads/worktree-bridge-"
+
+
+def reaches(pat, prefix):
+    """True when some ref name that starts with PREFIX matches the glob PAT (* any characters, a slash too; ? one character). The glob is run as an
+    automaton over PREFIX; what is left of it can always be completed (* may be empty, ? and a literal are one character of the name)."""
+    def close(states):
+        out = set(states)
+        for i in sorted(states):
+            while i < len(pat) and pat[i] == "*":
+                i += 1
+                out.add(i)
+        return out
+    cur = close({0})
+    for c in prefix:
+        nxt = set()
+        for i in cur:
+            if i >= len(pat):
+                continue
+            if pat[i] == "*":
+                nxt.add(i)
+            elif pat[i] == "?" or pat[i] == c:
+                nxt.add(i + 1)
+        cur = close(nxt)
+        if not cur:
+            return False
+    return True
 
 
 def protected_refs(protected=()):
@@ -47,12 +79,9 @@ def pattern_problem(pat, protected=()):
     literal = re.split(r"[*?]", rest, maxsplit=1)[0]
     if len(literal) < MIN_LITERAL:
         return "must start (after refs/%s/) with a literal prefix of at least %d characters, not %r" % (parts[1], MIN_LITERAL, literal)
-    if parts[1] == "heads":
-        if literal.startswith(FLOW_PREFIXES):
-            return "reaches into the git-flow branches (agent/, feature/, release/, hotfix/), which a run's ref check is for"
-        for pre in FLOW_PREFIXES:
-            if fnmatch.fnmatchcase("refs/heads/" + pre + "x", pat):
-                return "would match git-flow branches (%s*), which a run's ref check is for" % pre
+    for ns in RESERVED:
+        if reaches(pat, ns):
+            return "would match inside %s*, which a run's ref check is for (the git-flow branches and the tags)" % ns
     for ref in protected_refs(protected):
         if fnmatch.fnmatchcase(ref, pat):
             return "would match %s, which no run may touch" % ref
@@ -76,8 +105,11 @@ def problems(value, protected=()):
 
 
 def match(patterns, name, protected=(), bases=()):
-    """The first valid pattern that matches the ref name, or None. Never a protected ref or the base of an open run."""
+    """The first valid pattern that matches the ref name, or None. Never a protected ref, a git-flow branch, a tag, a worktree-bridge-* branch or the
+    base of an open run: those are refused here too, whatever the validation of the pattern let through."""
     if not isinstance(patterns, list) or not isinstance(name, str) or not name.startswith("refs/"):
+        return None
+    if name.startswith(RESERVED) or name.startswith(BRIDGE):
         return None
     forbidden = set(protected_refs(protected))
     for b in bases:
@@ -93,10 +125,18 @@ def match(patterns, name, protected=(), bases=()):
 
 def answers(path):
     try:
-        with open(path) as f:
-            d = json.load(f)
+        if path == "-":
+            d = json.load(sys.stdin)
+        else:
+            with open(path) as f:
+                d = json.load(f)
     except (OSError, ValueError):
         return [], []
+    return from_answers(d)
+
+
+def from_answers(d):
+    """(runs.owned_refs, repo.long_lived) of an answers object."""
     d = d if isinstance(d, dict) else {}
     runs = d.get("runs") if isinstance(d.get("runs"), dict) else {}
     repo = d.get("repo") if isinstance(d.get("repo"), dict) else {}

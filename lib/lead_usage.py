@@ -26,7 +26,7 @@ safe now, or why not. With --feature NAME it prints only when no open run of fea
 
 Environment: QARGI_LEAD (the session id, which names the transcript), QARGI_LEAD_NOW (epoch seconds; tests). Run through lib/lead.sh;
 python3 -I, standard library only."""
-import argparse, importlib.util, json, os, re, subprocess, sys, time
+import argparse, importlib.util, json, os, re, stat, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -289,13 +289,19 @@ def registry(state):
     return out
 
 
-def merged(repo, tip, state):
-    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit)."""
-    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state)
+def merged(repo, tip, state, branch=None, answers=None):
+    """True when the run's applied tip is merged: lib/merged.py, the test local list and local clean use too (a tip the lead rewrote counts by its new commit; the tip
+    the lead's journal records for BRANCH's review:apply replaces the file's; a bridge branch and a ref the run's answers declare owned settle nothing)."""
+    return (sys.modules.get("merged") or load("merged")).merged(repo, tip, state, branch, answers)
+
+
+class OpenRun(tuple):
+    """(run dir, slug, role, base, what), with the class of the run (cls) from the lead's registry record, or None for a record that has none."""
+    cls = None
 
 
 def open_runs(state, repo, url):
-    """The runs of this project that still need the lead: [(run dir, slug, role, base, what)]."""
+    """The runs of this project that still need the lead: [OpenRun (run dir, slug, role, base, what)]."""
     rp = os.path.realpath(repo) if repo else ""
     res = []
     for r in registry(state):
@@ -306,17 +312,23 @@ def open_runs(state, repo, url):
         if not same:
             continue
         base, slug, role = clean(str(r.get("base") or "")), clean(str(r.get("slug") or "")), clean(str(r.get("ability") or r.get("role") or ""))
+
+        def add(what):
+            run = OpenRun((d, slug, role, base, what))
+            run.cls = r.get("class") if r.get("class") in ("write", "read-only") else None
+            res.append(run)
         if os.path.exists(os.path.join(d, "applied")):
             try:
-                tip = open(os.path.join(d, "applied"), errors="replace").read().split()[1]
-            except (OSError, IndexError):
-                tip = ""
-            if not merged(repo, tip, state):
-                res.append((d, slug, role, base, "applied, not merged"))
+                words = open(os.path.join(d, "applied"), errors="replace").read().split()
+            except OSError:
+                words = []
+            tip, branch = (words[1] if len(words) > 1 else ""), (words[0] if words else None)
+            if not merged(repo, tip, state, branch, r.get("answers") if isinstance(r.get("answers"), dict) else None):
+                add("applied, not merged")
         elif os.path.exists(os.path.join(d, "verified")):
-            res.append((d, slug, role, base, "verified, not applied"))
+            add("verified, not applied")
         else:
-            res.append((d, slug, role, base, "prepared, not verified"))
+            add("prepared, not verified")
     return res
 
 
@@ -406,8 +418,11 @@ def features_of(repo):
     return sorted(b[len("feature/"):] for b in (git(repo, "for-each-ref", "--format=%(refname:short)", "refs/heads/feature/*") or "").split())
 
 
-def read_only(d):
-    """True when the run is a read-only one (RUN/class, which prepare writes): its product is a report, never patches."""
+def read_only(d, cls=None):
+    """True when the run is a read-only one: its product is a report, never patches. The class is the lead's registry record's (cls: prepare writes it); only a
+    record with none falls back to RUN/class, a member's file, and a run with neither is a run of work (write)."""
+    if cls in ("write", "read-only"):
+        return cls == "read-only"
     try:
         return open(os.path.join(d, "class"), errors="replace").read().strip() == "read-only"
     except OSError:
@@ -415,17 +430,27 @@ def read_only(d):
 
 
 def has_report(d):
+    """True when OUT holds a report: a regular file (not a link) named report.md or NAME-report.md directly in it (lib.sh out_has_report is the same test)."""
+    out = os.path.join(d, "out")
     try:
-        return any(n.endswith("report.md") for n in os.listdir(os.path.join(d, "out")))
+        names = os.listdir(out)
     except OSError:
         return False
+    for n in names:
+        if n == "report.md" or n.endswith("-report.md"):
+            try:
+                if stat.S_ISREG(os.lstat(os.path.join(out, n)).st_mode):
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def closing(run):
     """The exact command that closes an open run (run: a tuple of open_runs): a read-only run with its report closes with a plain clean; a run
     of work closes by its next step, applied by hand (local close), applied and merged (clean), or dropped."""
     d, slug, role, base, what = run
-    if read_only(d):
+    if read_only(d, getattr(run, "cls", None)):
         if has_report(d):
             return "qargi local clean %s" % d
         return "qargi local clean %s (once the member has written OUT/report.md; --discard drops the run)" % d
@@ -444,9 +469,10 @@ def check(a, conf, state):
     repo = repo_of(answers)
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     reasons, runs = [], open_runs(state, repo, url)
-    for d, slug, role, base, what in runs:
-        if read_only(d):
-            reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing((d, slug, role, base, what))))
+    for run in runs:
+        d, slug, role, base, what = run
+        if read_only(d, run.cls):
+            reasons.append("a read-only local run is open: %s (%s %s on %s, %s); read its report, then close it: %s" % (d, role, slug, base, what, closing(run)))
         elif what == "prepared, not verified":
             reasons.append("a local run is prepared and not verified: %s (%s %s on %s); verify it (qargi local verify %s) or discard it" % (d, role, slug, base, d))
         elif what == "verified, not applied":
@@ -536,8 +562,9 @@ def cmd_open_runs(a, conf, state):
     repo = repo_of(answers)
     url = (answers.get("repo") or {}).get("url") if isinstance(answers.get("repo"), dict) else ""
     found = [r for r in open_runs(state, repo, url) if r[3] == "feature/" + a.feature]
-    for d, slug, role, base, what in found:
-        print("%s\t%s\t%s\t%s\t%s" % (d, slug, role, what, closing((d, slug, role, base, what))))
+    for run in found:
+        d, slug, role, base, what = run
+        print("%s\t%s\t%s\t%s\t%s" % (d, slug, role, what, closing(run)))
     return 1 if found else 0
 
 

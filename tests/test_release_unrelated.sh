@@ -102,6 +102,38 @@ t=$($REL push 0.3.0 | tok); out=$(PATH=$T/shim:$PATH $REL push 0.3.0 --plan "$t"
 [ $rc != 0 ] && grep -q "would change the tree" <<<"$out" && [ "$(git -C "$U" rev-parse release/0.3.0)" = "$h0" ] && ! git -C "$T/un.git" rev-parse -q --verify refs/heads/release/0.3.0 >/dev/null && ok "a join that changes the tree is refused: nothing moved, nothing pushed" || no "tree check: rc=$rc $out"
 [ -z "$(find "$T/s" -maxdepth 1 -name 'release-wt.*')" ] && ok "no temporary worktree is left" || no "left: $(find "$T/s" -maxdepth 1 -name 'release-wt.*')"
 
+# --- the join uses the master the plan showed, not the one there is when it is made
+m3=$(git -C "$U" rev-parse master); h0=$(git -C "$U" rev-parse release/0.3.0)
+moved=$(git -C "$U" commit-tree "$(git -C "$U" rev-parse 'master^{tree}')" -p master -m moved)
+cp "$T/c/projects/un.json" "$T/un.json.keep"
+jq --arg c "git -C $U update-ref refs/heads/master $moved" '.release = {preflight: ["sh", "-c", $c]}' "$T/un.json.keep" > "$T/c/projects/un.json"
+out=$($REL push 0.3.0 2>&1); t=$(tok <<<"$out")
+grep -q "master must still be at ${m3:0:7}" <<<"$out" && ok "the push plan names the master the join will use" || no "plan master: $out"
+out=$($REL push 0.3.0 --plan "$t" --approved go 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "master is not at ${m3:0:7}, where the plan showed it" <<<"$out" && [ "$(git -C "$U" rev-parse release/0.3.0)" = "$h0" ] && ! git -C "$T/un.git" rev-parse -q --verify refs/heads/release/0.3.0 >/dev/null \
+  && ok "a master that moved after the plan (during the preflight) is refused: the branch did not move, nothing was pushed" || no "master moved: rc=$rc $out"
+git -C "$U" update-ref refs/heads/master "$m3"; cp "$T/un.json.keep" "$T/c/projects/un.json"
+# --- the join runs none of the lead's hooks and is not signed, whatever the configuration says
+mkdir -p "$U/.git/hooks"; printf '#!/bin/sh\ntouch "%s/hook-ran"\nexit 1\n' "$T" > "$U/.git/hooks/pre-merge-commit"; chmod +x "$U/.git/hooks/pre-merge-commit"
+git -C "$U" config commit.gpgsign true; git -C "$U" config gpg.program /bin/false
+t=$($REL push 0.3.0 | tok); out=$($REL push 0.3.0 --plan "$t" --approved go 2>&1); rc=$?
+j=$(git -C "$U" rev-parse release/0.3.0)
+[ $rc = 0 ] && [ "$j" != "$h0" ] && [ ! -e "$T/hook-ran" ] && [ "$(git -C "$U" log -1 --format=%G? "$j")" = N ] && ok "the join ran no hook of the repository and was not signed (commit.gpgsign true, a failing gpg program)" || no "hooks/gpg: rc=$rc hook=$([ -e "$T/hook-ran" ] && echo ran) $out"
+rm -f "$U/.git/hooks/pre-merge-commit"; git -C "$U" config --unset commit.gpgsign; git -C "$U" config --unset gpg.program
+# --- the plan says a checked-out branch will refuse the join
+git -C "$U" update-ref refs/heads/master "$(git -C "$U" commit-tree "$(git -C "$U" rev-parse 'develop^{tree}')" -m snapshot3)"
+$REL start 0.4.0 --allow-empty-notes >/dev/null 2>&1 || no "start 0.4.0: $($REL start 0.4.0 2>&1)"
+git -C "$U" checkout -q release/0.4.0
+out=$($REL push 0.4.0 2>&1)
+grep -q "^warning: release/0.4.0 is checked out in $U, which is not a worktree qargi made" <<<"$out" && ok "the plan warns that a branch checked out in the main checkout will refuse the join" || no "plan blocker: $out"
+git -C "$U" checkout -q parked
+
+# --- a hotfix whose develop shares no history with master, with no release open: no release is named that does not exist
+mk hf unrelated; export QARGI_PROJECT=hf
+$REL start 0.1.1 --hotfix --allow-empty-notes >/dev/null 2>&1 || no "start hotfix: $($REL start 0.1.1 --hotfix --allow-empty-notes 2>&1)"
+out=$($REL finish 0.1.1 --hotfix 2>&1); rc=$?
+[ $rc = 1 ] && grep -q "develop and hotfix/0.1.1 share no history" <<<"$out" && grep -q "no release is open" <<<"$out" && ! grep -q "finish that release first" <<<"$out" && ok "a hotfix with an unrelated develop and no open release does not tell the lead to finish a release" || no "hotfix unrelated develop: rc=$rc $out"
+
 # --- a repository with related histories is unchanged: no extra commit, no join in the plan, no note
 export QARGI_PROJECT=rel
 $REL verify 0.2.0 >/dev/null 2>&1
