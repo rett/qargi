@@ -25,7 +25,8 @@ result of the signing and of verify_command. Nothing the person types (the passp
   release_sign.py assets --af AF --version V --base DIR [--root DIR]... [--asset F]... [--asset-dir D]...
                                                  print "sha256<TAB>absolute path<TAB>path in its root" per file to attach: the release.assets of AF
                                                  (globs expanded), every --asset and every regular file of every --asset-dir. A relative name is taken
-                                                 in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository)
+                                                 in DIR; the file must be a regular file inside DIR or one of the --root directories (the worktrees of the repository),
+                                                 with no .git component in its name or where a symbolic link leads, and no two files may have the same base name
   release_sign.py asset-status AF VERSION        read the names of the assets of a GitHub release on stdin; print a line per entry of release.assets
                                                  ({version} replaced; a glob matched by its base name, with fnmatch): "asset X: present" or "asset X: MISSING from the release"
   release_sign.py after-steps AF VERSION         print the steps of release.after_steps, {version} replaced, one per line
@@ -131,15 +132,24 @@ def resolve(repo, name):
     return full, os.path.relpath(full, root)
 
 
+def has_git_part(path):
+    """Whether a path has a component named .git (any case): git's own files (a worktree's .git file, the config, the hooks) are never release assets."""
+    return any(p.lower() == ".git" for p in re.split(r"[/\\]+", path))
+
+
 def resolve_in(roots, base, name):
     """(absolute real path, name in its root) of a regular file named NAME (taken in BASE when relative) that lies inside one of ROOTS;
     the root is the deepest one that holds it. ValueError says why not."""
     if name == "" or CTRL_RE.search(name) or "#" in name:
         raise ValueError("%s: not a usable file name" % name.encode("unicode_escape").decode())
+    if has_git_part(name):
+        raise ValueError("%s: a .git component: the files of git's own directory are not release files" % name)
     full = os.path.realpath(os.path.join(base, name))
     held = [r for r in roots if full.startswith(r + os.sep)]
     if not held or "#" in full:
         raise ValueError("%s: not inside the repository or one of its worktrees" % name)
+    if any(has_git_part(os.path.relpath(full, r)) for r in held):   # reached through a symbolic link, or a glob
+        raise ValueError("%s: it is %s, which has a .git component: the files of git's own directory are not release files" % (name, full))
     if not os.path.isfile(full):
         raise ValueError("%s: not a file (build it first)" % name)
     return full, os.path.relpath(full, max(held, key=len))
@@ -149,12 +159,16 @@ def asset_files(a, af, version):
     """The files to attach, in order and without repeats: [(absolute path, name in its root)]. ValueError says which name cannot be used."""
     base = os.path.realpath(a["--base"][0])
     roots = sorted({base} | {os.path.realpath(r) for r in a.get("--root", [])})
-    out, seen = [], set()
+    out, seen, names = [], set(), {}
 
     def add(full, rel):
-        if full not in seen:
-            seen.add(full)
-            out.append((full, rel))
+        if full in seen:
+            return
+        other = names.setdefault(os.path.basename(full), full)   # gh names an asset by its base name: two files of one base name would be one asset, or a refusal
+        if other != full:
+            raise ValueError("%s and %s have the same base name %s: an asset is named by it, so only one of them can be attached" % (other, full, os.path.basename(full)))
+        seen.add(full)
+        out.append((full, rel))
     for pat in ((load_release(af) or {}).get("assets") or []):
         pat = pat.replace("{version}", version)
         if not glob.has_magic(pat):

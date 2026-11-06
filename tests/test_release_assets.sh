@@ -120,6 +120,19 @@ out=$(asset_plan --asset dist/SUMS --asset-dir dist); grep -q "^assets (4)," <<<
 ln -s /etc/passwd "$AW/dist/link"
 out=$(asset_plan --asset-dir dist) && no "a symbolic link to a file outside was accepted" || { grep -q "not inside the repository or one of its worktrees" <<<"$out" && ok "a symbolic link that leaves the worktrees refuses" || no "symlink: $out"; }
 rm -f "$AW/dist/link"
+# git's own files are never assets: by name, and through a symbolic link that resolves into the repository's .git
+out=$(asset_plan --asset .git) && no "the .git file was accepted" || { grep -q "a .git component" <<<"$out" && ! grep -q "plan token" <<<"$out" && ok "a name with a .git component refuses" || no ".git name: $out"; }
+ln -s "$R/.git/config" "$AW/dist/cfg"
+out=$(asset_plan --asset-dir dist) && no "a link into .git was accepted" || { grep -q "has a .git component" <<<"$out" && ! grep -q "plan token" <<<"$out" && ok "a symbolic link that resolves into .git refuses" || no "link into .git: $out"; }
+out=$(asset_plan --asset dist/cfg) && no "a link into .git was accepted by name" || ok "and by name"
+rm -f "$AW/dist/cfg"
+# two files of one base name would be one asset
+mkdir -p "$AW/dist/sub"; echo other > "$AW/dist/sub/SUMS"
+out=$(asset_plan --asset dist/SUMS --asset dist/sub/SUMS) && no "two assets of one base name were accepted" || { grep -q "have the same base name SUMS" <<<"$out" && ! grep -q "plan token" <<<"$out" && ok "two assets with the same base name refuse" || no "same base: $out"; }
+setans '.release.assets=["dist/SUMS","dist/**/SUMS"]'
+out=$(asset_plan) && no "a glob and a name of one base name were accepted" || { grep -q "have the same base name SUMS" <<<"$out" && ok "so do a release.assets name and a glob that finds another file of that name" || no "glob same base: $out"; }
+setans 'del(.release.assets)'
+rm -rf "$AW/dist/sub"
 # a full path inside another worktree of the repository
 git -C "$R" worktree add -q --detach "$T/other" master; echo extra > "$T/other/extra.bin"; mkdir "$T/outside"; echo no > "$T/outside/x.bin"
 out=$(asset_plan --asset "$(realpath "$T/other")/extra.bin"); t=$(tok <<<"$out")
