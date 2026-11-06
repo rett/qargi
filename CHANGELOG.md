@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- The project answer `runs.owned_refs` (a list of glob patterns for full ref names, such as `refs/heads/foo-*`; only the lead sets it, the guard refuses
+  `project set` of it to a member) declares the refs a runtime or harness creates in the repository. `qargi local verify` and `local clean` accept a local
+  ref that matches one, in either phase, and name it (`foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)`). A pattern
+  needs a literal prefix of at least 3 characters after `refs/NAMESPACE/` and may not match `develop`, `master`, a `repo.long_lived` branch or the git-flow
+  branches (`project validate` says so); a ref is never taken as owned when it is the base of a run that is not cleaned or closed, and a ref that matches
+  no valid pattern is checked as before, in the strict phase too. The built-in rule for the harness's `worktree-bridge-*` branches stays.
+
 ### Fixed
 - `lead compact-check` and `feature finish` settle a run as merged by the same test as `local list` and `local clean` (`lib/merged.py`, one function
   for the three). A run whose applied tip the lead rewrote with `qargi ref record --rewrite` counts as merged when the commit it was rewritten to is on

@@ -179,6 +179,65 @@ out=$($DA ref note 2>&1); rc=$?
 [ $rc = 2 ] && ok "ref note without a REF is a usage error" || no "no ref: rc=$rc $out"
 git -C "$A" branch -D agent-made >/dev/null; git -C "$A" push -q origin :agent-made
 
+# --- 1c. refs a runtime creates in the repository, declared by the lead (answers runs.owned_refs)
+own() { jq --argjson p "$1" '.runs = {owned_refs: $p}' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"; }
+OWNED="accepted: refs/heads/rt-* (owned by the runtime, per runs.owned_refs)"
+R=$(mkrun owned1)
+git -C "$A" branch rt-one develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/rt-one" <<<"$out" && ok "(setup) a branch a runtime made is found while no pattern declares it" || no "undeclared: rc=$rc $out"
+own '["refs/heads/rt-*"]'
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one created; $OWNED" <<<"$out" && grep -q "the refs the project declares the runtime's own" <<<"$out" && [ -f "$R/verified" ] && ok "a declared pattern accepts the ref in the strict phase and verify names the pattern and the answer" || no "declared: rc=$rc $out"
+git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
+git -C "$A" branch rt-two develop
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one moved; $OWNED" <<<"$out" && grep -qF "rt-two created; $OWNED" <<<"$out" && ok "and after the passing verify too: moves and new refs of the pattern are named" || no "declared lenient: rc=$rc $out"
+git -C "$A" branch -D rt-two >/dev/null
+out=$(verify "$R"); rc=$?
+[ $rc = 0 ] && grep -qF "rt-two deleted; $OWNED" <<<"$out" && ok "a deletion of a declared ref is accepted and named too" || no "declared deletion: rc=$rc $out"
+git -C "$A" branch other-made develop
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "refs/heads/other-made" <<<"$out" && ! grep -q "other-made.*owned by the runtime" <<<"$out" && ok "a ref the pattern does not match is still found" || no "other ref: rc=$rc $out"
+git -C "$A" branch -D other-made >/dev/null
+# clean names it as well
+git -C "$A" update-ref refs/heads/rt-one "$(hand rt-one)"
+echo '{}' > "$R/out/manifest.json"
+out=$($DA local clean "$R" 2>&1); rc=$?
+[ $rc = 0 ] && grep -qF "rt-one moved; $OWNED" <<<"$out" && ! grep -q "the lead's own move: rt-one" <<<"$out" && ok "local clean accepts the declared ref and names the pattern" || no "clean owned: rc=$rc $out"
+# a member rewriting develop is still caught: the strict phase, a rewrite, a pattern that would reach it
+own '["refs/heads/rt-*"]'
+R=$(mkrun owned2)
+dv=$(git -C "$A" rev-parse develop)
+git -C "$A" update-ref refs/heads/develop "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ok "a rewrite of develop is found though a pattern is declared" || no "develop rewrite: rc=$rc $out"
+own '["refs/heads/dev*"]'
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/develop" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a pattern that would match develop (hand-edited answers) is ignored" || no "develop pattern: rc=$rc $out"
+own '["refs/heads/*","refs/heads/ab*"]'
+git -C "$A" branch abc-made "$dv"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch created: refs/heads/abc-made" <<<"$out" && ! grep -q "owned by the runtime" <<<"$out" && ok "a bare glob and a pattern with a short literal prefix are ignored" || no "short pattern: rc=$rc $out"
+git -C "$A" branch -D abc-made >/dev/null
+git -C "$A" update-ref refs/heads/develop "$dv"
+# the base of an open run is never owned
+git -C "$A" branch rt-base develop
+own '["refs/heads/rt-*"]'
+R=$(mkrun owned3 rt-base)
+git -C "$A" update-ref refs/heads/rt-base "$(git -C "$A" commit-tree -m rewritten "$dv^{tree}")"
+out=$(verify "$R"); rc=$?
+[ $rc = 2 ] && grep -q "branch moved: refs/heads/rt-base" <<<"$out" && ok "the base of an open run is not accepted as owned, whatever the pattern says" || no "base owned: rc=$rc $out"
+git -C "$A" update-ref refs/heads/rt-base "$dv"
+out=$(verify "$R"); [ $? = 0 ] || no "(setup) base restored: $out"
+# the answer is checked by project validate
+$DA project template demo | jq '.repo.url = "https://github.com/example/demo" | .runs = {owned_refs: ["refs/heads/dev*"]}' > "$T/bad.json"
+out=$($DA project validate "$T/bad.json" 2>&1); rc=$?
+[ $rc != 0 ] && grep -q "runs.owned_refs\[0\]: would match refs/heads/develop" <<<"$out" && ok "project validate refuses a pattern that would match develop" || no "validate: rc=$rc $out"
+jq 'del(.runs)' "$T/c/projects/app.json" > "$T/app.new" && mv "$T/app.new" "$T/c/projects/app.json"
+git -C "$A" branch -D rt-one rt-base >/dev/null 2>&1
+for r in "$T"/scr/qargi.*; do $DA local clean "$r" --discard >/dev/null 2>&1; done
+
 # --- 2. local close --applied-by-am
 for r in "$T"/scr/qargi.*; do $DA local clean "$r" --discard >/dev/null 2>&1; done
 $F start cl >/dev/null 2>&1

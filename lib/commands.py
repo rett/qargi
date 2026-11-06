@@ -152,7 +152,9 @@ COMMANDS = {
                               "roles.ROLE.tools is the list of the tools a role needs beyond its apt packages, each {kind, name, ...}: kind go (name a package path, version a tag: go install NAME@VERSION), "
                               "kind binary (name the file name, version, url of the file itself, sha256 of it: downloaded to ~/.local/bin and kept only when the hash matches) and kind submodule "
                               "(name as in .gitmodules, path: checked out in each member clone by qargi local prepare). env plan lists them, env apply installs them and env check reports one that is "
-                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*."),
+                              "missing or wrong; a member's guard refuses setting them (and a whole role), as it refuses release.*, test_command, env.* and site.*. "
+                              "runs.owned_refs is a list of glob patterns for the refs a runtime or harness creates in the repository, which local verify and clean accept and name (see local verify); "
+                              "the guard refuses it to a member too."),
                         examples=["qargi project set acme roles.write.effort high", "qargi project set acme packs.none true",
                                   "qargi project set acme roles.test.tools '[{\"kind\":\"go\",\"name\":\"acme.test/ci\",\"version\":\"v1.2.0\"}]'"]),
             "show": verb("Print the stored answers and what they mean", [("NAME", "project")]),
@@ -1014,6 +1016,11 @@ COMMANDS = {
                                  "(a fetch), the parking branch (repo.parking_branch, default scratch) fast-forwarded to develop's tip, by hand too, and the branches and branches of origin you noted "
                                  "(qargi ref note: a ref that did not exist when the run was prepared; one the run's agent could have made or moved and you did not note still fails). "
                                  "It also leaves out the harness's own bridge branches: a branch worktree-bridge-NAME while the locked worktree bridge-NAME of the harness (in its worktrees directory under the main checkout) holds it and its moves are fast-forwards (or once the worktree and the branch are gone). "
+                                 "The refs a runtime or harness creates in the repository can be declared in the project answer runs.owned_refs, a list of glob patterns for full ref names "
+                                 "(qargi project set PROJECT runs.owned_refs '[\"refs/heads/foo-*\"]'; only the lead sets it, and project validate checks it): a local ref that matches one is accepted in either phase and "
+                                 "named (\"foo-x created; accepted: refs/heads/foo-* (owned by the runtime, per runs.owned_refs)\"). A pattern needs a literal prefix of at least 3 characters after refs/NAMESPACE/, "
+                                 "may not match develop, master, a repo.long_lived branch or the git-flow branches (agent/, feature/, release/, hotfix/), and a ref is never taken as owned when it is the base of a run "
+                                 "that is not cleaned or closed; a ref that matches no valid pattern is checked as before, in the strict phase too. "
                                  "After a passing verify the run records RUN/verified and its line in the registry is marked verified (what marshal status and handoff list the task as, also after clean); later verify and clean compare with that and also accept "
                                  "your fast-forwards of develop and master and of agent|feature|release|hotfix/* branches, and new branches there. Anything else (a push, a tag, "
                                  "a deletion or a rewrite nobody journaled) fails. Run it on every run before merging any of them. "
@@ -1407,7 +1414,7 @@ TOPICS = {
     "guard": ("What a member's guard refuses", [
         "The guard hooks a member's calls: a barrier, not a wall; qargi local verify is its backstop.",
         "It refuses verbs that change shared state: skill and tool new, import, seal, remove, unlink, link, enable, disable, accept and unaccept; "
-        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
+        "discover install; import; packs apply, seed, link and unlink; project set (models, release, test_command, env, site, packs, runs, upstream, roles.ROLE.tools, a whole role), init, new, link and unlink; "
         "provider new, import, seal, remove, enable, disable, attest, accept, check and adapter-run (the rest "
         "read); release publish, sign, site, assets and fix; marshal claim, set, renew, release, take, "
         "takeover, finish, enable, disable, key, signers and resign (handoff only with --write); feature start, finish, verify and park; branch prune; changelog renumber without --check; "
